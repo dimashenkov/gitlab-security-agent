@@ -1,0 +1,149 @@
+# Reusable AI security review job.
+#
+# Add to a project's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'your-group/gitlab-security-agent'
+#       ref: main
+#       file: '/templates/security-scan.yml'
+#       inputs:
+#         stage: test
+#
+# Required CI/CD variables on the consuming project (Settings → CI/CD →
+# Variables), both masked:
+#
+#   ANTHROPIC_API_KEY            the Anthropic API key
+#   SECURITY_SCAN_GITLAB_TOKEN   project or group access token with `api` scope,
+#                                used to post the review as a merge request
+#                                comment. CI_JOB_TOKEN cannot create notes, so
+#                                without this the review still runs and is
+#                                attached as an artifact, just not commented.
+#
+# Protect both variables so they are not exposed to pipelines on unprotected
+# branches, and remember that a fork pipeline does not receive them at all.
+
+spec:
+  inputs:
+    stage:
+      default: test
+      description: Pipeline stage to run the review in.
+    job_name:
+      default: ai-security-review
+      description: Name of the generated job.
+    image:
+      default: registry.gitlab.com/your-group/gitlab-security-agent:latest
+      description: Image containing the agent. Override to pin a digest.
+    model:
+      default: claude-opus-5
+      description: Model id used for the review.
+    effort:
+      default: high
+      options: [low, medium, high, xhigh, max]
+      description: Reasoning effort. `xhigh` reviews harder and costs more.
+    fail_on:
+      default: high
+      options: [critical, high, medium, low, none]
+      description: Severity at which a finding blocks the merge.
+    min_confidence:
+      default: medium
+      options: [high, medium, low]
+      description: Lowest confidence allowed to block a merge.
+    verify_votes:
+      default: '1'
+      description: >-
+        Independent verifiers per finding. Critical and high findings always get
+        at least two, regardless of this value.
+    max_turns:
+      default: '60'
+      description: Ceiling on agent turns; raise for large merge requests.
+    max_runtime:
+      default: '2700'
+      description: Wall-clock ceiling in seconds.
+    allow_failure:
+      type: boolean
+      default: false
+      description: >-
+        Set true to roll the gate out as a warning first. The job still reports
+        findings; it just stops blocking the pipeline.
+    skip_label:
+      default: skip-ai-security
+      description: Merge request label that skips the review.
+    timeout:
+      default: 1h
+      description: GitLab job timeout.
+
+"$[[ inputs.job_name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.image ]]
+  timeout: $[[ inputs.timeout ]]
+  allow_failure: $[[ inputs.allow_failure ]]
+  interruptible: true
+
+  variables:
+    # The agent diffs against the merge request's base commit, which must be
+    # present in the clone. A shallow fetch is the single most common reason
+    # this job fails to find a diff base.
+    GIT_DEPTH: 0
+    GIT_STRATEGY: fetch
+    SECURITY_SCAN_MODEL: $[[ inputs.model ]]
+    SECURITY_SCAN_EFFORT: $[[ inputs.effort ]]
+    SECURITY_SCAN_FAIL_ON: $[[ inputs.fail_on ]]
+    SECURITY_SCAN_MIN_CONFIDENCE: $[[ inputs.min_confidence ]]
+    SECURITY_SCAN_VERIFY_VOTES: $[[ inputs.verify_votes ]]
+    SECURITY_SCAN_MAX_TURNS: $[[ inputs.max_turns ]]
+    SECURITY_SCAN_MAX_RUNTIME: $[[ inputs.max_runtime ]]
+    SECURITY_SCAN_OUTPUT_DIR: .security-scan
+
+  rules:
+    # Merge request pipelines only. On a branch pipeline there is no merge
+    # request to comment on and no reliable base to diff against; a repo-wide
+    # review is a separate, scheduled job (see `ai-security-review-full` below).
+    - if: $CI_MERGE_REQUEST_IID && $CI_MERGE_REQUEST_LABELS =~ /$[[ inputs.skip_label ]]/
+      when: never
+    - if: $CI_MERGE_REQUEST_IID
+
+  script:
+    - gitlab-security-agent --skip-label "$[[ inputs.skip_label ]]"
+
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - .security-scan/
+    # Exposed in the merge request widget so the report is one click away even
+    # when the comment could not be posted.
+    expose_as: 'AI security review'
+
+
+# Scheduled whole-repository review. Not included by default: enable it by
+# adding a pipeline schedule with SECURITY_SCAN_FULL set to a non-empty value.
+"$[[ inputs.job_name ]]-full":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.image ]]
+  timeout: 3h
+  allow_failure: true
+  interruptible: false
+
+  variables:
+    GIT_DEPTH: 0
+    SECURITY_SCAN_MODE: repo
+    SECURITY_SCAN_MODEL: $[[ inputs.model ]]
+    SECURITY_SCAN_EFFORT: $[[ inputs.effort ]]
+    # A scheduled sweep reports; it does not gate. There is no merge to block,
+    # and a red scheduled pipeline every night trains people to ignore it.
+    SECURITY_SCAN_FAIL_ON: none
+    SECURITY_SCAN_MAX_TURNS: '200'
+    SECURITY_SCAN_MAX_RUNTIME: '9000'
+    SECURITY_SCAN_OUTPUT_DIR: .security-scan
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SECURITY_SCAN_FULL
+
+  script:
+    - gitlab-security-agent --mode repo
+
+  artifacts:
+    when: always
+    expire_in: 90 days
+    paths:
+      - .security-scan/

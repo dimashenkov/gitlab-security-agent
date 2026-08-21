@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitlab-security-agent"
+version = "0.1.0"
+description = "AI security review gate for GitLab CI/CD, powered by the Claude API"
+requires-python = ">=3.9"
+dependencies = [
+    "anthropic>=0.116.0",
+    "jsonschema>=4.21",
+    "PyYAML>=6.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+gitlab-security-agent = "security_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+security_agent = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Correctness and clarity rules only. The pyupgrade set is deliberately left
+# out: the package supports Python 3.9, and rewriting to 3.10+ syntax would
+# break the interpreter this is developed against.
+select = ["E", "F", "W", "I", "B", "SIM", "RUF", "PLW", "DTZ"]
+ignore = [
+    "E501",    # line length is handled by the formatter, not the linter
+    "RUF001",  # the report intentionally uses typographic characters
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]

@@ -1,0 +1,4 @@
+anthropic>=0.116.0
+jsonschema>=4.21
+PyYAML>=6.0
+requests>=2.31
