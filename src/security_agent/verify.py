@@ -33,6 +33,7 @@ from .models import (
     severity_rank,
 )
 from .tools import Session, dispatch, read_only_tool_definitions
+from .transport import stream_message
 from .workspace import Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
@@ -90,6 +91,27 @@ def verify_candidates(
             candidate.verdict_reason = "verification disabled (SECURITY_SCAN_VERIFY=false)"
         return usage
 
+    # Verification exists to keep the gate from blocking on something unreal.
+    # A finding that cannot block under the current settings has nothing to be
+    # protected from, and on a typical run these are most of them — verifying
+    # them is the largest avoidable cost in the whole tool. Decide this before
+    # touching the prompt file or the client, so a run with nothing to verify
+    # does no work at all.
+    candidates, informational = _partition(cfg, candidates)
+    for candidate in informational:
+        candidate.verdict = VERDICT_CONFIRMED
+        candidate.verdict_reason = (
+            "not verified — reported for information only, as it cannot block "
+            "the merge at the current settings ({})".format(_why_not_gating(cfg, candidate))
+        )
+    if informational:
+        log.info(
+            "skipping verification for %d finding(s) that cannot block; verifying %d",
+            len(informational), len(candidates),
+        )
+    if not candidates:
+        return usage
+
     system = _system_blocks(cfg)
     tools = read_only_tool_definitions(diff_available=bool(ws.diff_base))
 
@@ -128,6 +150,45 @@ def verify_candidates(
         log.info("  verdict: %s — %s", candidate.verdict, candidate.verdict_reason[:200])
 
     return usage
+
+
+def _partition(cfg: Config, candidates: List[Candidate]) -> Tuple[List[Candidate], List[Candidate]]:
+    """Split into (worth verifying, informational only).
+
+    A finding is worth the cost of verification when it could plausibly block
+    the merge. Severity and confidence are the agent's own claims here, before
+    any verifier has seen them — which is the point: verification can only lower
+    a rating, never raise one, so anything already below the gate stays below it
+    however the verification would have gone.
+    """
+    if cfg.fail_threshold is None:
+        return [], list(candidates)  # nothing can block; verify nothing
+
+    gating, informational = [], []
+    for candidate in candidates:
+        if _could_block(cfg, candidate):
+            gating.append(candidate)
+        else:
+            informational.append(candidate)
+    return gating, informational
+
+
+def _could_block(cfg: Config, candidate: Candidate) -> bool:
+    if severity_rank(candidate.severity) < severity_rank(cfg.fail_on):
+        return False
+    if confidence_rank(candidate.confidence) < confidence_rank(cfg.min_confidence):
+        return False
+    return candidate.in_changed_lines or cfg.gate_pre_existing
+
+
+def _why_not_gating(cfg: Config, candidate: Candidate) -> str:
+    if cfg.fail_threshold is None:
+        return "SECURITY_SCAN_FAIL_ON=none"
+    if severity_rank(candidate.severity) < severity_rank(cfg.fail_on):
+        return "below the {} severity threshold".format(cfg.fail_on)
+    if confidence_rank(candidate.confidence) < confidence_rank(cfg.min_confidence):
+        return "below {} confidence".format(cfg.min_confidence)
+    return "pre-existing, not introduced by this change"
 
 
 def _votes_for(cfg: Config, candidate: Candidate) -> int:
@@ -245,10 +306,7 @@ def _request(
 
 
 def _stream(client: Any, **params: Any) -> Any:
-    """Stream every call: `max_tokens` here is large enough that a non-streaming
-    request risks an HTTP timeout on a long investigation turn."""
-    with client.messages.stream(**params) as stream:
-        return stream.get_final_message()
+    return stream_message(client, params, label="verifier turn")
 
 
 def _parse_verdict(response: Any) -> Optional[Vote]:

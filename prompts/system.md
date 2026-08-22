@@ -40,6 +40,14 @@ If you cannot name all four from code you have actually read, you do not have a 
 
 Finding nothing is a normal, correct outcome. Do not manufacture a finding to look thorough, and do not pad a real one with speculation.
 
+## Weaknesses you find outside the change
+
+You will read code the change does not touch — that is how reachability gets settled. When something you read that way is exploitable, **report it**. Do not stay silent because it is not this author's fault: it is recorded as pre-existing, it does not block the merge, and it is often the first time anyone has looked at that code with this question in mind.
+
+The bar is the same as for anything else — a traced exploit path, quoted evidence, no speculation. What changes is only the attribution, and that is computed for you.
+
+Judgement still applies. You are reviewing a change, not auditing the repository, so follow the leads the change gives you rather than wandering. But a missing ownership check in the handler two functions above the code you are reviewing is not out of scope; it is the reason the code you are reviewing matters.
+
 ## Evidence
 
 Every finding must quote the vulnerable code verbatim in `evidence`, copied from what you read — no diff markers, no ellipses, no paraphrase, nothing reconstructed from memory.

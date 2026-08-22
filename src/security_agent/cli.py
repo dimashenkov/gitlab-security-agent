@@ -72,9 +72,11 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         if not changed:
             log.info("no reviewable files changed in this merge request — nothing to do")
             return EXIT_OK
-        log.info("reviewing %d changed file(s) in %s..%s", len(changed), base[:12], head[:12])
+        log.info("reviewing %d changed file(s) in %s..%s",
+                 len(changed), _abbrev(base), _abbrev(head))
     else:
-        log.info("reviewing %d tracked file(s) at %s", len(workspace.tracked_files()), head[:12])
+        log.info("reviewing %d tracked file(s) at %s",
+                 len(workspace.tracked_files()), _abbrev(head))
 
     try:
         rules, warnings = load_rules(root / cfg.ignore_file)
@@ -188,6 +190,13 @@ def _resolve_range(
     )
 
 
+def _abbrev(rev: str) -> str:
+    """Shorten a SHA for logging, but never a branch name."""
+    if len(rev) > 12 and all(c in "0123456789abcdef" for c in rev.lower()):
+        return rev[:12]
+    return rev
+
+
 def _has_credentials() -> bool:
     """The SDK resolves several credential sources; only fail when none exist."""
     return any(
@@ -242,6 +251,13 @@ def _configure_logging(verbose: bool, quiet: bool) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("anthropic").setLevel(
         logging.DEBUG if verbose else logging.WARNING)
+    # `-v` is for seeing what the agent did, not for HTTP wire traces. Left
+    # alone, httpcore's DEBUG output buries the review in per-frame noise —
+    # 150 KB in the first two minutes of a run, with the agent's own lines
+    # scattered through it. Set ANTHROPIC_LOG=debug when the transport is
+    # genuinely what you need to look at.
+    for chatty in ("httpcore", "httpx", "urllib3", "hpack", "h11"):
+        logging.getLogger(chatty).setLevel(logging.WARNING)
 
 
 def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:

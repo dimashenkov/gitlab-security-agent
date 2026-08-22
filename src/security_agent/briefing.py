@@ -160,6 +160,18 @@ def _clip(text: str, limit: int) -> str:
 
 
 def _short(rev: Optional[str]) -> str:
+    """Abbreviate a commit SHA — and only a SHA.
+
+    Branch names are not abbreviated: truncating `feature/add-webhooks` to
+    `feature/add-` tells the agent the branch is called something it is not,
+    which is worse than a long line.
+    """
     if not rev:
         return "?"
-    return rev[:12] if len(rev) > 12 else rev
+    if len(rev) > 12 and _is_sha(rev):
+        return rev[:12]
+    return rev
+
+
+def _is_sha(rev: str) -> bool:
+    return len(rev) >= 7 and all(c in "0123456789abcdef" for c in rev.lower())

@@ -30,6 +30,7 @@ from .models import (
     Usage,
 )
 from .tools import Session, dispatch, load_finding_schema, tool_definitions
+from .transport import split_capability_error, stream_message
 from .workspace import Workspace
 
 log = logging.getLogger(__name__)
@@ -237,16 +238,13 @@ class SecurityAgent:
             return self._stream(params, self.caps)
 
     def _stream(self, params: Dict[str, Any], caps: Capabilities) -> Any:
-        """Always stream: `max_tokens` is large enough that a non-streaming call
-        risks an HTTP timeout on a long turn."""
-        if caps.any_enabled:
-            kwargs = dict(params, betas=caps.betas)
-            if caps.refusal_fallback:
-                kwargs["fallbacks"] = "default"
-            with self.client.beta.messages.stream(**kwargs) as stream:
-                return stream.get_final_message()
-        with self.client.messages.stream(**params) as stream:
-            return stream.get_final_message()
+        return stream_message(
+            self.client,
+            params,
+            betas=caps.betas or None,
+            fallbacks="default" if caps.refusal_fallback else None,
+            label="turn {}".format(self.session.turn),
+        )
 
     # ----------------------------------------------------------------- tools
 
@@ -323,15 +321,6 @@ def _final_text(response: Any) -> str:
 
 
 def _is_capability_error(exc: Exception) -> bool:
-    """Is this 400 about an unavailable beta, rather than a malformed request?
-
-    Only a capability complaint justifies retrying with the betas off; a genuine
-    request error would fail again and the retry would mask the real cause.
-    """
-    message = (getattr(exc, "message", "") or str(exc)).lower()
-    markers = (
-        "beta", "task_budget", "task budget", "fallback",
-        "not available", "not enabled", "unsupported",
-        "unexpected value", "unrecognized", "unrecognised",
-    )
-    return any(marker in message for marker in markers)
+    """Is this 400 about an unavailable beta, rather than a malformed request?"""
+    capability, _ = split_capability_error(exc)
+    return capability

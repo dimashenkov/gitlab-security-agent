@@ -11,7 +11,7 @@ from security_agent.models import (
     VERDICT_UNCERTAIN,
     Vote,
 )
-from security_agent.verify import _decide, _votes_for
+from security_agent.verify import _decide, _partition, _votes_for, verify_candidates
 
 
 def vote(verdict, **kwargs):
@@ -127,3 +127,71 @@ class TestVerifierFailures:
         _decide(candidate)
         # One usable vote, so the two-vote critical rule does not apply.
         assert candidate.verdict == VERDICT_REFUTED
+
+
+class TestVerificationScope:
+    """Which findings are worth the cost of a verifier.
+
+    Verification exists to stop the gate blocking on something unreal. A finding
+    that cannot block has nothing to be protected from — and on a typical run
+    those are most of them, so this is the largest avoidable cost in the tool.
+    """
+
+    def test_a_blocking_finding_is_verified(self, config):
+        candidate = make_candidate(severity="high", confidence="high")
+        gating, informational = _partition(config, [candidate])
+        assert gating == [candidate] and informational == []
+
+    def test_below_the_severity_threshold_is_not_verified(self, config):
+        candidate = make_candidate(severity="low")
+        gating, informational = _partition(config, [candidate])
+        assert gating == [] and informational == [candidate]
+
+    def test_below_the_confidence_threshold_is_not_verified(self, config):
+        candidate = make_candidate(severity="critical", confidence="low")
+        _, informational = _partition(config, [candidate])
+        assert informational == [candidate]
+
+    def test_pre_existing_is_not_verified_by_default(self, config):
+        candidate = make_candidate(severity="critical", in_changed_lines=False)
+        _, informational = _partition(config, [candidate])
+        assert informational == [candidate]
+
+    def test_pre_existing_is_verified_when_it_can_block(self, config):
+        config.gate_pre_existing = True
+        candidate = make_candidate(severity="critical", in_changed_lines=False)
+        gating, _ = _partition(config, [candidate])
+        assert gating == [candidate]
+
+    def test_nothing_is_verified_when_the_gate_is_off(self, config):
+        config.fail_on = "none"
+        candidate = make_candidate(severity="critical", confidence="high")
+        gating, informational = _partition(config, [candidate])
+        assert gating == [] and informational == [candidate]
+
+    def test_verification_only_lowers_ratings_so_skipping_is_safe(self, config):
+        # The justification for skipping: a verifier can lower a rating but never
+        # raise one, so a finding already below the gate stays below it however
+        # the verification would have gone.
+        candidate = make_candidate(severity="medium", confidence="high")
+        candidate.votes = [Vote(verdict=VERDICT_CONFIRMED, reasoning="r",
+                                corrected_severity="critical")]
+        _decide(candidate)
+        assert candidate.severity == "medium"
+
+    def test_skipped_findings_say_why_in_the_report(self, config, monkeypatch):
+        candidate = make_candidate(severity="low")
+        verify_candidates(config, object(), object(), [candidate])
+        assert candidate.verdict == VERDICT_CONFIRMED
+        assert "cannot block" in candidate.verdict_reason
+        assert "below the high severity threshold" in candidate.verdict_reason
+
+    def test_skipping_costs_no_api_calls(self, config):
+        # A client that would explode if touched proves nothing was sent.
+        class Exploding:
+            def __getattr__(self, name):
+                raise AssertionError("the verifier must not be called")
+
+        candidate = make_candidate(severity="medium")
+        usage = verify_candidates(config, object(), Exploding(), [candidate])
+        assert usage.requests == 0

@@ -160,3 +160,80 @@ class TestDisablingBetasUpFront:
         assert client.requests[0]["beta"] is True
         assert params["fallbacks"] == "default"
         assert "task_budget" not in params["output_config"]
+
+
+class TestTransientFailures:
+    """A dropped stream must not destroy the run.
+
+    The SDK retries a connection that fails while a request is *starting*. It
+    does not help once bytes are flowing: a stream that dies mid-read surfaces
+    as a raw `httpx.ReadError`, which is not an `anthropic` exception at all.
+    Before this was handled, one reset packet threw away every turn taken and
+    every token paid for.
+    """
+
+    def test_a_mid_stream_read_error_is_retried(self, cfg, ws, monkeypatch):
+        import security_agent.transport as transport
+
+        monkeypatch.setattr(transport.time, "sleep", lambda _: None)
+        calls = {"n": 0}
+        real = FakeClient([FakeResponse([text("recovered")], stop_reason="end_turn")])
+
+        class Flaky:
+            def __init__(self):
+                self.beta = real.beta
+                self.messages = self
+
+            def stream(self, **params):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise httpx.ReadError("[Errno 54] Connection reset by peer")
+                return real.messages.stream(**params)
+
+        cfg.use_task_budget = False
+        cfg.use_refusal_fallback = False
+        outcome = SecurityAgent(cfg, ws, client=Flaky()).run("repo", "go")
+
+        assert calls["n"] == 2
+        assert outcome.stop_reason == STOP_COMPLETED
+        assert outcome.summary == "recovered"
+
+    def test_persistent_failure_becomes_a_recognised_api_error(self, cfg, ws, monkeypatch):
+        import security_agent.transport as transport
+
+        monkeypatch.setattr(transport.time, "sleep", lambda _: None)
+
+        class Dead:
+            def __init__(self):
+                self.messages = self
+
+            def stream(self, **params):
+                raise httpx.ConnectError("no route to host")
+
+        cfg.use_task_budget = False
+        cfg.use_refusal_fallback = False
+        outcome = SecurityAgent(cfg, ws, client=Dead()).run("repo", "go")
+
+        # Classified, not crashed: the loop already knows how to report this.
+        assert outcome.stop_reason == STOP_ERROR
+        assert "could not reach the Claude API" in outcome.stop_detail
+        assert not outcome.complete
+
+    def test_a_bad_request_is_not_retried(self, cfg, ws, monkeypatch):
+        import security_agent.transport as transport
+
+        monkeypatch.setattr(transport.time, "sleep", lambda _: None)
+        calls = {"n": 0}
+
+        class Rejecting:
+            def __init__(self):
+                self.messages = self
+
+            def stream(self, **params):
+                calls["n"] += 1
+                raise bad_request("messages.0: field required")
+
+        cfg.use_task_budget = False
+        cfg.use_refusal_fallback = False
+        SecurityAgent(cfg, ws, client=Rejecting()).run("repo", "go")
+        assert calls["n"] == 1  # spending money to get the same 400 helps nobody
