@@ -100,6 +100,7 @@ class Vote:
     reasoning: str
     corrected_severity: str = ""
     corrected_confidence: str = ""
+    removes_control: str = ""   # "yes" | "no" | "" when not asked
     error: str = ""
 
     @property
@@ -118,11 +119,18 @@ class Candidate:
     line_corrected_from: Optional[int] = None
     in_changed_lines: bool = True
     path_verified: bool = True
+    # "added" when this change wrote the cited code, "deleted" when it removed
+    # code where the weakness now sits, "" when the code predates the change.
+    attributed_by: str = "added"
 
     # --- layer 2/3: adversarial verification ---
     votes: List[Vote] = field(default_factory=list)
     verdict: str = VERDICT_CONFIRMED
     verdict_reason: str = ""
+    # Set when every verifier agrees the change removed a control that was
+    # deliberately there. Gated on separately from severity: the question is not
+    # "how bad is this" but "why is a guard someone added being taken away".
+    removes_control: bool = False
 
     # --- final disposition ---
     severity: str = ""
@@ -191,6 +199,8 @@ class Candidate:
                 "evidence_located_line": self.evidence_located_line,
                 "line_corrected": self.line_corrected_from is not None,
                 "introduced_by_this_change": self.in_changed_lines,
+                "attributed_by": self.attributed_by,
+                "removes_existing_control": self.removes_control,
                 "path_verified": self.path_verified,
             },
             "suppressed_by": self.suppressed_by,

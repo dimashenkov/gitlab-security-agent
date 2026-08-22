@@ -167,6 +167,11 @@ class Config:
     min_confidence: str = "medium"
     fail_on_incomplete: bool = True
     gate_pre_existing: bool = False
+    # A change that removes a security control blocks regardless of severity.
+    # The question there is not "how bad is this" but "why is a guard someone
+    # deliberately added being taken away", and that belongs to the author of
+    # the change rather than to a CVSS-shaped scale.
+    gate_removed_controls: bool = True
 
     # --- output ---
     output_dir: Path = Path(".security-scan")
@@ -206,6 +211,7 @@ class Config:
             min_confidence=_env("SECURITY_SCAN_MIN_CONFIDENCE", "medium"),
             fail_on_incomplete=_env_bool("SECURITY_SCAN_FAIL_ON_INCOMPLETE", True),
             gate_pre_existing=_env_bool("SECURITY_SCAN_GATE_PRE_EXISTING", False),
+            gate_removed_controls=_env_bool("SECURITY_SCAN_GATE_REMOVED_CONTROLS", True),
             output_dir=Path(_env("SECURITY_SCAN_OUTPUT_DIR", ".security-scan")),
             post_comment=_env_bool("SECURITY_SCAN_POST_COMMENT", True),
             ignore_file=Path(_env("SECURITY_SCAN_IGNORE_FILE", ".security-agent-ignore.yml")),

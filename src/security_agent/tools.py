@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
-from .evidence import evidence_span, excerpt, locate_evidence, touches_change
+from .evidence import attribution, evidence_span, excerpt, locate_evidence
 from .models import Candidate, Finding, RejectedClaim, ToolCallRecord
 from .workspace import Workspace, WorkspaceError
 
@@ -449,7 +449,8 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
     # --- accept, correcting the line number to where the code really is ---
     span = evidence_span(finding.evidence)
     corrected_from = finding.line if finding.line != located else None
-    in_change = touches_change(rel_path, located, span, ws.changed_line_map())
+    changed = ws.changed_line_map()
+    attributed = attribution(rel_path, located, span, changed)
 
     duplicate = next(
         (c for c in session.candidates if c.fingerprint == finding.fingerprint), None
@@ -466,7 +467,8 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
         finding=finding,
         evidence_located_line=located,
         line_corrected_from=corrected_from,
-        in_changed_lines=in_change if ws.changed_line_map() else True,
+        in_changed_lines=bool(attributed) if changed else True,
+        attributed_by=attributed if changed else "added",
         path_verified=True,
     )
     session.candidates.append(candidate)
@@ -475,7 +477,7 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
     notes = []
     if corrected_from is not None:
         notes.append("line corrected from {} to {}".format(corrected_from, located))
-    if ws.changed_line_map() and not in_change:
+    if changed and not attributed:
         notes.append(
             "this code is not part of the diff, so it will be reported as "
             "pre-existing rather than introduced by this change"

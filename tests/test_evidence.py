@@ -7,7 +7,8 @@ code despite formatting differences, and it must not find code that isn't there.
 """
 
 from security_agent.evidence import (
-    added_lines,
+    ChangedLines,
+    changed_lines,
     evidence_span,
     excerpt,
     locate_evidence,
@@ -109,26 +110,26 @@ diff --git a/README.md b/README.md
 '''
 
 
-class TestAddedLines:
-    def test_maps_each_file_to_its_added_lines(self):
-        result = added_lines(DIFF)
-        assert result["app/views.py"] == {13, 14, 15}
-        assert result["README.md"] == {2}
+class TestChangedLines:
+    def test_maps_each_file_to_its_changed_lines(self):
+        result = changed_lines(DIFF)
+        assert result.added["app/views.py"] == {13, 14, 15}
+        assert result.added["README.md"] == {2}
 
     def test_ignores_the_file_header_plus_signs(self):
         # `+++ b/path` starts with '+' but is not an added line; counting it
         # would shift every line number in the file by one.
-        assert 0 not in added_lines(DIFF)["app/views.py"]
+        assert 0 not in changed_lines(DIFF).added["app/views.py"]
 
     def test_handles_a_deleted_file(self):
         diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-x = 1\n-y = 2\n"
-        assert added_lines(diff) == {}
+        assert not changed_lines(diff)
 
     def test_empty_diff(self):
-        assert added_lines("") == {}
+        assert not changed_lines("")
 
 
-CHANGED = {"app/views.py": {13, 14, 15}}
+CHANGED = ChangedLines(added={"app/views.py": {13, 14, 15}}, removed_at={})
 
 
 class TestTouchesChange:
@@ -147,7 +148,7 @@ class TestTouchesChange:
         assert not touches_change("app/models.py", 14, 1, CHANGED)
 
     def test_false_when_there_is_no_diff_at_all(self):
-        assert not touches_change("app/views.py", 14, 1, {})
+        assert not touches_change("app/views.py", 14, 1, ChangedLines())
 
 
 class TestExcerpt:
@@ -163,3 +164,87 @@ class TestExcerpt:
 
     def test_handles_an_empty_file(self):
         assert excerpt("", 5) == ("", 0, 0)
+
+
+DELETION_ONLY_DIFF = '''\
+diff --git a/git/refs/symbolic.py b/git/refs/symbolic.py
+--- a/git/refs/symbolic.py
++++ b/git/refs/symbolic.py
+@@ -168,8 +168,6 @@ class SymbolicReference(object):
+         """Return: (str(sha), str(target_ref_path)) if available."""
+-        if ".." in str(ref_path):
+-            raise ValueError(f"Invalid reference '{ref_path}'")
+         tokens: Union[None, List[str], Tuple[str, str]] = None
+         repodir = _git_dir(repo, ref_path)
+'''
+
+
+class TestDeletionsAreAttributed:
+    """A change that only removes lines is still that change's responsibility.
+
+    Counting added lines alone is the obvious implementation and it is wrong:
+    removing a security control produces a diff with no added lines at all. A
+    real merge request reverting GitPython's CVE-2023-41040 guard was found and
+    confirmed by the agent, then waved through as "pre-existing" — the finding
+    was right and the attribution threw it away.
+    """
+
+    def test_a_deletion_only_diff_is_not_empty(self):
+        result = changed_lines(DELETION_ONLY_DIFF)
+        assert result.removed_at["git/refs/symbolic.py"], "a pure deletion attributed nothing"
+
+    def test_the_deletion_anchors_where_the_code_was_removed(self):
+        # Hunk starts at new-side 168; one context line precedes the deletions.
+        assert changed_lines(DELETION_ONLY_DIFF).removed_at["git/refs/symbolic.py"] == {169}
+
+    def test_a_finding_beside_the_deletion_is_attributed_to_the_change(self):
+        changed = changed_lines(DELETION_ONLY_DIFF)
+        # The sink sits a couple of lines below where the guard used to be.
+        assert touches_change("git/refs/symbolic.py", 171, 1, changed)
+
+    def test_a_finding_far_from_the_deletion_is_not(self):
+        changed = changed_lines(DELETION_ONLY_DIFF)
+        assert not touches_change("git/refs/symbolic.py", 900, 1, changed)
+
+    def test_additions_and_deletions_are_both_counted(self):
+        diff = ("--- a/x.py\n+++ b/x.py\n@@ -10,3 +10,3 @@\n"
+                " keep\n-old_line\n+new_line\n keep\n")
+        c = changed_lines(diff)
+        assert c.added["x.py"] == {11} and c.removed_at["x.py"] == {11}
+
+    def test_a_deletion_at_the_top_of_a_file_does_not_anchor_to_zero(self):
+        diff = "--- a/x.py\n+++ b/x.py\n@@ -1,2 +0,0 @@\n-first\n-second\n"
+        assert changed_lines(diff).removed_at["x.py"] == {1}
+
+
+class TestDeletionReachIsAsymmetric:
+    """A removed guard protects what comes after it, never what came before.
+
+    So a deletion reaches downward much further than an addition does, and
+    barely upward at all. The numbers come from the case that exposed this: the
+    GitPython sink sat four lines below the deleted `..` check, which a
+    symmetric three-line window missed by one.
+    """
+
+    changed = ChangedLines(added={}, removed_at={"a.py": {100}})
+
+    def test_reaches_well_below_the_deletion(self):
+        assert touches_change("a.py", 112, 1, self.changed)
+
+    def test_stops_eventually(self):
+        assert not touches_change("a.py", 130, 1, self.changed)
+
+    def test_barely_reaches_above(self):
+        assert touches_change("a.py", 98, 1, self.changed)
+        assert not touches_change("a.py", 90, 1, self.changed)
+
+    def test_additions_stay_symmetric_and_tight(self):
+        added = ChangedLines(added={"a.py": {100}}, removed_at={})
+        assert touches_change("a.py", 103, 1, added)
+        assert touches_change("a.py", 97, 1, added)
+        assert not touches_change("a.py", 112, 1, added)
+
+    def test_a_multi_line_finding_counts_its_whole_span(self):
+        added = ChangedLines(added={"a.py": {100}}, removed_at={})
+        # A five-line quote starting at 94 ends at 98, within slack of 100.
+        assert touches_change("a.py", 94, 5, added)

@@ -15,6 +15,7 @@ stop.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -94,15 +95,39 @@ def _match(haystack: List[str], needle: List[str], exact: bool) -> Optional[int]
     return None
 
 
-def added_lines(diff_text: str) -> Dict[str, Set[int]]:
-    """Map each file in a unified diff to the line numbers it adds.
+@dataclass(frozen=True)
+class ChangedLines:
+    """What a change did to one file, in new-file line numbers.
 
-    Used to tell a weakness this change introduced from one it merely sits next
-    to. Both are worth reporting, but only the first is the author's to fix in
-    this merge request, and a gate that blocks on pre-existing findings blocks
-    every merge request until someone cleans up the whole repository.
+    Additions and deletions are kept apart because they reach differently. An
+    added line is suspect where it sits. A deleted line has no position at all —
+    what it leaves behind is an absence, and the effect of an absence is on the
+    code that used to be protected by it, which is always *below*.
     """
-    result: Dict[str, Set[int]] = {}
+
+    added: Dict[str, Set[int]] = field(default_factory=dict)
+    removed_at: Dict[str, Set[int]] = field(default_factory=dict)
+
+    def files(self) -> Set[str]:
+        return set(self.added) | set(self.removed_at)
+
+    def __bool__(self) -> bool:
+        return any(self.added.values()) or any(self.removed_at.values())
+
+
+def changed_lines(diff_text: str) -> ChangedLines:
+    """Split a unified diff into the lines a change is answerable for.
+
+    Counting only additions is the obvious implementation and it is wrong. A
+    change that only deletes has no added lines at all, so nothing could ever be
+    attributed to it — and "only deletes" is the exact shape of removing a
+    security control, which is among the most important regressions there is. A
+    real merge request reverting GitPython's CVE-2023-41040 guard was found and
+    confirmed by the agent, then waved through as "pre-existing" for precisely
+    this reason.
+    """
+    added: Dict[str, Set[int]] = {}
+    removed: Dict[str, Set[int]] = {}
     current: Optional[str] = None
     lineno = 0
 
@@ -113,7 +138,8 @@ def added_lines(diff_text: str) -> Dict[str, Set[int]]:
                 path = path[2:]
             current = None if path == "/dev/null" else path
             if current is not None:
-                result.setdefault(current, set())
+                added.setdefault(current, set())
+                removed.setdefault(current, set())
             continue
         if line.startswith("--- ") or line.startswith("diff --git"):
             continue
@@ -124,33 +150,76 @@ def added_lines(diff_text: str) -> Dict[str, Set[int]]:
         if current is None:
             continue
         if line.startswith("+"):
-            result[current].add(lineno)
+            added[current].add(lineno)
             lineno += 1
-        elif line.startswith("-") or line.startswith("\\"):
+        elif line.startswith("-"):
+            # A deleted line occupies no position in the new file, so anchor it
+            # where the removal happened. max(1, ...) keeps a deletion at the
+            # very top of a file from anchoring to line 0.
+            removed[current].add(max(1, lineno))
+        elif line.startswith("\\"):
             continue
         else:
             # Context line (leading space), or a blank line git emitted without one.
             lineno += 1
 
-    return result
+    return ChangedLines(added=added, removed_at=removed)
+
+
+# How far each kind of change reaches, in lines.
+#
+# Additions get a small symmetric window: an added line is suspect roughly where
+# it sits. Deletions reach much further, and only downwards, because a removed
+# guard protects what follows it — the sink is always after the check, never
+# before. Fifteen lines covers a typical function body without swallowing the
+# file; the real GitPython case had the sink four lines below the deleted guard,
+# and a symmetric window of three missed it by one.
+ADDITION_SLACK = 3
+DELETION_REACH = 15
 
 
 def touches_change(
-    path: str, line: int, span: int, changed: Dict[str, Set[int]], slack: int = 3
+    path: str,
+    line: int,
+    span: int,
+    changed: "ChangedLines",
+    slack: int = ADDITION_SLACK,
+    deletion_reach: int = DELETION_REACH,
 ) -> bool:
-    """Did this change introduce the cited code?
+    """Is the cited code this change's responsibility?"""
+    return bool(attribution(path, line, span, changed, slack, deletion_reach))
 
-    A small slack window is allowed because a weakness is often introduced by an
-    added line that removes a guard a line or two above the sink itself.
+
+ATTRIBUTED_ADDED = "added"
+ATTRIBUTED_DELETED = "deleted"
+
+
+def attribution(
+    path: str,
+    line: int,
+    span: int,
+    changed: "ChangedLines",
+    slack: int = ADDITION_SLACK,
+    deletion_reach: int = DELETION_REACH,
+) -> str:
+    """How this change is responsible for the cited code — or "" if it is not.
+
+    The distinction matters to the gate, not just to the report. Code the change
+    *added* is judged on its severity like anything else. Code the change
+    *removed* is a different question: something that was there is gone, and if
+    a weakness sits where it used to be, the honest reading is that this change
+    took a guard away.
     """
-    lines = changed.get(path)
-    if lines is None:
-        return False
-    if not lines:
-        return False
-    low = line - slack
-    high = line + max(span, 1) - 1 + slack
-    return any(low <= n <= high for n in lines)
+    last = line + max(span, 1) - 1
+
+    added = changed.added.get(path) or set()
+    if any(line - slack <= n <= last + slack for n in added):
+        return ATTRIBUTED_ADDED
+
+    removed = changed.removed_at.get(path) or set()
+    if any(n - slack <= last and line <= n + deletion_reach for n in removed):
+        return ATTRIBUTED_DELETED
+    return ""
 
 
 def evidence_span(evidence: str) -> int:

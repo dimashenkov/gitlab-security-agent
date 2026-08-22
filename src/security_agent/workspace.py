@@ -173,23 +173,25 @@ class Workspace:
             args += ["--", resolved]
         return self.git(*args, check=False)
 
-    def changed_line_map(self) -> dict:
-        """Added line numbers per file for the range under review, computed once.
+    def changed_line_map(self):
+        """Lines this change is answerable for, per file, computed once.
 
         Used to tell a weakness this change introduced from one that was already
         there. Empty outside a merge request, where the distinction is moot.
         """
         if self._changed_lines is None:
-            from .evidence import added_lines  # local import: avoids a cycle
+            from .evidence import changed_lines  # local import: avoids a cycle
 
             if not self.diff_base:
-                self._changed_lines = {}
+                from .evidence import ChangedLines
+
+                self._changed_lines = ChangedLines()
             else:
                 raw = self.git(
                     "diff", "--no-color", "--no-ext-diff", "-M", "--unified=0",
                     self.diff_base, self.diff_head, check=False,
                 )
-                self._changed_lines = added_lines(raw)
+                self._changed_lines = changed_lines(raw)
         return self._changed_lines
 
     # ----------------------------------------------------------------- read

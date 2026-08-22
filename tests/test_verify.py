@@ -97,13 +97,12 @@ class TestCorrections:
         assert candidate.severity == "medium"
         assert candidate.confidence == "medium"
 
-    def test_upgrades_are_ignored(self):
-        # A verifier sees one finding in isolation; it may lower a rating but
-        # never raise one.
+    def test_a_lone_verifier_can_raise_severity(self):
+        # With one vote, unanimity is that vote.
         candidate = make_candidate(severity="medium")
         candidate.votes = [vote(VERDICT_CONFIRMED, corrected_severity="critical")]
         _decide(candidate)
-        assert candidate.severity == "medium"
+        assert candidate.severity == "critical"
 
     def test_uncertain_forces_low_confidence(self):
         candidate = make_candidate(severity="high", confidence="high")
@@ -189,15 +188,20 @@ class TestVerificationScope:
         gating, informational = _partition(config, [candidate])
         assert gating == [] and informational == [candidate]
 
-    def test_verification_only_lowers_ratings_so_skipping_is_safe(self, config):
-        # The justification for skipping: a verifier can lower a rating but never
-        # raise one, so a finding already below the gate stays below it however
-        # the verification would have gone.
+    def test_one_step_below_the_threshold_is_still_verified(self, config):
+        # Ratings can now be raised, so "below the bar" no longer means settled:
+        # a medium finding is exactly what two verifiers might agree is high.
         candidate = make_candidate(severity="medium", confidence="high")
-        candidate.votes = [Vote(verdict=VERDICT_CONFIRMED, reasoning="r",
-                                corrected_severity="critical")]
-        _decide(candidate)
-        assert candidate.severity == "medium"
+        gating, informational = _partition(config, [candidate])
+        assert gating == [candidate] and informational == []
+
+    def test_two_steps_below_is_not_verified(self, config):
+        # A low finding promoted straight to high would be an extraordinary
+        # disagreement, and verifying every low finding costs more than it is
+        # worth. It still appears in the report.
+        candidate = make_candidate(severity="low", confidence="high")
+        _, informational = _partition(config, [candidate])
+        assert informational == [candidate]
 
     def test_skipped_findings_say_why_in_the_report(self, config, monkeypatch):
         candidate = make_candidate(severity="low")
@@ -212,7 +216,7 @@ class TestVerificationScope:
             def __getattr__(self, name):
                 raise AssertionError("the verifier must not be called")
 
-        candidate = make_candidate(severity="medium")
+        candidate = make_candidate(severity="low")
         usage = verify_candidates(config, object(), Exploding(), [candidate])
         assert usage.requests == 0
 
@@ -383,11 +387,31 @@ class TestConfidenceMovesBothWays:
         _decide(candidate)
         assert candidate.confidence == "low"
 
-    def test_severity_still_only_falls(self):
+    def test_raising_severity_takes_every_verifier(self):
         candidate = make_candidate(severity="medium", confidence="high")
         candidate.votes = [
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_severity="critical"),
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="b", corrected_severity="critical"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_severity="high"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="b"),
+        ]
+        _decide(candidate)
+        assert candidate.severity == "medium", "one silent verifier is not agreement"
+
+    def test_unanimous_verifiers_do_raise_severity(self):
+        # The case this rule exists for: the same finding was rated high on one
+        # run and medium on the next, and the gate is a step function on that.
+        candidate = make_candidate(severity="medium", confidence="high")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_severity="high"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="b", corrected_severity="high"),
+        ]
+        _decide(candidate)
+        assert candidate.severity == "high"
+
+    def test_one_dissent_still_lowers_severity(self):
+        candidate = make_candidate(severity="critical", confidence="high")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_severity="medium"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="b"),
         ]
         _decide(candidate)
         assert candidate.severity == "medium"

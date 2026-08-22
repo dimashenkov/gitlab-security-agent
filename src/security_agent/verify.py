@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import anthropic
 
 from .config import Config
-from .evidence import excerpt
+from .evidence import ATTRIBUTED_DELETED, excerpt
 from .models import (
     VERDICT_CONFIRMED,
     VERDICT_REFUTED,
@@ -64,7 +64,19 @@ VERDICT_SCHEMA: Dict[str, Any] = {
         "corrected_severity": {
             "type": "string",
             "enum": ["critical", "high", "medium", "low", ""],
-            "description": "A lower severity if the claim overstated impact; empty to agree.",
+            "description": "Your own severity, which may be higher or lower than claimed. Judge impact and ease of exploitation together. Empty to agree.",
+        },
+        "removes_existing_control": {
+            "type": "string",
+            "enum": ["yes", "no", ""],
+            "description": (
+                "Does this weakness exist because the change under review "
+                "REMOVED a check, guard, validation, or other security control "
+                "that was previously in place? `yes` only when you can see the "
+                "removal in the diff and the weakness follows from it. Deleting "
+                "unrelated code near an existing weakness is `no`. Leave empty "
+                "if the change adds no deletions here."
+            ),
         },
         "corrected_confidence": {
             "type": "string",
@@ -225,11 +237,24 @@ def _partition(cfg: Config, candidates: List[Candidate]) -> Tuple[List[Candidate
 
 
 def _worth_verifying(cfg: Config, candidate: Candidate) -> bool:
-    """Could a verifier's verdict change whether this blocks?"""
-    if severity_rank(candidate.severity) < severity_rank(cfg.fail_on):
-        return False  # verification cannot raise severity, so this stays below
-    # Otherwise it is severe enough and in scope, and confidence — the only
-    # thing left that could keep it from blocking — is the verifier's to settle.
+    """Could a verifier's verdict change whether this blocks?
+
+    Both ratings can now move up, so "below the threshold" no longer means
+    "settled". A finding one step under the bar is exactly the one a pair of
+    verifiers might agree belongs over it, and skipping it would recreate the
+    trap this rule was written to close — just one level down.
+
+    One step, not all of them. A two-level promotion (`low` to `high`) would be
+    an extraordinary disagreement between the agent and both verifiers, and
+    verifying every `low` finding on a large change costs more than that case is
+    worth. Anything skipped still appears in the report, labelled with why.
+    """
+    if candidate.attributed_by == ATTRIBUTED_DELETED and cfg.gate_removed_controls:
+        # Whether this is a removed control is the verifier's call, and it can
+        # block regardless of severity — so severity cannot be used to skip it.
+        return True
+    if severity_rank(candidate.severity) < severity_rank(cfg.fail_on) - 1:
+        return False
     return candidate.in_changed_lines or cfg.gate_pre_existing
 
 
@@ -404,6 +429,7 @@ def _parse_verdict(response: Any) -> Optional[Vote]:
         reasoning=str(data.get("reasoning", "")).strip(),
         corrected_severity=str(data.get("corrected_severity", "") or "").strip(),
         corrected_confidence=str(data.get("corrected_confidence", "") or "").strip(),
+        removes_control=str(data.get("removes_existing_control", "") or "").strip().lower(),
     )
 
 
@@ -446,16 +472,42 @@ def _decide(candidate: Candidate) -> None:
     candidate.verdict = verdict
     candidate.verdict_reason = _reason(usable, verdict)
 
+    # Unanimity, like every other upward move here. One verifier calling it a
+    # removed control is not enough to gate a merge on.
+    candidate.removes_control = (
+        verdict != VERDICT_REFUTED
+        and bool(usable)
+        and all(v.removes_control == "yes" for v in usable)
+    )
+
     if verdict == VERDICT_REFUTED:
         return
 
-    # Severity moves down only. It is a judgement about impact, and the agent
-    # that traced the path had more of the picture than a verifier looking at
-    # one finding in isolation.
-    for vote in usable:
-        if (0 <= severity_rank(vote.corrected_severity)
-                < severity_rank(candidate.severity)):
-            candidate.severity = vote.corrected_severity
+    # Severity moves in both directions, with the same asymmetry used
+    # everywhere else here: one dissenting verifier lowers it, raising it takes
+    # all of them.
+    #
+    # This started out one-directional, on the reasoning that the agent which
+    # traced the path had more context than a verifier seeing one finding in
+    # isolation. Four runs over the same code showed that reasoning was wrong
+    # in the way that matters. What the agent is reliable about is *whether* a
+    # weakness is real — that was identical every run — and what it is unreliable
+    # about is the severity label, which moved between `high` and `medium` for
+    # the same finding across runs. The gate is a step function on exactly that
+    # noisy scalar.
+    #
+    # A verifier is not worse placed to judge impact: the agent spreads its
+    # attention across the whole change, while the verifier reads one finding
+    # closely. And since verifiers are told to refute, unanimous agreement to
+    # *raise* a severity is a strong signal rather than a lenient one. Deciding
+    # from two independent reads instead of one first impression is the point.
+    if verdict != VERDICT_REFUTED:
+        candidate.severity = _agreed_severity(usable, candidate.severity)
+    else:
+        for vote in usable:
+            if (0 <= severity_rank(vote.corrected_severity)
+                    < severity_rank(candidate.severity)):
+                candidate.severity = vote.corrected_severity
 
     if verdict == VERDICT_UNCERTAIN:
         # An unresolved chain is exactly what `low` confidence means, and it
@@ -480,6 +532,29 @@ def _decide(candidate: Candidate) -> None:
                 candidate.confidence = vote.corrected_confidence
 
 
+def _agreed_severity(votes: List[Vote], claimed: str) -> str:
+    """The severity every verifier can stand behind.
+
+    Same shape as `_agreed_confidence`: lowering takes one voice, raising takes
+    all of them, and the lowest proposal wins. A verifier that leaves the field
+    empty is agreeing with the claim as it stands, not voting to raise it.
+    """
+    return _agree(votes, claimed, severity_rank,
+                  lambda v: v.corrected_severity)
+
+
+def _agree(votes: List[Vote], claimed: str, rank, field) -> str:
+    proposals = [field(v) for v in votes if field(v)]
+    if not proposals:
+        return claimed
+    if len(proposals) < len(votes):
+        # Someone did not express an opinion, so nothing can be raised; a
+        # proposal below the claim still lowers it.
+        lowered = [p for p in proposals if rank(p) < rank(claimed)]
+        return min(lowered, key=rank) if lowered else claimed
+    return min(proposals, key=rank)
+
+
 def _agreed_confidence(votes: List[Vote], claimed: str) -> str:
     """The confidence every confirming verifier can stand behind.
 
@@ -491,12 +566,8 @@ def _agreed_confidence(votes: List[Vote], claimed: str) -> str:
     A verifier that leaves the field empty is agreeing with the claim, not
     voting for it, so silence cannot raise anything on its own.
     """
-    proposals = [v.corrected_confidence for v in votes if v.corrected_confidence]
-    if not proposals or len(proposals) < len(votes):
-        # At least one verifier did not express an opinion; keep the claim.
-        lowered = [c for c in proposals if confidence_rank(c) < confidence_rank(claimed)]
-        return min(lowered, key=confidence_rank) if lowered else claimed
-    return min(proposals, key=confidence_rank)
+    return _agree(votes, claimed, confidence_rank,
+                  lambda v: v.corrected_confidence)
 
 
 def _reason(votes: List[Vote], verdict: str) -> str:
