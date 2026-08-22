@@ -156,6 +156,11 @@ class Config:
     verify_model: str = ""  # falls back to `model`
     verify_effort: str = "high"
     verify_max_findings: int = 40
+    # Verifier calls are independent, so they run concurrently. The ceiling
+    # keeps a run with many findings from opening dozens of connections at once
+    # and hitting rate limits — the wall-clock win is already most of the way
+    # there at four.
+    verify_concurrency: int = 4
 
     # --- gating ---
     fail_on: str = "high"  # critical | high | medium | low | none
@@ -196,6 +201,7 @@ class Config:
             verify_model=_env("SECURITY_SCAN_VERIFY_MODEL"),
             verify_effort=_env("SECURITY_SCAN_VERIFY_EFFORT", "high"),
             verify_max_findings=_env_int("SECURITY_SCAN_VERIFY_MAX", 40),
+            verify_concurrency=_env_int("SECURITY_SCAN_VERIFY_CONCURRENCY", 4),
             fail_on=_env("SECURITY_SCAN_FAIL_ON", "high"),
             min_confidence=_env("SECURITY_SCAN_MIN_CONFIDENCE", "medium"),
             fail_on_incomplete=_env_bool("SECURITY_SCAN_FAIL_ON_INCOMPLETE", True),
@@ -238,6 +244,8 @@ class Config:
             raise ConfigError("SECURITY_SCAN_MAX_TOKENS must be at least 4000")
         if self.max_turns < 1:
             raise ConfigError("SECURITY_SCAN_MAX_TURNS must be at least 1")
+        if not 1 <= self.verify_concurrency <= 16:
+            raise ConfigError("SECURITY_SCAN_VERIFY_CONCURRENCY must be between 1 and 16")
         if not 1 <= self.verify_votes <= 5:
             raise ConfigError("SECURITY_SCAN_VERIFY_VOTES must be between 1 and 5")
         # The API rejects a task budget below 20000; catch it here with a message

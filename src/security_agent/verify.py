@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
 import anthropic
@@ -33,7 +34,7 @@ from .models import (
     severity_rank,
 )
 from .tools import Session, dispatch, read_only_tool_definitions
-from .transport import stream_message
+from .transport import TransportFailure, stream_message
 from .workspace import Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ VERDICT_SCHEMA: Dict[str, Any] = {
         "corrected_confidence": {
             "type": "string",
             "enum": ["high", "medium", "low", ""],
-            "description": "A lower confidence if the chain is less certain than claimed; empty to agree.",
+            "description": "Your own confidence, which may be higher or lower than claimed: it records how much of the chain you actually saw. Raise it when you closed a link the reviewer could not; lower it when a link is weaker than claimed. Empty to agree.",
         },
     },
 }
@@ -129,22 +130,61 @@ def verify_candidates(
                     cfg.verify_max_findings)
             )
 
+    # Every vote is an independent conversation over a read-only workspace —
+    # that independence is the whole point of the design, and it also means
+    # there is no reason to run them one at a time. Sequentially, verification
+    # took 280 of a 320-second job while the review itself took 100; the votes
+    # simply queued behind each other.
+    jobs = [
+        (candidate, vote_index)
+        for candidate in to_verify
+        for vote_index in range(_votes_for(cfg, candidate))
+    ]
     for index, candidate in enumerate(to_verify, start=1):
-        votes_wanted = _votes_for(cfg, candidate)
         log.info(
             "verifying %d/%d: %s (%s) — %d vote(s)",
             index, len(to_verify), candidate.finding.title,
-            candidate.severity, votes_wanted,
+            candidate.severity, _votes_for(cfg, candidate),
         )
-        for vote_index in range(votes_wanted):
-            vote, vote_usage = _one_vote(cfg, ws, client, system, tools, candidate, vote_index)
-            candidate.votes.append(vote)
+
+    workers = max(1, min(cfg.verify_concurrency, len(jobs)))
+    log.info("running %d verification call(s) across %d worker(s)", len(jobs), workers)
+
+    results: Dict[Tuple[int, int], Vote] = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_one_vote, cfg, ws, client, system, tools, candidate, vote_index):
+                (id(candidate), vote_index)
+            for candidate, vote_index in jobs
+        }
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                vote, vote_usage = future.result()
+            except Exception as exc:  # a worker must not take the run down
+                log.exception("a verification call raised")
+                vote, vote_usage = Vote(
+                    verdict=VERDICT_UNCERTAIN, reasoning="",
+                    error="verification call raised {}: {}".format(type(exc).__name__, exc),
+                ), Usage()
+            results[key] = vote
             usage.merge(vote_usage)
+
+    # Votes are attached in a fixed order rather than completion order, so a
+    # rerun of the same findings aggregates identically regardless of which
+    # worker happened to finish first.
+    for candidate, vote_index in jobs:
+        vote = results.get((id(candidate), vote_index))
+        if vote is not None:
+            candidate.votes.append(vote)
+
+    for candidate in to_verify:
+        for number, vote in enumerate(candidate.votes, start=1):
             log.info(
-                "  vote %d: %s — %s",
-                vote_index + 1,
+                "  [%s] vote %d: %s — %s",
+                candidate.finding.title[:40], number,
                 vote.verdict if not vote.error else "unavailable",
-                (vote.error or vote.reasoning)[:200],
+                (vote.error or vote.reasoning)[:180],
             )
         _decide(candidate)
         log.info("  verdict: %s — %s", candidate.verdict, candidate.verdict_reason[:200])
@@ -155,25 +195,46 @@ def verify_candidates(
 def _partition(cfg: Config, candidates: List[Candidate]) -> Tuple[List[Candidate], List[Candidate]]:
     """Split into (worth verifying, informational only).
 
-    A finding is worth the cost of verification when it could plausibly block
-    the merge. Severity and confidence are the agent's own claims here, before
-    any verifier has seen them — which is the point: verification can only lower
-    a rating, never raise one, so anything already below the gate stays below it
-    however the verification would have gone.
+    Skipping verification for findings that cannot block is the largest cost
+    saving in the tool, but two runs over the same merge request showed the trap
+    in taking it too literally. The agent rated a real `pickle.loads` on
+    untrusted bytes `high` severity but only `low` confidence; that put it below
+    the gate, so it was never verified, and a genuinely dangerous finding passed
+    silently. The agent's own first impression had become final.
+
+    So severity and confidence are treated differently here. Confidence is a
+    statement about how much of the chain the agent managed to see, and a
+    verifier reading with fresh eyes routinely sees more — it is exactly the
+    thing that should be allowed to settle it. Severity is a judgement about
+    impact, and there the agent had more context than any single verifier will.
+
+    A severe finding is therefore always verified, whatever confidence it
+    claims. Everything below the severity threshold is still skipped, because no
+    verdict can lift it over the bar.
     """
     if cfg.fail_threshold is None:
         return [], list(candidates)  # nothing can block; verify nothing
 
     gating, informational = [], []
     for candidate in candidates:
-        if _could_block(cfg, candidate):
+        if _worth_verifying(cfg, candidate):
             gating.append(candidate)
         else:
             informational.append(candidate)
     return gating, informational
 
 
+def _worth_verifying(cfg: Config, candidate: Candidate) -> bool:
+    """Could a verifier's verdict change whether this blocks?"""
+    if severity_rank(candidate.severity) < severity_rank(cfg.fail_on):
+        return False  # verification cannot raise severity, so this stays below
+    # Otherwise it is severe enough and in scope, and confidence — the only
+    # thing left that could keep it from blocking — is the verifier's to settle.
+    return candidate.in_changed_lines or cfg.gate_pre_existing
+
+
 def _could_block(cfg: Config, candidate: Candidate) -> bool:
+    """Does this finding block the merge as currently rated?"""
     if severity_rank(candidate.severity) < severity_rank(cfg.fail_on):
         return False
     if confidence_rank(candidate.confidence) < confidence_rank(cfg.min_confidence):
@@ -228,7 +289,8 @@ def _one_vote(
         session.turn = turn
         try:
             response = _request(cfg, client, system, messages, tools)
-        except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
+        except (anthropic.APIStatusError, anthropic.APIConnectionError,
+                TransportFailure) as exc:
             return Vote(
                 verdict=VERDICT_UNCERTAIN,
                 reasoning="",
@@ -387,21 +449,54 @@ def _decide(candidate: Candidate) -> None:
     if verdict == VERDICT_REFUTED:
         return
 
-    # Downgrades only. A verifier looks at one finding in isolation, with less
-    # context than the agent that traced the path, so its opinion is trusted to
-    # lower a rating but never to raise one.
+    # Severity moves down only. It is a judgement about impact, and the agent
+    # that traced the path had more of the picture than a verifier looking at
+    # one finding in isolation.
     for vote in usable:
         if (0 <= severity_rank(vote.corrected_severity)
                 < severity_rank(candidate.severity)):
             candidate.severity = vote.corrected_severity
-        if (0 <= confidence_rank(vote.corrected_confidence)
-                < confidence_rank(candidate.confidence)):
-            candidate.confidence = vote.corrected_confidence
 
     if verdict == VERDICT_UNCERTAIN:
         # An unresolved chain is exactly what `low` confidence means, and it
         # keeps the finding visible without letting it block the merge.
         candidate.confidence = "low"
+    elif verdict == VERDICT_CONFIRMED:
+        # Confidence moves in both directions, because it means something
+        # different from severity: it records how much of the chain was actually
+        # seen, not how bad the outcome would be. A verifier that read the
+        # callers and closed a link the agent could only guess at knows more
+        # about that than the agent did.
+        #
+        # This exists because the alternative was worse. When only downgrades
+        # were allowed, an agent that hedged at `low` on a real `pickle.loads`
+        # buried the finding permanently — nothing downstream could ever undo a
+        # cautious first impression.
+        candidate.confidence = _agreed_confidence(usable, candidate.confidence)
+    else:
+        for vote in usable:
+            if (0 <= confidence_rank(vote.corrected_confidence)
+                    < confidence_rank(candidate.confidence)):
+                candidate.confidence = vote.corrected_confidence
+
+
+def _agreed_confidence(votes: List[Vote], claimed: str) -> str:
+    """The confidence every confirming verifier can stand behind.
+
+    The lowest of what they proposed, so raising takes agreement while lowering
+    takes only one dissent — the same asymmetry used everywhere else here, for
+    the same reason: it is cheaper to be wrong in the direction of a visible
+    finding than an invisible one.
+
+    A verifier that leaves the field empty is agreeing with the claim, not
+    voting for it, so silence cannot raise anything on its own.
+    """
+    proposals = [v.corrected_confidence for v in votes if v.corrected_confidence]
+    if not proposals or len(proposals) < len(votes):
+        # At least one verifier did not express an opinion; keep the claim.
+        lowered = [c for c in proposals if confidence_rank(c) < confidence_rank(claimed)]
+        return min(lowered, key=confidence_rank) if lowered else claimed
+    return min(proposals, key=confidence_rank)
 
 
 def _reason(votes: List[Vote], verdict: str) -> str:

@@ -126,6 +126,13 @@ class Workspace:
             check=False,
             env=_git_env(),
         )
+        if proc.returncode != 0 and proc.stderr.strip():
+            # A missing revision exits non-zero *silently* under --quiet, so
+            # anything on stderr means git refused for some other reason —
+            # ownership, a corrupt object, a broken environment. Reporting that
+            # as "revision not found" sent a whole CI debugging session chasing
+            # GIT_DEPTH when the real message was "dubious ownership".
+            log.warning("git rev-parse %s: %s", rev, proc.stderr.strip().splitlines()[0])
         return proc.returncode == 0
 
     def tracked_files(self) -> List[str]:
@@ -352,11 +359,21 @@ class Workspace:
 def _git_env() -> dict:
     """A minimal environment for git subprocesses.
 
-    Config is pinned to nothing on purpose. ``--no-ext-diff`` stops an
-    ``external diff`` driver from running, but only if the config that defines it
-    is never read — and a repository can ship both ``.gitconfig`` (picked up if
-    ``HOME`` points into the tree) and system config. Both are routed to
-    ``/dev/null``, and ``HOME`` is pointed somewhere that does not exist.
+    Config files are pinned to nothing on purpose. ``--no-ext-diff`` stops an
+    ``external diff`` driver from running, but only if the config defining it is
+    never read, and a repository can ship a ``.gitconfig`` that gets picked up
+    when ``HOME`` points into the tree. So ``HOME`` goes somewhere that does not
+    exist and both config files are routed to ``/dev/null``.
+
+    That leaves one problem, and it is the reason for the ``safe.directory``
+    entry below. A CI runner clones the repository as one user and this process
+    runs as another, so git refuses it with "detected dubious ownership" — which
+    is a sensible default for a shared machine and pointless here, where the
+    checkout is the very thing we were asked to read. The usual fix is
+    ``safe.directory`` in *system* config, but that file is exactly what the
+    hardening above stops git from reading. Injecting the setting through
+    ``GIT_CONFIG_COUNT`` keeps both properties: no config file is trusted, and
+    the ownership check is still waived.
     """
     return {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -364,6 +381,9 @@ def _git_env() -> dict:
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "safe.directory",
+        "GIT_CONFIG_VALUE_0": "*",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_OPTIONAL_LOCKS": "0",
         "LC_ALL": "C.UTF-8",

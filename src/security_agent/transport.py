@@ -1,16 +1,19 @@
 """Streaming requests that survive a dropped connection.
 
-The SDK retries connection failures when a request is *started*. It does not
-help once bytes are flowing: a stream that dies mid-read surfaces as a raw
-`httpx.ReadError`, which is neither an `anthropic.APIConnectionError` nor
-anything the loop above would recognise. One reset packet then destroys an
-entire review — every turn taken, every finding recorded, every token paid for —
-and the job reports an error for a reason that had nothing to do with the code
-under review.
+The SDK retries a connection that fails while a request is *starting*. It does
+not help once bytes are flowing: a stream that dies mid-read surfaces as the
+underlying HTTP library's own exception, which is not an `anthropic` error and
+which no caller here would recognise. One reset packet then destroys an entire
+review — every turn taken, every finding recorded, every token paid for — and
+the job reports a failure that had nothing to do with the code under review.
 
-Retrying is unusually cheap here. The conversation prefix is already in the
-prompt cache, so a repeated turn re-reads it at a tenth of the price rather than
-paying for it again.
+Retrying is unusually cheap. The conversation prefix is already in the prompt
+cache, so a repeated turn re-reads it at a tenth of the price.
+
+Nothing here imports the HTTP library. Which one the SDK sits on is an
+implementation detail that has already changed once — `anthropic` 1.x moved from
+`httpx` to `httpx2` — and a scanner that crashes on `ModuleNotFoundError`
+because it guessed wrong is worse than one that classifies by behaviour.
 """
 
 from __future__ import annotations
@@ -20,23 +23,54 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 import anthropic
-import httpx
 
 log = logging.getLogger(__name__)
 
-# Failures worth repeating: the connection dropped, stalled, or the server had a
-# moment. A 400 or a refusal is not in here — repeating those just spends money
-# to get the same answer.
-TRANSIENT = (
-    httpx.TransportError,      # ReadError, ConnectError, ReadTimeout, …
-    httpx.RemoteProtocolError,
-    anthropic.APIConnectionError,
-    anthropic.APITimeoutError,
-    anthropic.InternalServerError,
-)
-
 DEFAULT_ATTEMPTS = 3
 BACKOFF_SECONDS = (2.0, 8.0)
+
+# Modules whose exceptions mean "the connection had a problem". Matched by name
+# so a future SDK can swap its transport again without breaking this.
+_TRANSPORT_MODULES = ("httpx", "httpx2", "httpcore", "httpcore2", "h11", "h2")
+
+# Exception names from those modules that are *not* transport failures: an HTTP
+# error carrying a real status code is the server answering, not the connection
+# breaking, and repeating it buys the same answer twice.
+_NOT_TRANSIENT = ("HTTPStatusError", "TooManyRedirects", "UnsupportedProtocol",
+                  "InvalidURL", "ProtocolError")
+
+
+class TransportFailure(Exception):
+    """A request could not be completed after retrying.
+
+    Its own type rather than a re-used SDK exception, so callers catch it
+    explicitly and it cannot be confused with an error the API actually
+    returned.
+    """
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Is this worth trying again?
+
+    Connection dropped, stalled, or the server had a moment. A 400, a refusal,
+    or an authentication failure is not — repeating those spends money to reach
+    the same conclusion.
+    """
+    if isinstance(exc, (anthropic.APIConnectionError, anthropic.APITimeoutError,
+                        anthropic.InternalServerError)):
+        return True
+    if isinstance(exc, anthropic.APIStatusError):
+        return exc.status_code in (408, 409, 429) or exc.status_code >= 500
+
+    name = type(exc).__name__
+    module = type(exc).__module__.split(".")[0]
+    if module in _TRANSPORT_MODULES:
+        return name not in _NOT_TRANSIENT
+
+    # Sockets and DNS, for the case where nothing wraps them at all.
+    return isinstance(exc, (ConnectionError, TimeoutError)) or (
+        isinstance(exc, OSError) and not isinstance(exc, (FileNotFoundError, PermissionError))
+    )
 
 
 def stream_message(
@@ -64,7 +98,9 @@ def stream_message(
                     return stream.get_final_message()
             with client.messages.stream(**params) as stream:
                 return stream.get_final_message()
-        except TRANSIENT as exc:
+        except Exception as exc:
+            if not is_transient(exc):
+                raise
             last = exc
             if attempt == attempts:
                 break
@@ -75,29 +111,10 @@ def stream_message(
             )
             time.sleep(delay)
 
-    # Re-raise as something the callers already know how to classify, so a
-    # dropped stream and an unreachable API are handled identically upstream.
-    raise anthropic.APIConnectionError(
-        message="{} failed after {} attempts: {}: {}".format(
-            label, attempts, type(last).__name__, last),
-        request=_request_of(last),
+    raise TransportFailure(
+        "{} failed after {} attempts: {}: {}".format(
+            label, attempts, type(last).__name__, last)
     ) from last
-
-
-def _request_of(exc: Optional[BaseException]) -> httpx.Request:
-    """`APIConnectionError` needs a request object; synthesise one if absent.
-
-    `httpx` exposes `.request` as a property that *raises* when the exception
-    was constructed without one, so `getattr(exc, "request", None)` is not the
-    safe read it looks like.
-    """
-    try:
-        candidate = exc.request  # type: ignore[union-attr]
-        if isinstance(candidate, httpx.Request):
-            return candidate
-    except (AttributeError, RuntimeError):
-        pass
-    return httpx.Request("POST", "https://api.anthropic.com/v1/messages")
 
 
 def split_capability_error(exc: Exception) -> Tuple[bool, str]:

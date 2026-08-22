@@ -138,3 +138,43 @@ class TestExcludes:
     def test_leaves_other_paths_alone(self, git_repo):
         ws = Workspace(root=git_repo, excludes=("*.md",))
         assert not ws.is_excluded("app/views.py")
+
+
+class TestGitEnvironment:
+    """The environment git subprocesses run in.
+
+    Both halves are load-bearing and they pull against each other: the config
+    files must not be trusted, and the ownership check must still be waived. A
+    CI run found that out the hard way — hardening the config away also removed
+    the `safe.directory` that made a root-owned checkout readable, and the agent
+    reported "cannot determine a diff base" for a commit that was right there.
+    """
+
+    def test_repository_controlled_config_is_not_read(self):
+        from security_agent.workspace import _git_env
+
+        env = _git_env()
+        assert env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+        assert env["GIT_CONFIG_SYSTEM"] == "/dev/null"
+        # HOME must not point into a repository, or a committed .gitconfig
+        # becomes the agent's configuration.
+        assert env["HOME"] == "/nonexistent"
+
+    def test_ownership_check_is_waived_without_a_config_file(self):
+        from security_agent.workspace import _git_env
+
+        env = _git_env()
+        assert env["GIT_CONFIG_COUNT"] == "1"
+        assert env["GIT_CONFIG_KEY_0"] == "safe.directory"
+        assert env["GIT_CONFIG_VALUE_0"] == "*"
+
+    def test_git_still_works_through_this_environment(self, git_repo):
+        # The settings above are only correct if git actually accepts them.
+        ws = Workspace(root=git_repo, excludes=())
+        assert ws.rev_exists("HEAD")
+        assert "views.py" in ws.git("ls-files")
+
+    def test_a_missing_revision_is_still_reported_as_missing(self, git_repo):
+        ws = Workspace(root=git_repo, excludes=())
+        assert not ws.rev_exists("0" * 40)
+        assert not ws.rev_exists("")

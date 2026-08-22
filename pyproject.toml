@@ -8,10 +8,12 @@ version = "0.1.0"
 description = "AI security review gate for GitLab CI/CD, powered by the Claude API"
 requires-python = ">=3.9"
 dependencies = [
-    "anthropic>=0.116.0",
-    "jsonschema>=4.21",
-    "PyYAML>=6.0",
-    "requests>=2.31",
+    # Bounded on purpose — see requirements.txt for what an unbounded
+    # `anthropic` did to the first CI run.
+    "anthropic>=0.116.0,<1.0.0",
+    "jsonschema>=4.21,<5",
+    "PyYAML>=6.0,<7",
+    "requests>=2.31,<3",
 ]
 
 [project.optional-dependencies]

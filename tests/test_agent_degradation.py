@@ -14,7 +14,6 @@ silent behaviour change.
 from pathlib import Path
 
 import anthropic
-import httpx
 import pytest
 
 from fakes import FakeClient, FakeResponse, text, tool_use
@@ -26,10 +25,25 @@ from security_agent.workspace import Workspace
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 
 
+class _Response:
+    """The little the SDK reads off a response when building an error.
+
+    Deliberately not an `httpx.Response`: which HTTP library the SDK sits on has
+    already changed once (`anthropic` 1.x moved to `httpx2`), and a test that
+    imports the wrong one fails for a reason that has nothing to do with the
+    behaviour under test.
+    """
+
+    status_code = 400
+    request = None
+
+    @property
+    def headers(self):
+        return {}
+
+
 def bad_request(message):
-    response = httpx.Response(
-        400, request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
-    return anthropic.BadRequestError(message, response=response, body=None)
+    return anthropic.BadRequestError(message, response=_Response(), body=None)
 
 
 @pytest.fixture
@@ -187,7 +201,7 @@ class TestTransientFailures:
             def stream(self, **params):
                 calls["n"] += 1
                 if calls["n"] == 1:
-                    raise httpx.ReadError("[Errno 54] Connection reset by peer")
+                    raise ConnectionResetError(54, "Connection reset by peer")
                 return real.messages.stream(**params)
 
         cfg.use_task_budget = False
@@ -208,7 +222,7 @@ class TestTransientFailures:
                 self.messages = self
 
             def stream(self, **params):
-                raise httpx.ConnectError("no route to host")
+                raise ConnectionError("no route to host")
 
         cfg.use_task_budget = False
         cfg.use_refusal_fallback = False

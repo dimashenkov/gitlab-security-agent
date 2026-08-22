@@ -10,9 +10,11 @@
 FROM python:3.12-slim AS base
 
 # git is not optional here — the agent's entire view of the repository comes
-# through it. tini reaps the process properly when a runner cancels the job.
+# through it. No init process: the CI runner owns PID 1 in this container and
+# handles signals itself (see the CMD note at the bottom for why there is no
+# ENTRYPOINT to hang one off).
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y git tini ca-certificates \
+    && apt-get install --no-install-recommends -y git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \
@@ -46,5 +48,15 @@ RUN useradd --create-home --uid 10001 scanner \
 USER scanner
 WORKDIR /builds
 
-ENTRYPOINT ["/usr/bin/tini", "--", "gitlab-security-agent"]
-CMD ["--help"]
+# Deliberately no ENTRYPOINT.
+#
+# A CI runner starts the job container by passing its own shell-detection script
+# as the command. Docker appends that to any ENTRYPOINT, so an application
+# entrypoint receives the runner's script as its arguments and exits with
+# "unrecognized arguments" before the job script ever runs. The image has to
+# leave the command slot free for the runner to put a shell in it.
+#
+# `gitlab-security-agent` is on PATH, so `script: [gitlab-security-agent]` in a
+# job works, and so does `docker run security-agent gitlab-security-agent --help`
+# by hand.
+CMD ["gitlab-security-agent", "--help"]

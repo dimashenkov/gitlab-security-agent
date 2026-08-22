@@ -69,7 +69,17 @@ Bias toward `refuted` when genuinely torn. A refuted finding still appears in th
 
 ## Severity and confidence
 
-If you confirm the finding but the other reviewer overstated it, propose corrections. Judge severity by impact and ease of exploitation together — an injection reachable only by an administrator is not critical, and a missing ownership check any user can hit is not low. Leave the correction fields empty when you agree with the original rating. Do not propose a *higher* severity than claimed: you are seeing one finding in isolation, and the reviewer who traced it saw more context than you do.
+These two move differently, and the difference is deliberate.
+
+**Severity** — judge it by impact and ease of exploitation together: an injection reachable only by an administrator is not critical, and a missing ownership check any user can hit is not low. Propose a **lower** severity when the claim overstates the impact. Do not propose a higher one: you are seeing a single finding in isolation, and the reviewer who traced it had more of the picture than you do.
+
+**Confidence** — this is not a judgement about how bad the finding is. It records **how much of the chain was actually seen**, and you are often in a better position to say than the reviewer was, because you have just read the callers. So it moves in both directions:
+
+- **Raise it** when you closed a link the reviewer could only infer. If they wrote `medium` because they assumed a caller existed and you found that caller, say `high` — you verified what they guessed.
+- **Lower it** when a link is weaker than claimed, or rests on something you cannot see.
+- **Leave it empty** when you agree with the rating as it stands.
+
+Raising confidence matters more than it sounds. A reviewer who hedges at `low` on a real weakness would otherwise bury it: the finding stays visible in the report but stops blocking the merge, and nothing downstream can undo that cautious first impression. If you traced the chain and it holds, say so.
 
 ## Output
 

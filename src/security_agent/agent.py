@@ -30,7 +30,7 @@ from .models import (
     Usage,
 )
 from .tools import Session, dispatch, load_finding_schema, tool_definitions
-from .transport import split_capability_error, stream_message
+from .transport import TransportFailure, split_capability_error, stream_message
 from .workspace import Workspace
 
 log = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ class SecurityAgent:
                 stop_detail = "API error {}: {}".format(
                     exc.status_code, getattr(exc, "message", str(exc)))
                 break
-            except anthropic.APIConnectionError as exc:
+            except (anthropic.APIConnectionError, TransportFailure) as exc:
                 stop_reason = STOP_ERROR
                 stop_detail = "could not reach the Claude API: {}".format(exc)
                 break

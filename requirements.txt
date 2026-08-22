@@ -1,4 +1,14 @@
-anthropic>=0.116.0
-jsonschema>=4.21
-PyYAML>=6.0
-requests>=2.31
+# Upper bounds are not optional here. An unpinned `anthropic>=0.116.0` resolved
+# to 0.125.0 on the development machine and to 1.0.0 in the container, and the
+# two majors sit on different HTTP libraries (`httpx` vs `httpx2`) — so code
+# that passed locally failed in CI with ModuleNotFoundError. A security tool
+# whose own dependencies differ between where it is tested and where it runs is
+# not one to trust.
+#
+# Held at 0.x because `anthropic` 1.x requires Python 3.10+ and this package
+# still supports 3.9. Moving to 1.x means raising requires-python first; see the
+# SDK's own upgrade guide for the breaking changes.
+anthropic>=0.116.0,<1.0.0
+jsonschema>=4.21,<5
+PyYAML>=6.0,<7
+requests>=2.31,<3

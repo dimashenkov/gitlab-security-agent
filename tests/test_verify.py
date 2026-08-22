@@ -4,14 +4,24 @@ The asymmetry is the point: it should be easy for verifiers to downgrade a
 finding and hard for a single one to discard a critical.
 """
 
+import threading
+import time
+
 from conftest import make_candidate
 from security_agent.models import (
     VERDICT_CONFIRMED,
     VERDICT_REFUTED,
     VERDICT_UNCERTAIN,
+    Usage,
     Vote,
 )
-from security_agent.verify import _decide, _partition, _votes_for, verify_candidates
+from security_agent.verify import (
+    _could_block,
+    _decide,
+    _partition,
+    _votes_for,
+    verify_candidates,
+)
 
 
 def vote(verdict, **kwargs):
@@ -147,8 +157,18 @@ class TestVerificationScope:
         gating, informational = _partition(config, [candidate])
         assert gating == [] and informational == [candidate]
 
-    def test_below_the_confidence_threshold_is_not_verified(self, config):
+    def test_a_severe_finding_is_verified_however_low_its_confidence(self, config):
+        # The case that motivated this: the agent rated a real pickle.loads on
+        # untrusted bytes `high` severity but only `low` confidence, so it fell
+        # below the gate, was never verified, and passed silently. A cautious
+        # first impression must not be able to bury a severe finding.
         candidate = make_candidate(severity="critical", confidence="low")
+        gating, informational = _partition(config, [candidate])
+        assert gating == [candidate] and informational == []
+
+    def test_below_the_severity_threshold_is_still_skipped(self, config):
+        # Severity only ever moves down, so no verdict can lift this over the bar.
+        candidate = make_candidate(severity="low", confidence="high")
         _, informational = _partition(config, [candidate])
         assert informational == [candidate]
 
@@ -195,3 +215,206 @@ class TestVerificationScope:
         candidate = make_candidate(severity="medium")
         usage = verify_candidates(config, object(), Exploding(), [candidate])
         assert usage.requests == 0
+
+
+class TestConcurrentVerification:
+    """Votes run in parallel; the aggregate must not depend on who finishes first.
+
+    Measured before this: verification took 280 seconds of a 320-second job
+    while the review itself took 100. The votes are independent conversations,
+    so they were queueing for no reason.
+    """
+
+    def _candidates(self, n):
+        return [make_candidate(severity="high", title="finding {}".format(i))
+                for i in range(n)]
+
+    def test_votes_are_attached_in_a_stable_order(self, config, monkeypatch):
+        # Completion order is reversed relative to submission order; the vote
+        # attached first must still be vote 0.
+        import security_agent.verify as verify
+
+        def fake_vote(cfg, ws, client, system, tools, candidate, vote_index):
+            time.sleep(0.05 if vote_index == 0 else 0.0)
+            return Vote(verdict=VERDICT_CONFIRMED,
+                        reasoning="vote-{}".format(vote_index)), Usage()
+
+        monkeypatch.setattr(verify, "_one_vote", fake_vote)
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+
+        candidate = make_candidate(severity="high")
+        verify.verify_candidates(config, _StubWorkspace(), object(), [candidate])
+
+        assert [v.reasoning for v in candidate.votes] == ["vote-0", "vote-1"]
+
+    def test_calls_actually_overlap(self, config, monkeypatch):
+        import security_agent.verify as verify
+
+        config.verify_concurrency = 4
+        active, peak = [0], [0]
+        lock = threading.Lock()
+
+        def fake_vote(cfg, ws, client, system, tools, candidate, vote_index):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            time.sleep(0.05)
+            with lock:
+                active[0] -= 1
+            return Vote(verdict=VERDICT_CONFIRMED, reasoning="r"), Usage()
+
+        monkeypatch.setattr(verify, "_one_vote", fake_vote)
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+
+        verify.verify_candidates(config, _StubWorkspace(), object(), self._candidates(4))
+        assert peak[0] > 1, "verification ran sequentially"
+
+    def test_concurrency_respects_the_configured_ceiling(self, config, monkeypatch):
+        import security_agent.verify as verify
+
+        config.verify_concurrency = 2
+        active, peak = [0], [0]
+        lock = threading.Lock()
+
+        def fake_vote(cfg, ws, client, system, tools, candidate, vote_index):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            time.sleep(0.05)
+            with lock:
+                active[0] -= 1
+            return Vote(verdict=VERDICT_CONFIRMED, reasoning="r"), Usage()
+
+        monkeypatch.setattr(verify, "_one_vote", fake_vote)
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+
+        verify.verify_candidates(config, _StubWorkspace(), object(), self._candidates(4))
+        assert peak[0] <= 2
+
+    def test_a_raising_worker_does_not_kill_the_run(self, config, monkeypatch):
+        import security_agent.verify as verify
+
+        def fake_vote(cfg, ws, client, system, tools, candidate, vote_index):
+            if vote_index == 0:
+                raise RuntimeError("worker exploded")
+            return Vote(verdict=VERDICT_CONFIRMED, reasoning="ok"), Usage()
+
+        monkeypatch.setattr(verify, "_one_vote", fake_vote)
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+
+        candidate = make_candidate(severity="high")
+        verify.verify_candidates(config, _StubWorkspace(), object(), [candidate])
+
+        # The crash becomes an unusable vote, not a lost run — and being unable
+        # to check a claim is not evidence against it.
+        assert any(v.error for v in candidate.votes)
+        assert candidate.verdict == VERDICT_CONFIRMED
+
+    def test_usage_from_every_worker_is_counted(self, config, monkeypatch):
+        import security_agent.verify as verify
+
+        def fake_vote(cfg, ws, client, system, tools, candidate, vote_index):
+            u = Usage()
+            u.requests, u.output_tokens = 1, 100
+            return Vote(verdict=VERDICT_CONFIRMED, reasoning="r"), u
+
+        monkeypatch.setattr(verify, "_one_vote", fake_vote)
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+
+        usage = verify.verify_candidates(config, _StubWorkspace(), object(), self._candidates(3))
+        assert usage.requests == 6  # 3 findings x 2 votes each at high severity
+        assert usage.output_tokens == 600
+
+
+class _StubWorkspace:
+    diff_base = ""
+
+
+class TestConfidenceMovesBothWays:
+    """Confidence records how much of the chain was seen, so a verifier that
+    read the callers may know better than the agent that guessed.
+
+    Severity stays one-directional for the opposite reason: it is a judgement
+    about impact, where the agent had the wider view.
+    """
+
+    def test_agreeing_verifiers_can_raise_confidence(self):
+        candidate = make_candidate(severity="high", confidence="low")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="found the caller",
+                 corrected_confidence="high"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="traced it too",
+                 corrected_confidence="high"),
+        ]
+        _decide(candidate)
+        assert candidate.confidence == "high"
+
+    def test_raising_takes_agreement_from_every_verifier(self):
+        # One silent verifier is agreeing with the claim, not voting to raise it.
+        candidate = make_candidate(severity="high", confidence="low")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_confidence="high"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="b"),
+        ]
+        _decide(candidate)
+        assert candidate.confidence == "low"
+
+    def test_the_lowest_agreed_confidence_wins(self):
+        candidate = make_candidate(severity="high", confidence="low")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_confidence="high"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="b", corrected_confidence="medium"),
+        ]
+        _decide(candidate)
+        assert candidate.confidence == "medium"
+
+    def test_a_single_dissent_still_lowers(self):
+        # Lowering takes one voice, raising takes all of them.
+        candidate = make_candidate(severity="high", confidence="high")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_confidence="low"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="b"),
+        ]
+        _decide(candidate)
+        assert candidate.confidence == "low"
+
+    def test_severity_still_only_falls(self):
+        candidate = make_candidate(severity="medium", confidence="high")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_severity="critical"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="b", corrected_severity="critical"),
+        ]
+        _decide(candidate)
+        assert candidate.severity == "medium"
+
+    def test_an_uncertain_verdict_still_forces_low(self):
+        candidate = make_candidate(severity="high", confidence="high")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_confidence="high"),
+            Vote(verdict=VERDICT_REFUTED, reasoning="b"),
+        ]
+        _decide(candidate)
+        assert candidate.verdict == VERDICT_UNCERTAIN
+        assert candidate.confidence == "low"
+
+    def test_the_pickle_case_now_blocks(self, config):
+        # End to end over the exact shape that slipped through: high severity,
+        # agent hedged at low confidence, verifiers found it real.
+        candidate = make_candidate(severity="high", confidence="low",
+                                   category="deserialization")
+        gating, _ = _partition(config, [candidate])
+        assert gating == [candidate], "it must at least be verified"
+
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="added by this change",
+                 corrected_confidence="high"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="no sanitisation",
+                 corrected_confidence="high"),
+        ]
+        _decide(candidate)
+        assert _could_block(config, candidate)
