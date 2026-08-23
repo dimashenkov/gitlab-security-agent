@@ -158,3 +158,45 @@ class TestFingerprintStability:
     def test_differs_across_categories(self):
         assert (make_candidate(category="injection").fingerprint
                 != make_candidate(category="xss").fingerprint)
+
+
+class TestFingerprintSurvivesRewording:
+    """The fingerprint is the only escape hatch a blocking gate has.
+
+    Measuring five runs over an identical diff produced five different
+    fingerprints for the same weakness, because the title was part of the hash
+    and the model rewords a title every time. An accepted risk recorded in the
+    ignore file stopped matching on the next run and blocked the merge again.
+    """
+
+    def test_a_reworded_title_keeps_the_fingerprint(self):
+        a = make_candidate(title="Removal of '..' guard reintroduces path traversal")
+        b = make_candidate(title="Reverted CVE-2023-41040 fix: path traversal returns")
+        assert a.fingerprint == b.fingerprint
+
+    def test_reworded_prose_keeps_the_fingerprint(self):
+        a = make_candidate(description="One wording.", exploit_scenario="A path.")
+        b = make_candidate(description="Another entirely.", exploit_scenario="B path.")
+        assert a.fingerprint == b.fingerprint
+
+    def test_quoting_extra_lines_keeps_the_fingerprint(self):
+        # Only the first quoted line anchors it, so a run that quotes three
+        # lines and a run that quotes two still agree.
+        a = make_candidate(evidence="db.execute(sql)")
+        b = make_candidate(evidence="db.execute(sql)\n    return cursor.fetchall()")
+        assert a.fingerprint == b.fingerprint
+
+    def test_indentation_and_diff_markers_do_not_matter(self):
+        a = make_candidate(evidence="    db.execute(sql)")
+        b = make_candidate(evidence="+db.execute(sql)")
+        assert a.fingerprint == b.fingerprint
+
+    def test_different_code_gives_a_different_fingerprint(self):
+        a = make_candidate(evidence="db.execute(sql)")
+        b = make_candidate(evidence="os.system(cmd)")
+        assert a.fingerprint != b.fingerprint
+
+    def test_the_same_code_in_another_file_is_a_different_finding(self):
+        a = make_candidate(file="a.py", evidence="db.execute(sql)")
+        b = make_candidate(file="b.py", evidence="db.execute(sql)")
+        assert a.fingerprint != b.fingerprint

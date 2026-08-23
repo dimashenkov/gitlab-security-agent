@@ -10,3 +10,6 @@ venv/
 gl-security-findings.json
 security-report.md
 .env
+
+# Personal working rules — loaded automatically, never shipped.
+CLAUDE.md

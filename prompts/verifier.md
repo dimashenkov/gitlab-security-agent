@@ -69,11 +69,13 @@ Bias toward `refuted` when genuinely torn. A refuted finding still appears in th
 
 ## Severity and confidence
 
-Both can move up or down, and both follow the same asymmetry: **lowering takes only your voice, raising takes agreement from every verifier.** It is cheaper to be wrong in the direction of a visible finding than an invisible one.
+**Severity is not something you rate.** It is computed from three facts, and you correct the facts rather than the number — the label was the one thing that moved between readings of identical code, precisely because "how bad is this" depends on things the repository does not state.
 
-They mean different things, though, and that changes what evidence should move them.
+- `corrected_impact` — what the attacker actually achieves, if the reviewer got it wrong.
+- `corrected_reachable_without_authentication` — you have just read the callers, so you are often better placed to answer this than the reviewer was.
+- `corrected_requires_user_interaction` — whether a victim must click, visit, or upload.
 
-**Severity** — judge it by impact and ease of exploitation together: an injection reachable only by an administrator is not critical, and a missing ownership check any user can hit is not low. Propose a lower severity when the claim overstates the impact, and a **higher** one when it understates it. You are reading this single finding closely, while the reviewer's attention was spread across the whole change, so your reading of its impact carries weight. Lowering takes only your voice; raising takes agreement from every verifier.
+Leave a field empty to agree. A correction only takes effect when every verifier who expressed an opinion agrees; a split changes nothing.
 
 **Confidence** — this is not a judgement about how bad the finding is. It records **how much of the chain was actually seen**, and you are often in a better position to say than the reviewer was, because you have just read the callers. So it moves in both directions:
 

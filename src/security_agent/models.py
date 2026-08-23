@@ -59,6 +59,9 @@ class Finding:
     category: str
     file: str
     line: int
+    impact: str
+    reachable_without_authentication: str
+    requires_user_interaction: str
     evidence: str
     description: str
     exploit_scenario: str
@@ -73,6 +76,10 @@ class Finding:
             category=str(data["category"]),
             file=str(data["file"]),
             line=int(data["line"]),
+            impact=str(data.get("impact", "")),
+            reachable_without_authentication=str(
+                data.get("reachable_without_authentication", "unclear")),
+            requires_user_interaction=str(data.get("requires_user_interaction", "unclear")),
             evidence=str(data["evidence"]),
             description=str(data["description"]),
             exploit_scenario=str(data["exploit_scenario"]),
@@ -83,12 +90,31 @@ class Finding:
     def fingerprint(self) -> str:
         """Stable identity for suppression and comment de-duplication.
 
-        Deliberately excludes ``line`` and the prose fields: the same weakness
-        re-reported after unrelated edits shifted it down the file, or worded
-        slightly differently on a re-run, must keep its fingerprint or an
-        accepted-risk entry in the ignore file would silently stop matching.
+        Built from the category, the file, and the **first line of quoted
+        code** — never from prose. The title was in here once, and measuring
+        five runs over an identical diff produced five different fingerprints
+        for the same weakness, because the model rewords a title every time
+        ("Removal of '..' guard reintroduces…", "Reverted CVE-2023-41040
+        fix…"). That silently broke the only escape hatch a blocking gate has:
+        an accepted risk recorded in the ignore file would stop matching on the
+        next run and block the merge again.
+
+        Quoted code is the right anchor because layer 1 has already proved it
+        exists in the file, and because it is the one part of a finding that
+        describes the defect without describing it in words. Only the first
+        line is used, so a run that quotes three lines and a run that quotes two
+        still agree.
+
+        Line numbers stay out: unrelated edits move code, and an accepted risk
+        must survive that.
         """
-        material = "|".join((self.category, self.file, self.title.strip().lower()))
+        anchor = ""
+        for line in self.evidence.splitlines():
+            collapsed = " ".join(line.split())
+            if collapsed:
+                anchor = collapsed.lstrip("+- ")
+                break
+        material = "|".join((self.category, self.file, anchor))
         return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
@@ -98,7 +124,9 @@ class Vote:
 
     verdict: str
     reasoning: str
-    corrected_severity: str = ""
+    corrected_impact: str = ""
+    corrected_reachable: str = ""
+    corrected_interaction: str = ""
     corrected_confidence: str = ""
     removes_control: str = ""   # "yes" | "no" | "" when not asked
     error: str = ""
@@ -136,10 +164,25 @@ class Candidate:
     severity: str = ""
     confidence: str = ""
     suppressed_by: str = ""
+    # How `severity` was arrived at, for the report. A derived number nobody can
+    # retrace is no better than a guessed one.
+    severity_derivation: str = ""
 
     def __post_init__(self) -> None:
         if not self.severity:
-            self.severity = self.finding.severity
+            # Derived from the facts the model reported, not from the label it
+            # proposed — that label was the one thing that moved between runs.
+            from .severity import derive
+
+            derived, why = derive(
+                self.finding.impact,
+                self.finding.reachable_without_authentication,
+                self.finding.requires_user_interaction,
+                self.finding.category,
+            )
+            self.severity = derived or self.finding.severity
+            self.severity_derivation = why if derived else (
+                "not derived ({}); using the reviewer's own rating".format(why))
         if not self.confidence:
             self.confidence = self.finding.confidence
 
@@ -176,6 +219,10 @@ class Candidate:
             "category": self.finding.category,
             "file": self.finding.file,
             "line": self.line,
+            "impact": self.finding.impact,
+            "reachable_without_authentication": self.finding.reachable_without_authentication,
+            "requires_user_interaction": self.finding.requires_user_interaction,
+            "severity_derivation": self.severity_derivation,
             "evidence": self.finding.evidence,
             "description": self.finding.description,
             "exploit_scenario": self.finding.exploit_scenario,
@@ -187,7 +234,7 @@ class Candidate:
                     {
                         "verdict": v.verdict,
                         "reasoning": v.reasoning,
-                        "corrected_severity": v.corrected_severity,
+                        "corrected_impact": v.corrected_impact,
                         "corrected_confidence": v.corrected_confidence,
                         "error": v.error,
                     }

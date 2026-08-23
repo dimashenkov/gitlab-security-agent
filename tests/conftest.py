@@ -15,6 +15,9 @@ def make_finding(**overrides):
         "category": "injection",
         "file": "app/views.py",
         "line": 14,
+        "impact": "broad_data_access",
+        "reachable_without_authentication": "yes",
+        "requires_user_interaction": "no",
         "evidence": 'db.execute("SELECT * FROM users WHERE id = " + user_id)',
         "description": "User input is concatenated into a query.",
         "exploit_scenario": "An anonymous caller sends id=1 OR 1=1 and reads every row.",
@@ -25,9 +28,13 @@ def make_finding(**overrides):
 
 
 def make_candidate(**overrides):
+    """Build a Candidate. `severity=` pins the severity, bypassing derivation —
+    most tests care about what the gate does with a rating, not how it was
+    reached."""
     candidate_fields = {}
     for key in ("in_changed_lines", "evidence_located_line", "verdict",
-                "verdict_reason", "votes", "severity", "confidence"):
+                "verdict_reason", "votes", "severity", "confidence",
+                "attributed_by", "removes_control"):
         if key in overrides:
             candidate_fields[key] = overrides.pop(key)
     return Candidate(finding=make_finding(**overrides), **candidate_fields)

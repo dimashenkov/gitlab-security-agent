@@ -1,7 +1,10 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "findings"],
+  "required": [
+    "summary",
+    "findings"
+  ],
   "properties": {
     "summary": {
       "type": "string",
@@ -20,6 +23,9 @@
           "category",
           "file",
           "line",
+          "impact",
+          "reachable_without_authentication",
+          "requires_user_interaction",
           "evidence",
           "description",
           "exploit_scenario",
@@ -32,11 +38,21 @@
           },
           "severity": {
             "type": "string",
-            "enum": ["critical", "high", "medium", "low"]
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "description": "Your own overall judgement of how bad this is. Recorded for comparison, but the severity the gate acts on is derived from the three factual fields below, not from this one \u2014 they are answerable from the code, and this is not."
           },
           "confidence": {
             "type": "string",
-            "enum": ["high", "medium", "low"],
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
             "description": "How certain you are that this is a real, reachable vulnerability rather than a theoretical one."
           },
           "category": {
@@ -69,7 +85,7 @@
           },
           "evidence": {
             "type": "string",
-            "description": "The vulnerable code copied verbatim from the file at the cited line — one to five lines. No diff markers, no ellipses, no paraphrasing, no reconstruction from memory. This string is matched against the real file before the finding is accepted, and the finding is rejected if it is not found there."
+            "description": "The vulnerable code copied verbatim from the file at the cited line \u2014 one to five lines. No diff markers, no ellipses, no paraphrasing, no reconstruction from memory. This string is matched against the real file before the finding is accepted, and the finding is rejected if it is not found there."
           },
           "description": {
             "type": "string",
@@ -82,6 +98,36 @@
           "recommendation": {
             "type": "string",
             "description": "The concrete fix, ideally with the corrected code shape."
+          },
+          "impact": {
+            "type": "string",
+            "enum": [
+              "code_execution",
+              "broad_data_access",
+              "narrow_data_access",
+              "state_change",
+              "metadata_disclosure",
+              "denial_of_service"
+            ],
+            "description": "What the attacker actually achieves. `code_execution`: runs code or commands. `broad_data_access`: reads whole tables, arbitrary files, or other users' records. `narrow_data_access`: reads one specific record or file they were not meant to see. `state_change`: writes, deletes, or performs an action as someone else. `metadata_disclosure`: learns something that only helps a further attack \u2014 a path, a version, whether a file exists. `denial_of_service`: makes the service unavailable."
+          },
+          "reachable_without_authentication": {
+            "type": "string",
+            "enum": [
+              "yes",
+              "no",
+              "unclear"
+            ],
+            "description": "Can an unauthenticated caller reach the vulnerable code? Answer from what you can see: an unauthenticated route, a missing decorator, a public webhook is `yes`; a handler behind a login check is `no`. Use `unclear` when routing or middleware lives outside this repository. `unclear` is a real answer and is treated consistently \u2014 guessing is what makes the same finding come out differently on different runs."
+          },
+          "requires_user_interaction": {
+            "type": "string",
+            "enum": [
+              "yes",
+              "no",
+              "unclear"
+            ],
+            "description": "Must a victim do something for the attack to work \u2014 click a link, open a page, upload a file the attacker chose? Reflected XSS and CSRF are `yes`; a direct request to an endpoint is `no`."
           }
         }
       }

@@ -56,14 +56,21 @@ That quote is matched against the real file before the finding is recorded, and 
 
 Cite the line in the post-change version of the file. When the quote is found at a different line than you claimed, the line is corrected for you; when a finding spans a range, cite the most relevant line.
 
-## Severity and confidence
+## Severity is computed, not judged
 
-Assign severity from impact and ease of exploitation together, never from the vulnerability class:
+Do not try to decide how bad a finding is. That judgement depends on things the code does not tell you — whether the service faces the internet, how much data sits behind the endpoint, who the users are — and inventing those assumptions is why the same finding gets rated differently on different readings.
 
-- **critical** — unauthenticated remote code execution, authentication bypass, full database read or write, or a live production credential.
-- **high** — privileged data access or state change reachable by any authenticated user, stored XSS on an authenticated surface, SSRF that reaches internal services, a non-production credential.
-- **medium** — needs unusual preconditions, an already-privileged actor, or user interaction; information disclosure that enables a further attack.
-- **low** — narrow impact or hard to reach; a weakened control not currently exploitable on its own.
+Instead, answer three questions you *can* settle by reading, and the severity is computed from them:
+
+**`impact`** — what the attacker actually achieves. Running code or commands is `code_execution`. Reading whole tables, arbitrary files, or other users' records is `broad_data_access`. Reading one specific record or file they should not see is `narrow_data_access`. Writing, deleting, or acting as someone else is `state_change`. Learning only something that helps a further attack — a path, a version, whether a file exists — is `metadata_disclosure`. Making the service unavailable is `denial_of_service`.
+
+**`reachable_without_authentication`** — can an unauthenticated caller get to this code? An unauthenticated route, a missing decorator, a public webhook is `yes`. A handler behind a login check is `no`.
+
+**`requires_user_interaction`** — must a victim click, visit, or upload something? Reflected XSS and CSRF are `yes`; a direct request to an endpoint is `no`.
+
+**`unclear` is a real answer.** Use it when routing or middleware lives outside this repository and you genuinely cannot see. It is treated the same way every time, which is the whole point — a guess that differs between readings is worse than an honest "I cannot tell from here".
+
+The `severity` field still exists and you should fill it in with your own overall impression. It is recorded for comparison and does not drive the gate.
 
 Confidence describes how much of the chain you saw with your own eyes:
 

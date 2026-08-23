@@ -7,7 +7,7 @@ finding and hard for a single one to discard a critical.
 import threading
 import time
 
-from conftest import make_candidate
+from conftest import make_candidate, make_finding
 from security_agent.models import (
     VERDICT_CONFIRMED,
     VERDICT_REFUTED,
@@ -89,33 +89,12 @@ class TestCriticalAsymmetry:
 
 
 class TestCorrections:
-    def test_downgrades_are_applied(self):
-        candidate = make_candidate(severity="high", confidence="high")
-        candidate.votes = [vote(VERDICT_CONFIRMED, corrected_severity="medium",
-                                corrected_confidence="medium")]
-        _decide(candidate)
-        assert candidate.severity == "medium"
-        assert candidate.confidence == "medium"
-
-    def test_a_lone_verifier_can_raise_severity(self):
-        # With one vote, unanimity is that vote.
-        candidate = make_candidate(severity="medium")
-        candidate.votes = [vote(VERDICT_CONFIRMED, corrected_severity="critical")]
-        _decide(candidate)
-        assert candidate.severity == "critical"
-
     def test_uncertain_forces_low_confidence(self):
         candidate = make_candidate(severity="high", confidence="high")
         candidate.votes = [vote(VERDICT_REFUTED), vote(VERDICT_CONFIRMED)]
         _decide(candidate)
         assert candidate.verdict == VERDICT_UNCERTAIN
         assert candidate.confidence == "low"
-
-    def test_refuted_findings_keep_their_original_rating(self):
-        candidate = make_candidate(severity="high")
-        candidate.votes = [vote(VERDICT_REFUTED, corrected_severity="low")]
-        _decide(candidate)
-        assert candidate.severity == "high"
 
 
 class TestVerifierFailures:
@@ -387,35 +366,6 @@ class TestConfidenceMovesBothWays:
         _decide(candidate)
         assert candidate.confidence == "low"
 
-    def test_raising_severity_takes_every_verifier(self):
-        candidate = make_candidate(severity="medium", confidence="high")
-        candidate.votes = [
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_severity="high"),
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="b"),
-        ]
-        _decide(candidate)
-        assert candidate.severity == "medium", "one silent verifier is not agreement"
-
-    def test_unanimous_verifiers_do_raise_severity(self):
-        # The case this rule exists for: the same finding was rated high on one
-        # run and medium on the next, and the gate is a step function on that.
-        candidate = make_candidate(severity="medium", confidence="high")
-        candidate.votes = [
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_severity="high"),
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="b", corrected_severity="high"),
-        ]
-        _decide(candidate)
-        assert candidate.severity == "high"
-
-    def test_one_dissent_still_lowers_severity(self):
-        candidate = make_candidate(severity="critical", confidence="high")
-        candidate.votes = [
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_severity="medium"),
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="b"),
-        ]
-        _decide(candidate)
-        assert candidate.severity == "medium"
-
     def test_an_uncertain_verdict_still_forces_low(self):
         candidate = make_candidate(severity="high", confidence="high")
         candidate.votes = [
@@ -442,3 +392,85 @@ class TestConfidenceMovesBothWays:
         ]
         _decide(candidate)
         assert _could_block(config, candidate)
+
+
+class TestSeverityComesFromFacts:
+    """Severity is computed, not voted on.
+
+    It was the one rating that moved between runs on identical input, because
+    "how bad is this" depends on things the diff does not contain. Verifiers now
+    correct the *facts* — what the attacker gets, whether authentication is
+    needed, whether a victim must act — and the number follows from them.
+    """
+
+    def test_the_label_the_agent_proposed_is_ignored(self):
+        from security_agent.models import Candidate
+
+        # The reviewer says `low`; the facts say code execution.
+        finding = make_finding(severity="low", impact="code_execution",
+                               reachable_without_authentication="yes",
+                               requires_user_interaction="no")
+        assert Candidate(finding=finding).severity == "critical"
+
+    def test_authentication_and_interaction_each_cost_a_step(self):
+        from security_agent.models import Candidate
+
+        finding = make_finding(impact="code_execution",
+                               reachable_without_authentication="no",
+                               requires_user_interaction="yes")
+        assert Candidate(finding=finding).severity == "medium"
+
+    def test_unclear_changes_nothing(self):
+        from security_agent.models import Candidate
+
+        # The point of `unclear`: a model that cannot tell must not be rewarded
+        # for guessing, and the same non-answer must give the same result.
+        a = Candidate(finding=make_finding(impact="broad_data_access",
+                                           reachable_without_authentication="unclear",
+                                           requires_user_interaction="unclear"))
+        b = Candidate(finding=make_finding(impact="broad_data_access",
+                                           reachable_without_authentication="unclear",
+                                           requires_user_interaction="unclear"))
+        assert a.severity == b.severity == "high"
+
+    def test_the_derivation_is_recorded(self):
+        from security_agent.models import Candidate
+
+        c = Candidate(finding=make_finding(impact="narrow_data_access",
+                                           reachable_without_authentication="no",
+                                           requires_user_interaction="no"))
+        assert "narrow_data_access" in c.severity_derivation
+        assert "authentication required" in c.severity_derivation
+
+    def test_unanimous_verifiers_can_correct_a_fact(self):
+        candidate = make_candidate(impact="narrow_data_access",
+                                   reachable_without_authentication="no",
+                                   requires_user_interaction="no")
+        before = candidate.severity
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="found an unauthenticated route",
+                 corrected_reachable="yes"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="same",
+                 corrected_reachable="yes"),
+        ]
+        _decide(candidate)
+        assert before == "low" and candidate.severity == "medium"
+        assert "verifiers corrected" in candidate.severity_derivation
+
+    def test_a_split_on_the_facts_changes_nothing(self):
+        candidate = make_candidate(impact="broad_data_access",
+                                   reachable_without_authentication="no",
+                                   requires_user_interaction="no")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_reachable="yes"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="b", corrected_reachable="unclear"),
+        ]
+        _decide(candidate)
+        assert candidate.severity == "medium", "disagreeing verifiers must not move it"
+
+    def test_an_unknown_impact_falls_back_to_the_reviewer(self):
+        from security_agent.models import Candidate
+
+        c = Candidate(finding=make_finding(severity="high", impact="something_new"))
+        assert c.severity == "high"
+        assert "not derived" in c.severity_derivation

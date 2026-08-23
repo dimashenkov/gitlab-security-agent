@@ -55,11 +55,23 @@ def blocking_findings(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
 
     blocking = []
     for candidate in outcome.reported:
+        if not candidate.in_changed_lines and not cfg.gate_pre_existing:
+            continue
+
+        # A change that deletes a security control blocks on that alone. The
+        # question there is not how bad the resulting weakness scores but why a
+        # guard someone deliberately added is being taken away, and that belongs
+        # to the author of the change rather than to a severity scale. Measured:
+        # a merge request reverting the fix for CVE-2023-41040 was found and
+        # confirmed on five runs out of five and blocked on none of them,
+        # because three independent reads agreed it rated below the threshold.
+        if candidate.removes_control and cfg.gate_removed_controls:
+            blocking.append(candidate)
+            continue
+
         if severity_rank(candidate.severity) < minimum_severity:
             continue
         if confidence_rank(candidate.confidence) < minimum_confidence:
-            continue
-        if not candidate.in_changed_lines and not cfg.gate_pre_existing:
             continue
         blocking.append(candidate)
     return blocking

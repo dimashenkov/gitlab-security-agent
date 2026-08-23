@@ -47,7 +47,9 @@ MAX_VERIFY_TURNS = 14
 VERDICT_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["verdict", "reasoning", "corrected_severity", "corrected_confidence"],
+    "required": ["verdict", "reasoning", "corrected_impact",
+                 "corrected_reachable_without_authentication",
+                 "corrected_requires_user_interaction", "corrected_confidence"],
     "properties": {
         "verdict": {
             "type": "string",
@@ -61,10 +63,30 @@ VERDICT_SCHEMA: Dict[str, Any] = {
                 "references."
             ),
         },
-        "corrected_severity": {
+        "corrected_impact": {
             "type": "string",
-            "enum": ["critical", "high", "medium", "low", ""],
-            "description": "Your own severity, which may be higher or lower than claimed. Judge impact and ease of exploitation together. Empty to agree.",
+            "enum": ["code_execution", "broad_data_access", "narrow_data_access",
+                     "state_change", "metadata_disclosure", "denial_of_service", ""],
+            "description": (
+                "Correct what the attacker actually achieves, if the reviewer "
+                "got it wrong. Empty to agree. Severity is computed from this "
+                "and the two fields below — you are not asked to rate the "
+                "finding, only to establish the facts it is rated from."
+            ),
+        },
+        "corrected_reachable_without_authentication": {
+            "type": "string",
+            "enum": ["yes", "no", "unclear", ""],
+            "description": (
+                "Correct whether an unauthenticated caller can reach the "
+                "vulnerable code. You have read the callers, so you are often "
+                "better placed to say than the reviewer was. Empty to agree."
+            ),
+        },
+        "corrected_requires_user_interaction": {
+            "type": "string",
+            "enum": ["yes", "no", "unclear", ""],
+            "description": "Correct whether a victim must act. Empty to agree.",
         },
         "removes_existing_control": {
             "type": "string",
@@ -427,7 +449,11 @@ def _parse_verdict(response: Any) -> Optional[Vote]:
     return Vote(
         verdict=verdict,
         reasoning=str(data.get("reasoning", "")).strip(),
-        corrected_severity=str(data.get("corrected_severity", "") or "").strip(),
+        corrected_impact=str(data.get("corrected_impact", "") or "").strip(),
+        corrected_reachable=str(
+            data.get("corrected_reachable_without_authentication", "") or "").strip(),
+        corrected_interaction=str(
+            data.get("corrected_requires_user_interaction", "") or "").strip(),
         corrected_confidence=str(data.get("corrected_confidence", "") or "").strip(),
         removes_control=str(data.get("removes_existing_control", "") or "").strip().lower(),
     )
@@ -483,31 +509,11 @@ def _decide(candidate: Candidate) -> None:
     if verdict == VERDICT_REFUTED:
         return
 
-    # Severity moves in both directions, with the same asymmetry used
-    # everywhere else here: one dissenting verifier lowers it, raising it takes
-    # all of them.
-    #
-    # This started out one-directional, on the reasoning that the agent which
-    # traced the path had more context than a verifier seeing one finding in
-    # isolation. Four runs over the same code showed that reasoning was wrong
-    # in the way that matters. What the agent is reliable about is *whether* a
-    # weakness is real — that was identical every run — and what it is unreliable
-    # about is the severity label, which moved between `high` and `medium` for
-    # the same finding across runs. The gate is a step function on exactly that
-    # noisy scalar.
-    #
-    # A verifier is not worse placed to judge impact: the agent spreads its
-    # attention across the whole change, while the verifier reads one finding
-    # closely. And since verifiers are told to refute, unanimous agreement to
-    # *raise* a severity is a strong signal rather than a lenient one. Deciding
-    # from two independent reads instead of one first impression is the point.
-    if verdict != VERDICT_REFUTED:
-        candidate.severity = _agreed_severity(usable, candidate.severity)
-    else:
-        for vote in usable:
-            if (0 <= severity_rank(vote.corrected_severity)
-                    < severity_rank(candidate.severity)):
-                candidate.severity = vote.corrected_severity
+    # Severity is no longer a thing anyone votes on. It is computed from three
+    # facts about the finding, so a verifier that disagrees corrects a fact and
+    # the number follows — the label was the one part that moved between runs,
+    # and taking opinions on it directly is what made it move.
+    _apply_fact_corrections(candidate, usable)
 
     if verdict == VERDICT_UNCERTAIN:
         # An unresolved chain is exactly what `low` confidence means, and it
@@ -532,15 +538,36 @@ def _decide(candidate: Candidate) -> None:
                 candidate.confidence = vote.corrected_confidence
 
 
-def _agreed_severity(votes: List[Vote], claimed: str) -> str:
-    """The severity every verifier can stand behind.
+def _apply_fact_corrections(candidate: Candidate, votes: List[Vote]) -> None:
+    """Let verifiers correct the facts, then recompute severity from them.
 
-    Same shape as `_agreed_confidence`: lowering takes one voice, raising takes
-    all of them, and the lowest proposal wins. A verifier that leaves the field
-    empty is agreeing with the claim as it stands, not voting to raise it.
+    A correction needs agreement from every verifier that expressed an opinion,
+    and none dissenting — the same bar as raising a rating, for the same reason:
+    a single verifier's reading should not be able to move the gate on its own.
     """
-    return _agree(votes, claimed, severity_rank,
-                  lambda v: v.corrected_severity)
+    from .severity import derive
+
+    finding = candidate.finding
+    facts = {
+        "impact": finding.impact,
+        "reachable": finding.reachable_without_authentication,
+        "interaction": finding.requires_user_interaction,
+    }
+    changed = []
+    for key, attr in (("impact", "corrected_impact"),
+                      ("reachable", "corrected_reachable"),
+                      ("interaction", "corrected_interaction")):
+        proposals = {getattr(v, attr) for v in votes if getattr(v, attr)}
+        if len(proposals) == 1 and len(proposals & {facts[key]}) == 0:
+            facts[key] = proposals.pop()
+            changed.append(key)
+
+    derived, why = derive(facts["impact"], facts["reachable"],
+                          facts["interaction"], finding.category)
+    if derived:
+        candidate.severity = derived
+        candidate.severity_derivation = why + (
+            "; verifiers corrected {}".format(", ".join(changed)) if changed else "")
 
 
 def _agree(votes: List[Vote], claimed: str, rank, field) -> str:

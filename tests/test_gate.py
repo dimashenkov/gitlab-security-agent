@@ -109,3 +109,48 @@ class TestBlockingSelection:
         joined = " ".join(decision.non_blocking_reasons)
         assert "below the high severity threshold" in joined
         assert "below medium confidence" in joined
+
+
+class TestRemovedControlsBlock:
+    """Deleting a security control blocks on that alone.
+
+    Every part of this rule existed — the question to the verifier, the
+    aggregation, the config flag, the verification scope — except the line in
+    the gate that acts on it. 282 tests passed because none of them followed
+    the rule all the way to the verdict. Five runs over a merge request
+    reverting the fix for CVE-2023-41040 confirmed it five times and blocked it
+    zero times.
+    """
+
+    def test_a_removed_control_blocks_below_the_severity_threshold(self, config):
+        candidate = make_candidate(severity="low", confidence="high",
+                                   removes_control=True)
+        decision = decide(config, outcome_with(candidate))
+        assert decision.exit_code == EXIT_FINDINGS
+        assert decision.blocking == [candidate]
+
+    def test_it_blocks_below_the_confidence_threshold_too(self, config):
+        candidate = make_candidate(severity="low", confidence="low",
+                                   removes_control=True)
+        assert decide(config, outcome_with(candidate)).exit_code == EXIT_FINDINGS
+
+    def test_it_can_be_switched_off(self, config):
+        config.gate_removed_controls = False
+        candidate = make_candidate(severity="low", removes_control=True)
+        assert decide(config, outcome_with(candidate)).exit_code == EXIT_OK
+
+    def test_it_does_not_override_pre_existing(self, config):
+        # Code the change did not touch is not this author's to answer for,
+        # whatever the verifiers concluded about it.
+        candidate = make_candidate(severity="low", removes_control=True,
+                                   in_changed_lines=False)
+        assert decide(config, outcome_with(candidate)).exit_code == EXIT_OK
+
+    def test_fail_on_none_still_means_none(self, config):
+        config.fail_on = "none"
+        candidate = make_candidate(severity="critical", removes_control=True)
+        assert decide(config, outcome_with(candidate)).exit_code == EXIT_OK
+
+    def test_an_ordinary_finding_is_unaffected(self, config):
+        candidate = make_candidate(severity="low", removes_control=False)
+        assert decide(config, outcome_with(candidate)).exit_code == EXIT_OK

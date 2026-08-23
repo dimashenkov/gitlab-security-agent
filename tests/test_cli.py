@@ -210,10 +210,12 @@ class TestSuppressionThroughTheCli:
     ):
         from conftest import make_candidate
 
+        # The fingerprint is anchored on the quoted code, so the suppression
+        # entry has to be derived from the same evidence the agent reports.
         fingerprint = make_candidate(
-            title=FINDING_ARGS["title"],
             category=FINDING_ARGS["category"],
             file=FINDING_ARGS["file"],
+            evidence=FINDING_ARGS["evidence"],
         ).fingerprint
         (git_repo / ".security-agent-ignore.yml").write_text(
             "ignore:\n  - fingerprint: {}\n    reason: Accepted, tracked in SEC-1.\n".format(
