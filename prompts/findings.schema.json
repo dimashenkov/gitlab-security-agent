@@ -85,7 +85,7 @@
           },
           "evidence": {
             "type": "string",
-            "description": "The vulnerable code copied verbatim from the file at the cited line \u2014 one to five lines. No diff markers, no ellipses, no paraphrasing, no reconstruction from memory. This string is matched against the real file before the finding is accepted, and the finding is rejected if it is not found there."
+            "description": "The vulnerable code copied verbatim from the file at the cited line \u2014 one to five lines. No diff markers, no ellipses, no paraphrasing, no reconstruction from memory. This string is matched against the real file before the finding is accepted, and must identify ONE place in it: a quote that matches several lines is rejected rather than attached to the first one. Quote the whole statement, and surrounding lines when the statement alone is not distinctive."
           },
           "description": {
             "type": "string",

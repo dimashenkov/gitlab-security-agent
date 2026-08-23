@@ -46,36 +46,98 @@ def _strip_diff_markers(lines: Sequence[str]) -> List[str]:
     return [line for line in stripped if line]
 
 
-def locate_evidence(file_text: str, evidence: str) -> Optional[int]:
-    """Find where the quoted code sits in the file.
+# A quote has to carry enough information to identify one place in a file.
+# `return value` occurs in most files several times; matching it proves nothing
+# and silently attaches the finding to the first occurrence, taking the location
+# and the change attribution with it.
+MIN_EVIDENCE_CHARS = 24
 
-    Returns the 1-based line number of the first quoted line, or None when the
-    quote does not appear. A returned line number is authoritative: it is used
-    to correct the finding's own claim, which is often off by a few lines when
-    the agent counted hunk offsets by hand.
+
+class EvidenceProblem(Exception):
+    """The quote cannot be tied to one place in the file.
+
+    Carries a message written for the agent, because the agent is what has to
+    act on it — by quoting more, or by dropping the finding.
+    """
+
+
+def locate_evidence(file_text: str, evidence: str, claimed_line: int = 0) -> int:
+    """Find where the quoted code sits in the file, or refuse to guess.
+
+    Returns a 1-based line number. Raises `EvidenceProblem` when the quote is
+    absent, too thin to identify anything, or matches several places without the
+    claimed line settling which.
+
+    Taking the first match used to be the behaviour, and it made this layer
+    weaker than its own docstring claimed: it proved similar text occurred
+    *somewhere*, not that the quoted operation was at the cited site. Ambiguity
+    is now an answer, not something resolved by position.
     """
     wanted = _evidence_lines(evidence)
     if not wanted:
-        return None
+        raise EvidenceProblem(
+            "the evidence is empty — quote the vulnerable code verbatim")
+
+    if sum(len(line) for line in wanted) < MIN_EVIDENCE_CHARS:
+        raise EvidenceProblem(
+            "the quoted code is too short to identify one place in the file "
+            "({} characters). Quote the whole statement, or a couple of lines "
+            "around it.".format(sum(len(line) for line in wanted)))
 
     haystack = [normalize(line) for line in file_text.splitlines()]
     if not haystack:
-        return None
+        raise EvidenceProblem("the file is empty")
 
     for candidate in (wanted, _strip_diff_markers(wanted)):
         if not candidate:
             continue
-        hit = _match(haystack, candidate, exact=True)
-        if hit is not None:
-            return hit
-        hit = _match(haystack, candidate, exact=False)
-        if hit is not None:
-            return hit
-    return None
+        for exact in (True, False):
+            hits = _match_all(haystack, candidate, exact=exact)
+            if not hits:
+                continue
+            if len(hits) == 1:
+                return hits[0]
+            chosen = _closest(hits, claimed_line)
+            if chosen is not None:
+                return chosen
+            raise EvidenceProblem(
+                "that code appears {} times in the file (lines {}), so it does "
+                "not identify one place. Quote more of the surrounding code, or "
+                "give the line you mean.".format(
+                    len(hits), ", ".join(str(h) for h in hits[:6])))
+
+    raise EvidenceProblem("the quoted code does not appear in the file")
 
 
-def _match(haystack: List[str], needle: List[str], exact: bool) -> Optional[int]:
-    """Sliding-window match of consecutive lines. Returns a 1-based line number.
+def _closest(hits: List[int], claimed_line: int) -> Optional[int]:
+    """Pick the occurrence the finding meant, when its own line says clearly.
+
+    Two conditions, and both are needed. The nearest occurrence must be within
+    reach of the claim — a claim tens of lines away is not pointing at it — and
+    it must be *strictly* nearer than every other. A claim equidistant from two
+    occurrences has disambiguated nothing, and guessing there is the behaviour
+    this replaced.
+    """
+    if not claimed_line:
+        return None
+    ranked = sorted(hits, key=lambda h: (abs(h - claimed_line), h))
+    nearest = ranked[0]
+    if abs(nearest - claimed_line) > NEAR_CLAIMED_LINE:
+        return None
+    runner_up = ranked[1]
+    if abs(nearest - claimed_line) == abs(runner_up - claimed_line):
+        return None
+    return nearest
+
+
+# How close a claimed line has to be to count as pointing at an occurrence. The
+# agent's own line numbers are routinely a few off, since it counts hunk offsets
+# by hand — but not tens off.
+NEAR_CLAIMED_LINE = 10
+
+
+def _match_all(haystack: List[str], needle: List[str], exact: bool) -> List[int]:
+    """Every place the quote matches, as 1-based line numbers.
 
     ``exact=False`` allows each quoted line to be a substring of the file line,
     which covers a quote that clipped a long line mid-way. Every line of the
@@ -83,7 +145,8 @@ def _match(haystack: List[str], needle: List[str], exact: bool) -> Optional[int]
     """
     span = len(needle)
     if span > len(haystack):
-        return None
+        return []
+    hits = []
     for start in range(len(haystack) - span + 1):
         window = haystack[start : start + span]
         if exact:
@@ -91,8 +154,8 @@ def _match(haystack: List[str], needle: List[str], exact: bool) -> Optional[int]
         else:
             ok = all(n in w for w, n in zip(window, needle))
         if ok:
-            return start + 1
-    return None
+            hits.append(start + 1)
+    return hits
 
 
 @dataclass(frozen=True)

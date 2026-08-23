@@ -20,7 +20,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
-from .evidence import attribution, evidence_span, excerpt, locate_evidence
+from .evidence import (
+    EvidenceProblem,
+    attribution,
+    evidence_span,
+    excerpt,
+    locate_evidence,
+)
 from .models import Candidate, Finding, RejectedClaim, ToolCallRecord
 from .workspace import Workspace, WorkspaceError
 
@@ -418,8 +424,12 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
             is_error=True,
         )
 
-    # --- is the quoted code actually in that file? ---
-    located = locate_evidence(file_text, finding.evidence)
+    # --- is the quoted code actually in that file, at one identifiable place? ---
+    try:
+        located = locate_evidence(file_text, finding.evidence, finding.line)
+        problem = ""
+    except EvidenceProblem as exc:
+        located, problem = None, str(exc)
     if located is None:
         if final_attempt:
             session.rejected.append(RejectedClaim(
@@ -427,21 +437,21 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
                 reason="evidence-not-found",
                 detail="quoted code does not appear in the file"))
             return ToolResult(
-                "Dropped: the quoted code still does not appear in {}. A finding "
-                "whose evidence is not in the file cannot be reported. Move on."
-                .format(rel_path),
-                "dropped: evidence not found in {}".format(rel_path),
+                "Dropped: {} in {}. A finding whose evidence cannot be tied to "
+                "one place in the file cannot be reported. Move on."
+                .format(problem, rel_path),
+                "dropped: {}".format(problem[:60]),
                 is_error=True,
             )
         window, start, stop = excerpt(file_text, finding.line, radius=20)
         return ToolResult(
-            "Not recorded — the `evidence` you supplied does not appear anywhere "
-            "in {}. Evidence must be copied verbatim from the file, with no diff "
-            "markers, ellipses, or paraphrasing.\n\nWhat is actually at lines "
-            "{}-{}:\n{}\n\nRe-read the file, then either report again quoting the "
-            "real code, or drop the finding if the code you had in mind is not "
-            "there.".format(rel_path, start, stop, window),
-            "rejected: evidence not found in {}".format(rel_path),
+            "Not recorded — {} in {}. Evidence must be copied verbatim from the "
+            "file, with no diff markers, ellipses, or paraphrasing, and must "
+            "identify one place.\n\nWhat is actually at lines {}-{}:\n{}\n\n"
+            "Re-read the file, then either report again quoting the real code, "
+            "or drop the finding if the code you had in mind is not there."
+            .format(problem, rel_path, start, stop, window),
+            "rejected: {}".format(problem[:60]),
             is_error=True,
         )
 

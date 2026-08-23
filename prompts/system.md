@@ -54,6 +54,8 @@ Every finding must quote the vulnerable code verbatim in `evidence`, copied from
 
 That quote is matched against the real file before the finding is recorded, and the finding is rejected if it is not found. This is not a formality: it is the check that stops a plausible-sounding description of code that does not exist. If a rejection surprises you, the code is not what you thought — re-read it before reporting again.
 
+The quote must also identify **one** place. `return value` occurs all over most files; a quote that matches several lines does not say where the weakness is, and the finding is rejected rather than attached to whichever occurrence came first. Quote the whole statement, and a line or two around it when the statement alone is not distinctive. Getting the line number roughly right helps too — it is used to settle which occurrence you meant when a quote is otherwise ambiguous.
+
 Cite the line in the post-change version of the file. When the quote is found at a different line than you claimed, the line is corrected for you; when a finding spans a range, cite the most relevant line.
 
 ## Severity is computed, not judged

@@ -6,8 +6,11 @@ blocked merge request, so both directions are load-bearing: it must find real
 code despite formatting differences, and it must not find code that isn't there.
 """
 
+import pytest
+
 from security_agent.evidence import (
     ChangedLines,
+    EvidenceProblem,
     changed_lines,
     evidence_span,
     excerpt,
@@ -15,6 +18,15 @@ from security_agent.evidence import (
     normalize,
     touches_change,
 )
+
+
+def missing(file_text, evidence, claimed=0):
+    """True when the quote cannot be tied to one place — the new failure mode."""
+    try:
+        locate_evidence(file_text, evidence, claimed)
+        return False
+    except EvidenceProblem:
+        return True
 
 SOURCE = '''\
 import os
@@ -50,27 +62,28 @@ class TestLocateEvidence:
         evidence = '+    query = "SELECT * FROM users WHERE id = " + user_id'
         assert locate_evidence(SOURCE, evidence) == 6
 
-    def test_matches_a_clipped_fragment_of_a_long_line(self):
-        assert locate_evidence(SOURCE, "SELECT * FROM users WHERE id = ") is not None
+    def test_a_clipped_fragment_matches_when_it_is_unique(self):
+        assert locate_evidence(
+            SOURCE, 'query = "SELECT * FROM users WHERE id = "') == 6
 
     def test_rejects_code_that_is_not_there(self):
-        assert locate_evidence(SOURCE, 'os.system("rm -rf " + user_input)') is None
+        assert missing(SOURCE, 'os.system("rm -rf " + user_input)')
 
     def test_rejects_a_paraphrase(self):
         # Same meaning, different code. This is the failure mode the check exists
         # for, and tolerating it would defeat the whole layer.
-        assert locate_evidence(SOURCE, 'query = f"SELECT * FROM users WHERE id = {user_id}"') is None
+        assert missing(SOURCE, 'query = f"SELECT * FROM users WHERE id = {user_id}"')
 
     def test_rejects_lines_that_exist_but_not_consecutively(self):
         evidence = "import os\n    return db.execute(query)"
-        assert locate_evidence(SOURCE, evidence) is None
+        assert missing(SOURCE, evidence)
 
     def test_empty_evidence_is_not_a_match(self):
-        assert locate_evidence(SOURCE, "") is None
-        assert locate_evidence(SOURCE, "   \n  \n") is None
+        assert missing(SOURCE, "")
+        assert missing(SOURCE, "   \n  \n")
 
     def test_empty_file_is_not_a_match(self):
-        assert locate_evidence("", "anything") is None
+        assert missing("", "anything")
 
 
 class TestNormalize:
@@ -248,3 +261,43 @@ class TestDeletionReachIsAsymmetric:
         added = ChangedLines(added={"a.py": {100}}, removed_at={})
         # A five-line quote starting at 94 ends at 98, within slack of 100.
         assert touches_change("a.py", 94, 5, added)
+
+
+class TestAmbiguousEvidenceIsRefused:
+    """The citation check has to prove *where*, not just *whether*.
+
+    It used to return the first match anywhere in the file, which meant a quote
+    like `return value` proved that similar text occurred somewhere and then
+    attached the finding to an unrelated line — taking the location and the
+    change attribution with it. Ambiguity is now an answer.
+    """
+
+    def test_a_fragment_appearing_twice_is_refused(self):
+        # This substring is in both the vulnerable line and the safe
+        # parameterised one, so on its own it identifies neither.
+        with pytest.raises(EvidenceProblem, match="appears 2 times"):
+            locate_evidence(SOURCE, "SELECT * FROM users WHERE id = ")
+
+    def test_the_claimed_line_can_settle_it(self):
+        # The agent's own line number is routinely a few off but not tens off,
+        # so it disambiguates when it points clearly at one occurrence.
+        assert locate_evidence(SOURCE, "SELECT * FROM users WHERE id = ", 6) == 6
+        assert locate_evidence(SOURCE, "SELECT * FROM users WHERE id = ", 11) == 11
+
+    def test_a_claimed_line_between_two_matches_settles_nothing(self):
+        text = "a = 1\n" * 40 + "sink(user_input, extra)\n" + "b = 2\n" * 5 + "sink(user_input, extra)\n"
+        # Equidistant from both: guessing here is what this exists to stop.
+        with pytest.raises(EvidenceProblem):
+            locate_evidence(text, "sink(user_input, extra)", 44)
+
+    def test_a_quote_too_short_to_identify_anything_is_refused(self):
+        with pytest.raises(EvidenceProblem, match="too short"):
+            locate_evidence(SOURCE, "return")
+
+    def test_a_unique_quote_still_matches(self):
+        assert locate_evidence(
+            SOURCE, 'query = "SELECT * FROM users WHERE id = " + user_id') == 6
+
+    def test_absent_code_says_so_rather_than_something_vaguer(self):
+        with pytest.raises(EvidenceProblem, match="does not appear"):
+            locate_evidence(SOURCE, 'os.system("rm -rf " + user_input)')
