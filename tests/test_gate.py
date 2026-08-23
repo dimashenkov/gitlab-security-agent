@@ -154,3 +154,34 @@ class TestRemovedControlsBlock:
     def test_an_ordinary_finding_is_unaffected(self, config):
         candidate = make_candidate(severity="low", removes_control=False)
         assert decide(config, outcome_with(candidate)).exit_code == EXIT_OK
+
+
+class TestTheVerdictNamesTheRuleThatApplied:
+    """Two different rules block, and the message has to say which one did.
+
+    A finding stopped for deleting a guard is usually below the severity
+    threshold. Telling its author it was "at or above the high threshold" sends
+    them to argue with a number that had nothing to do with the decision —
+    which is what the first real pipeline run reported.
+    """
+
+    def test_a_removed_control_is_described_as_one(self, config):
+        candidate = make_candidate(severity="medium", removes_control=True)
+        reason = decide(config, outcome_with(candidate)).reason
+        assert "removes an existing security control" in reason
+        assert "threshold" not in reason
+
+    def test_an_ordinary_finding_still_cites_the_threshold(self, config):
+        candidate = make_candidate(severity="critical", confidence="high")
+        reason = decide(config, outcome_with(candidate)).reason
+        assert "at or above the high threshold" in reason
+        assert "removes an existing" not in reason
+
+    def test_both_rules_at_once_are_both_named(self, config):
+        candidates = [
+            make_candidate(severity="low", removes_control=True, title="a"),
+            make_candidate(severity="critical", confidence="high", title="b"),
+        ]
+        reason = decide(config, outcome_with(*candidates)).reason
+        assert "removes an existing security control" in reason
+        assert "at or above the high threshold" in reason

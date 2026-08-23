@@ -22,7 +22,9 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # claude-opus-5, $/MTok. Only used for the cost column.
@@ -55,16 +57,26 @@ def run_once(args: argparse.Namespace, index: int) -> dict:
         cmd += ["--effort", args.effort]
 
     # check=False on purpose: a non-zero exit is the product here, not a failure.
+    started = time.monotonic()
+    # check=False on purpose: a non-zero exit is the product here, not a failure.
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    seconds = time.monotonic() - started
+
     payload_path = out_dir / "findings.json"
     if not payload_path.is_file():
         shutil.rmtree(out_dir, ignore_errors=True)
-        return {"ok": False, "exit_code": proc.returncode,
+        return {"ok": False, "index": index, "seconds": seconds,
+                "exit_code": proc.returncode,
                 "error": proc.stderr.strip().splitlines()[-1:] or ["no output"]}
 
     payload = json.loads(payload_path.read_text())
     shutil.rmtree(out_dir, ignore_errors=True)
-    return {"ok": True, "exit_code": proc.returncode, "payload": payload}
+    # Keep the agent's own log: without it a slow or retrying run looks
+    # identical to a fast one, and "why did that take 17 minutes" is
+    # unanswerable after the fact.
+    retries = proc.stderr.count("retrying in")
+    return {"ok": True, "index": index, "seconds": seconds, "retries": retries,
+            "exit_code": proc.returncode, "payload": payload}
 
 
 def summarise(runs: list) -> None:
@@ -88,6 +100,12 @@ def summarise(runs: list) -> None:
         statistics.median(costs), min(costs), max(costs)))
     print("turns          {} median  ({}–{})".format(
         int(statistics.median(turns)), min(turns), max(turns)))
+    times = [r["seconds"] for r in good]
+    print("time per run   {:.0f}s median  ({:.0f}–{:.0f}s)".format(
+        statistics.median(times), min(times), max(times)))
+    retried = sum(r.get("retries", 0) for r in good)
+    if retried:
+        print("               {} transient retry/retries across the set".format(retried))
 
     # --- per finding, keyed by the fingerprint that is meant to be stable ---
     seen = defaultdict(list)
@@ -131,21 +149,38 @@ def main() -> int:
     parser.add_argument("--head")
     parser.add_argument("--effort")
     parser.add_argument("-n", "--runs", type=int, default=5)
+    parser.add_argument("-c", "--concurrency", type=int, default=5,
+                        help="How many reviews to run at once. They share nothing.")
     parser.add_argument("--json", metavar="PATH", help="write the raw payloads here")
     args = parser.parse_args()
 
+    # The runs are independent by construction — same input, no shared state —
+    # so running them one after another only makes the measurement slower, not
+    # more correct. Five sequential runs took 86 minutes; concurrently they take
+    # as long as the slowest one.
+    workers = max(1, min(args.concurrency, args.runs))
+    print("running {} review(s) across {} worker(s)\n".format(args.runs, workers))
+
+    started = time.monotonic()
     runs = []
-    for i in range(1, args.runs + 1):
-        print("run {}/{} ...".format(i, args.runs), end=" ", flush=True)
-        result = run_once(args, i)
-        if result["ok"]:
-            payload = result["payload"]
-            print("exit {} · {} finding(s) · ${:.3f}".format(
-                result["exit_code"], payload["counts"]["reported"],
-                cost_of(payload["usage"])))
-        else:
-            print("FAILED: {}".format(result.get("error")))
-        runs.append(result)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(run_once, args, i): i
+                   for i in range(1, args.runs + 1)}
+        for future in as_completed(futures):
+            result = future.result()
+            if result["ok"]:
+                payload = result["payload"]
+                print("run {} · exit {} · {} finding(s) · ${:.3f} · {:.0f}s{}".format(
+                    result["index"], result["exit_code"],
+                    payload["counts"]["reported"], cost_of(payload["usage"]),
+                    result["seconds"],
+                    " · {} retries".format(result["retries"]) if result["retries"] else ""))
+            else:
+                print("run {} FAILED after {:.0f}s: {}".format(
+                    result["index"], result["seconds"], result.get("error")))
+            runs.append(result)
+    print("\nwall clock: {:.0f}s".format(time.monotonic() - started))
+    runs.sort(key=lambda r: r["index"])
 
     summarise(runs)
     if args.json:

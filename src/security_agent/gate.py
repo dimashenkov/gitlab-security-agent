@@ -99,21 +99,29 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
     notes = _non_blocking_notes(cfg, outcome, blocking)
 
     if blocking:
-        counts = {}
-        for candidate in blocking:
-            counts[candidate.severity] = counts.get(candidate.severity, 0) + 1
-        summary = ", ".join(
-            "{} {}".format(count, level)
-            for level, count in sorted(
-                counts.items(), key=lambda kv: -severity_rank(kv[0]))
-        )
+        # Two different rules can block, and the message has to name the one
+        # that actually applied. A finding stopped for deleting a guard is
+        # often below the severity threshold, and telling its author it was
+        # "at or above the threshold" sends them to argue with the wrong number.
+        removed = [c for c in blocking if c.removes_control]
+        rated = [c for c in blocking if not c.removes_control]
+
+        parts = []
+        if removed:
+            parts.append(
+                "{} finding(s) where this change removes an existing security "
+                "control ({})".format(len(removed), _levels(removed))
+            )
+        if rated:
+            parts.append(
+                "{} finding(s) at or above the {} threshold with at least {} "
+                "confidence ({})".format(
+                    len(rated), cfg.fail_on, cfg.min_confidence, _levels(rated))
+            )
+
         return Decision(
             exit_code=EXIT_FINDINGS,
-            reason=(
-                "{} finding(s) at or above the {} threshold with at least {} "
-                "confidence: {}.".format(
-                    len(blocking), cfg.fail_on, cfg.min_confidence, summary)
-            ),
+            reason="; ".join(parts) + ".",
             blocking=blocking,
             non_blocking_reasons=notes,
         )
@@ -140,6 +148,16 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
         exit_code=EXIT_OK,
         reason="No security findings.",
         non_blocking_reasons=notes,
+    )
+
+
+def _levels(candidates: List[Candidate]) -> str:
+    counts = {}
+    for candidate in candidates:
+        counts[candidate.severity] = counts.get(candidate.severity, 0) + 1
+    return ", ".join(
+        "{} {}".format(count, level)
+        for level, count in sorted(counts.items(), key=lambda kv: -severity_rank(kv[0]))
     )
 
 
