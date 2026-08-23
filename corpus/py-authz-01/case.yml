@@ -1,0 +1,12 @@
+case_id: py-authz-01
+language: python
+family: authorization
+framework: flask
+source: path parameter naming another user's record
+sink: response body
+decisive_control: comparing the record's owner to the session user before returning it
+# No dangerous function appears anywhere. The vulnerability is the *absence* of
+# two lines, which is why no rule set encodes it and why this case is the one
+# most likely to separate the agent from a linter.
+expected_category: authorization
+expected_file: views.py

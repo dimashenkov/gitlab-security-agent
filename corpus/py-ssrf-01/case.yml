@@ -1,0 +1,12 @@
+case_id: py-ssrf-01
+language: python
+family: ssrf
+framework: requests
+source: tenant-configured callback URL
+sink: requests.get
+decisive_control: checking the host against the allowlist, not only the scheme
+# The allowlist is defined in both members and used in only one. A finding here
+# requires noticing that a constant is declared and never consulted, which is
+# exactly the kind of near-miss that reads as safe on a skim.
+expected_category: ssrf
+expected_file: webhook.py

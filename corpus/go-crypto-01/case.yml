@@ -1,0 +1,12 @@
+case_id: go-crypto-01
+language: go
+family: crypto
+framework: crypto/hmac
+source: attacker-supplied signature header
+sink: signature comparison
+decisive_control: hmac.Equal, which takes constant time, rather than ==
+# The unsafe member is shorter and simpler-looking, and its only fault is that
+# == returns as soon as two bytes differ. A reviewer scanning for dangerous
+# calls sees nothing; the danger is in a call that is missing.
+expected_category: crypto
+expected_file: verify.go

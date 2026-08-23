@@ -1,0 +1,11 @@
+case_id: py-deser-01
+language: python
+family: deserialization
+framework: redis
+source: bytes read from a shared cache
+sink: deserialisation
+decisive_control: json.loads, which builds only data, rather than pickle.loads
+# The one case here a rule set would also catch. Kept deliberately: a corpus of
+# only the hard cases would not notice the day the easy ones started failing.
+expected_category: deserialization
+expected_file: session.py

@@ -1,0 +1,12 @@
+case_id: ts-redirect-01
+language: typescript
+family: open_redirect
+framework: express
+source: next query parameter
+sink: res.redirect
+decisive_control: requiring a site-relative path, and rejecting the // form that is not one
+# The safe member's second condition is the subtle half: "//evil.example" starts
+# with a slash and is a protocol-relative absolute URL. A check that stops at
+# startsWith("/") looks like a control and is not one.
+expected_category: open_redirect
+expected_file: login.ts

@@ -1,0 +1,12 @@
+case_id: py-path-01
+language: python
+family: path_traversal
+framework: flask
+source: caller-supplied file name
+sink: send_file
+decisive_control: containment check after resolve(), rather than an existence check
+# Both members call resolve() and both abort on failure, so the shapes match.
+# Only one of the two checks constrains where the path may point; the other
+# constrains only whether something is there.
+expected_category: path_traversal
+expected_file: download.py
