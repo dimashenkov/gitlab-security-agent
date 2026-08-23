@@ -1,0 +1,36 @@
+# Anthropic's own AI security reviewer, run alongside ours on the same pull
+# requests so the two can be compared on identical diffs.
+#
+# This is a benchmark, not a second gate: it is the closest published tool to
+# what this repository builds — semantic, diff-aware, language-agnostic — so
+# where the two disagree is the interesting part. Kept non-blocking on purpose;
+# a comparison that fails the build is a comparison nobody runs twice.
+
+name: Security review (Anthropic action)
+
+permissions:
+  pull-requests: write # to leave the review comments
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # The action diffs against the base, so it needs more than the tip.
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-security-review@main
+        continue-on-error: true
+        with:
+          comment-pr: true
+          upload-results: true
+          claude-api-key: ${{ secrets.CLAUDE_API_KEY }}
+          # Left on the action's default model rather than matched to ours.
+          # Testing it as it ships is the honest comparison; the model
+          # difference is a caveat to state, not a variable to tune away.
