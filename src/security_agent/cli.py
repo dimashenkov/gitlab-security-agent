@@ -6,6 +6,8 @@ import argparse
 import logging
 import os
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -49,10 +51,11 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     # Imported here so `--help` and config errors do not pay for the SDK import.
     import anthropic
 
+    from . import terminal
     from .agent import SecurityAgent
     from .briefing import build as build_briefing
     from .gitlab import publish
-    from .report import ReportError, render_markdown, render_terminal, write_artifacts
+    from .report import ReportError, render_markdown, write_artifacts
     from .suppress import SuppressionError
     from .suppress import apply as apply_suppressions
     from .suppress import load as load_rules
@@ -99,7 +102,8 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     agent = SecurityAgent(cfg, workspace, client=client)
 
     log.info("starting review — model=%s effort=%s mode=%s", cfg.model, cfg.effort, mode)
-    outcome = agent.run(mode=mode, briefing=build_briefing(cfg, workspace, mode))
+    with _folded("review", "Reviewing the change"):
+        outcome = agent.run(mode=mode, briefing=build_briefing(cfg, workspace, mode))
     candidates = list(agent.candidates)
     log.info(
         "agent finished: %s, %d turn(s), %d candidate finding(s)",
@@ -109,10 +113,10 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     # Layers 2 and 3 of the hallucination check. Layer 1 already ran inside
     # `report_finding`, so everything here cites code that provably exists.
     if candidates:
-        log.info("verifying %d finding(s)", len(candidates))
-        outcome.verification_usage = verify_candidates(
-            cfg, workspace, client, candidates,
-            provenance=outcome.provenance, metrics=outcome.metrics)
+        with _folded("verify", "Verifying {} finding(s)".format(len(candidates))):
+            outcome.verification_usage = verify_candidates(
+                cfg, workspace, client, candidates,
+                provenance=outcome.provenance, metrics=outcome.metrics)
 
     # A suppression the change itself adds cannot excuse that change.
     ignore_touched = any(
@@ -138,17 +142,40 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         # a verdict on the code.
         log.error("%s", exc)
         return EXIT_ERROR
-    log.info("wrote %s and %s", paths["markdown"], paths["json"])
-    print(render_terminal(outcome, decision))
+    log.debug("wrote %s and %s", paths["markdown"], paths["json"])
+    print(terminal.render(outcome, decision, report_path=paths["markdown"]))
 
     if cfg.post_comment and not args.no_comment:
         publish(cfg.gitlab, render_markdown(cfg, outcome, decision))
 
-    _log_verdict(decision)
+    # No closing log line: the rendered banner above already states the verdict,
+    # and saying it twice in two formats is how a job log becomes unreadable.
     return decision.exit_code
 
 
 # ------------------------------------------------------------------- helpers
+
+
+@contextmanager
+def _folded(name: str, title: str):
+    """Collapse a noisy phase in the GitLab job log.
+
+    The trace of what the agent read is worth keeping — it is how you audit a
+    verdict you disagree with — but it should not be the first thing on screen.
+    Folded, it is one clickable line; the verdict stays visible without
+    scrolling. Outside GitLab the markers are invisible control characters, so
+    there is nothing to switch off.
+    """
+    from . import terminal
+
+    started = int(time.time())
+    sys.stdout.write(terminal.section(name, title, True, started) + "\n")
+    sys.stdout.flush()
+    try:
+        yield
+    finally:
+        sys.stdout.write(terminal.section(name, "", False, int(time.time())) + "\n")
+        sys.stdout.flush()
 
 
 def _skip_requested(cfg: Config, args: argparse.Namespace) -> bool:
@@ -222,14 +249,6 @@ def _has_credentials() -> bool:
         for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE")
     ) or Path(os.path.expanduser("~/.config/anthropic")).exists()
 
-
-def _log_verdict(decision) -> None:
-    if decision.exit_code == EXIT_OK:
-        log.info("PASS — %s", decision.reason)
-    elif decision.exit_code == EXIT_ERROR:
-        log.error("ERROR — %s", decision.reason)
-    else:
-        log.error("BLOCKED — %s", decision.reason)
 
 
 def _build_config(args: argparse.Namespace) -> Config:

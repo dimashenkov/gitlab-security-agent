@@ -491,16 +491,7 @@ def write_artifacts(
     return {"markdown": str(markdown_path), "json": str(json_path)}
 
 
-def render_terminal(outcome: ScanOutcome, decision: Decision) -> str:
-    """A compact view for the job log, where nobody renders Markdown."""
-    lines = ["", "=" * 72]
-    for candidate in sorted(outcome.reported, key=lambda c: c.sort_key):
-        blocking = "BLOCKS" if candidate in decision.blocking else "      "
-        lines.append("{} {:>8} {:<12} {}:{}".format(
-            blocking, candidate.severity, candidate.finding.category,
-            candidate.finding.file, candidate.line))
-        lines.append("         {}".format(candidate.finding.title))
-    if not outcome.reported:
-        lines.append("No findings reported.")
-    lines += ["=" * 72, decision.reason, ""]
-    return "\n".join(lines)
+# The job log view lives in `terminal.py`. It is a different document for a
+# different reader — skimmed in a browser while a pipeline runs, not read as a
+# report — and keeping it here invited the two to drift into one mediocre
+# format that served neither.
