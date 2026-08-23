@@ -317,6 +317,35 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
             usage.cache_read_tokens, usage.cache_write_tokens, usage.requests),
         "",
     ]
+    m = outcome.metrics
+    cov = outcome.coverage
+    if cov.changed:
+        lines += [
+            "**Coverage:** {} of {} changed file(s) opened{}".format(
+                len([f for f in cov.changed if f in set(cov.examined)]),
+                len(cov.changed),
+                "" if cov.complete else " — not opened: " + ", ".join(
+                    "`{}`".format(f) for f in cov.unopened[:8])),
+            "",
+        ]
+    rejected = (m.citations_rejected_not_found + m.citations_rejected_ambiguous
+                + m.citations_rejected_too_short + m.citations_rejected_unknown_path)
+    if m.citations_accepted or rejected:
+        lines += [
+            "**Citation checks:** {} accepted, {} rejected{}{}".format(
+                m.citations_accepted, rejected,
+                " ({} ambiguous)".format(m.citations_rejected_ambiguous)
+                if m.citations_rejected_ambiguous else "",
+                " · {} line(s) corrected".format(m.lines_corrected)
+                if m.lines_corrected else ""),
+            "",
+            "**Verification:** {} verified, {} skipped as non-blocking, "
+            "{} changed a verdict{}".format(
+                m.verified, m.verification_skipped, m.verdicts_changed,
+                " · {} could not run".format(m.verification_failed)
+                if m.verification_failed else ""),
+            "",
+        ]
     if outcome.duplicates_dropped:
         lines.append("**Duplicate reports collapsed:** {}".format(outcome.duplicates_dropped))
         lines.append("")
@@ -397,6 +426,8 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
         },
         "usage": usage.to_dict(),
         "provenance": outcome.provenance.to_dict(),
+        "coverage_accounting": outcome.coverage.to_dict(),
+        "stage_metrics": outcome.metrics.to_dict(),
         "settings": {
             "fail_on": cfg.fail_on,
             "min_confidence": cfg.min_confidence,

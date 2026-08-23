@@ -111,7 +111,8 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     if candidates:
         log.info("verifying %d finding(s)", len(candidates))
         outcome.verification_usage = verify_candidates(
-            cfg, workspace, client, candidates, provenance=outcome.provenance)
+            cfg, workspace, client, candidates,
+            provenance=outcome.provenance, metrics=outcome.metrics)
 
     # A suppression the change itself adds cannot excuse that change.
     ignore_touched = any(

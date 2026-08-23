@@ -115,6 +115,7 @@ def verify_candidates(
     client: Any,
     candidates: List[Candidate],
     provenance: Optional[Any] = None,
+    metrics: Optional[Any] = None,
 ) -> Usage:
     """Verify every candidate in place. Returns the tokens this stage cost."""
     usage = Usage()
@@ -140,6 +141,9 @@ def verify_candidates(
             "not verified — reported for information only, as it cannot block "
             "the merge at the current settings ({})".format(_why_not_gating(cfg, candidate))
         )
+    if metrics is not None:
+        metrics.verification_skipped += len(informational)
+        metrics.verified += len(candidates)
     if informational:
         log.info(
             "skipping verification for %d finding(s) that cannot block; verifying %d",
@@ -224,7 +228,16 @@ def verify_candidates(
                 vote.verdict if not vote.error else "unavailable",
                 (vote.error or vote.reasoning)[:180],
             )
+        before = (candidate.severity, candidate.confidence, candidate.verdict,
+                  candidate.removes_control)
         _decide(candidate)
+        if metrics is not None:
+            if any(v.error for v in candidate.votes):
+                metrics.verification_failed += 1
+            after = (candidate.severity, candidate.confidence, candidate.verdict,
+                     candidate.removes_control)
+            if before != after:
+                metrics.verdicts_changed += 1
         log.info("  verdict: %s — %s", candidate.verdict, candidate.verdict_reason[:200])
 
     return usage

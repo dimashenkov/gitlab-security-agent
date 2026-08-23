@@ -346,6 +346,102 @@ STOP_EXPLANATIONS = {
 
 
 @dataclass
+class StageMetrics:
+    """What each stage did, so its value can be argued about with numbers.
+
+    The open question this exists to answer is whether adversarial verification
+    earns roughly three times the cost of the review itself. That cannot be
+    settled by opinion, and it cannot be settled after the fact from a report
+    that only shows what survived — it needs counts of what each stage saw,
+    rejected, and changed.
+    """
+
+    # Layer 1, inside report_finding.
+    citations_accepted: int = 0
+    citations_rejected_unknown_path: int = 0
+    citations_rejected_not_found: int = 0
+    citations_rejected_ambiguous: int = 0
+    citations_rejected_too_short: int = 0
+    lines_corrected: int = 0
+
+    # Layers 2 and 3.
+    verified: int = 0
+    verification_skipped: int = 0
+    verification_failed: int = 0
+
+    # The number that decides whether verification is worth its cost: findings
+    # whose gate disposition it actually changed.
+    verdicts_changed: int = 0
+
+    def note_citation_rejection(self, reason: str) -> None:
+        if "does not appear" in reason:
+            self.citations_rejected_not_found += 1
+        elif "appears" in reason and "times" in reason:
+            self.citations_rejected_ambiguous += 1
+        elif "too short" in reason:
+            self.citations_rejected_too_short += 1
+        else:
+            self.citations_rejected_unknown_path += 1
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "citations": {
+                "accepted": self.citations_accepted,
+                "rejected_unknown_path": self.citations_rejected_unknown_path,
+                "rejected_not_found": self.citations_rejected_not_found,
+                "rejected_ambiguous": self.citations_rejected_ambiguous,
+                "rejected_too_short": self.citations_rejected_too_short,
+                "lines_corrected": self.lines_corrected,
+            },
+            "verification": {
+                "verified": self.verified,
+                "skipped": self.verification_skipped,
+                "failed": self.verification_failed,
+                "verdicts_changed": self.verdicts_changed,
+            },
+        }
+
+
+@dataclass
+class Coverage:
+    """Which changed files were actually looked at.
+
+    "The model stopped calling tools" is not a completion criterion — it records
+    that the agent decided it was done, which is the thing under question. This
+    is the deterministic answer: every file in the change is accounted for as
+    examined, excluded by configuration, or neither.
+
+    Neither is the interesting column. It is not necessarily wrong — an agent
+    that reads a diff and judges a rename uninteresting has covered it — but it
+    is the difference between a review and a glance, and it belongs in the report
+    rather than in nobody's head.
+    """
+
+    changed: List[str] = field(default_factory=list)
+    examined: List[str] = field(default_factory=list)
+    excluded: List[str] = field(default_factory=list)
+
+    @property
+    def unopened(self) -> List[str]:
+        """Changed files the agent never opened."""
+        seen = set(self.examined)
+        return [path for path in self.changed if path not in seen]
+
+    @property
+    def complete(self) -> bool:
+        return not self.unopened
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "changed": self.changed,
+            "examined": sorted(self.examined),
+            "excluded": self.excluded,
+            "unopened": self.unopened,
+            "complete": self.complete,
+        }
+
+
+@dataclass
 class Provenance:
     """What actually produced this verdict.
 
@@ -409,6 +505,8 @@ class ScanOutcome:
     usage: Usage = field(default_factory=Usage)
     verification_usage: Usage = field(default_factory=Usage)
     provenance: Provenance = field(default_factory=Provenance)
+    coverage: Coverage = field(default_factory=Coverage)
+    metrics: StageMetrics = field(default_factory=StageMetrics)
 
     @property
     def complete(self) -> bool:

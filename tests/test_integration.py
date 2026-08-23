@@ -343,3 +343,89 @@ class TestProvenanceIsRecorded:
         payload = build_json(cfg, outcome, decision)
         assert payload["provenance"]["model_requested"] == "claude-opus-5"
         assert "Provenance" in render_markdown(cfg, outcome, decision)
+
+
+class TestStageMetrics:
+    """Counts that let the stages be argued about with numbers.
+
+    The open question is whether adversarial verification earns roughly three
+    times the cost of the review. A report showing only what survived cannot
+    answer it; the count of verdicts verification actually changed can.
+    """
+
+    def _finding(self, **overrides):
+        args = dict(FINDING_ARGS)
+        args.update(overrides)
+        return args
+
+    def test_accepted_citations_are_counted(self, cfg, ws):
+        client = FakeClient([
+            FakeResponse([tool_use("report_finding", FINDING_ARGS, id="t1")],
+                         stop_reason="tool_use"),
+            FakeResponse([text("done")], stop_reason="end_turn"),
+        ])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        assert outcome.metrics.citations_accepted == 1
+
+    def test_a_rejected_citation_is_counted_by_reason(self, cfg, ws):
+        invented = self._finding(evidence='os.system("rm -rf /" + attacker_input)')
+        client = FakeClient([
+            FakeResponse([tool_use("report_finding", invented, id="t1")],
+                         stop_reason="tool_use"),
+            FakeResponse([text("withdrawn")], stop_reason="end_turn"),
+        ])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        assert outcome.metrics.citations_rejected_not_found == 1
+        assert outcome.metrics.citations_accepted == 0
+
+    def test_an_ambiguous_citation_is_counted_separately(self, cfg, ws):
+        # Distinguishing "not there" from "could be three places" is the point
+        # of the rejection reasons; the counts have to keep them apart too.
+        ambiguous = self._finding(evidence="user_id = request.args.get(\"id\")",
+                                  line=999)
+        client = FakeClient([
+            FakeResponse([tool_use("report_finding", ambiguous, id="t1")],
+                         stop_reason="tool_use"),
+            FakeResponse([text("withdrawn")], stop_reason="end_turn"),
+        ])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        assert outcome.metrics.citations_accepted + sum((
+            outcome.metrics.citations_rejected_not_found,
+            outcome.metrics.citations_rejected_ambiguous,
+            outcome.metrics.citations_rejected_too_short,
+        )) == 1
+
+    def test_a_corrected_line_is_counted(self, cfg, ws):
+        wrong_line = self._finding(line=999)
+        client = FakeClient([
+            FakeResponse([tool_use("report_finding", wrong_line, id="t1")],
+                         stop_reason="tool_use"),
+            FakeResponse([text("done")], stop_reason="end_turn"),
+        ])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        assert outcome.metrics.lines_corrected == 1
+
+    def test_verification_records_what_it_changed(self, cfg, ws):
+        from security_agent.verify import verify_candidates
+
+        client = FakeClient(
+            script=[
+                FakeResponse([tool_use("report_finding", FINDING_ARGS, id="t1")],
+                             stop_reason="tool_use"),
+                FakeResponse([text("done")], stop_reason="end_turn"),
+            ],
+            verifier_script=[verdict(VERDICT_REFUTED)] * 2,
+        )
+        agent = SecurityAgent(cfg, ws, client=client)
+        outcome = agent.run("repo", "go")
+        verify_candidates(cfg, ws, client, agent.candidates, metrics=outcome.metrics)
+
+        assert outcome.metrics.verified == 1
+        assert outcome.metrics.verdicts_changed == 1, "a refutation is a changed verdict"
+
+    def test_metrics_reach_the_artifact(self, cfg, ws):
+        client = FakeClient([FakeResponse([text("done")], stop_reason="end_turn")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        payload = build_json(cfg, outcome, decide(cfg, outcome))
+        assert "stage_metrics" in payload
+        assert "coverage_accounting" in payload

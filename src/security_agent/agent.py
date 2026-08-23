@@ -103,6 +103,8 @@ class SecurityAgent:
 
         outcome = ScanOutcome(mode=mode, model=self.cfg.model)
         outcome.provenance = _provenance(self.cfg)
+        if diff_available:
+            outcome.coverage.changed = [path for path, _ in self.ws.changed_files()]
         deadline = time.monotonic() + self.cfg.max_runtime_seconds
         stop_reason = STOP_COMPLETED
         stop_detail = ""
@@ -181,6 +183,8 @@ class SecurityAgent:
         outcome.turns = self.session.turn
         outcome.tool_calls = list(self.session.tool_calls)
         outcome.files_examined = list(self.session.files_examined)
+        outcome.coverage.examined = list(self.session.files_examined)
+        outcome.metrics = self.session.metrics
         outcome.rejected_claims = list(self.session.rejected)
         outcome.duplicates_dropped = self.session.duplicates_dropped
         outcome.usage = self.usage

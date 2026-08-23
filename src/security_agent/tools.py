@@ -27,7 +27,7 @@ from .evidence import (
     excerpt,
     locate_evidence,
 )
-from .models import Candidate, Finding, RejectedClaim, ToolCallRecord
+from .models import Candidate, Finding, RejectedClaim, StageMetrics, ToolCallRecord
 from .workspace import Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ class Session:
     files_examined: List[str] = field(default_factory=list)
     duplicates_dropped: int = 0
     turn: int = 0
+    metrics: StageMetrics = field(default_factory=StageMetrics)
     _attempts: Dict[str, int] = field(default_factory=dict)
 
     def note_file(self, path: str) -> None:
@@ -415,6 +416,7 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
                 "dropped: unknown path {}".format(finding.file),
                 is_error=True,
             )
+        session.metrics.citations_rejected_unknown_path += 1
         return ToolResult(
             "Not recorded — no readable file {!r} in this repository ({}).{} "
             "Findings must cite a real repository-relative path. Check the path "
@@ -443,6 +445,7 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
                 "dropped: {}".format(problem[:60]),
                 is_error=True,
             )
+        session.metrics.note_citation_rejection(problem)
         window, start, stop = excerpt(file_text, finding.line, radius=20)
         return ToolResult(
             "Not recorded — {} in {}. Evidence must be copied verbatim from the "
@@ -472,6 +475,9 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
             "duplicate of {}".format(duplicate.fingerprint),
         )
 
+    session.metrics.citations_accepted += 1
+    if corrected_from is not None:
+        session.metrics.lines_corrected += 1
     candidate = Candidate(
         finding=finding,
         evidence_located_line=located,
