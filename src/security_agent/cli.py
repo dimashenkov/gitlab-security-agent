@@ -110,7 +110,8 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     # `report_finding`, so everything here cites code that provably exists.
     if candidates:
         log.info("verifying %d finding(s)", len(candidates))
-        outcome.verification_usage = verify_candidates(cfg, workspace, client, candidates)
+        outcome.verification_usage = verify_candidates(
+            cfg, workspace, client, candidates, provenance=outcome.provenance)
 
     # A suppression the change itself adds cannot excuse that change.
     ignore_touched = any(

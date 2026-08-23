@@ -292,6 +292,16 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
             lines.append("| `{}` | {} |".format(name, count))
         lines.append("")
 
+    prov = outcome.provenance
+    lines += [
+        "**Provenance:** model `{}`{} · prompts `{}`/`{}` · schema `{}` · agent `{}`".format(
+            prov.model_requested,
+            " — **answered by {}**".format(", ".join(prov.models_served))
+            if prov.model_substituted else "",
+            prov.system_prompt_sha[:8], prov.verifier_prompt_sha[:8],
+            prov.schema_sha[:8], prov.agent_version),
+        "",
+    ]
     lines += [
         "**Settings:** fail on `{}` · minimum confidence `{}` · verification "
         "`{}`{} · model `{}` · effort `{}`".format(
@@ -386,6 +396,7 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
             ],
         },
         "usage": usage.to_dict(),
+        "provenance": outcome.provenance.to_dict(),
         "settings": {
             "fail_on": cfg.fail_on,
             "min_confidence": cfg.min_confidence,

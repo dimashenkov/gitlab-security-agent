@@ -130,6 +130,9 @@ class Vote:
     corrected_confidence: str = ""
     removes_control: str = ""   # "yes" | "no" | "" when not asked
     error: str = ""
+    # Which model actually answered this vote — a server-side fallback can
+    # substitute one mid-review, and a blocking verdict should say so.
+    served_models: List[str] = field(default_factory=list)
 
     @property
     def refutes(self) -> bool:
@@ -343,6 +346,45 @@ STOP_EXPLANATIONS = {
 
 
 @dataclass
+class Provenance:
+    """What actually produced this verdict.
+
+    A blocking gate has to be reproducible enough to argue with. Without this,
+    "the same code passed last week" has no answer: the model may have been
+    swapped by a server-side fallback mid-review, a prompt may have been edited,
+    or the finding schema may have changed shape. Each of those changes the
+    verdict and none of them shows up in a diff.
+    """
+
+    model_requested: str = ""
+    models_served: List[str] = field(default_factory=list)
+    system_prompt_sha: str = ""
+    verifier_prompt_sha: str = ""
+    schema_sha: str = ""
+    agent_version: str = ""
+
+    def note_served(self, model: str) -> None:
+        if model and model not in self.models_served:
+            self.models_served.append(model)
+
+    @property
+    def model_substituted(self) -> bool:
+        """Did anything other than the requested model answer?"""
+        return any(m != self.model_requested for m in self.models_served)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "model_requested": self.model_requested,
+            "models_served": self.models_served,
+            "model_substituted": self.model_substituted,
+            "system_prompt_sha": self.system_prompt_sha,
+            "verifier_prompt_sha": self.verifier_prompt_sha,
+            "schema_sha": self.schema_sha,
+            "agent_version": self.agent_version,
+        }
+
+
+@dataclass
 class ScanOutcome:
     """Everything the gating, reporting, and comment layers need."""
 
@@ -366,6 +408,7 @@ class ScanOutcome:
     files_examined: List[str] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     verification_usage: Usage = field(default_factory=Usage)
+    provenance: Provenance = field(default_factory=Provenance)
 
     @property
     def complete(self) -> bool:

@@ -10,6 +10,7 @@ pass, and conflating them is how a security gate becomes theatre.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from .models import (
     STOP_REFUSAL,
     STOP_TIME_LIMIT,
     STOP_TURN_LIMIT,
+    Provenance,
     ScanOutcome,
     ToolCallRecord,
     Usage,
@@ -100,6 +102,7 @@ class SecurityAgent:
         ]
 
         outcome = ScanOutcome(mode=mode, model=self.cfg.model)
+        outcome.provenance = _provenance(self.cfg)
         deadline = time.monotonic() + self.cfg.max_runtime_seconds
         stop_reason = STOP_COMPLETED
         stop_detail = ""
@@ -136,6 +139,7 @@ class SecurityAgent:
                 break
 
             self.usage.add(response.usage)
+            outcome.provenance.note_served(getattr(response, "model", "") or self.cfg.model)
             self._log_turn(response)
 
             if response.stop_reason == "refusal":
@@ -311,6 +315,34 @@ class SecurityAgent:
         for block in response.content:
             if getattr(block, "type", "") == "text" and block.text.strip():
                 log.debug("  note: %s", block.text.strip()[:2000])
+
+
+def _provenance(cfg: Config) -> Provenance:
+    """Hash what the verdict depends on, so a changed verdict has an explanation.
+
+    Prompts and the finding schema are read from disk at run time, which is what
+    makes them easy to iterate on and also what makes them invisible when they
+    change. Recording their hashes puts "the prompt moved" and "the model was
+    substituted" in the artifact next to the verdict, rather than leaving a
+    reviewer to wonder why the same code was judged differently.
+    """
+    from . import __version__
+
+    prompts = cfg.resolved_prompt_dir()
+    return Provenance(
+        model_requested=cfg.model,
+        system_prompt_sha=_sha(prompts / "system.md"),
+        verifier_prompt_sha=_sha(prompts / "verifier.md"),
+        schema_sha=_sha(prompts / "findings.schema.json"),
+        agent_version=__version__,
+    )
+
+
+def _sha(path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return ""
 
 
 def _final_text(response: Any) -> str:

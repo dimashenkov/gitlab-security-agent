@@ -114,6 +114,7 @@ def verify_candidates(
     ws: Workspace,
     client: Any,
     candidates: List[Candidate],
+    provenance: Optional[Any] = None,
 ) -> Usage:
     """Verify every candidate in place. Returns the tokens this stage cost."""
     usage = Usage()
@@ -203,6 +204,9 @@ def verify_candidates(
                 ), Usage()
             results[key] = vote
             usage.merge(vote_usage)
+            if provenance is not None:
+                for model in getattr(vote, "served_models", ()) or ():
+                    provenance.note_served(model)
 
     # Votes are attached in a fixed order rather than completion order, so a
     # rerun of the same findings aggregates identically regardless of which
@@ -326,6 +330,7 @@ def _one_vote(
 ) -> Tuple[Vote, Usage]:
     """Run one verifier to completion in its own conversation."""
     usage = Usage()
+    served: List[str] = []
     session = Session()  # scratch state; the verifier records no findings
     messages: List[Dict[str, Any]] = [
         {"role": "user", "content": [{"type": "text", "text": _brief(cfg, ws, candidate, vote_index)}]}
@@ -345,6 +350,7 @@ def _one_vote(
             ), usage
 
         usage.add(response.usage)
+        served.append(getattr(response, "model", "") or cfg.verifier_model)
 
         if response.stop_reason == "refusal":
             return Vote(
@@ -361,11 +367,11 @@ def _one_vote(
         if not tool_uses:
             vote = _parse_verdict(response)
             if vote is not None:
-                return vote, usage
-            return Vote(
+                return _tagged(vote, served), usage
+            return _tagged(Vote(
                 verdict=VERDICT_UNCERTAIN, reasoning="",
                 error="the verifier did not return a parsable verdict",
-            ), usage
+            ), served), usage
 
         results = []
         for block in tool_uses:
@@ -386,10 +392,21 @@ def _one_vote(
         cached_block = results[-1]
         messages.append({"role": "user", "content": results})
 
-    return Vote(
+    return _tagged(Vote(
         verdict=VERDICT_UNCERTAIN, reasoning="",
         error="the verifier ran out of turns before reaching a verdict",
-    ), usage
+    ), served), usage
+
+
+def _tagged(vote: Vote, served: List[str]) -> Vote:
+    """Carry the models that answered back across the thread boundary.
+
+    Attached to the vote rather than returned separately because the votes are
+    what survive the worker pool; a fourth return value would have to be
+    threaded through every call site for one field.
+    """
+    vote.served_models = list(dict.fromkeys(m for m in served if m))
+    return vote
 
 
 def _request(

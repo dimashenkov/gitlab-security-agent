@@ -296,3 +296,50 @@ class TestReporting:
 
         assert "Coverage is partial" in markdown
         assert "did not complete" in markdown
+
+
+class TestProvenanceIsRecorded:
+    """A blocking verdict has to be reproducible enough to argue with.
+
+    Prompts and the schema are read from disk at run time, which makes them easy
+    to iterate on and invisible when they change; a server-side fallback can
+    swap the model mid-review. Each changes the verdict and none shows up in a
+    diff, so "the same code passed last week" would otherwise have no answer.
+    """
+
+    def test_prompt_and_schema_hashes_are_captured(self, cfg, ws):
+        client = FakeClient([FakeResponse([text("done")], stop_reason="end_turn")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        p = outcome.provenance
+
+        assert len(p.system_prompt_sha) == 16
+        assert len(p.verifier_prompt_sha) == 16
+        assert len(p.schema_sha) == 16
+        assert p.system_prompt_sha != p.verifier_prompt_sha
+
+    def test_the_requested_model_is_recorded(self, cfg, ws):
+        client = FakeClient([FakeResponse([text("done")], stop_reason="end_turn")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        assert outcome.provenance.model_requested == "claude-opus-5"
+        assert not outcome.provenance.model_substituted
+
+    def test_a_substituted_model_is_flagged(self, cfg, ws):
+        # Server-side refusal fallback can answer from a different model inside
+        # the same call. A gate that blocks a merge should say so.
+        client = FakeClient([
+            FakeResponse([text("done")], stop_reason="end_turn",
+                         model="claude-opus-4-8"),
+        ])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+
+        assert outcome.provenance.model_substituted
+        assert "claude-opus-4-8" in outcome.provenance.models_served
+
+    def test_it_reaches_the_artifact_and_the_report(self, cfg, ws):
+        client = FakeClient([FakeResponse([text("done")], stop_reason="end_turn")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        decision = decide(cfg, outcome)
+
+        payload = build_json(cfg, outcome, decision)
+        assert payload["provenance"]["model_requested"] == "claude-opus-5"
+        assert "Provenance" in render_markdown(cfg, outcome, decision)
