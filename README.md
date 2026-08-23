@@ -246,6 +246,7 @@ Everything is a CI/CD variable. Defaults are in bold.
 | `SECURITY_SCAN_MIN_CONFIDENCE` | high, **medium**, low | Lowest confidence allowed to block. |
 | `SECURITY_SCAN_FAIL_ON_INCOMPLETE` | **true**, false | Whether a partial review fails the job. |
 | `SECURITY_SCAN_GATE_PRE_EXISTING` | true, **false** | Block on weaknesses this change did not introduce. |
+| `SECURITY_SCAN_UNGATED_CATEGORIES` | comma-separated, empty | Categories that never block here. The findings are still reported in full and marked `not gated`; only their power to stop a merge is withheld. Applies to every rule, including removed controls. |
 
 ### Model
 

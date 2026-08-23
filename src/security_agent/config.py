@@ -172,6 +172,13 @@ class Config:
     # deliberately added being taken away", and that belongs to the author of
     # the change rather than to a CVSS-shaped scale.
     gate_removed_controls: bool = True
+    # Categories this project has decided not to gate on. Distinct from a
+    # suppression: a suppression is "we accept this specific risk", and it is
+    # per-finding and shown as dropped. This is a standing policy, so the
+    # finding is reported in full — code, exploit path, verdict — and only its
+    # ability to stop the merge is withheld. Deleting the finding instead would
+    # let a policy decision quietly become a coverage gap that nobody can see.
+    ungated_categories: Sequence[str] = ()
 
     # --- output ---
     output_dir: Path = Path(".security-scan")
@@ -212,6 +219,8 @@ class Config:
             fail_on_incomplete=_env_bool("SECURITY_SCAN_FAIL_ON_INCOMPLETE", True),
             gate_pre_existing=_env_bool("SECURITY_SCAN_GATE_PRE_EXISTING", False),
             gate_removed_controls=_env_bool("SECURITY_SCAN_GATE_REMOVED_CONTROLS", True),
+            ungated_categories=tuple(
+                c.lower() for c in _env_list("SECURITY_SCAN_UNGATED_CATEGORIES")),
             output_dir=Path(_env("SECURITY_SCAN_OUTPUT_DIR", ".security-scan")),
             post_comment=_env_bool("SECURITY_SCAN_POST_COMMENT", True),
             ignore_file=Path(_env("SECURITY_SCAN_IGNORE_FILE", ".security-agent-ignore.yml")),

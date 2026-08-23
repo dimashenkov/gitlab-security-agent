@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 from .config import Config
 from .gate import Decision
@@ -71,7 +71,7 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
         if blocking:
             lines.append("_These do not block the merge._")
             lines.append("")
-        lines += _findings_section(other)
+        lines += _findings_section(other, {id(c) for c in decision.policy_excluded})
 
     if outcome.refuted:
         lines += _collapsed(
@@ -161,18 +161,26 @@ def _incomplete_warning(outcome: ScanOutcome) -> List[str]:
     ]
 
 
-def _findings_section(candidates: Sequence[Candidate]) -> List[str]:
+def _findings_section(
+    candidates: Sequence[Candidate], excluded_ids: Optional[Set[int]] = None
+) -> List[str]:
+    excluded_ids = excluded_ids or set()
     lines: List[str] = []
     for candidate in sorted(candidates, key=lambda c: c.sort_key):
-        lines += _finding(candidate)
+        lines += _finding(candidate, id(candidate) in excluded_ids)
     return lines
 
 
-def _finding(candidate: Candidate) -> List[str]:
+def _finding(candidate: Candidate, excluded_by_policy: bool = False) -> List[str]:
     finding = candidate.finding
     emoji = SEVERITY_EMOJI.get(candidate.severity, "⚪")
 
     tags = ["confidence: {}".format(candidate.confidence)]
+    if excluded_by_policy:
+        # Beside the finding, not only in the footer. A reader who sees a `high`
+        # under a green pipeline decides at that moment whether the tool is
+        # broken or the project made a choice.
+        tags.append("**not gated — category excluded by policy**")
     if not candidate.in_changed_lines:
         tags.append("pre-existing")
     if candidate.verdict == VERDICT_UNCERTAIN:

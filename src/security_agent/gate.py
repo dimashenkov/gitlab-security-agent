@@ -33,6 +33,12 @@ class Decision:
     reason: str
     blocking: List[Candidate] = field(default_factory=list)
     non_blocking_reasons: List[str] = field(default_factory=list)
+    # Findings that would otherwise have been judged on their merits but belong
+    # to a category this project does not gate on. Carried on the decision so
+    # the report can mark them individually: a high-severity finding sitting
+    # under a green pipeline needs to say which setting let it through, next to
+    # the finding, not in a footnote.
+    policy_excluded: List[Candidate] = field(default_factory=list)
 
     @property
     def blocked(self) -> bool:
@@ -53,9 +59,20 @@ def blocking_findings(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
     minimum_severity = severity_rank(threshold)
     minimum_confidence = confidence_rank(cfg.min_confidence)
 
+    ungated = {c.lower() for c in cfg.ungated_categories}
+
     blocking = []
     for candidate in outcome.reported:
         if not candidate.in_changed_lines and not cfg.gate_pre_existing:
+            continue
+
+        # A category the project has decided not to gate on takes precedence
+        # over every rule below, including the removed-control one. A team that
+        # has ruled out a whole class of weakness has ruled out guards for that
+        # class too, and a knob with an unstated exception is worse than one
+        # that does exactly what its name says. The finding is still reported in
+        # full; only its power to stop the merge is withheld.
+        if candidate.finding.category.lower() in ungated:
             continue
 
         # A change that deletes a security control blocks on that alone. The
@@ -75,6 +92,14 @@ def blocking_findings(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
             continue
         blocking.append(candidate)
     return blocking
+
+
+def policy_excluded(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
+    """Reported findings whose category this project has chosen not to gate on."""
+    ungated = {c.lower() for c in cfg.ungated_categories}
+    if not ungated:
+        return []
+    return [c for c in outcome.reported if c.finding.category.lower() in ungated]
 
 
 def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
@@ -97,6 +122,7 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
 
     blocking = blocking_findings(cfg, outcome)
     notes = _non_blocking_notes(cfg, outcome, blocking)
+    excluded = policy_excluded(cfg, outcome)
 
     if blocking:
         # Two different rules can block, and the message has to name the one
@@ -124,6 +150,7 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
             reason="; ".join(parts) + ".",
             blocking=blocking,
             non_blocking_reasons=notes,
+            policy_excluded=excluded,
         )
 
     if not outcome.complete:
@@ -134,6 +161,7 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
                 "Coverage is partial.".format(outcome.stop_detail or outcome.stop_reason)
             ),
             non_blocking_reasons=notes,
+            policy_excluded=excluded,
         )
 
     if outcome.reported:
@@ -142,6 +170,7 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
             reason="{} finding(s) reported, none at or above the {} threshold.".format(
                 len(outcome.reported), cfg.fail_on),
             non_blocking_reasons=notes,
+            policy_excluded=excluded,
         )
 
     return Decision(
@@ -173,6 +202,17 @@ def _non_blocking_notes(
     blocked_ids = {id(c) for c in blocking}
     withheld = [c for c in outcome.reported if id(c) not in blocked_ids]
 
+    # Each withheld finding is attributed to one reason, not to every rule that
+    # would independently have withheld it. A low-severity finding in an
+    # excluded category counted under both headings makes four findings look
+    # like seven, and a reader who notices the arithmetic stops trusting the
+    # rest of the numbers. Policy exclusion is decided first, so it wins.
+    ungated_names = {c.lower() for c in cfg.ungated_categories}
+    withheld_by_policy = [
+        c for c in withheld if c.finding.category.lower() in ungated_names]
+    withheld = [
+        c for c in withheld if c.finding.category.lower() not in ungated_names]
+
     if cfg.fail_threshold is None:
         if outcome.reported:
             notes.append(
@@ -196,6 +236,19 @@ def _non_blocking_notes(
         and severity_rank(c.severity) >= severity_rank(cfg.fail_on)
         and confidence_rank(c.confidence) >= confidence_rank(cfg.min_confidence)
     )
+
+    by_policy: dict = {}
+    for candidate in withheld_by_policy:
+        name = candidate.finding.category.lower()
+        by_policy[name] = by_policy.get(name, 0) + 1
+    if by_policy:
+        # Named per category rather than totalled: "3 not gated" invites the
+        # reader to assume a bug, where "3 in denial_of_service" points at the
+        # setting that produced it.
+        notes.append(
+            "{} in categor{} excluded by SECURITY_SCAN_UNGATED_CATEGORIES ({})".format(
+                sum(by_policy.values()), "y" if len(by_policy) == 1 else "ies",
+                ", ".join(sorted(by_policy))))
 
     if low_severity:
         notes.append("{} below the {} severity threshold".format(low_severity, cfg.fail_on))

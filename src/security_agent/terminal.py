@@ -69,14 +69,20 @@ def render(outcome: ScanOutcome, decision: Decision, report_path: str = "") -> s
 
     lines = ["", *_banner(s, outcome, decision)]
 
+    excluded = {id(c) for c in decision.policy_excluded}
+
     ordered = sorted(outcome.reported, key=lambda c: c.sort_key)
     for candidate in ordered:
-        lines += _finding(s, candidate, id(candidate) in blocking)
+        lines += _finding(s, candidate, id(candidate) in blocking,
+                          id(candidate) in excluded)
 
     if not ordered:
         lines += ["", INDENT + s("No findings.", "32")]
 
     lines += _dropped(s, outcome)
+    if decision.non_blocking_reasons:
+        lines += ["", INDENT + s("Not gated  ", "1;2")
+                  + s("; ".join(decision.non_blocking_reasons), "2")]
     lines += _footer(s, outcome, decision, report_path)
     return "\n".join(lines)
 
@@ -114,13 +120,23 @@ def _banner(s: Style, outcome: ScanOutcome, decision: Decision) -> List[str]:
     ]
 
 
-def _finding(s: Style, candidate: Candidate, blocks: bool) -> List[str]:
+def _finding(
+    s: Style, candidate: Candidate, blocks: bool, excluded_by_policy: bool = False
+) -> List[str]:
     finding = candidate.finding
     colour = _SEVERITY_COLOUR.get(candidate.severity, "37")
 
     marker = "▲" if blocks else "•"
     heading = "{} {}  {}".format(marker, candidate.severity.upper(), finding.category)
-    flag = s("BLOCKS THE MERGE", "1;31") if blocks else s("advisory", "2")
+    if blocks:
+        flag = s("BLOCKS THE MERGE", "1;31")
+    elif excluded_by_policy:
+        # Said here, beside the finding, and not only in the footer: a `high`
+        # under a green pipeline is the moment a reader decides the tool is
+        # broken, and the answer has to be in front of them at that moment.
+        flag = s("not gated — category excluded", "35")
+    else:
+        flag = s("advisory", "2")
     pad = max(1, WIDTH - len(heading) - len(_visible(flag)) - 1)
 
     lines = [

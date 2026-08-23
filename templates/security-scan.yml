@@ -3,11 +3,21 @@
 # Add to a project's .gitlab-ci.yml:
 #
 #   include:
-#     - project: 'your-group/gitlab-security-agent'
-#       ref: main
+#     - project: 'security/gitlab-security-agent'   # where the agent is hosted
+#       ref: main                                   # pin a tag in production
 #       file: '/templates/security-scan.yml'
 #       inputs:
+#         image: registry.example.com/security/gitlab-security-agent:latest
 #         stage: test
+#
+# `image` is required and has no default — see the note on it below.
+#
+# For `include: project:` to work, the consuming project must be able to read
+# the agent project: same GitLab instance, and either the agent project is
+# public/internal, or the consuming project is listed under the agent's
+# Settings → CI/CD → Job token permissions → allowlist. A private agent project
+# with an empty allowlist fails with "Project not found or access denied",
+# which reads like a typo in the path rather than a permissions setting.
 #
 # Required CI/CD variables on the consuming project (Settings → CI/CD →
 # Variables), both masked:
@@ -31,8 +41,19 @@ spec:
       default: ai-security-review
       description: Name of the generated job.
     image:
-      default: registry.gitlab.com/your-group/gitlab-security-agent:latest
-      description: Image containing the agent. Override to pin a digest.
+      # Deliberately has no default. The image is built and pushed by this
+      # project's own pipeline to *its* container registry, so the address
+      # depends on where the agent is hosted and cannot be guessed here. A
+      # plausible-looking default would fail at job start with an image pull
+      # error; with the input required, GitLab refuses to create the pipeline
+      # and names the missing input instead.
+      #
+      # Find it under Deploy → Container Registry on the agent project. Prefer
+      # a digest (`...@sha256:...`) over `latest`: the job holds an API key and
+      # a GitLab token, and `latest` means whatever was pushed most recently.
+      description: >-
+        Required. Image containing the agent, e.g.
+        registry.example.com/security/gitlab-security-agent@sha256:<digest>.
     model:
       default: claude-opus-5
       description: Model id used for the review.
@@ -48,6 +69,12 @@ spec:
       default: medium
       options: [high, medium, low]
       description: Lowest confidence allowed to block a merge.
+    ungated_categories:
+      default: ''
+      description: >-
+        Comma-separated categories that never block in this project, e.g.
+        "denial_of_service". Findings in them are still reported in full and
+        marked as not gated — this is a visible policy, not a filter.
     verify_votes:
       default: '1'
       description: >-
@@ -89,6 +116,7 @@ spec:
     SECURITY_SCAN_EFFORT: $[[ inputs.effort ]]
     SECURITY_SCAN_FAIL_ON: $[[ inputs.fail_on ]]
     SECURITY_SCAN_MIN_CONFIDENCE: $[[ inputs.min_confidence ]]
+    SECURITY_SCAN_UNGATED_CATEGORIES: $[[ inputs.ungated_categories ]]
     SECURITY_SCAN_VERIFY_VOTES: $[[ inputs.verify_votes ]]
     SECURITY_SCAN_MAX_TURNS: $[[ inputs.max_turns ]]
     SECURITY_SCAN_MAX_RUNTIME: $[[ inputs.max_runtime ]]
