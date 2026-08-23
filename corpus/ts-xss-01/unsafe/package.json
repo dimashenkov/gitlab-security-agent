@@ -1,0 +1,5 @@
+{
+  "name": "notes-ui",
+  "private": true,
+  "dependencies": { "react": "^18.2.0" }
+}

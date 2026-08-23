@@ -1,0 +1,12 @@
+case_id: go-cmd-01
+language: go
+family: injection
+framework: os/exec
+source: HTTP query parameter
+sink: exec.Command
+decisive_control: separate argv elements rather than a shell interpreting a string
+# exec.Command with separate arguments does not involve a shell, so an argument
+# containing `;` or `$(...)` is passed through literally. The unsafe member adds
+# `/bin/sh -c` and builds the command line by formatting.
+expected_category: injection
+expected_file: thumbnail.go

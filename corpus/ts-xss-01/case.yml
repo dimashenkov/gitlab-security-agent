@@ -1,0 +1,12 @@
+case_id: ts-xss-01
+language: typescript
+family: xss
+framework: react
+source: note body written by another user
+sink: React rendering
+decisive_control: JSX text interpolation, which escapes, rather than dangerouslySetInnerHTML
+# Both members render user-authored text into the DOM. React escapes text
+# children by default, so the safe member is safe *because of a framework
+# default* — the case that pattern matching gets wrong in both directions.
+expected_category: xss
+expected_file: NoteBody.tsx

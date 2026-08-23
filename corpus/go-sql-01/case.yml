@@ -1,0 +1,12 @@
+case_id: go-sql-01
+language: go
+family: injection
+framework: database/sql
+source: HTTP query parameter
+sink: DB.QueryContext
+decisive_control: positional placeholder ($1) instead of string interpolation
+# The two members differ by one construct and nothing else. If the agent reports
+# the safe member it is reacting to the shape of a query built near request
+# data, not to the interpolation.
+expected_category: injection
+expected_file: lookup.go
