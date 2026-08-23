@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from .config import Config
@@ -24,8 +25,13 @@ from .models import (
     ScanOutcome,
 )
 
+
 # Lets GitLab find and update the agent's own note instead of adding a new one
 # on every pipeline run.
+class ReportError(Exception):
+    """The report cannot be written where it was asked to go."""
+
+
 COMMENT_MARKER = "<!-- ai-security-scan -->"
 
 _FENCE_LANGUAGES = {
@@ -391,13 +397,49 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
     }
 
 
+def _safe_output_dir(requested: Path) -> Path:
+    """Refuse to write the report through anything the repository controls.
+
+    The default output directory sits inside the checkout, and the report file
+    names are fixed. A committed symlink at that path redirects both writes
+    somewhere of the contributor's choosing — the report is written by a job
+    that has a GitLab token, so where it lands is not a cosmetic question.
+
+    Any symlink on the path is refused rather than resolved. Resolving it would
+    "work", which is the problem: the write would silently go somewhere else.
+    Set SECURITY_SCAN_OUTPUT_DIR to a runner-provided directory outside the
+    checkout to avoid the question entirely.
+    """
+    requested = Path(requested)
+    probe = requested if requested.is_absolute() else Path.cwd() / requested
+    walked = Path(probe.anchor or ".")
+    for part in probe.parts[1:] if probe.anchor else probe.parts:
+        walked = walked / part
+        if walked.is_symlink():
+            raise ReportError(
+                "refusing to write the report through the symlink at {}. The "
+                "output path must not pass through a link the repository "
+                "controls; set SECURITY_SCAN_OUTPUT_DIR to a directory outside "
+                "the checkout.".format(walked)
+            )
+
+    requested.mkdir(parents=True, exist_ok=True)
+    for name in ("report.md", "findings.json"):
+        target = requested / name
+        if target.is_symlink():
+            raise ReportError(
+                "refusing to overwrite {}: it is a symlink, and the report "
+                "would be written to wherever it points.".format(target))
+    return requested
+
+
 def write_artifacts(
     cfg: Config, outcome: ScanOutcome, decision: Decision
 ) -> Dict[str, str]:
     """Write the report and the JSON result. Returns {kind: path}."""
-    cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    markdown_path = cfg.output_dir / "report.md"
-    json_path = cfg.output_dir / "findings.json"
+    out_dir = _safe_output_dir(cfg.output_dir)
+    markdown_path = out_dir / "report.md"
+    json_path = out_dir / "findings.json"
 
     markdown_path.write_text(render_markdown(cfg, outcome, decision), encoding="utf-8")
     json_path.write_text(

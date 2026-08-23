@@ -52,7 +52,7 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     from .agent import SecurityAgent
     from .briefing import build as build_briefing
     from .gitlab import publish
-    from .report import render_markdown, render_terminal, write_artifacts
+    from .report import ReportError, render_markdown, render_terminal, write_artifacts
     from .suppress import SuppressionError
     from .suppress import apply as apply_suppressions
     from .suppress import load as load_rules
@@ -112,14 +112,30 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         log.info("verifying %d finding(s)", len(candidates))
         outcome.verification_usage = verify_candidates(cfg, workspace, client, candidates)
 
-    kept, suppressed = apply_suppressions(candidates, rules)
+    # A suppression the change itself adds cannot excuse that change.
+    ignore_touched = any(
+        path == str(cfg.ignore_file).lstrip("./")
+        for path, _ in workspace.changed_files()
+    )
+    if ignore_touched and rules:
+        log.warning(
+            "%s is edited by this change, so its entries do not apply here — "
+            "they take effect from the next change onward", cfg.ignore_file)
+    kept, suppressed = apply_suppressions(candidates, rules, self_added=ignore_touched)
     outcome.suppressed = suppressed
     outcome.refuted = [c for c in kept if c.verdict == VERDICT_REFUTED]
     outcome.reported = [c for c in kept if c.verdict != VERDICT_REFUTED]
 
     decision = decide(cfg, outcome)
 
-    paths = write_artifacts(cfg, outcome, decision)
+    try:
+        paths = write_artifacts(cfg, outcome, decision)
+    except ReportError as exc:
+        # Exit 2, not 1: the review may have found real problems, but a report
+        # that cannot be written where it was asked to go is a failed check, not
+        # a verdict on the code.
+        log.error("%s", exc)
+        return EXIT_ERROR
     log.info("wrote %s and %s", paths["markdown"], paths["json"])
     print(render_terminal(outcome, decision))
 

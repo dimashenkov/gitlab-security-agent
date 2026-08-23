@@ -147,14 +147,23 @@ def load(path: Path, today: Optional[_dt.date] = None) -> Tuple[List[Rule], List
 
 
 def apply(
-    candidates: Sequence[Candidate], rules: Sequence[Rule]
+    candidates: Sequence[Candidate], rules: Sequence[Rule], self_added: bool = False
 ) -> Tuple[List[Candidate], List[Candidate]]:
-    """Split candidates into (kept, suppressed), tagging the suppressed ones."""
+    """Split candidates into (kept, suppressed), tagging the suppressed ones.
+
+    ``self_added`` means the change under review edits the ignore file itself.
+    Suppressions then do not apply to this change — they take effect from the
+    next one. Without that, a merge request can introduce a weakness and the
+    entry excusing it in the same breath, and the gate approves itself.
+
+    The entry is still honoured afterwards, and it is still visible in the diff,
+    so nothing is lost except the ability to use it on itself.
+    """
     kept: List[Candidate] = []
     suppressed: List[Candidate] = []
     for candidate in candidates:
         rule = next((r for r in rules if r.matches(candidate)), None)
-        if rule is None:
+        if rule is None or self_added:
             kept.append(candidate)
             continue
         candidate.suppressed_by = "{} — {}".format(rule.label, rule.reason)

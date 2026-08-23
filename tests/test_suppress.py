@@ -200,3 +200,38 @@ class TestFingerprintSurvivesRewording:
         a = make_candidate(file="a.py", evidence="db.execute(sql)")
         b = make_candidate(file="b.py", evidence="db.execute(sql)")
         assert a.fingerprint != b.fingerprint
+
+
+class TestASuppressionCannotExcuseItsOwnChange:
+    """A merge request must not introduce a weakness and the entry excusing it.
+
+    Keeping the file in the repository is deliberate — the person who is blocked
+    has to be able to unblock themselves, or the gate gets switched off. But the
+    entry takes effect from the next change onward, so it cannot be used on
+    itself. Approval by a code owner is the other half; this is the half that
+    does not depend on how the project is configured.
+    """
+
+    def _rules(self, tmp_path, candidate):
+        return load(write(tmp_path, """
+ignore:
+  - fingerprint: {}
+    reason: Accepted.
+""".format(candidate.fingerprint)))[0]
+
+    def test_it_does_not_apply_when_the_change_edits_the_file(self, tmp_path):
+        candidate = make_candidate()
+        rules = self._rules(tmp_path, candidate)
+        kept, suppressed = apply([candidate], rules, self_added=True)
+        assert kept == [candidate] and suppressed == []
+
+    def test_it_applies_normally_otherwise(self, tmp_path):
+        candidate = make_candidate()
+        rules = self._rules(tmp_path, candidate)
+        kept, suppressed = apply([candidate], rules, self_added=False)
+        assert suppressed == [candidate] and kept == []
+
+    def test_the_default_is_to_apply(self, tmp_path):
+        candidate = make_candidate()
+        _, suppressed = apply([candidate], self._rules(tmp_path, candidate))
+        assert suppressed == [candidate]

@@ -22,7 +22,7 @@ merge request
      ▼  every finding, before it counts:
    layer 1  the quoted code must exist in the file        (deterministic)
    layer 2  an independent verifier tries to refute it    (fresh context)
-   layer 3  votes are aggregated, ratings can only fall
+   layer 3  votes are aggregated; lowering takes one, raising takes all
      │
      ▼
    exit 0 · exit 1 (blocked) · exit 2 (review didn't complete)
@@ -109,8 +109,11 @@ Before the finding is recorded, that quote is matched against the real file.
   there, so the agent can correct itself or drop the claim.
 - File not in the repository → **rejected**, with tracked paths sharing that
   filename.
-- Quote found at a different line → the line number is **corrected** silently;
-  the quote is authoritative, not the agent's arithmetic.
+- Quote found at a different line → the line number is **corrected**; the quote
+  is authoritative, not the agent's arithmetic.
+- Quote matching several places → **rejected**. A quote that could be any of
+  three lines does not say where the weakness is, and the finding is not
+  attached to whichever came first.
 - Second failure on the same claim → **dropped permanently** and recorded in the
   report's rejected-claims section.
 
@@ -137,9 +140,14 @@ thought tends to find it convincing.
 | `refuted` | Moved to a "refuted during verification" section. Never deleted. |
 
 Critical findings get at least two verifiers and require **unanimous** refutation
-to be dropped; one dissenting vote only downgrades them to `uncertain`. The
-verifier can lower a severity or confidence but never raise one — it sees a
-single finding in isolation, with less context than the agent that traced it.
+to be dropped; one dissenting vote only downgrades them to `uncertain`.
+
+Severity is not voted on at all — it is computed from three factual questions
+(what the attacker achieves, whether authentication is needed, whether a victim
+must act), because "how bad is this" depends on things the diff does not contain
+and moved between runs on identical code. Verifiers correct the *facts* and the
+number follows. Confidence moves in both directions: lowering takes one
+verifier, raising takes all of them.
 
 If verification cannot run at all (API error), the finding is reported and marked
 unverified. Being unable to check a claim is not evidence against it.
@@ -191,9 +199,35 @@ ignore:
 - Fingerprints are stable across line moves and re-wordings, so an entry keeps
   matching after unrelated edits.
 
-The file lives in the repository under review, which means a merge request could
-add a vulnerability and an entry suppressing it in the same change. That is by
-design — the entry appears in the diff, where humans see it.
+### Who may accept a risk
+
+The file lives in the repository under review, so the person who is blocked can
+unblock themselves. That is deliberate: a suppression file held somewhere else
+turns every accepted risk into a ticket for another team, and a gate that cannot
+be used on a Friday afternoon gets switched off entirely.
+
+It does mean the same merge request could add a vulnerability and the entry
+suppressing it. Two things close that, and they belong together:
+
+**Let the forge decide who approves.** Put the file under a code owner, so
+editing it needs approval from a named group — enforced by GitLab rather than by
+this tool, and visible in the merge request rather than in documentation:
+
+```
+[Security gate][1] @your-group/security
+/.security-agent-ignore.yml
+/CODEOWNERS
+```
+
+Owning `CODEOWNERS` itself matters, or one approved change removes the
+protection for every change after it. This binds only if the target branch is
+protected, Code Owner approval is required on it, direct pushes are disabled,
+authors cannot approve their own merge requests, and approvals reset when the
+file changes. Listing an owner on its own enforces nothing.
+
+**A suppression does not apply to the change that introduces it.** Even with
+approval, an entry added by the merge request under review takes effect from the
+next one onward.
 
 **Other escape hatches:** the `skip-ai-security` label on a merge request skips
 the job entirely, and `SECURITY_SCAN_FAIL_ON=none` reports without blocking.

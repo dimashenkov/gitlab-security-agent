@@ -267,3 +267,46 @@ class TestUnexpectedFailures:
                             lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")))
         run(git_repo, "--output-dir", str(tmp_path / "out"))
         assert "crashed" in caplog.text
+
+
+class TestTheReportPathIsNotContributorControlled:
+    """The report is written by a job holding a GitLab token.
+
+    The default output directory sits inside the checkout and the file names are
+    fixed, so a committed symlink at that path would redirect both writes
+    somewhere of the contributor's choosing. Refused rather than resolved:
+    resolving it would work, which is exactly the problem.
+    """
+
+    def test_a_symlinked_output_directory_is_refused(self, git_repo, monkeypatch, tmp_path):
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        planted = git_repo / ".security-scan"
+        planted.symlink_to(elsewhere)
+
+        install_client(monkeypatch, [FakeResponse([text("Nothing.")], stop_reason="end_turn")])
+        code = cli.main(["--repo", str(git_repo), "--mode", "repo", "--no-comment",
+                         "--output-dir", str(planted)])
+
+        assert code == EXIT_ERROR
+        assert not (elsewhere / "report.md").exists()
+
+    def test_a_symlinked_report_file_is_refused(self, git_repo, monkeypatch, tmp_path):
+        out = git_repo / "out"
+        out.mkdir()
+        target = tmp_path / "captured.md"
+        (out / "report.md").symlink_to(target)
+
+        install_client(monkeypatch, [FakeResponse([text("Nothing.")], stop_reason="end_turn")])
+        code = cli.main(["--repo", str(git_repo), "--mode", "repo", "--no-comment",
+                         "--output-dir", str(out)])
+
+        assert code == EXIT_ERROR
+        assert not target.exists()
+
+    def test_an_ordinary_directory_still_works(self, git_repo, monkeypatch, tmp_path):
+        out = tmp_path / "plain"
+        install_client(monkeypatch, [FakeResponse([text("Nothing.")], stop_reason="end_turn")])
+        assert cli.main(["--repo", str(git_repo), "--mode", "repo", "--no-comment",
+                         "--output-dir", str(out)]) == EXIT_OK
+        assert (out / "report.md").is_file()
