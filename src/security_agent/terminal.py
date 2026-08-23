@@ -17,6 +17,7 @@ import sys
 import textwrap
 from typing import List
 
+from . import PROJECT_NAME, PROJECT_URL, __version__
 from .gate import EXIT_ERROR, EXIT_OK, Decision
 from .models import (
     VERDICT_CONFIRMED,
@@ -286,7 +287,14 @@ def _footer(
     word = {EXIT_OK: "exit 0 — nothing blocking",
             EXIT_ERROR: "exit 2 — the review did not complete"}.get(
                 code, "exit 1 — blocking findings")
-    lines += [" " + s(word, "1" if code == EXIT_OK else "1;31"), ""]
+    lines += [
+        " " + s(word, "1" if code == EXIT_OK else "1;31"),
+        "",
+        " " + s("{} v{} — by Dimitar Shenkov, MIT licensed".format(
+            PROJECT_NAME, __version__), "2"),
+        " " + s(PROJECT_URL, "2"),
+        "",
+    ]
     return lines
 
 

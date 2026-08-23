@@ -1,5 +1,8 @@
 # GitLab security agent
 
+By **[Dimitar Shenkov](https://github.com/dimashenkov)** · MIT licensed ·
+[github.com/dimashenkov/gitlab-security-agent](https://github.com/dimashenkov/gitlab-security-agent)
+
 An autonomous security reviewer for GitLab merge requests. It reads the change,
 follows the code until it understands it, and blocks the merge when it finds
 something exploitable — after proving to itself that the finding is real.
@@ -403,3 +406,14 @@ ruff check src/ tests/
 Tests run without network access: `tests/fakes.py` replays scripted model
 responses, so the agent loop, verification hand-off, gating, and report are all
 exercised end to end.
+
+---
+
+## Author and licence
+
+Written by **Dimitar Shenkov** — <dimitar.shenkov@gmail.com> ·
+[github.com/dimashenkov](https://github.com/dimashenkov).
+
+Released under the MIT licence (see [LICENSE](LICENSE)). You may use, modify and
+redistribute it, including commercially; the copyright notice has to travel with
+it. If it saves you a bad merge, saying where it came from costs nothing.

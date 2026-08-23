@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set
 
+from . import AUTHOR_URL, PROJECT_NAME, PROJECT_URL, __version__
 from .config import Config
 from .gate import Decision
 from .models import (
@@ -367,7 +368,10 @@ def _footer(cfg: Config, outcome: ScanOutcome) -> str:
     return (
         "<sub>Reviewed by an AI agent using `{}`. Findings are checked against "
         "the real files and independently verified, but this is an assistant, "
-        "not a substitute for review. {}{}</sub>".format(outcome.model, when, tail)
+        "not a substitute for review. {}{}<br>"
+        "[{}]({}) v{} — by [Dimitar Shenkov]({}), MIT licensed.</sub>".format(
+            outcome.model, when, tail, PROJECT_NAME, PROJECT_URL, __version__,
+            AUTHOR_URL)
     )
 
 
