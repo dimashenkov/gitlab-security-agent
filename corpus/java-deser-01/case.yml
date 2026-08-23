@@ -1,0 +1,12 @@
+case_id: java-deser-01
+language: java
+family: deserialization
+framework: jackson / java.io
+source: browser cookie
+sink: object deserialisation
+decisive_control: binding to a declared type with Jackson rather than ObjectInputStream.readObject
+# The cast to Preferences happens *after* readObject has already constructed
+# whatever the payload named, so the type in the signature is not a control. A
+# reviewer who reads the cast as one has read it backwards.
+expected_category: deserialization
+expected_file: PreferencesCookie.java

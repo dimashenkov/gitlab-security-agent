@@ -1,0 +1,12 @@
+case_id: java-sql-01
+language: java
+family: injection
+framework: spring-data-jpa
+source: request parameter
+sink: EntityManager.createQuery
+decisive_control: a named parameter bound with setParameter, rather than concatenation
+# JPQL, not SQL. The agent has to know that JPQL concatenation is injectable in
+# the same way, and that TypedQuery on its own — which reads as a typed, safe
+# API — provides no escaping.
+expected_category: injection
+expected_file: OrderSearch.java

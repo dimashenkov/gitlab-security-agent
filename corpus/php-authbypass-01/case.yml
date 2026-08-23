@@ -1,0 +1,14 @@
+case_id: php-authbypass-01
+language: php
+family: authentication
+framework: none
+source: bearer token from the caller
+sink: token comparison
+decisive_control: hash_equals rather than ==
+# Two faults in one character. `==` in PHP compares loosely, so two strings that
+# look numeric in exponential form ("0e123..." ) compare equal to each other —
+# and hex HMAC output does sometimes take that form. It is also not constant
+# time. The unsafe member reads as ordinary equality to anyone not carrying PHP
+# type-juggling in their head.
+expected_category: authentication
+expected_file: api.php

@@ -1,0 +1,12 @@
+case_id: rb-xss-01
+language: ruby
+family: xss
+framework: rails
+source: comment body written by another user
+sink: view rendering
+decisive_control: letting Rails escape by default rather than calling html_safe
+# html_safe does not sanitise anything; it marks a string as already safe and
+# turns the escaping off. The method name says the opposite of what it does,
+# which is why this one is worth a case of its own.
+expected_category: xss
+expected_file: comment_helper.rb

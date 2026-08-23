@@ -1,0 +1,12 @@
+case_id: rb-massassign-01
+language: ruby
+family: authorization
+framework: rails
+source: request parameters
+sink: ActiveRecord update!
+decisive_control: permit with a named list, rather than permit! which allows everything
+# One character. `permit!` reads as the same method with emphasis; it marks
+# every submitted key as permitted, so a request carrying user[admin]=true sets
+# a column the form never had.
+expected_category: authorization
+expected_file: users_controller.rb

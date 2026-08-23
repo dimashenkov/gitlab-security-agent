@@ -1,0 +1,12 @@
+case_id: rs-cmd-01
+language: rust
+family: injection
+framework: std::process
+source: uploaded archive name
+sink: Command
+decisive_control: separate .arg() calls rather than a shell interpreting a formatted string
+# The case that checks whether "it is Rust" is being read as "it is safe".
+# Memory safety has nothing to say about handing a formatted string to sh -c;
+# the borrow checker is satisfied by both members.
+expected_category: injection
+expected_file: extract.rs
