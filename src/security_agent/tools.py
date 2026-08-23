@@ -313,7 +313,7 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
         body = body[:120_000]
         trimmed = True
     if path:
-        session.note_file(ws.relative(ws.resolve(path)))
+        session.note_file(ws.repo_path(path))
     note = (
         "\n\n[Diff trimmed at 120000 characters. Request individual files with "
         "`path` to see the rest.]" if trimmed else ""
@@ -338,7 +338,7 @@ def _handle_read_file(ws: Workspace, session: Session, args: Dict[str, Any]) -> 
     start = _as_int(args.get("start_line"), 1)
     end = _as_int(args.get("end_line"), 0)
     body, trimmed = ws.read_file(path, start_line=start, end_line=end)
-    session.note_file(ws.relative(ws.resolve(path)))
+    session.note_file(ws.repo_path(path))
     if trimmed:
         body += (
             "\n\n[Output trimmed. Re-read with a narrower start_line/end_line "
@@ -364,7 +364,7 @@ def _handle_git_log(ws: Workspace, session: Session, args: Dict[str, Any]) -> To
     path = str(args.get("path") or "")
     cmd = ["log", "--no-color", "--date=short", "--format=%h %ad %an: %s", "-n", str(max_count)]
     if path:
-        cmd += ["--", ws.relative(ws.resolve(path))]
+        cmd += ["--", ws.repo_path(path)]
     body = ws.git(*cmd, check=False).strip()
     return ToolResult(body or "(no commits)", "git log {}".format(path or "."))
 
@@ -394,10 +394,9 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
 
     # --- does the file exist? ---
     try:
-        target = ws.resolve(finding.file)
-        rel_path = ws.relative(target)
-        if not target.is_file():
-            raise WorkspaceError("not a file")
+        # Existence is decided by the revision under review, not by the disk —
+        # the same authority the quoted evidence is matched against.
+        rel_path = ws.repo_path(finding.file)
         file_text = ws.raw_text(finding.file)
     except WorkspaceError as exc:
         if final_attempt:

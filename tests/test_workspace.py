@@ -61,11 +61,13 @@ class TestReading:
             ws.read_file("app/views.py", start_line=99)
 
     def test_rejects_a_missing_file(self, ws):
-        with pytest.raises(WorkspaceError, match="does not exist"):
+        with pytest.raises(WorkspaceError, match="not a tracked file"):
             ws.read_file("app/nope.py")
 
     def test_rejects_a_directory(self, ws):
-        with pytest.raises(WorkspaceError, match="is a directory"):
+        # A directory is not a blob, so the revision lookup rejects it for the
+        # same reason it rejects anything untracked.
+        with pytest.raises(WorkspaceError, match="not a tracked file"):
             ws.read_file("app")
 
     def test_raw_text_has_no_line_numbers(self, ws):
@@ -178,3 +180,84 @@ class TestGitEnvironment:
         ws = Workspace(root=git_repo, excludes=())
         assert not ws.rev_exists("0" * 40)
         assert not ws.rev_exists("")
+
+
+class TestReadsTheRevisionNotTheDisk:
+    """Files come from the object database, not from the working tree.
+
+    The checkout is material an untrusted contributor controls, and what sits at
+    a path on disk need not be what the commit says is there — a symlink, a file
+    an earlier job step wrote, a filter driver. A finding has to describe the
+    code actually proposed for merge.
+    """
+
+    def test_untracked_content_on_disk_is_not_readable(self, git_repo):
+        ws = Workspace(root=git_repo, excludes=())
+        (git_repo / "app" / "planted.py").write_text("SECRET = 'x'\n", encoding="utf-8")
+        with pytest.raises(WorkspaceError, match="not a tracked file"):
+            ws.read_file("app/planted.py")
+
+    def test_a_modified_working_tree_does_not_change_what_is_read(self, git_repo):
+        ws = Workspace(root=git_repo, excludes=())
+        (git_repo / "app" / "views.py").write_text("# replaced after checkout\n",
+                                                   encoding="utf-8")
+        body, _ = ws.read_file("app/views.py")
+        assert "replaced after checkout" not in body
+        assert "SELECT * FROM users" in body
+
+    def test_a_symlink_is_not_followed_to_its_target(self, git_repo):
+        import subprocess
+
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(git_repo),
+               "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.com",
+               "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.com"}
+        (git_repo / "link.py").symlink_to("/etc/hosts")
+        subprocess.run(("git", "-C", str(git_repo), "add", "link.py"),
+                       check=True, capture_output=True, env=env)
+        subprocess.run(("git", "-C", str(git_repo), "commit", "-qm", "add link"),
+                       check=True, capture_output=True, env=env)
+
+        ws = Workspace(root=git_repo, excludes=())
+        # git stores the link as its own blob — the target path — so what comes
+        # back is the link text, never the contents of /etc/hosts.
+        body, _ = ws.read_file("link.py")
+        assert "/etc/hosts" in body
+        assert "localhost" not in body
+
+    def test_evidence_matching_uses_the_same_source(self, git_repo):
+        ws = Workspace(root=git_repo, excludes=())
+        (git_repo / "app" / "views.py").write_text("# replaced\n", encoding="utf-8")
+        assert "SELECT * FROM users" in ws.raw_text("app/views.py")
+
+
+class TestTreePathsAreCheckedLexically:
+    """Naming a blob is a string operation, not a filesystem one.
+
+    `resolve()` still guards filesystem access, but reads now address the git
+    tree, where following a symlink to decide whether a path is allowed is both
+    unnecessary and wrong — a committed symlink is an object we want to be able
+    to look at.
+    """
+
+    def test_traversal_is_rejected(self, git_repo):
+        ws = Workspace(root=git_repo, excludes=())
+        for bad in ("../etc/passwd", "app/../../etc/passwd", "a/../../b"):
+            with pytest.raises(WorkspaceError, match="outside the repository"):
+                ws.repo_path(bad)
+
+    def test_leading_slashes_and_dots_are_normalised(self, git_repo):
+        ws = Workspace(root=git_repo, excludes=())
+        assert ws.repo_path("/app/views.py") == "app/views.py"
+        assert ws.repo_path("./app/./views.py") == "app/views.py"
+
+    def test_empty_paths_are_rejected(self, git_repo):
+        ws = Workspace(root=git_repo, excludes=())
+        for bad in ("", "   ", "/", "./"):
+            with pytest.raises(WorkspaceError, match="must not be empty"):
+                ws.repo_path(bad)
+
+    def test_it_does_not_touch_the_filesystem(self, git_repo):
+        # A path that does not exist on disk still normalises; whether it is a
+        # real blob is the revision's answer, given later and separately.
+        ws = Workspace(root=git_repo, excludes=())
+        assert ws.repo_path("does/not/exist.py") == "does/not/exist.py"

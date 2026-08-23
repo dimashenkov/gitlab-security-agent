@@ -73,6 +73,34 @@ class Workspace:
             )
         return target
 
+    def repo_path(self, relative: str) -> str:
+        """Normalise a path from the model for addressing the git tree.
+
+        Deliberately does not touch the filesystem. `resolve()` exists to keep
+        *filesystem* reads inside the checkout, and it does that by following
+        symlinks — correct for reading a file, wrong for naming a blob. A
+        symlink committed to the repository is a legitimate object with content
+        of its own, and resolving it would reject it for pointing outside the
+        tree, which is exactly the thing we want to be able to look at.
+
+        Traversal is rejected lexically instead: no component may be `..`, and
+        the result never escapes the root because it never leaves the string.
+        """
+        if not relative or not relative.strip():
+            raise WorkspaceError("path must not be empty")
+        candidate = relative.strip().lstrip("/")
+        parts = []
+        for part in candidate.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                raise WorkspaceError(
+                    "path {!r} points outside the repository".format(relative))
+            parts.append(part)
+        if not parts:
+            raise WorkspaceError("path must not be empty")
+        return "/".join(parts)
+
     def relative(self, path: Path) -> str:
         try:
             return str(path.relative_to(self.root))
@@ -169,8 +197,7 @@ class Workspace:
             self.diff_base, self.diff_head,
         ]
         if path:
-            resolved = self.relative(self.resolve(path))
-            args += ["--", resolved]
+            args += ["--", self.repo_path(path)]
         return self.git(*args, check=False)
 
     def changed_line_map(self):
@@ -196,50 +223,88 @@ class Workspace:
 
     # ----------------------------------------------------------------- read
 
-    def raw_text(self, path: str) -> str:
-        """File contents with no line numbering, for evidence matching."""
-        target = self.resolve(path)
-        if not target.is_file():
-            raise WorkspaceError("{} is not a file in this checkout".format(self.relative(target)))
-        if target.stat().st_size > MAX_READ_BYTES:
-            raise WorkspaceError(
-                "{} is too large to load ({} KB)".format(
-                    self.relative(target), target.stat().st_size // 1024)
-            )
-        try:
-            return target.read_text(encoding="utf-8")
-        except UnicodeDecodeError as exc:
-            raise WorkspaceError(
-                "{} is not UTF-8 text".format(self.relative(target))) from exc
-        except OSError as exc:
-            raise WorkspaceError(
-                "cannot read {}: {}".format(self.relative(target), exc)) from exc
+    def blob_text(self, path: str) -> str:
+        """The file's contents **at the revision under review**, not from disk.
 
-    def read_file(self, path: str, start_line: int = 1, end_line: int = 0) -> Tuple[str, bool]:
-        """Return line-numbered text and whether it was trimmed."""
-        target = self.resolve(path)
-        rel = self.relative(target)
-        if target.is_dir():
-            raise WorkspaceError("{} is a directory; use list_directory".format(rel))
-        if not target.exists():
+        Reading the working tree looks equivalent and is not. The checkout is
+        material an untrusted contributor controls, and what sits at a path on
+        disk need not be what the commit says is there: a symlink, a file
+        written by an earlier job step, a `.gitattributes` filter, or anything
+        else that touched the directory between checkout and review. A finding
+        must describe the code that is actually proposed for merge, and the only
+        authority on that is the object database.
+
+        `git show <rev>:<path>` resolves through the tree of that commit, so a
+        symlink is returned as its own content — a link — rather than followed
+        to whatever it points at.
+        """
+        rel = self.repo_path(path)
+        rev = self.diff_head or "HEAD"
+
+        size = self._blob_size(rev, rel)
+        if size is None:
             raise WorkspaceError(
-                "{} does not exist at the revision checked out in this job".format(rel)
-            )
-        size = target.stat().st_size
+                "{} is not a tracked file at the revision under review".format(rel))
         if size > MAX_READ_BYTES:
             raise WorkspaceError(
                 "{} is {} KB, over the {} KB read limit. Pass start_line and "
                 "end_line to read a window of it.".format(
-                    rel, size // 1024, MAX_READ_BYTES // 1024
-                )
-            )
+                    rel, size // 1024, MAX_READ_BYTES // 1024))
+
         try:
-            text = target.read_text(encoding="utf-8")
-        except UnicodeDecodeError as exc:
-            raise WorkspaceError(
-                "{} is not UTF-8 text (binary file)".format(rel)) from exc
-        except OSError as exc:
-            raise WorkspaceError("cannot read {}: {}".format(rel, exc)) from exc
+            proc = subprocess.run(
+                ("git", "--no-pager", "-C", str(self.root), "show",
+                 "{}:{}".format(rev, rel)),
+                capture_output=True, check=False, timeout=GIT_TIMEOUT_SECONDS,
+                env=_git_env(),
+            )
+        except subprocess.TimeoutExpired:
+            raise WorkspaceError("reading {} timed out".format(rel)) from None
+        if proc.returncode != 0:
+            raise WorkspaceError("cannot read {} at {}: {}".format(
+                rel, _abbrev(rev), proc.stderr.decode("utf-8", "replace").strip()))
+
+        try:
+            return proc.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            raise WorkspaceError("{} is not UTF-8 text (binary file)".format(rel)) from None
+
+    def _blob_size(self, rev: str, rel: str) -> Optional[int]:
+        """Size of the blob at that revision, or None when the path is not one.
+
+        The type is checked first because `cat-file -s` answers for a tree as
+        happily as for a blob, so without it a directory reads as a file of some
+        size and the failure surfaces much later and less clearly.
+
+        Size is checked before reading so an enormous file is refused rather
+        than pulled into memory first.
+        """
+        kind = subprocess.run(
+            ("git", "-C", str(self.root), "cat-file", "-t", "{}:{}".format(rev, rel)),
+            capture_output=True, text=True, check=False, env=_git_env(),
+        )
+        if kind.returncode != 0 or kind.stdout.strip() != "blob":
+            return None
+
+        proc = subprocess.run(
+            ("git", "-C", str(self.root), "cat-file", "-s", "{}:{}".format(rev, rel)),
+            capture_output=True, text=True, check=False, env=_git_env(),
+        )
+        if proc.returncode != 0:
+            return None
+        try:
+            return int(proc.stdout.strip())
+        except ValueError:
+            return None
+
+    # `raw_text` is the name the rest of the agent uses; it now means "the blob
+    # at the reviewed revision" everywhere.
+    raw_text = blob_text
+
+    def read_file(self, path: str, start_line: int = 1, end_line: int = 0) -> Tuple[str, bool]:
+        """Return line-numbered text and whether it was trimmed."""
+        rel = self.repo_path(path)
+        text = self.blob_text(path)
 
         lines = text.splitlines()
         total = len(lines)
@@ -247,8 +312,7 @@ class Workspace:
         stop = total if end_line <= 0 else min(total, end_line)
         if start > total:
             raise WorkspaceError(
-                "{} has {} lines; start_line {} is past the end".format(rel, total, start)
-            )
+                "{} has {} lines; start_line {} is past the end".format(rel, total, start))
 
         selected = lines[start - 1 : stop]
         body = "\n".join(
@@ -356,6 +420,13 @@ class Workspace:
                 total - len(shown)
             )
         return "{} match(es) for {!r}:\n{}{}".format(total, pattern, body, note), total
+
+
+def _abbrev(rev: str) -> str:
+    """Shorten a SHA for a message, but never a branch name."""
+    if len(rev) > 12 and all(c in "0123456789abcdef" for c in rev.lower()):
+        return rev[:12]
+    return rev
 
 
 def _git_env() -> dict:
