@@ -213,9 +213,12 @@ class TestVerificationHandoff:
         outcome.reported = []
         assert decide(cfg, outcome).exit_code == EXIT_OK
 
-    def test_high_severity_gets_two_verifiers(self, cfg, ws):
+    def test_a_blocking_finding_gets_an_odd_panel(self, cfg, ws):
+        # Three, not two. Two verifiers cannot form a majority, so their
+        # disagreement was settled by a rule — and that rule turned out to let
+        # one hedge decide the gate.
         client, _, _ = self._run_with_verdict(cfg, ws, VERDICT_CONFIRMED)
-        assert len(client.verifier_requests) == 2
+        assert len(client.verifier_requests) == 3
 
     def test_the_verifier_cannot_report_findings(self, cfg, ws):
         client, _, _ = self._run_with_verdict(cfg, ws, VERDICT_CONFIRMED)

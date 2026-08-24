@@ -329,13 +329,30 @@ def _why_not_gating(cfg: Config, candidate: Candidate) -> str:
 def _votes_for(cfg: Config, candidate: Candidate) -> int:
     """How many independent verifiers this claim gets.
 
-    Critical and high findings are escalated to at least two, for an asymmetric
-    reason: dropping a real critical costs far more than the extra call, so a
-    single dissenting verifier must not be able to discard one on its own.
+    Findings that could block are escalated to **three**, and three rather than
+    two for a specific reason: two verifiers cannot form a majority, so any
+    disagreement between them is settled by a rule rather than by evidence, and
+    whichever rule is chosen becomes a coin flip on the phrasing of one reply.
+
+    Measured: with two verifiers, four identical runs of one unsafe case gave
+    three blocks and one pass — 3 of 6 run pairs agreed. The disagreement was
+    never about the code. One verifier said `uncertain` where the others said
+    `confirmed`, that alone forced the verdict to uncertain, and uncertain
+    forces confidence to `low`, which is under the gate. A single hedge
+    silently ungated a real finding.
+
+    An odd number is the cheapest fix that makes the outcome depend on what a
+    majority saw rather than on who hedged. It costs one extra verifier call
+    per blocking-eligible finding — most runs have one or two.
     """
     votes = cfg.verify_votes
-    if severity_rank(candidate.severity) >= severity_rank("high"):
-        votes = max(votes, 2)
+    if severity_rank(candidate.severity) >= severity_rank(cfg.fail_on):
+        votes = max(votes, 3)
+    if votes % 2 == 0:
+        # An even panel has no majority to appeal to. Whatever tie-break is
+        # written for it decides the gate on its own, which is the failure this
+        # is here to remove.
+        votes += 1
     return min(votes, 5)
 
 
@@ -530,7 +547,17 @@ def _decide(candidate: Candidate) -> None:
             verdict = VERDICT_UNCERTAIN
     elif len(refuted) * 2 > len(usable):
         verdict = VERDICT_REFUTED
-    elif len(confirmed) == len(usable):
+    elif len(confirmed) * 2 > len(usable):
+        # A majority, not unanimity. Requiring every verifier to agree made a
+        # single hedge decide the gate: `uncertain` forces confidence to `low`,
+        # `low` is under the threshold, and the merge went through with the
+        # finding sitting in the report saying nothing had been settled.
+        #
+        # The asymmetry this replaces was written to protect findings — "it is
+        # cheaper to be wrong toward a visible finding than an invisible one" —
+        # and in gate terms it did the opposite, because a finding that does not
+        # block is the invisible one. Unanimity is kept where it belongs, below,
+        # for discarding a critical.
         verdict = VERDICT_CONFIRMED
     else:
         verdict = VERDICT_UNCERTAIN
@@ -623,18 +650,29 @@ def _agree(votes: List[Vote], claimed: str, rank, field) -> str:
 
 
 def _agreed_confidence(votes: List[Vote], claimed: str) -> str:
-    """The confidence every confirming verifier can stand behind.
+    """What the panel, as a panel, thinks was actually seen.
 
-    The lowest of what they proposed, so raising takes agreement while lowering
-    takes only one dissent — the same asymmetry used everywhere else here, for
-    the same reason: it is cheaper to be wrong in the direction of a visible
-    finding than an invisible one.
+    The **median** of the confirming verifiers, with silence counted as
+    agreement with the claim. Two things changed here and both had the same
+    cause.
 
-    A verifier that leaves the field empty is agreeing with the claim, not
-    voting for it, so silence cannot raise anything on its own.
+    It used to take the minimum, and to take it over *every* usable vote rather
+    than the confirming ones its own docstring named. So a verifier in the
+    minority — outvoted on whether the finding was even real — still set the
+    confidence for the whole panel by proposing `low`. Since `low` is under the
+    gate, that one reply decided whether the merge was blocked, which is the
+    single-verifier veto the majority rule above was written to remove.
+
+    The old asymmetry was justified as erring toward a visible finding. In gate
+    terms it did the opposite: a finding that does not block is the invisible
+    one. A median errs toward what most of the panel saw, in both directions,
+    and one outlier moves nothing.
     """
-    return _agree(votes, claimed, confidence_rank,
-                  lambda v: v.corrected_confidence)
+    confirming = [v for v in votes if v.verdict == VERDICT_CONFIRMED]
+    if not confirming:
+        return claimed
+    proposals = [v.corrected_confidence or claimed for v in confirming]
+    return sorted(proposals, key=confidence_rank)[len(proposals) // 2]
 
 
 def _reason(votes: List[Vote], verdict: str) -> str:

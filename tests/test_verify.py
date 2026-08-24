@@ -29,10 +29,10 @@ def vote(verdict, **kwargs):
 
 
 class TestVoteCounts:
-    def test_high_and_critical_get_at_least_two_verifiers(self, config):
+    def test_findings_that_could_block_get_an_odd_panel(self, config):
         config.verify_votes = 1
-        assert _votes_for(config, make_candidate(severity="critical")) == 2
-        assert _votes_for(config, make_candidate(severity="high")) == 2
+        assert _votes_for(config, make_candidate(severity="critical")) == 3
+        assert _votes_for(config, make_candidate(severity="high")) == 3
 
     def test_lower_severities_use_the_configured_count(self, config):
         config.verify_votes = 1
@@ -200,6 +200,138 @@ class TestVerificationScope:
         assert usage.requests == 0
 
 
+class TestOneHedgeCannotDecideTheGate:
+    """The instability that made every other number unreadable.
+
+    Four identical runs of one unsafe case gave three blocks and one pass — 3
+    of 6 run pairs agreed. Nothing about the code changed between them. One
+    verifier of two said `uncertain` where the others said `confirmed`; that
+    alone forced the verdict to uncertain, uncertain forces confidence to
+    `low`, and `low` is under the gate. A single hedge ungated a real finding,
+    and which way a run went depended on how one reply happened to be phrased.
+
+    Two verifiers cannot form a majority, so the outcome had to be settled by a
+    rule, and the rule was unanimity. These tests hold the panel odd and the
+    decision majority, so what decides the gate is what most verifiers saw.
+    """
+
+    def test_a_lone_hedge_among_three_does_not_unblock(self, config):
+        candidate = make_candidate(severity="high", confidence="high")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED), vote(VERDICT_CONFIRMED),
+            vote(VERDICT_UNCERTAIN),
+        ]
+        _decide(candidate)
+        assert candidate.verdict == VERDICT_CONFIRMED
+        assert candidate.confidence == "high"
+
+    def test_two_hedges_among_three_do_leave_it_uncertain(self, config):
+        """The majority is what decides, in both directions."""
+        candidate = make_candidate(severity="high", confidence="high")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED), vote(VERDICT_UNCERTAIN),
+            vote(VERDICT_UNCERTAIN),
+        ]
+        _decide(candidate)
+        assert candidate.verdict == VERDICT_UNCERTAIN
+        assert candidate.confidence == "low"
+
+    def test_a_lone_refusal_among_three_does_not_discard_it(self, config):
+        candidate = make_candidate(severity="high", confidence="high")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED), vote(VERDICT_CONFIRMED),
+            vote(VERDICT_REFUTED),
+        ]
+        _decide(candidate)
+        assert candidate.verdict == VERDICT_CONFIRMED
+
+    def test_a_blocking_finding_never_gets_an_even_panel(self, config):
+        """An even panel has no majority, so a rule decides instead of evidence."""
+        for level in ("high", "critical"):
+            for configured in (1, 2, 3, 4):
+                config.verify_votes = configured
+                panel = _votes_for(config, make_candidate(severity=level))
+                assert panel % 2 == 1, (level, configured, panel)
+                assert panel >= 3
+
+    def test_the_panel_follows_the_threshold_not_a_fixed_level(self, config):
+        """A project gating on `medium` needs medium findings settled too."""
+        config.fail_on = "medium"
+        assert _votes_for(config, make_candidate(severity="medium")) >= 3
+
+    def test_one_verifier_can_still_not_delete_a_critical(self, config):
+        """The protection the old asymmetry was written for, still standing."""
+        candidate = make_candidate(severity="critical", confidence="high")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED), vote(VERDICT_CONFIRMED),
+            vote(VERDICT_REFUTED),
+        ]
+        _decide(candidate)
+        assert candidate.verdict != VERDICT_REFUTED
+
+
+class TestConfidenceIsDecidedByThePanel:
+    """Confidence used to be settled by whoever was least sure.
+
+    It took the minimum, and took it across every usable vote rather than the
+    confirming ones its own docstring named — so a verifier outvoted on whether
+    the finding was even real still set the confidence for the panel. Because
+    `low` is under the gate, that reply decided whether the merge was blocked.
+    Fixing the verdict rule without this one would have left the same veto
+    intact one step downstream.
+    """
+
+    def test_an_outvoted_verifier_does_not_set_the_confidence(self, config):
+        candidate = make_candidate(severity="high", confidence="high")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED), vote(VERDICT_CONFIRMED),
+            vote(VERDICT_UNCERTAIN, corrected_confidence="low"),
+        ]
+        _decide(candidate)
+        assert candidate.confidence == "high"
+
+    def test_one_confirming_verifier_alone_does_not_lower_it(self, config):
+        candidate = make_candidate(severity="high", confidence="high")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED), vote(VERDICT_CONFIRMED),
+            vote(VERDICT_CONFIRMED, corrected_confidence="low"),
+        ]
+        _decide(candidate)
+        assert candidate.confidence == "high"
+
+    def test_a_majority_does_lower_it(self, config):
+        candidate = make_candidate(severity="high", confidence="high")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED),
+            vote(VERDICT_CONFIRMED, corrected_confidence="low"),
+            vote(VERDICT_CONFIRMED, corrected_confidence="low"),
+        ]
+        _decide(candidate)
+        assert candidate.confidence == "low"
+
+    def test_a_majority_can_still_raise_it(self, config):
+        """The property that was worth keeping from the old rule.
+
+        An agent hedging at `low` on a real weakness used to bury it
+        permanently, because nothing downstream could undo a cautious first
+        impression. Verifiers who read the callers know more than it did.
+        """
+        candidate = make_candidate(severity="high", confidence="low")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED, corrected_confidence="high"),
+            vote(VERDICT_CONFIRMED, corrected_confidence="high"),
+            vote(VERDICT_CONFIRMED),
+        ]
+        _decide(candidate)
+        assert candidate.confidence == "high"
+
+    def test_silence_counts_as_agreeing_with_the_claim(self, config):
+        candidate = make_candidate(severity="high", confidence="medium")
+        candidate.votes = [vote(VERDICT_CONFIRMED) for _ in range(3)]
+        _decide(candidate)
+        assert candidate.confidence == "medium"
+
+
 class TestVerificationScopeIsIndependentOfGating:
     """What gets verified must not depend on what gets gated.
 
@@ -279,7 +411,7 @@ class TestConcurrentVerification:
         candidate = make_candidate(severity="high")
         verify.verify_candidates(config, _StubWorkspace(), object(), [candidate])
 
-        assert [v.reasoning for v in candidate.votes] == ["vote-0", "vote-1"]
+        assert [v.reasoning for v in candidate.votes] == ["vote-0", "vote-1", "vote-2"]
 
     def test_calls_actually_overlap(self, config, monkeypatch):
         import security_agent.verify as verify
@@ -360,8 +492,8 @@ class TestConcurrentVerification:
         monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
 
         usage = verify.verify_candidates(config, _StubWorkspace(), object(), self._candidates(3))
-        assert usage.requests == 6  # 3 findings x 2 votes each at high severity
-        assert usage.output_tokens == 600
+        assert usage.requests == 9  # 3 findings x 3 votes each at high severity
+        assert usage.output_tokens == 900
 
 
 class _StubWorkspace:
@@ -374,6 +506,18 @@ class TestConfidenceMovesBothWays:
 
     Severity stays one-directional for the opposite reason: it is a judgement
     about impact, where the agent had the wider view.
+
+    **The rule under this changed on 2026-08-24.** It used to be "lowering takes
+    one voice, raising takes all", justified as erring toward a visible finding.
+    In gate terms it erred the other way: `low` is under the threshold, so a
+    single voice lowering it made the finding invisible to the gate and the
+    merge went through. Measured, that produced two different exit codes across
+    four identical runs of the same code.
+
+    It is now the median of the confirming verifiers. Confidence still moves in
+    both directions — that property is why this class exists and it is kept —
+    but it takes a majority to move it either way, and no single verifier can
+    decide the gate.
     """
 
     def test_agreeing_verifiers_can_raise_confidence(self):
@@ -383,38 +527,48 @@ class TestConfidenceMovesBothWays:
                  corrected_confidence="high"),
             Vote(verdict=VERDICT_CONFIRMED, reasoning="traced it too",
                  corrected_confidence="high"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="and again",
+                 corrected_confidence="high"),
         ]
         _decide(candidate)
         assert candidate.confidence == "high"
 
-    def test_raising_takes_agreement_from_every_verifier(self):
-        # One silent verifier is agreeing with the claim, not voting to raise it.
+    def test_a_lone_voice_cannot_raise_it(self):
+        # Silence is agreement with the claim, not a vote to change it.
         candidate = make_candidate(severity="high", confidence="low")
         candidate.votes = [
             Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_confidence="high"),
             Vote(verdict=VERDICT_CONFIRMED, reasoning="b"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="c"),
         ]
         _decide(candidate)
         assert candidate.confidence == "low"
 
-    def test_the_lowest_agreed_confidence_wins(self):
-        candidate = make_candidate(severity="high", confidence="low")
-        candidate.votes = [
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_confidence="high"),
-            Vote(verdict=VERDICT_CONFIRMED, reasoning="b", corrected_confidence="medium"),
-        ]
-        _decide(candidate)
-        assert candidate.confidence == "medium"
+    def test_a_lone_voice_cannot_lower_it_either(self):
+        """The half of the old rule that was doing the damage.
 
-    def test_a_single_dissent_still_lowers(self):
-        # Lowering takes one voice, raising takes all of them.
+        Under "lowering takes one voice", this returned `low`, the finding fell
+        under the gate, and the merge proceeded — decided by one reply out of
+        three.
+        """
         candidate = make_candidate(severity="high", confidence="high")
         candidate.votes = [
             Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_confidence="low"),
             Vote(verdict=VERDICT_CONFIRMED, reasoning="b"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="c"),
         ]
         _decide(candidate)
-        assert candidate.confidence == "low"
+        assert candidate.confidence == "high"
+
+    def test_the_middle_opinion_wins(self):
+        candidate = make_candidate(severity="high", confidence="low")
+        candidate.votes = [
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="a", corrected_confidence="high"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="b", corrected_confidence="medium"),
+            Vote(verdict=VERDICT_CONFIRMED, reasoning="c", corrected_confidence="medium"),
+        ]
+        _decide(candidate)
+        assert candidate.confidence == "medium"
 
     def test_an_uncertain_verdict_still_forces_low(self):
         candidate = make_candidate(severity="high", confidence="high")
