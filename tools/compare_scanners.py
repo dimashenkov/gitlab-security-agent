@@ -115,6 +115,31 @@ def run_codeql(repo: Path, target: str, language: str) -> dict:
 SCANNERS = {"semgrep": run_semgrep, "codeql": run_codeql}
 
 
+def scanner_version(name: str) -> str:
+    """The exact build that produced a number, recorded with the number.
+
+    A comparison against "Semgrep" is not reproducible; a comparison against
+    Semgrep 1.136.0 with three named rulesets is. Rulesets are served from a
+    registry and change under a stable name, so a result quoted six months from
+    now without this line is a claim about a tool nobody can identify.
+    """
+    try:
+        out = subprocess.run((name, "--version"), capture_output=True,
+                             text=True, check=False, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    for line in out.splitlines():
+        if line.strip():
+            return line.strip()
+    return "unknown"
+
+
+def configuration(name: str) -> str:
+    if name == "semgrep":
+        return "rulesets " + ", ".join(SEMGREP_CONFIGS)
+    return "suite <lang>-security-extended.qls"
+
+
 def run_case(case: dict, scanner: str) -> dict:
     work = Path(tempfile.mkdtemp(prefix="cmp-{}-".format(case["case_id"]))).resolve()
     row = {"case_id": case["case_id"], "language": case.get("language", "?"),
@@ -203,6 +228,11 @@ def report(rows: list, scanner: str) -> None:
         sum(r["safe_false_positive"] for r in done),
         sum(not r["unsafe_recall"] for r in done),
         " — {} case(s) unsupported".format(len(unsupported)) if unsupported else ""))
+    print("  {}  ·  {}".format(scanner_version(scanner), configuration(scanner)))
+    print("\nThis is a capability matrix, not a leaderboard. These tools answer "
+          "a different question at a different price, and the pairs were written "
+          "here — a corpus authored alongside one tool is not a neutral ground "
+          "on which to rank another.")
 
 
 def main() -> int:
@@ -231,7 +261,12 @@ def main() -> int:
 
     report(rows, args.scanner)
     if args.json:
-        Path(args.json).write_text(json.dumps(rows, indent=2))
+        Path(args.json).write_text(json.dumps({
+            "scanner": args.scanner,
+            "version": scanner_version(args.scanner),
+            "configuration": configuration(args.scanner),
+            "results": rows,
+        }, indent=2))
         print("\nraw results written to {}".format(args.json))
     return 0
 

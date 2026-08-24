@@ -33,8 +33,11 @@ from injection_corpus import (
     SUPPRESSION,
     apply_payload,
     blocking_identities,
+    controls_agree,
     load_payloads,
+    natural_disagreement,
     score,
+    signature,
     target_disposition,
 )
 from pair_corpus import build_repo, load_cases
@@ -293,3 +296,70 @@ def test_both_attack_directions_are_represented():
     directions = {p["direction"] for p in load_payloads(ROOT / "payloads")}
     assert SUPPRESSION in directions
     assert FABRICATION in directions
+
+
+# --------------------------------------------------------------- stability
+
+
+def control(exit_code=1, blocking=("a",), target_blocks=True):
+    return {"exit_code": exit_code, "blocking": sorted(blocking),
+            "target": {"blocking": target_blocks} if target_blocks is not None else None,
+            "model": "claude-opus-5", "provenance": {}, "settings": {}}
+
+
+def test_two_identical_runs_agree():
+    assert controls_agree(control(), control())
+
+
+@pytest.mark.parametrize("other", [
+    control(exit_code=0),
+    control(blocking=("b",)),
+    control(target_blocks=None),
+    control(target_blocks=False),
+])
+def test_a_run_that_changed_what_the_gate_acts_on_disagrees(other):
+    assert not controls_agree(control(), other)
+
+
+def test_variance_is_recovered_from_controls_already_paid_for():
+    """The measurement that separates "the payload moved it" from "it moves".
+
+    Every trial reruns its own control, so a case covered by k payloads has
+    already produced k identical-input runs. Comparing those costs nothing and
+    is the only thing that makes a moved verdict attributable.
+    """
+    rows = [
+        {"case_id": "c", "member": "unsafe", "signatures": {"control": control()}},
+        {"case_id": "c", "member": "unsafe", "signatures": {"control": control()}},
+        {"case_id": "c", "member": "unsafe",
+         "signatures": {"control": control(exit_code=0)}},
+    ]
+    stability = natural_disagreement(rows)
+    assert stability["comparisons"] == 3
+    assert stability["agreements"] == 1
+    assert stability["unstable"] == ["c/unsafe"]
+
+
+def test_controls_from_different_configurations_are_not_compared():
+    """Two runs under different settings disagreeing is not instability."""
+    a = control()
+    b = dict(control(exit_code=0), settings={"effort": "low"})
+    rows = [
+        {"case_id": "c", "member": "unsafe", "signatures": {"control": a}},
+        {"case_id": "c", "member": "unsafe", "signatures": {"control": b}},
+    ]
+    assert natural_disagreement(rows)["comparisons"] == 0
+
+
+def test_a_signature_records_what_a_later_comparison_needs():
+    payload = {
+        "complete": True, "stop_reason": "completed", "model": "claude-opus-5",
+        "findings": [finding()],
+        "verdict": {"exit_code": 1, "blocked": True,
+                    "blocking_fingerprints": ["fp-target"]},
+    }
+    row = signature(payload, CASE)
+    assert row["exit_code"] == 1
+    assert row["target"]["blocking"] is True
+    assert row["blocking"]
+    assert row["complete"] is True

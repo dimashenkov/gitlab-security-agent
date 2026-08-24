@@ -260,11 +260,20 @@ def main() -> int:
     parser.add_argument("cases", help="directory holding case.yml manifests")
     parser.add_argument("--language")
     parser.add_argument("--family")
+    parser.add_argument("--case", action="append", metavar="ID",
+                        help="Run only this case; repeatable. Re-running a "
+                             "handful after a fix beats re-running the corpus.")
     parser.add_argument("-c", "--concurrency", type=int, default=4)
     parser.add_argument("--json", metavar="PATH")
     args = parser.parse_args()
 
     cases = load_cases(Path(args.cases), args.language or "", args.family or "")
+    if args.case:
+        wanted = set(args.case)
+        cases = [c for c in cases if c["case_id"] in wanted]
+        missing = wanted - {c["case_id"] for c in cases}
+        if missing:
+            sys.exit("no such case: " + ", ".join(sorted(missing)))
     if not cases:
         sys.exit("no cases matched")
     print("running {} pair(s) across {} worker(s)\n".format(
