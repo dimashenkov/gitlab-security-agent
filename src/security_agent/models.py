@@ -228,6 +228,14 @@ class Vote:
     corrected_interaction: str = ""
     corrected_confidence: str = ""
     removes_control: str = ""   # "yes" | "no" | "" when not asked
+    # The two links a confirmation rests on, stated rather than implied.
+    # A verifier confirmed that a discarded 404 let unvalidated actions run,
+    # without ever opening the caller — which validates with the identical
+    # predicate on the identical object first. The instruction to read callers
+    # was already in both prompts and had been for weeks; prose did not fix it,
+    # so the verdict now has to carry the evidence or it is not a confirmation.
+    control_search: str = ""    # what guard was looked for, where, and found
+    entry_point: str = ""       # the caller or entry an attacker comes through
     error: str = ""
     # Which model actually answered this vote — a server-side fallback can
     # substitute one mid-review, and a blocking verdict should say so.

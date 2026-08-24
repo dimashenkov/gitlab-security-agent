@@ -791,3 +791,102 @@ class TestSeverityComesFromFacts:
         c = Candidate(finding=make_finding(severity="high", impact="something_new"))
         assert c.severity == "high"
         assert "not derived" in c.severity_derivation
+
+
+class TestConfirmationsCarryTheirEvidence:
+    """The Winter failure, turned into a rule.
+
+    A reviewer reported a real local defect — `execPageAction` discards its
+    404 and falls through — as a security weakness, and a verifier confirmed
+    it. Neither opened the caller. Every caller runs `actionExists` on the
+    same object first, so one function would have refuted it.
+
+    Both prompts already said to read the callers, and had for weeks. So the
+    fix is not another sentence: a confirmation now has to state what would
+    have refuted the finding and where it looked, or it is not a confirmation.
+    """
+
+    def test_a_confirmation_that_shows_no_search_becomes_uncertain(self):
+        from security_agent.verify import _require_evidence
+
+        vote = _require_evidence(Vote(
+            verdict=VERDICT_CONFIRMED,
+            reasoning="The 404 is discarded and the action runs anyway."))
+
+        assert vote.verdict == VERDICT_UNCERTAIN
+        assert "downgraded from confirmed" in vote.reasoning
+        # And it says which link was missing, so the report can be argued with.
+        assert "refute" in vote.reasoning
+
+    def test_a_token_answer_does_not_count_as_a_search(self):
+        """"checked" is not a statement about the code."""
+        from security_agent.verify import _require_evidence
+
+        for excuse in ("", "n/a", "checked", "yes", "looked"):
+            vote = _require_evidence(Vote(
+                verdict=VERDICT_CONFIRMED, reasoning="Confirmed.",
+                control_search=excuse))
+            assert vote.verdict == VERDICT_UNCERTAIN, excuse
+
+    def test_a_confirmation_that_names_what_it_searched_survives(self):
+        from security_agent.verify import _require_evidence
+
+        vote = _require_evidence(Vote(
+            verdict=VERDICT_CONFIRMED,
+            reasoning="No caller validates.",
+            control_search="Searched modules/backend for a call to "
+                           "actionExists before dispatch; none of the three "
+                           "callers performs one."))
+
+        assert vote.verdict == VERDICT_CONFIRMED
+
+    def test_claiming_unauthenticated_reach_requires_naming_the_entry(self):
+        """The claim that escalates severity is the claim that needs evidence."""
+        from security_agent.verify import _require_evidence
+
+        vote = _require_evidence(Vote(
+            verdict=VERDICT_CONFIRMED, reasoning="Reachable.",
+            control_search="Searched app/ and lib/ for an auth decorator on "
+                           "the route; there is none.",
+            corrected_reachable="yes"))
+
+        assert vote.verdict == VERDICT_UNCERTAIN
+        assert "entry point" in vote.reasoning
+
+    def test_naming_the_entry_point_lets_it_stand(self):
+        from security_agent.verify import _require_evidence
+
+        vote = _require_evidence(Vote(
+            verdict=VERDICT_CONFIRMED, reasoning="Reachable.",
+            control_search="Searched app/ and lib/ for an auth decorator on "
+                           "the route; there is none.",
+            corrected_reachable="yes",
+            entry_point="app/urls.py:8 routes /export to the handler with no "
+                        "authentication middleware"))
+
+        assert vote.verdict == VERDICT_CONFIRMED
+
+    def test_a_refutation_needs_no_evidence_fields(self):
+        """The rule exists to make confirming harder, not refuting.
+
+        A verifier that refutes is arguing against the gate, which is the
+        direction that already costs it something.
+        """
+        from security_agent.verify import _require_evidence
+
+        for verdict in (VERDICT_REFUTED, VERDICT_UNCERTAIN):
+            vote = _require_evidence(Vote(verdict=verdict, reasoning="No."))
+            assert vote.verdict == verdict
+
+    def test_a_finding_that_does_not_claim_unauthenticated_reach_needs_no_entry(self):
+        """A hardcoded credential has no call chain, and demanding one would
+        push a whole class of true findings into `uncertain`."""
+        from security_agent.verify import _require_evidence
+
+        vote = _require_evidence(Vote(
+            verdict=VERDICT_CONFIRMED, reasoning="The key is in the repository.",
+            control_search="Searched for a vault lookup or env indirection "
+                           "around this constant; the literal is used directly.",
+            corrected_reachable="unclear"))
+
+        assert vote.verdict == VERDICT_CONFIRMED

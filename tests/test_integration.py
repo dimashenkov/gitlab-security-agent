@@ -59,8 +59,18 @@ def ws(git_repo):
 
 
 def verdict(status, reasoning="Traced the call chain and confirmed it.", **extra):
+    """A verifier reply shaped like a real one.
+
+    `control_search` is filled in because a confirmation without it is
+    downgraded to `uncertain`: a verdict that cannot say what it looked for is
+    an opinion about the quoted lines, not a statement about the code. Pass
+    `control_search=""` to exercise the downgrade.
+    """
     payload = {"verdict": status, "reasoning": reasoning,
-               "corrected_severity": "", "corrected_confidence": ""}
+               "corrected_severity": "", "corrected_confidence": "",
+               "control_search": "Looked for a validating caller in app/ and "
+                                 "found none; the sink is reached directly.",
+               "entry_point": "app/views.py:14 via the public handler"}
     payload.update(extra)
     return FakeResponse([json_text(payload)], stop_reason="end_turn")
 

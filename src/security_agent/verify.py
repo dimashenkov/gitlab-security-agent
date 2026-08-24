@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Tuple
 
 import anthropic
@@ -47,9 +48,17 @@ MAX_VERIFY_TURNS = 14
 VERDICT_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
+    # `control_search` and `entry_point` are required so the model has to
+    # confront the question on every verdict rather than omitting the field.
+    # Without that, a verifier that simply never mentions its search sends
+    # every finding to `uncertain` and the gate stops blocking anything — the
+    # rule would read as caution and act as an off switch. Required means it
+    # must answer; the length check downstream is what decides whether the
+    # answer is a statement or a token.
     "required": ["verdict", "reasoning", "corrected_impact",
                  "corrected_reachable_without_authentication",
-                 "corrected_requires_user_interaction", "corrected_confidence"],
+                 "corrected_requires_user_interaction", "corrected_confidence",
+                 "control_search", "entry_point"],
     "properties": {
         "verdict": {
             "type": "string",
@@ -98,6 +107,28 @@ VERDICT_SCHEMA: Dict[str, Any] = {
                 "removal in the diff and the weakness follows from it. Deleting "
                 "unrelated code near an existing weakness is `no`. Leave empty "
                 "if the change adds no deletions here."
+            ),
+        },
+        "control_search": {
+            "type": "string",
+            "description": (
+                "What you looked for that would REFUTE this finding, where you "
+                "looked, and what you found. Name the guard, validation, or "
+                "check you expected to exist, the files you searched, and the "
+                "result — including 'searched X and Y, no such check exists'. "
+                "Required to confirm: a confirmation without it is an opinion "
+                "about the quoted lines, not a verdict about the code. If you "
+                "did not search, say so and answer `uncertain`."
+            ),
+        },
+        "entry_point": {
+            "type": "string",
+            "description": (
+                "The caller or entry point through which an attacker reaches "
+                "this code, with file and line — the specific chain, not 'it is "
+                "reachable'. Required to confirm a finding you also mark "
+                "reachable without authentication. If every caller you found "
+                "validates first, that is a refutation, not a confirmation."
             ),
         },
         "corrected_confidence": {
@@ -507,6 +538,49 @@ def _stream(client: Any, **params: Any) -> Any:
     return stream_message(client, params, label="verifier turn")
 
 
+# Long enough to name a file and a thing looked for. A verifier that answers
+# "checked" or "n/a" has not made the statement the field exists to extract.
+MIN_EVIDENCE_CHARS = 24
+
+
+def _require_evidence(vote: Vote) -> Vote:
+    """A confirmation that cannot say what it checked is not a confirmation.
+
+    Winter's reviewer reported a real local defect — a discarded 404 — as a
+    security weakness, and a verifier confirmed it, without either of them
+    opening the caller. Every caller validates with the identical predicate on
+    the identical object first, so the finding was refutable by reading one
+    function. Both prompts already said to read the callers. They had said it
+    for weeks.
+
+    So this is not another sentence of prose. `confirmed` is downgraded to
+    `uncertain` unless the vote states what would have refuted the finding and
+    where it looked, and — where the finding rests on being reachable by an
+    unauthenticated caller — which entry point that is. `uncertain` is a real
+    answer here, the same way it is everywhere else in this project: a
+    consistent "I could not establish it" beats a confident guess.
+    """
+    if vote.verdict != VERDICT_CONFIRMED:
+        return vote
+
+    missing = []
+    if len(vote.control_search) < MIN_EVIDENCE_CHARS:
+        missing.append("what it searched for that would refute the finding")
+    if (vote.corrected_reachable or "").lower() == "yes" and (
+            len(vote.entry_point) < MIN_EVIDENCE_CHARS):
+        missing.append("the entry point an unauthenticated attacker comes through")
+    if not missing:
+        return vote
+
+    return replace(
+        vote,
+        verdict=VERDICT_UNCERTAIN,
+        reasoning=(
+            "{} (downgraded from confirmed: the verdict did not state {})"
+        ).format(vote.reasoning, " or ".join(missing)).strip(),
+    )
+
+
 def _parse_verdict(response: Any) -> Optional[Vote]:
     """Read the structured verdict out of the final message.
 
@@ -535,7 +609,7 @@ def _parse_verdict(response: Any) -> Optional[Vote]:
     verdict = str(data.get("verdict", "")).strip()
     if verdict not in (VERDICT_CONFIRMED, VERDICT_UNCERTAIN, VERDICT_REFUTED):
         return None
-    return Vote(
+    return _require_evidence(Vote(
         verdict=verdict,
         reasoning=str(data.get("reasoning", "")).strip(),
         corrected_impact=str(data.get("corrected_impact", "") or "").strip(),
@@ -545,7 +619,9 @@ def _parse_verdict(response: Any) -> Optional[Vote]:
             data.get("corrected_requires_user_interaction", "") or "").strip(),
         corrected_confidence=str(data.get("corrected_confidence", "") or "").strip(),
         removes_control=str(data.get("removes_existing_control", "") or "").strip().lower(),
-    )
+        control_search=str(data.get("control_search", "") or "").strip(),
+        entry_point=str(data.get("entry_point", "") or "").strip(),
+    ))
 
 
 # ---------------------------------------------------------------- aggregation
@@ -727,6 +803,13 @@ def _reason(votes: List[Vote], verdict: str) -> str:
         head = preferred[0].reasoning
     else:
         head = next((v.reasoning for v in votes if v.reasoning), "")
+    # What was looked for, beside what was concluded. A confirmation is only
+    # worth as much as the refutation that was attempted, and a reader
+    # overruling the gate needs to see which one that was.
+    search = next((v.control_search for v in votes
+                   if v.verdict == verdict and v.control_search), "")
+    if search:
+        head = "{} Searched: {}".format(head, search).strip()
     if len(votes) > 1:
         tally = "{}/{} verifier(s) agreed".format(
             sum(1 for v in votes if v.verdict == verdict), len(votes))

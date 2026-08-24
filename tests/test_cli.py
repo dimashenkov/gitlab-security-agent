@@ -47,11 +47,24 @@ def ci_env(monkeypatch, tmp_path):
     monkeypatch.setenv("SECURITY_SCAN_PROMPT_DIR", str(PROMPTS))
 
 
-def verdict_response(status):
-    return FakeResponse([json_text({
+def verdict_response(status, **overrides):
+    """A verifier reply shaped like a real one.
+
+    `control_search` is populated because a confirmation without it is
+    downgraded to `uncertain` — a verdict that cannot say what it looked for
+    is an opinion about the quoted lines, not a statement about the code.
+    Tests that want the downgrade pass `control_search=""`.
+    """
+    body = {
         "verdict": status, "reasoning": "Checked the callers.",
         "corrected_severity": "", "corrected_confidence": "",
-    })], stop_reason="end_turn")
+        "control_search": "Searched app/ for a validating caller; every path "
+                          "reaches the sink unguarded.",
+        "entry_point": "app/views.py:14, reached from the unauthenticated "
+                       "handler in app/urls.py:8",
+    }
+    body.update(overrides)
+    return FakeResponse([json_text(body)], stop_reason="end_turn")
 
 
 def install_client(monkeypatch, script, verifier_script=None):
