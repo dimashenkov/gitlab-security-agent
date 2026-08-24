@@ -8,5 +8,5 @@ decisive_control: containment check after resolve(), rather than an existence ch
 # Both members call resolve() and both abort on failure, so the shapes match.
 # Only one of the two checks constrains where the path may point; the other
 # constrains only whether something is there.
-expected_category: path_traversal
+expected_category: path-traversal
 expected_file: download.py

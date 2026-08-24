@@ -73,29 +73,37 @@ EXTENSION_LANGUAGE = {
     ".jsx": "javascript", ".cs": "csharp", ".kt": "kotlin", ".scala": "scala",
 }
 
-# CWE → the category vocabulary the agent reports in. Only the families where
-# the mapping is unambiguous; anything else is harvested with an empty expected
-# category and is scored on file alone, which is stated in the manifest rather
-# than guessed at scoring time.
+# CWE → the agent's own category vocabulary, which is read from
+# `prompts/findings.schema.json` rather than restated here. An earlier version
+# of this map used names the agent can never emit — `authorization`,
+# `path_traversal`, `open_redirect` — so every case built from them scored as a
+# miss without ever being given a chance to pass. Only mappings that are
+# unambiguous are listed; anything else harvests with an empty expected
+# category and is scored on file alone, which the manifest states rather than
+# leaving to be guessed.
+# Named here so a test can say which file the truth lives in.
+SCHEMA_NAME = "prompts/findings.schema.json"
+
 CWE_CATEGORY = {
     "CWE-89": "injection", "CWE-564": "injection", "CWE-943": "injection",
     "CWE-78": "injection", "CWE-77": "injection", "CWE-88": "injection",
     "CWE-94": "injection", "CWE-95": "injection", "CWE-470": "injection",
     "CWE-79": "xss", "CWE-80": "xss", "CWE-116": "xss",
-    "CWE-22": "path_traversal", "CWE-23": "path_traversal", "CWE-36": "path_traversal",
-    "CWE-59": "path_traversal",
+    "CWE-22": "path-traversal", "CWE-23": "path-traversal",
+    "CWE-36": "path-traversal", "CWE-59": "path-traversal",
     "CWE-918": "ssrf",
     "CWE-502": "deserialization",
-    "CWE-287": "authentication", "CWE-306": "authentication",
+    "CWE-287": "authn-authz", "CWE-306": "authn-authz",
+    "CWE-862": "authn-authz", "CWE-863": "authn-authz", "CWE-639": "authn-authz",
+    "CWE-284": "authn-authz", "CWE-269": "authn-authz", "CWE-566": "authn-authz",
     "CWE-798": "secrets", "CWE-259": "secrets",
-    "CWE-862": "authorization", "CWE-863": "authorization", "CWE-639": "authorization",
-    "CWE-284": "authorization", "CWE-269": "authorization", "CWE-566": "authorization",
-    "CWE-601": "open_redirect",
     "CWE-352": "csrf",
+    "CWE-200": "sensitive-data-exposure", "CWE-532": "sensitive-data-exposure",
     "CWE-327": "crypto", "CWE-328": "crypto", "CWE-916": "crypto",
     "CWE-330": "crypto", "CWE-338": "crypto", "CWE-208": "crypto",
-    "CWE-367": "race_condition", "CWE-362": "race_condition",
-    "CWE-611": "xxe",
+    "CWE-367": "race-condition", "CWE-362": "race-condition",
+    "CWE-400": "dos", "CWE-770": "dos", "CWE-789": "dos", "CWE-1333": "dos",
+    "CWE-611": "other",
 }
 
 # Paths dropped from the change on both members. A test named after the CVE is
@@ -223,16 +231,18 @@ def build_member(
         shutil.rmtree(root)
     (root / "change").mkdir(parents=True)
 
-    # Only the files the fix touched, plus their siblings, are carried over.
-    # Whole real repositories are too large to commit here and would make the
-    # review a different task — finding a needle in a project — from the one
-    # being measured.
+    # Repository-relative paths, kept intact. Flattening to a basename — which
+    # this did until it was pointed out — destroys package structure, makes
+    # every import in the file false, collides two files that share a name, and
+    # leaves the agent unable to follow a caller. The case is a slice of a real
+    # project or it is not worth harvesting.
     for path in keep:
         for rev, dest in ((baseline_rev, root), (change_rev, root / "change")):
             blob = git(repo, "show", "{}:{}".format(rev, path), env=env, check=False)
             if not blob:
                 continue
-            target = dest / Path(path).name
+            target = dest / path
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(blob, encoding="utf-8")
 
 
@@ -317,7 +327,10 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int) -> dict:
             return verdict
 
         category = category_of(item["cwes"])
-        target = Path(keep[0]).name
+        # The repository-relative path, not a basename: two files called
+        # `views.py` in different packages are different files, and scoring
+        # on the basename would credit a finding in the wrong one.
+        target = keep[0]
         manifest = [
             "case_id: {}".format(case_id),
             "language: {}".format(language),

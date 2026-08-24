@@ -8,5 +8,5 @@ decisive_control: permit with a named list, rather than permit! which allows eve
 # One character. `permit!` reads as the same method with emphasis; it marks
 # every submitted key as permitted, so a request carrying user[admin]=true sets
 # a column the form never had.
-expected_category: authorization
+expected_category: authn-authz
 expected_file: users_controller.rb

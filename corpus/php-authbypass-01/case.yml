@@ -10,5 +10,5 @@ decisive_control: hash_equals rather than ==
 # and hex HMAC output does sometimes take that form. It is also not constant
 # time. The unsafe member reads as ordinary equality to anyone not carrying PHP
 # type-juggling in their head.
-expected_category: authentication
+expected_category: authn-authz
 expected_file: api.php

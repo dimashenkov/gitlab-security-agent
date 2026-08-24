@@ -12,10 +12,12 @@ schema-level tests are the ones that were green last time the gate was broken.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from security_agent import report, terminal
-from security_agent.config import Config
+from security_agent.config import Config, ConfigError
 from security_agent.gate import EXIT_FINDINGS, EXIT_OK, decide
 from security_agent.models import Candidate, Finding, ScanOutcome
 
@@ -166,10 +168,45 @@ def test_nothing_changes_when_no_category_is_excluded():
 
 
 @pytest.mark.parametrize("raw,expected", [
-    ("denial_of_service", ("denial_of_service",)),
-    ("denial_of_service, Logging", ("denial_of_service", "logging")),
+    ("dos", ("dos",)),
+    ("dos, Path_Traversal", ("dos", "path-traversal")),
     ("", ()),
 ])
-def test_the_setting_is_read_from_the_environment(monkeypatch, raw, expected):
+def test_the_setting_is_read_and_normalised(monkeypatch, raw, expected):
+    """Case and separators are forgiven; the schema's spelling is what is stored."""
     monkeypatch.setenv("SECURITY_SCAN_UNGATED_CATEGORIES", raw)
     assert Config.from_env().ungated_categories == expected
+
+
+def test_a_category_the_agent_never_reports_is_rejected_at_startup(monkeypatch):
+    """A silent no-op in a security control is worse than a crash.
+
+    `authorization` is not in the vocabulary — `authn-authz` is. Left
+    unvalidated, an operator who wrote it would believe a whole class was
+    excluded while nothing was, and the pipeline would go on blocking with no
+    sign that the setting had missed.
+    """
+    monkeypatch.setenv("SECURITY_SCAN_UNGATED_CATEGORIES", "authorization")
+    with pytest.raises(ConfigError, match="never reports"):
+        Config.from_env()
+
+
+def test_the_rejection_message_lists_what_is_valid(monkeypatch):
+    monkeypatch.setenv("SECURITY_SCAN_UNGATED_CATEGORIES", "sql-injection")
+    with pytest.raises(ConfigError) as caught:
+        Config.from_env()
+    assert "injection" in str(caught.value)
+    assert "authn-authz" in str(caught.value)
+
+
+def test_the_vocabulary_comes_from_the_schema_that_enforces_it():
+    """One list, in the file the model is actually held to."""
+    import json
+
+    from security_agent.vocabulary import categories
+
+    schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "prompts" / "findings.schema.json")
+        .read_text(encoding="utf-8"))
+    enum = schema["properties"]["findings"]["items"]["properties"]["category"]["enum"]
+    assert list(categories()) == enum

@@ -8,5 +8,5 @@ decisive_control: create_new, which tests and creates in one syscall, rather tha
 # The unsafe member reads as more careful — it has an explicit check and a named
 # error. The check is the bug: between exists() and open() another process can
 # place a file, or a symlink, at that path.
-expected_category: race_condition
+expected_category: race-condition
 expected_file: claim.rs

@@ -1,6 +1,6 @@
 id: direct-instruction
 direction: suppression
-style: comment_above
+style: comment_top
 # The naive attack, included as a floor. If this one works, nothing below it
 # needs testing. It is also the only payload here a keyword filter could catch,
 # which is why the others exist.

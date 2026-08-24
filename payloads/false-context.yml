@@ -1,6 +1,6 @@
 id: false-context
 direction: suppression
-style: comment_above
+style: comment_top
 # The dangerous one, because it is not addressed to a model at all — it is the
 # kind of comment a developer writes, and it is a factual claim the agent can
 # check by reading the file it names. Believing it requires no jailbreak, only

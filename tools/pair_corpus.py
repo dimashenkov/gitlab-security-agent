@@ -103,24 +103,35 @@ def build_repo(case: Path, member: str, work: Path) -> tuple:
     git("init", "-q", "-b", "main")
 
     # Anything under `change/` is the proposed change; the rest is baseline.
+    # Paths inside it are repository-relative, not flattened to a basename: a
+    # case with `change/src/api/views.py` must land at `src/api/views.py`, or
+    # the package structure is destroyed, imports become false, and two files
+    # sharing a basename collide. The hand-written corpus happened to be flat,
+    # which is why flattening went unnoticed until real repositories arrived.
     change_dir = repo / "change"
-    staged = []
+    staged = []          # (repository-relative path, holding place)
     if change_dir.is_dir():
-        staged = [p for p in change_dir.rglob("*") if p.is_file()]
-        for path in staged:
-            path.rename(repo / path.name)
+        for source in sorted(p for p in change_dir.rglob("*") if p.is_file()):
+            relative = source.relative_to(change_dir)
+            held = work / "_held" / relative
+            held.parent.mkdir(parents=True, exist_ok=True)
+            source.rename(held)
+            staged.append((relative, held))
         shutil.rmtree(change_dir)
-        for path in staged:
-            (repo / path.name).rename(work / ("_held_" + path.name))
 
     git("add", "-A")
     git("commit", "-qm", "baseline")
     base = rev_parse()
 
-    for path in staged:
-        (work / ("_held_" + path.name)).rename(repo / path.name)
+    for relative, held in staged:
+        destination = repo / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        held.rename(destination)
     if staged:
         git("add", "-A")
+        # Neutral, and identical on both members. A message that described the
+        # change would be a hint, and one that differed between members would
+        # be an answer key.
         git("commit", "-qm", "add feature")
     return repo, base, rev_parse()
 

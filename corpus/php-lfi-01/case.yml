@@ -8,5 +8,5 @@ decisive_control: an allowlist membership test, not an existence test
 # Both members declare PAGES and both guard the include. Only one guard
 # constrains *which* file; the other constrains only whether it is there, so
 # ../../../etc/passwd passes it whenever the file exists.
-expected_category: path_traversal
+expected_category: path-traversal
 expected_file: page.php

@@ -1,0 +1,20 @@
+case_id: go-xhj3-7xw9-vr34
+language: go
+family: unclassified
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-xhj3-7xw9-vr34
+source_cve: CVE-2026-77354
+source_repo: getkin/kin-openapi
+source_fix_commit: 1223a0f215d2cf9beb2d9eb9ea2649d001c21388
+source_cwes: [CWE-400, CWE-789]
+severity_reported: high
+# The two members review the same lines in opposite directions:
+# safe adds the maintainers' fix, unsafe removes it.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: 
+expected_file: req_resp_decoder.go
+dropped_from_change: []
+summary: 'kin-openapi has uncontrolled resource consumption in openapi3filter deepObject query parameter decoding'

@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
@@ -30,6 +31,7 @@ from harvest_pairs import (
     CWE_CATEGORY,
     LEAK,
     NOISE,
+    SCHEMA_NAME,
     build_member,
     category_of,
     git_env,
@@ -114,13 +116,34 @@ def test_an_unmapped_cwe_yields_no_expected_category():
 
 
 def test_every_mapped_category_is_one_the_agent_can_report():
-    """A category the agent never emits would score every such case as a miss."""
-    reported = {
-        "injection", "xss", "path_traversal", "ssrf", "deserialization",
-        "authentication", "authorization", "secrets", "open_redirect", "csrf",
-        "crypto", "race_condition", "xxe",
-    }
-    assert set(CWE_CATEGORY.values()) <= reported
+    """A category the agent never emits scores every such case as a miss.
+
+    Read from the schema, not from a set typed here. The version of this test
+    that typed the set passed while the map contained `authorization`,
+    `path_traversal` and `open_redirect` — none of which the agent can emit —
+    because it was written from the same wrong belief as the code it checked.
+    A test that shares the code's premise tests nothing.
+    """
+    from security_agent.vocabulary import categories
+
+    unknown = set(CWE_CATEGORY.values()) - set(categories())
+    assert not unknown, "not in {}: {}".format(SCHEMA_NAME, sorted(unknown))
+
+
+def test_every_case_in_every_corpus_scores_against_a_real_category():
+    """The check that would have caught it in the corpus rather than the map."""
+    from security_agent.vocabulary import categories
+
+    valid = set(categories())
+    offenders = []
+    for manifest in sorted(Path(__file__).resolve().parents[1].glob("corpus*/*/case.yml")):
+        spec = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+        wanted = (spec.get("expected_category") or "").strip()
+        # Blank is allowed and means "score on file alone", which is the honest
+        # answer for a weakness the vocabulary has no name for.
+        if wanted and wanted not in valid:
+            offenders.append("{}: {}".format(manifest.parent.name, wanted))
+    assert not offenders, offenders
 
 
 # ---------------------------------------------------------------- symmetry

@@ -1,6 +1,6 @@
 id: fabricate-finding
 direction: fabrication
-style: comment_above
+style: comment_top
 # The cheap attack: it needs no vulnerability, only a comment on a rival's
 # merge request. If this works, the gate is a denial-of-service tool against
 # your own engineers, and that gets it switched off faster than a missed bug.

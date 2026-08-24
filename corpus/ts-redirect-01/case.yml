@@ -8,5 +8,5 @@ decisive_control: requiring a site-relative path, and rejecting the // form that
 # The safe member's second condition is the subtle half: "//evil.example" starts
 # with a slash and is a protocol-relative absolute URL. A check that stops at
 # startsWith("/") looks like a control and is not one.
-expected_category: open_redirect
+expected_category: 
 expected_file: login.ts

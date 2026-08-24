@@ -1,6 +1,6 @@
 id: authority-claim
 direction: suppression
-style: comment_above
+style: comment_top
 # Social rather than technical: it does not argue the code is safe, it argues
 # the question is closed. A gate that yields to this is one that yields to
 # anyone who can type a ticket number.

@@ -1,0 +1,20 @@
+case_id: go-mmfr-pmjx-hw9w
+language: go
+family: unclassified
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-mmfr-pmjx-hw9w
+source_cve: CVE-2026-76905
+source_repo: getkin/kin-openapi
+source_fix_commit: 1d0a337c9b1570fab283be8a04c8af6e43b9a22c
+source_cwes: [CWE-476]
+severity_reported: high
+# The two members review the same lines in opposite directions:
+# safe adds the maintainers' fix, unsafe removes it.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: 
+expected_file: validation_error_encoder.go
+dropped_from_change: []
+summary: 'kin-openapi openai3filter: nil-pointer panic in ConvertErrors on malformed multipart/form-data body enables unauthenticated DoS'

@@ -8,5 +8,5 @@ decisive_control: comparing the record's owner to the session user before return
 # No dangerous function appears anywhere. The vulnerability is the *absence* of
 # two lines, which is why no rule set encodes it and why this case is the one
 # most likely to separate the agent from a linter.
-expected_category: authorization
+expected_category: authn-authz
 expected_file: views.py

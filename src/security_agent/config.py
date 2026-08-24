@@ -219,8 +219,7 @@ class Config:
             fail_on_incomplete=_env_bool("SECURITY_SCAN_FAIL_ON_INCOMPLETE", True),
             gate_pre_existing=_env_bool("SECURITY_SCAN_GATE_PRE_EXISTING", False),
             gate_removed_controls=_env_bool("SECURITY_SCAN_GATE_REMOVED_CONTROLS", True),
-            ungated_categories=tuple(
-                c.lower() for c in _env_list("SECURITY_SCAN_UNGATED_CATEGORIES")),
+            ungated_categories=tuple(_env_list("SECURITY_SCAN_UNGATED_CATEGORIES")),
             output_dir=Path(_env("SECURITY_SCAN_OUTPUT_DIR", ".security-scan")),
             post_comment=_env_bool("SECURITY_SCAN_POST_COMMENT", True),
             ignore_file=Path(_env("SECURITY_SCAN_IGNORE_FILE", ".security-agent-ignore.yml")),
@@ -247,6 +246,24 @@ class Config:
                 "SECURITY_SCAN_MIN_CONFIDENCE must be one of {}, got {!r}".format(
                     "|".join(CONFIDENCE_ORDER), self.min_confidence)
             )
+        if self.ungated_categories:
+            from .vocabulary import categories, normalise
+
+            resolved, unknown = [], []
+            for name in self.ungated_categories:
+                match = normalise(name)
+                (resolved if match else unknown).append(match or name)
+            if unknown:
+                raise ConfigError(
+                    "SECURITY_SCAN_UNGATED_CATEGORIES names {} that the agent "
+                    "never reports, so it would exclude nothing while looking "
+                    "as though it excluded something. Valid categories: "
+                    "{}".format(
+                        ", ".join(repr(u) for u in unknown),
+                        ", ".join(categories()))
+                )
+            self.ungated_categories = tuple(resolved)
+
         if self.mode not in ("auto", "diff", "repo"):
             raise ConfigError(
                 "SECURITY_SCAN_MODE must be auto|diff|repo, got {!r}".format(self.mode))
