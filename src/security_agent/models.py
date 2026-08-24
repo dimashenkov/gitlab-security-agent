@@ -471,6 +471,44 @@ STOP_EXPLANATIONS = {
 
 
 @dataclass
+class TurnRecord:
+    """One request to the model, and what came back.
+
+    Aggregate usage says what a review cost and nothing about where it went.
+    When four reviews stopped early, the question "which turn, holding how
+    much, asking for how much room" had no answer in the artifact — the
+    diagnosis had to be rebuilt from the source and ended in "one of two,
+    cannot tell". Per-turn is the granularity that answers it, and it is a few
+    hundred bytes.
+    """
+
+    turn: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    # What the request asked for, which the retry changes mid-review.
+    max_tokens: int = 0
+    stop_reason: str = ""
+    # True when this turn is a replay of one that came back truncated. Its
+    # tokens were charged and its work was thrown away, so a review with
+    # replays costs more than its turn count suggests.
+    replay: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "turn": self.turn,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+            "max_tokens": self.max_tokens,
+            "stop_reason": self.stop_reason,
+            "replay": self.replay,
+        }
+
+
+@dataclass
 class StageMetrics:
     """What each stage did, so its value can be argued about with numbers.
 
@@ -662,6 +700,7 @@ class ScanOutcome:
     verification_usage: Usage = field(default_factory=Usage)
     provenance: Provenance = field(default_factory=Provenance)
     revision: Revision = field(default_factory=Revision)
+    turn_records: List[TurnRecord] = field(default_factory=list)
     coverage: Coverage = field(default_factory=Coverage)
     metrics: StageMetrics = field(default_factory=StageMetrics)
 

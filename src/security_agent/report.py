@@ -542,6 +542,11 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
         "provenance": outcome.provenance.to_dict(),
         "coverage_accounting": outcome.coverage.to_dict(),
         "stage_metrics": outcome.metrics.to_dict(),
+        # Per turn, not just the total. A total says what a review cost
+        # and nothing about where it went, and "which turn, holding how
+        # much, asking for how much room" is the question an incomplete
+        # run has to answer from its own artifact.
+        "turns_detail": [r.to_dict() for r in outcome.turn_records],
         "settings": {
             "fail_on": cfg.fail_on,
             "min_confidence": cfg.min_confidence,

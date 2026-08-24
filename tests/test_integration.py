@@ -473,3 +473,99 @@ class TestStageMetrics:
         payload = build_json(cfg, outcome, decide(cfg, outcome))
         assert "stage_metrics" in payload
         assert "coverage_accounting" in payload
+
+
+class TestUnknownStopReasons:
+    """The loop named four reasons and let everything else fall through.
+
+    A response with no tool call was then declared a completed review. Current
+    models return `model_context_window_exceeded` instead of a 400 when
+    generation reaches the context limit, so a review that ran out of room
+    would have reported a clean pass — the exact confusion the product's exit
+    codes exist to prevent, arriving through the one door nobody checked.
+
+    Found by Codex, verified by reading the loop.
+    """
+
+    def test_a_context_window_stop_is_not_a_clean_pass(self, cfg, ws):
+        client = FakeClient([FakeResponse(
+            [text("I was partway through when")],
+            stop_reason="model_context_window_exceeded")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+
+        assert not outcome.complete
+        assert outcome.stop_reason == "context_exhausted"
+        assert "model_context_window_exceeded" in outcome.stop_detail
+
+    def test_a_stop_reason_nobody_has_read_the_docs_for_is_not_a_clean_pass(self, cfg, ws):
+        """The allowlist has to hold for reasons that do not exist yet.
+
+        Naming today's unknown reason and leaving the shape a deny-list would
+        fix this case and guarantee the next one.
+        """
+        client = FakeClient([FakeResponse(
+            [text("partial")], stop_reason="some_reason_invented_in_2027")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+
+        assert not outcome.complete
+        assert outcome.stop_reason == "error"
+
+    def test_an_ordinary_end_turn_is_still_a_clean_pass(self, cfg, ws):
+        client = FakeClient([FakeResponse([text("Reviewed. Nothing found.")],
+                                          stop_reason="end_turn")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+
+        assert outcome.complete
+        assert outcome.stop_reason == "completed"
+
+    def test_a_stop_sequence_is_a_clean_pass_too(self, cfg, ws):
+        client = FakeClient([FakeResponse([text("Reviewed.")],
+                                          stop_reason="stop_sequence")])
+        assert SecurityAgent(cfg, ws, client=client).run("repo", "go").complete
+
+
+class TestTurnTelemetry:
+    """Aggregate usage says what a review cost and nothing about where it went.
+
+    When four reviews stopped early, "which turn, holding how much, asking for
+    how much room" had no answer in the artifact, so the diagnosis had to be
+    rebuilt from the source and ended in "one of two, cannot tell".
+    """
+
+    def test_every_turn_is_recorded(self, cfg, ws):
+        client = FakeClient([
+            FakeResponse([tool_use("git_log", {}, id="t1")], stop_reason="tool_use"),
+            FakeResponse([text("Done.")], stop_reason="end_turn"),
+        ])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+
+        assert len(outcome.turn_records) == 2
+        assert [r.turn for r in outcome.turn_records] == [1, 2]
+        assert [r.stop_reason for r in outcome.turn_records] == ["tool_use", "end_turn"]
+        assert all(r.max_tokens == cfg.max_tokens for r in outcome.turn_records)
+
+    def test_a_replay_is_marked_and_its_cost_is_not_hidden(self, cfg, ws):
+        """The truncated attempt was charged and its work thrown away, so a
+        review with replays costs more than its turn count suggests."""
+        client = FakeClient([
+            FakeResponse([text("truncated")], stop_reason="max_tokens"),
+            FakeResponse([text("Done.")], stop_reason="end_turn"),
+        ])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+
+        assert [r.replay for r in outcome.turn_records] == [False, True]
+        # Two requests billed, one logical turn.
+        assert len(outcome.turn_records) == 2
+        assert outcome.turns == 1
+        assert outcome.turn_records[1].max_tokens > outcome.turn_records[0].max_tokens
+
+    def test_the_detail_reaches_the_artifact(self, cfg, ws):
+        from security_agent.gate import decide
+        from security_agent.report import build_json
+
+        client = FakeClient([FakeResponse([text("Done.")], stop_reason="end_turn")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        payload = build_json(cfg, outcome, decide(cfg, outcome))
+
+        assert payload["turns_detail"][0]["stop_reason"] == "end_turn"
+        assert "max_tokens" in payload["turns_detail"][0]

@@ -33,6 +33,7 @@ from .models import (
     Revision,
     ScanOutcome,
     ToolCallRecord,
+    TurnRecord,
     Usage,
 )
 from .tools import Session, dispatch, load_finding_schema, tool_definitions
@@ -76,6 +77,45 @@ BETA_TASK_BUDGET = "task-budgets-2026-03-13"
 # effort can exhaust a 32k ceiling before the model reaches its tool call. This
 # is the ceiling the retry may climb to, not the default.
 MAX_RESPONSE_TOKENS = 64_000
+
+# The only stop reasons that mean the model finished a turn on its own terms.
+# `pause_turn` and `max_tokens` are handled before this and never reach it.
+FINISHED_CLEANLY = frozenset({"end_turn", "tool_use", "stop_sequence"})
+
+# Reasons the API can return that mean the turn was cut short. Named so the
+# artifact says which, rather than recording a review that never finished as
+# one that finished and found nothing.
+_API_STOP_REASONS = {
+    "model_context_window_exceeded": STOP_CONTEXT,
+    "context_window_exceeded": STOP_CONTEXT,
+}
+
+
+def _turn_record(turn: int, response: Any, max_tokens: int, replay: bool) -> TurnRecord:
+    usage = getattr(response, "usage", None)
+
+    def count(name: str) -> int:
+        return int(getattr(usage, name, 0) or 0) if usage else 0
+
+    return TurnRecord(
+        turn=turn,
+        input_tokens=count("input_tokens"),
+        output_tokens=count("output_tokens"),
+        cache_read_tokens=count("cache_read_input_tokens"),
+        cache_write_tokens=count("cache_creation_input_tokens"),
+        max_tokens=max_tokens,
+        stop_reason=str(getattr(response, "stop_reason", "") or ""),
+        replay=replay,
+    )
+
+
+def _stop_reason_for(api_stop_reason: Optional[str]) -> str:
+    """Map an unexpected API stop reason onto one of ours.
+
+    Unknown maps to `error` rather than to `completed`. A reason nobody has
+    read the documentation for is not evidence that the review finished.
+    """
+    return _API_STOP_REASONS.get(api_stop_reason or "", STOP_ERROR)
 
 
 @dataclass
@@ -142,6 +182,7 @@ class SecurityAgent:
         # turn will very likely need it again, and paying for a truncated
         # response to discover that a second time is waste.
         ceiling = self.cfg.max_tokens
+        replayed = False
         stop_reason = STOP_COMPLETED
         stop_detail = ""
         summary = ""
@@ -180,6 +221,9 @@ class SecurityAgent:
                 break
 
             self.usage.add(response.usage)
+            outcome.turn_records.append(_turn_record(
+                self.session.turn, response, ceiling, replay=replayed))
+            replayed = False
             outcome.provenance.note_served(getattr(response, "model", "") or self.cfg.model)
             self._log_turn(response)
 
@@ -203,6 +247,7 @@ class SecurityAgent:
                 if ceiling < MAX_RESPONSE_TOKENS:
                     ceiling = min(ceiling * 2, MAX_RESPONSE_TOKENS)
                     self.session.turn -= 1        # the turn did not happen
+                    replayed = True
                     log.info("response truncated; replaying the turn with "
                              "max_tokens=%d", ceiling)
                     continue
@@ -220,6 +265,21 @@ class SecurityAgent:
                 # A server-side tool paused mid-turn; resending the history
                 # resumes it. Nothing to execute on our side.
                 continue
+
+            # An allowlist, not a chain of special cases. Everything the loop
+            # did not name fell through to the branch below, and a response
+            # with no tool call was then declared a completed review — so
+            # `model_context_window_exceeded`, which is what current models
+            # return instead of a 400 when generation reaches the context
+            # limit, would have reported a clean pass on a review that ran out
+            # of room. That is the one thing this product must never do, and
+            # the deny-list shape guarantees the next unnamed reason does it
+            # again.
+            if response.stop_reason not in FINISHED_CLEANLY:
+                stop_reason = _stop_reason_for(response.stop_reason)
+                stop_detail = "the API ended the turn with stop_reason={!r}".format(
+                    response.stop_reason)
+                break
 
             tool_uses = [b for b in response.content if getattr(b, "type", "") == "tool_use"]
             if not tool_uses:
