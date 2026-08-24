@@ -444,6 +444,12 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
             "fail_on": cfg.fail_on,
             "min_confidence": cfg.min_confidence,
             "gate_pre_existing": cfg.gate_pre_existing,
+            # Recorded because an archived artifact has to be able to say which
+            # policy produced it. Without this, two runs of the same code under
+            # opposite gating settings are indistinguishable after the fact,
+            # and any experiment comparing them is unfalsifiable.
+            "gate_removed_controls": cfg.gate_removed_controls,
+            "ungated_categories": list(cfg.ungated_categories),
             "verify": cfg.verify,
             "verify_votes": cfg.verify_votes,
             "effort": cfg.effort,

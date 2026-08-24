@@ -288,9 +288,19 @@ def _worth_verifying(cfg: Config, candidate: Candidate) -> bool:
     verifying every `low` finding on a large change costs more than that case is
     worth. Anything skipped still appears in the report, labelled with why.
     """
-    if candidate.attributed_by == ATTRIBUTED_DELETED and cfg.gate_removed_controls:
+    if candidate.attributed_by == ATTRIBUTED_DELETED:
         # Whether this is a removed control is the verifier's call, and it can
         # block regardless of severity — so severity cannot be used to skip it.
+        #
+        # Deliberately not conditioned on `gate_removed_controls`. Verification
+        # scope is decided by what a verdict could change about the *finding*,
+        # never by the gating policy in force: a project that has switched the
+        # rule off still deserves to know whether its change deleted a guard,
+        # and a claim that it did is exactly the kind worth checking against the
+        # file. Tying the two together also made the setting impossible to
+        # ablate — turning the rule off silently stopped verifying these, so
+        # "ungated" and "unverified" moved as one and no experiment could
+        # separate them.
         return True
     if severity_rank(candidate.severity) < severity_rank(cfg.fail_on) - 1:
         return False

@@ -200,6 +200,56 @@ class TestVerificationScope:
         assert usage.requests == 0
 
 
+class TestVerificationScopeIsIndependentOfGating:
+    """What gets verified must not depend on what gets gated.
+
+    These two questions look adjacent and are not. Verification asks whether a
+    claim about the code is true; gating asks whether a true claim should stop
+    a merge. Letting the second decide the first means a project that relaxes
+    its policy quietly stops *checking*, and every finding it does report
+    becomes less trustworthy at exactly the moment it is trusted more.
+
+    It also made the setting impossible to study: with the two tied together,
+    turning the removed-control rule off stopped verifying deletion-attributed
+    findings, so "no longer gated" and "no longer verified" moved as one and no
+    experiment could tell which had produced a difference.
+    """
+
+    def test_a_deleted_guard_is_verified_with_the_rule_on(self, config):
+        config.gate_removed_controls = True
+        candidate = make_candidate(severity="low", attributed_by="deleted")
+        gating, _ = _partition(config, [candidate])
+        assert gating == [candidate]
+
+    def test_a_deleted_guard_is_verified_with_the_rule_off_too(self, config):
+        """The regression. Off, this used to fall through to the severity test.
+
+        A `low` finding attributed to a deletion then came back unverified
+        rather than merely ungated — a project that had switched the rule off
+        was told less about its own change, not just gated less on it.
+        """
+        config.gate_removed_controls = False
+        candidate = make_candidate(severity="low", attributed_by="deleted")
+        gating, informational = _partition(config, [candidate])
+        assert gating == [candidate]
+        assert informational == []
+
+    def test_the_gating_rule_changes_no_verification_decision(self, config):
+        """Swept across the settings, the partition must be identical."""
+        candidates = [
+            make_candidate(severity=level, attributed_by=attribution,
+                           confidence=confidence)
+            for level in ("low", "medium", "high", "critical")
+            for attribution in ("added", "deleted", "")
+            for confidence in ("low", "high")
+        ]
+        config.gate_removed_controls = True
+        with_rule = _partition(config, candidates)
+        config.gate_removed_controls = False
+        without_rule = _partition(config, candidates)
+        assert with_rule == without_rule
+
+
 class TestConcurrentVerification:
     """Votes run in parallel; the aggregate must not depend on who finishes first.
 
