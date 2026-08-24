@@ -139,12 +139,53 @@ class TestStopConditions:
         assert outcome.stop_reason == STOP_REFUSAL
         assert decide(cfg, outcome).exit_code == EXIT_ERROR
 
-    def test_hitting_max_tokens_is_an_error(self, cfg, ws):
-        client = FakeClient([FakeResponse([text("truncated")], stop_reason="max_tokens")])
+    def test_a_truncated_response_ends_the_turn_not_the_review(self, cfg, ws):
+        """It is recoverable, and the reviews it kills are the working ones.
+
+        The truncated response is never appended to `messages`, so the
+        conversation is exactly as it was and the turn replays cleanly.
+        Adaptive thinking counts toward `max_tokens`, so the turn that hits the
+        ceiling is the turn the model thought hardest about — on a matched pair,
+        the member that has something to find.
+        """
+        client = FakeClient([
+            FakeResponse([text("truncated")], stop_reason="max_tokens"),
+            FakeResponse([text("Reviewed, nothing found.")], stop_reason="end_turn"),
+        ])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+
+        assert outcome.complete
+        # The replay asked for more room, and the truncated attempt did not
+        # count against the turn limit — it did not happen.
+        asked = [r["params"]["max_tokens"] for r in client.agent_requests]
+        assert asked[1] > asked[0], asked
+        assert outcome.turns == 1, outcome.turns
+
+    def test_two_truncated_responses_give_up_with_a_named_reason(self, cfg, ws):
+        """Raising the ceiling forever is how a run bills without finishing."""
+        client = FakeClient([
+            FakeResponse([text("truncated")], stop_reason="max_tokens"),
+            FakeResponse([text("truncated again")], stop_reason="max_tokens"),
+            FakeResponse([text("truncated a third time")], stop_reason="max_tokens"),
+        ])
         outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
 
         assert not outcome.complete
+        assert outcome.stop_reason == "response_too_long"
         assert "max_tokens" in outcome.stop_detail
+
+    def test_the_raised_ceiling_is_kept_for_the_rest_of_the_review(self, cfg, ws):
+        """A review that needed the room once will need it again, and paying
+        for a second truncated response to rediscover that is waste."""
+        client = FakeClient([
+            FakeResponse([text("truncated")], stop_reason="max_tokens"),
+            FakeResponse([tool_use("git_log", {}, id="t1")], stop_reason="tool_use"),
+            FakeResponse([text("Done.")], stop_reason="end_turn"),
+        ])
+        SecurityAgent(cfg, ws, client=client).run("repo", "go")
+
+        asked = [r["params"]["max_tokens"] for r in client.agent_requests]
+        assert asked[1] == asked[2] > asked[0], asked
 
 
 class TestRequestShape:

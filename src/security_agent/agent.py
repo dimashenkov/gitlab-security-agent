@@ -71,6 +71,12 @@ BETA_FALLBACK = "server-side-fallback-2026-07-01"
 # than being cut off mid-trace by a ceiling it cannot see.
 BETA_TASK_BUDGET = "task-budgets-2026-03-13"
 
+# The most room a single response may be given. `max_tokens` covers thinking as
+# well as output under adaptive thinking, so a hard security question at high
+# effort can exhaust a 32k ceiling before the model reaches its tool call. This
+# is the ceiling the retry may climb to, not the default.
+MAX_RESPONSE_TOKENS = 64_000
+
 
 @dataclass
 class Capabilities:
@@ -132,6 +138,10 @@ class SecurityAgent:
         if diff_available:
             outcome.coverage.changed = [path for path, _ in self.ws.changed_files()]
         deadline = time.monotonic() + self.cfg.max_runtime_seconds
+        # Raised once, and kept raised. A review that needed the room on one
+        # turn will very likely need it again, and paying for a truncated
+        # response to discover that a second time is waste.
+        ceiling = self.cfg.max_tokens
         stop_reason = STOP_COMPLETED
         stop_detail = ""
         summary = ""
@@ -155,7 +165,7 @@ class SecurityAgent:
 
             self.session.turn += 1
             try:
-                response = self._request(system, messages, tools)
+                response = self._request(system, messages, tools, ceiling)
             except anthropic.APIStatusError as exc:
                 message = getattr(exc, "message", "") or str(exc)
                 stop_reason = (
@@ -182,10 +192,25 @@ class SecurityAgent:
                 break
 
             if response.stop_reason == "max_tokens":
+                # Recoverable, and worth recovering: the truncated response was
+                # never appended to `messages` (the break above happens first),
+                # so the conversation is exactly as it was and the turn can be
+                # replayed with more room. Adaptive thinking counts toward
+                # `max_tokens`, so the turn that hits this is the turn the model
+                # thought hardest about — which on a matched pair is the member
+                # that has something to find. Ending the review there loses
+                # precisely the reviews that were working.
+                if ceiling < MAX_RESPONSE_TOKENS:
+                    ceiling = min(ceiling * 2, MAX_RESPONSE_TOKENS)
+                    self.session.turn -= 1        # the turn did not happen
+                    log.info("response truncated; replaying the turn with "
+                             "max_tokens=%d", ceiling)
+                    continue
                 stop_reason = STOP_RESPONSE_TOO_LONG
                 stop_detail = (
-                    "a single response hit max_tokens ({}); raise "
-                    "SECURITY_SCAN_MAX_TOKENS".format(self.cfg.max_tokens)
+                    "a single response hit max_tokens twice, at {} and {}; "
+                    "raise SECURITY_SCAN_MAX_TOKENS or lower "
+                    "SECURITY_SCAN_EFFORT".format(self.cfg.max_tokens, ceiling)
                 )
                 break
 
@@ -263,10 +288,11 @@ class SecurityAgent:
         system: List[Dict[str, Any]],
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
+        max_tokens: Optional[int] = None,
     ) -> Any:
         params: Dict[str, Any] = {
             "model": self.cfg.model,
-            "max_tokens": self.cfg.max_tokens,
+            "max_tokens": max_tokens or self.cfg.max_tokens,
             "system": system,
             "messages": messages,
             "tools": tools,
