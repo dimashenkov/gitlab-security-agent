@@ -46,14 +46,21 @@ from pathlib import Path
 
 import yaml
 
+# Per million tokens, claude-opus-5.
 IN_RATE, OUT_RATE = 5.0, 25.0
+
+# A cache write costs 1.25x the input rate at the five-minute TTL and **2x at
+# the one-hour TTL** — and the agent runs with `cache_ttl = "1h"`, so 1.25 was
+# the wrong constant and every cost this tool has ever reported was low.
+CACHE_WRITE_MULTIPLIER = 2.0
+CACHE_READ_MULTIPLIER = 0.1
 
 
 def cost_of(usage: dict) -> float:
     return (
         usage["input_tokens"] * IN_RATE
-        + usage["cache_write_tokens"] * IN_RATE * 1.25
-        + usage["cache_read_tokens"] * IN_RATE * 0.1
+        + usage["cache_write_tokens"] * IN_RATE * CACHE_WRITE_MULTIPLIER
+        + usage["cache_read_tokens"] * IN_RATE * CACHE_READ_MULTIPLIER
         + usage["output_tokens"] * OUT_RATE
     ) / 1e6
 
