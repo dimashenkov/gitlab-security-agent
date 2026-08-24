@@ -304,10 +304,12 @@ def main() -> int:
                 r["case_id"],
                 r.get("error") or ("pass" if r["pair_success"] else "FAIL")))
 
-    report(results)
+    # Written before the report. A crash while formatting would otherwise throw
+    # away runs already paid for.
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2))
         print("\nraw results written to {}".format(args.json))
+    report(results)
     return 0
 
 

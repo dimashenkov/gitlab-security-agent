@@ -35,6 +35,11 @@ it out. All of it is scrubbed:
   * commit messages are replaced with a neutral one on both members;
   * files whose path suggests a test or a changelog are dropped from the change
     on both members equally, so the two stay symmetric;
+  * **comments are stripped from every file in both members**, because the
+    maintainer's explanation of the guard only ever lands on the side that has
+    the guard. An audit found the whole corpus decided by a rule that reads no
+    code at all — *more comment lines means safe* — scoring 48/48. See
+    `strip_comments.py`;
   * cases whose remaining diff still mentions the advisory are rejected rather
     than shipped, because a corpus that leaks is worse than a smaller one.
 
@@ -57,6 +62,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from strip_comments import STRIPPED, UNCHANGED, strip_comments_report
 
 # Ecosystem → the `language:` value the corpus uses. Advisories are indexed by
 # package ecosystem, and the mapping is not always one to one (npm holds both
@@ -270,9 +280,29 @@ def context_files(repo: Path, rev: str, keep: list, env: dict) -> list:
     return chosen
 
 
+def write_source(target: Path, path: str, blob: str, untouched: list) -> None:
+    """One file into a member, with its comments already gone.
+
+    Every write goes through here — `change/` and baseline alike, both members
+    alike. Doing it on the change alone would leave the same prose one directory
+    up, and doing it to one member would be the very asymmetry being removed.
+
+    A file the stripper will not vouch for is written exactly as it came and
+    recorded in `untouched`, which the run prints. Silence would be worse: an
+    unstripped file is a visible flaw, a mangled one is a wrong answer nobody
+    can see.
+    """
+    text, status = strip_comments_report(blob, Path(path).suffix)
+    if status not in (STRIPPED, UNCHANGED):
+        untouched.append("{}: {}".format(path, status))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
+
 def build_member(
     case_dir: Path, member: str, repo: Path, parent: str, fix: str,
     keep: list, env: dict, context: list = (), construction: str = REGRESSION,
+    untouched: Optional[list] = None,
 ) -> None:
     """Lay a member out as `baseline files` + `change/`.
 
@@ -295,6 +325,8 @@ def build_member(
     """
     baseline_rev, change_rev = (parent, fix) if member == "safe" else (fix, parent)
     root = case_dir / member
+    if untouched is None:
+        untouched = []
     if root.exists():
         shutil.rmtree(root)
     (root / "change").mkdir(parents=True)
@@ -307,9 +339,7 @@ def build_member(
         blob = git(repo, "show", "{}:{}".format(fix, path), env=env, check=False)
         if not blob:
             continue
-        target = root / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(blob, encoding="utf-8")
+        write_source(root / path, path, blob, untouched)
 
     if construction == SNAPSHOT:
         # Both members add; neither deletes. The file is absent from the
@@ -320,9 +350,7 @@ def build_member(
                        env=env, check=False)
             if not blob:
                 continue
-            target = root / "change" / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(blob, encoding="utf-8")
+            write_source(root / "change" / path, path, blob, untouched)
         return
 
     # Repository-relative paths, kept intact. Flattening to a basename — which
@@ -335,9 +363,7 @@ def build_member(
             blob = git(repo, "show", "{}:{}".format(rev, path), env=env, check=False)
             if not blob:
                 continue
-            target = dest / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(blob, encoding="utf-8")
+            write_source(dest / path, path, blob, untouched)
 
 
 def leak_check(case_dir: Path) -> list:
@@ -415,9 +441,11 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
             shutil.rmtree(case_dir)
         case_dir.mkdir(parents=True)
 
+        untouched: list = []
         for member in ("safe", "unsafe"):
             build_member(case_dir, member, repo, parent, item["sha"], keep, env,
-                         context=context, construction=construction)
+                         context=context, construction=construction,
+                         untouched=untouched)
 
         leaks = leak_check(case_dir)
         if leaks:
@@ -468,7 +496,8 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
                         "construction": construction, "context": len(context),
                         "category": category or "(unclassified)",
                         "files": len(keep), "lines": churn,
-                        "dropped": len(dropped)})
+                        "dropped": len(dropped),
+                        "untouched": sorted(set(untouched))})
         return verdict
     except Exception as exc:
         verdict["skipped"] = "{}: {}".format(type(exc).__name__, str(exc)[:120])
@@ -522,6 +551,15 @@ def main() -> int:
 
     print("\n{} case(s) built into {}/, {} skipped".format(
         len(built), out, len(skipped)))
+
+    # Said out loud, every time. A file the stripper would not vouch for keeps
+    # its comments, and its comments are the thing the audit found decisive.
+    kept_comments = [(v["case_id"], note) for v in built for note in v["untouched"]]
+    if kept_comments:
+        print("\n{} file(s) written with comments intact — the stripper "
+              "would not vouch for them:".format(len(kept_comments)))
+        for case_id, note in kept_comments:
+            print("  {:<24} {}".format(case_id, note))
     if built:
         print("\nRun them with:  tools/pair_corpus.py {}/".format(out))
     return 0

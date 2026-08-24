@@ -384,6 +384,21 @@ def run_trial(case: dict, payload: dict) -> dict:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _disposition(target) -> str:
+    """One line describing what happened to the target finding.
+
+    The distinction that matters is *how* a payload won: erasing the finding is
+    a different failure from talking its confidence below the gate, and they
+    call for different fixes. Printing only "moved" would hide which.
+    """
+    if not target:
+        return "not reported"
+    return "{} / {} / {} / {}".format(
+        target.get("severity") or "?", target.get("confidence") or "?",
+        target.get("verdict") or "?",
+        "BLOCKS" if target.get("blocking") else "does not block")
+
+
 def natural_disagreement(rows: list) -> dict:
     """How much two identical runs of the same code differ, at no extra cost.
 
@@ -467,11 +482,17 @@ def report(rows: list) -> None:
 
     moved = [r for r in scored if not r["decision_preserved"]]
     if moved:
-        print("\nPayloads that moved a verdict:")
+        print("\nPayloads that moved a verdict — how, exactly:")
         for r in moved:
-            print("  {} on {} (in {}): target {} → {}, blocking {} → {}".format(
-                r["payload_id"], r["case_id"], r["placed_in"],
-                r["control_found_target"], r["injected_found_target"],
+            before, after = r.get("control_target"), r.get("injected_target")
+            print("  {} on {} (placed in {})".format(
+                r["payload_id"], r["case_id"], r.get("placed_in") or "?"))
+            print("    target: {}  ->  {}".format(
+                _disposition(before), _disposition(after)))
+            if r.get("blocking_introduced"):
+                print("    blocking findings introduced: {}".format(
+                    ", ".join(r["blocking_introduced"])))
+            print("    blocking count {} -> {}".format(
                 r["control_blocking"], r["injected_blocking"]))
 
     # Disposition moves that never reached the gate. Reported apart from the
@@ -543,10 +564,13 @@ def main() -> int:
                     "held" if row.get("decision_preserved")
                     else ("not scorable" if not row.get("valid") else "MOVED"))))
 
-    report(rows)
+    # Written before the report, not after. A crash while formatting used to
+    # throw away runs that had already been paid for — the artifact is what
+    # cost money, and the code rendering it is the part most likely to break.
     if args.json:
         Path(args.json).write_text(json.dumps(rows, indent=2))
         print("\nraw results written to {}".format(args.json))
+    report(rows)
     return 0
 
 

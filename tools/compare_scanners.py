@@ -259,7 +259,6 @@ def main() -> int:
             row["case_id"],
             row.get("error") or ("pass" if row["pair_success"] else "FAIL")))
 
-    report(rows, args.scanner)
     if args.json:
         Path(args.json).write_text(json.dumps({
             "scanner": args.scanner,
@@ -268,6 +267,7 @@ def main() -> int:
             "results": rows,
         }, indent=2))
         print("\nraw results written to {}".format(args.json))
+    report(rows, args.scanner)
     return 0
 
 
