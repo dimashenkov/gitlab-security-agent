@@ -1,0 +1,27 @@
+case_id: cs-jwjp-4649-v8jp
+language: csharp
+family: dos
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-jwjp-4649-v8jp
+source_cve: none
+source_repo: sipsorcery-org/sipsorcery
+source_fix_commit: a2466550bb2a28821c73fb1961bc33dcc467f8cf
+source_cwes: [CWE-125, CWE-755]
+severity_reported: high
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: dos
+expected_file: src/SIPSorcery/net/SCTP/Chunks/SctpSackChunk.cs
+dropped_from_change: ['test/unit/net/SCTP/SctpChunkUnitTest.cs']
+summary: 'SIPSorcery vulnerable to Denial of Service via out-of-bounds read in SCTP SACK chunk parsing'

@@ -1,0 +1,27 @@
+case_id: php-p2ch-c2c3-4xm5-snap
+language: php
+family: csrf
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-p2ch-c2c3-4xm5
+source_cve: none
+source_repo: wintercms/winter
+source_fix_commit: 353b23804dee2acf49fca996c72637040446824f
+source_cwes: [CWE-352]
+severity_reported: medium
+construction: snapshot
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: csrf
+expected_file: modules/backend/classes/BackendController.php
+dropped_from_change: []
+summary: 'Winter: CSRF through AJAX handler names reachable as backend page actions'

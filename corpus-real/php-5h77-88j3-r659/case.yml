@@ -1,0 +1,27 @@
+case_id: php-5h77-88j3-r659
+language: php
+family: xss
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-5h77-88j3-r659
+source_cve: CVE-2026-63135
+source_repo: YOURLS/YOURLS
+source_fix_commit: e1e93476655107e6caab34e52259eb1c91079ec7
+source_cwes: [CWE-79]
+severity_reported: high
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: xss
+expected_file: includes/functions-infos.php
+dropped_from_change: ['tests/tests/format/URLTest.php']
+summary: 'YOURLS has stored XSS in referrer statistics chart via crafted Referer header'

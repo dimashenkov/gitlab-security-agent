@@ -67,6 +67,17 @@ ECOSYSTEM_LANGUAGE = {
     "composer": "php", "rubygems": "ruby", "rust": "rust", "nuget": "csharp",
 }
 
+# Two-letter code per language for the case id. Taken from a table rather than
+# from `language[:2]`, which gave `ru` for both ruby and rust and quietly turned
+# the prefix into noise — ids stayed unique because of the advisory suffix, so
+# nothing broke and nothing said so either.
+LANGUAGE_CODE = {
+    "python": "py", "go": "go", "java": "jv", "php": "php", "ruby": "rb",
+    "rust": "rs", "typescript": "ts", "javascript": "js", "csharp": "cs",
+    "kotlin": "kt", "scala": "sc",
+}
+assert len(set(LANGUAGE_CODE.values())) == len(LANGUAGE_CODE), "codes must be distinct"
+
 EXTENSION_LANGUAGE = {
     ".py": "python", ".go": "go", ".java": "java", ".php": "php", ".rb": "ruby",
     ".rs": "rust", ".ts": "typescript", ".tsx": "typescript", ".js": "javascript",
@@ -103,6 +114,9 @@ CWE_CATEGORY = {
     "CWE-330": "crypto", "CWE-338": "crypto", "CWE-208": "crypto",
     "CWE-367": "race-condition", "CWE-362": "race-condition",
     "CWE-400": "dos", "CWE-770": "dos", "CWE-789": "dos", "CWE-1333": "dos",
+    "CWE-295": "crypto", "CWE-297": "crypto", "CWE-322": "crypto",
+    "CWE-248": "dos", "CWE-754": "dos", "CWE-755": "dos", "CWE-704": "dos",
+    "CWE-125": "dos", "CWE-787": "dos", "CWE-476": "dos", "CWE-681": "dos",
     "CWE-611": "other",
 }
 
@@ -210,26 +224,106 @@ def fetch_commit(repo_slug: str, sha: str, work: Path) -> Path:
 # ------------------------------------------------------------- construction
 
 
+REGRESSION = "regression"
+SNAPSHOT = "snapshot"
+
+MAX_CONTEXT_FILES = 25
+MAX_CONTEXT_BYTES = 400_000
+
+
 def changed_files(repo: Path, parent: str, fix: str, env: dict) -> list:
     out = git(repo, "diff", "--name-only", "--diff-filter=M", parent, fix, env=env)
     return [line for line in out.splitlines() if line.strip()]
 
 
+def context_files(repo: Path, rev: str, keep: list, env: dict) -> list:
+    """Unchanged files sitting beside the ones the fix touched.
+
+    Without these, a harvested case is a file in a vacuum: no callers, no
+    validators, no configuration, and no way for the agent to check a claim
+    about what happens upstream. The whole repository is too much — it turns
+    the task from reviewing a change into finding a needle — so the compromise
+    is the directories the change is in, bounded so a case stays a case.
+    """
+    wanted_dirs = {str(Path(path).parent) for path in keep}
+    listing = git(repo, "ls-tree", "-r", "--name-only", rev, env=env, check=False)
+
+    siblings = []
+    for path in listing.splitlines():
+        if not path.strip() or path in keep:
+            continue
+        if str(Path(path).parent) not in wanted_dirs:
+            continue
+        if NOISE.search(path):
+            continue
+        siblings.append(path)
+
+    chosen, total = [], 0
+    for path in sorted(siblings, key=len):
+        blob = git(repo, "show", "{}:{}".format(rev, path), env=env, check=False)
+        if not blob or "\x00" in blob[:1024]:
+            continue
+        if total + len(blob) > MAX_CONTEXT_BYTES or len(chosen) >= MAX_CONTEXT_FILES:
+            break
+        chosen.append(path)
+        total += len(blob)
+    return chosen
+
+
 def build_member(
     case_dir: Path, member: str, repo: Path, parent: str, fix: str,
-    keep: list, env: dict,
+    keep: list, env: dict, context: list = (), construction: str = REGRESSION,
 ) -> None:
     """Lay a member out as `baseline files` + `change/`.
 
     The pair runner treats anything under `change/` as the second commit, so
-    the two members differ only in which version of the changed files is the
-    baseline and which is the change.
+    the two members differ only in what the change does.
+
+    Two constructions, which measure different things and must never be scored
+    together:
+
+    **regression** — the fix is added on one side and reverted on the other.
+    Exactly symmetric, and exactly the attack worth catching, but the direction
+    of the diff is then perfectly predictive of the answer: every unsafe member
+    deletes something. A tool with a rule about removed controls scores well
+    here without having recognised the weakness at all.
+
+    **snapshot** — both members *add* the implementation from a shared
+    baseline, one fixed and one not. The diffs are no longer exact inverses,
+    but provenance and surroundings stay matched and direction stops carrying
+    the answer. This is the one that measures discrimination.
     """
     baseline_rev, change_rev = (parent, fix) if member == "safe" else (fix, parent)
     root = case_dir / member
     if root.exists():
         shutil.rmtree(root)
     (root / "change").mkdir(parents=True)
+
+    # Context is taken from one revision for both members. Reading it from each
+    # member's own baseline would let an unrelated change elsewhere in the
+    # directory differ between them, and then the members differ by something
+    # other than the thing under test.
+    for path in context:
+        blob = git(repo, "show", "{}:{}".format(fix, path), env=env, check=False)
+        if not blob:
+            continue
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(blob, encoding="utf-8")
+
+    if construction == SNAPSHOT:
+        # Both members add; neither deletes. The file is absent from the
+        # baseline, so what the agent reviews is a new implementation arriving.
+        source_rev = fix if member == "safe" else parent
+        for path in keep:
+            blob = git(repo, "show", "{}:{}".format(source_rev, path),
+                       env=env, check=False)
+            if not blob:
+                continue
+            target = root / "change" / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(blob, encoding="utf-8")
+        return
 
     # Repository-relative paths, kept intact. Flattening to a basename — which
     # this did until it was pointed out — destroys package structure, makes
@@ -277,7 +371,8 @@ def category_of(cwes: list) -> str:
     return ""
 
 
-def harvest(item: dict, out: Path, max_files: int, max_lines: int) -> dict:
+def harvest(item: dict, out: Path, max_files: int, max_lines: int,
+            construction: str = REGRESSION) -> dict:
     work = Path(tempfile.mkdtemp(prefix="harvest-")).resolve()
     env = git_env(work)
     verdict = {"ghsa": item["ghsa"], "repo": item["repo"], "sha": item["sha"][:12]}
@@ -309,14 +404,20 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int) -> dict:
             verdict["skipped"] = "no recognised source language among " + ", ".join(keep[:3])
             return verdict
 
-        case_id = "{}-{}".format(language[:2], item["ghsa"].lower().replace("ghsa-", ""))
+        context = context_files(repo, item["sha"], keep, env)
+
+        case_id = "{}-{}{}".format(
+            LANGUAGE_CODE.get(language, language[:2]),
+            item["ghsa"].lower().replace("ghsa-", ""),
+            "" if construction == REGRESSION else "-snap")
         case_dir = out / case_id
         if case_dir.exists():
             shutil.rmtree(case_dir)
         case_dir.mkdir(parents=True)
 
         for member in ("safe", "unsafe"):
-            build_member(case_dir, member, repo, parent, item["sha"], keep, env)
+            build_member(case_dir, member, repo, parent, item["sha"], keep, env,
+                         context=context, construction=construction)
 
         leaks = leak_check(case_dir)
         if leaks:
@@ -345,8 +446,15 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int) -> dict:
             "source_fix_commit: {}".format(item["sha"]),
             "source_cwes: [{}]".format(", ".join(item["cwes"]) or ""),
             "severity_reported: {}".format(item["severity"]),
-            "# The two members review the same lines in opposite directions:",
-            "# safe adds the maintainers' fix, unsafe removes it.",
+            "construction: {}".format(construction),
+            "# regression: the two members review the same lines in opposite",
+            "#   directions — safe adds the maintainers' fix, unsafe reverts it.",
+            "#   Exactly symmetric, but every unsafe member deletes something, so",
+            "#   direction predicts the answer and a removed-control rule scores",
+            "#   well here without recognising anything.",
+            "# snapshot: both members add an implementation from a shared",
+            "#   baseline, one fixed and one not. Direction carries no answer.",
+            "# Never score the two constructions together.",
             "decisive_control: the change the maintainers shipped as the fix",
             "expected_category: {}".format(category),
             "expected_file: {}".format(target),
@@ -357,6 +465,7 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int) -> dict:
         (case_dir / "case.yml").write_text("\n".join(manifest) + "\n", encoding="utf-8")
 
         verdict.update({"case_id": case_id, "language": language,
+                        "construction": construction, "context": len(context),
                         "category": category or "(unclassified)",
                         "files": len(keep), "lines": churn,
                         "dropped": len(dropped)})
@@ -376,6 +485,11 @@ def main() -> int:
                                                            "high", "critical"])
     parser.add_argument("--limit", type=int, default=5)
     parser.add_argument("--out", default="corpus-real")
+    parser.add_argument("--construction", choices=(REGRESSION, SNAPSHOT),
+                        default=REGRESSION,
+                        help="regression: fix added vs reverted (symmetric, but "
+                             "direction predicts the answer). snapshot: both "
+                             "members add, one fixed one not.")
     parser.add_argument("--max-files", type=int, default=3,
                         help="reject fixes touching more source files than this")
     parser.add_argument("--max-lines", type=int, default=120,
@@ -395,15 +509,16 @@ def main() -> int:
     for item in found:
         if len(built) >= args.limit:
             break
-        verdict = harvest(item, out, args.max_files, args.max_lines)
+        verdict = harvest(item, out, args.max_files, args.max_lines,
+                          args.construction)
         if "skipped" in verdict:
             skipped.append(verdict)
             print("  skip {:<24} {}".format(verdict["ghsa"], verdict["skipped"][:52]))
         else:
             built.append(verdict)
-            print("  {:<10} {:<22} {:<14} {} file(s), {} line(s)".format(
+            print("  {:<6} {:<24} {:<14} {} file(s), {} line(s), {} context".format(
                 "BUILT", verdict["case_id"], verdict["category"],
-                verdict["files"], verdict["lines"]))
+                verdict["files"], verdict["lines"], verdict["context"]))
 
     print("\n{} case(s) built into {}/, {} skipped".format(
         len(built), out, len(skipped)))

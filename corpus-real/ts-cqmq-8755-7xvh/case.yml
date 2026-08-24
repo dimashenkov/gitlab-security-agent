@@ -1,0 +1,27 @@
+case_id: ts-cqmq-8755-7xvh
+language: typescript
+family: unclassified
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-cqmq-8755-7xvh
+source_cve: CVE-2026-63421
+source_repo: keystonejs/keystone
+source_fix_commit: 9fb88b246950ce4de754a43fe6416f20403577b1
+source_cwes: [CWE-20, CWE-480]
+severity_reported: high
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: 
+expected_file: packages/core/src/lib/core/queries/resolvers.ts
+dropped_from_change: ['tests/api-tests/queries/limits.test.ts']
+summary: 'Keystone vulnerable to `graphql.maxTake` bypass with negative `take`'

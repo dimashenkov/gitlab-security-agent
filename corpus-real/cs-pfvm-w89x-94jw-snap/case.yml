@@ -1,0 +1,27 @@
+case_id: cs-pfvm-w89x-94jw-snap
+language: csharp
+family: dos
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-pfvm-w89x-94jw
+source_cve: none
+source_repo: sipsorcery-org/sipsorcery
+source_fix_commit: ccb0b5a845efa2fb131fd00de4f5321bae627f29
+source_cwes: [CWE-248, CWE-755]
+severity_reported: high
+construction: snapshot
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: dos
+expected_file: src/SIPSorcery/net/TURN/TurnServer.cs
+dropped_from_change: ['test/unit/net/TURN/TurnServerUnitTest.cs']
+summary: 'SIPSorcery: Malformed UDP datagram crashes TurnServer receive loop with no restart, disabling TURN UDP relay for all clients (DoS)'

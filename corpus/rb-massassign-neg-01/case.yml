@@ -1,0 +1,16 @@
+case_id: rb-massassign-neg-01
+language: ruby
+family: authorization
+framework: rails
+source: request parameters
+sink: mass assignment
+decisive_control: what the permitted hash was built from, and what receives it
+# permit! marks every key in a hash as allowed, so both members carry the call
+# that a rule set is looking for. In the safe member the hash it is called on is
+# one the controller built itself, three named values copied out of params, and
+# what receives it is a plain object with no table behind it — there is no key
+# an attacker can add and no column it could reach. The unsafe member calls the
+# same method on the whole submitted user hash and hands it to a record with an
+# admin column.
+expected_category: authn-authz
+expected_file: app/controllers/preferences_controller.rb

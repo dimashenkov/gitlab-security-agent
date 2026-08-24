@@ -1,0 +1,16 @@
+case_id: go-cmd-neg-01
+language: go
+family: injection
+framework: os/exec
+source: HTTP query parameter
+sink: /bin/sh -c
+decisive_control: whether anything from the request reaches the command string
+# Both members hand a script to a shell, and both run a query parameter through
+# fmt.Sprintf two lines above that call, so the tokens a pattern matcher keys on
+# are present in each. In the safe member the formatted value only ever reaches
+# the JSON report; the script itself is a package constant with no verb in it,
+# so the string the shell parses is identical on every request and there is
+# nothing for a caller to steer. The unsafe member formats the label into the
+# script instead.
+expected_category: injection
+expected_file: rotate.go

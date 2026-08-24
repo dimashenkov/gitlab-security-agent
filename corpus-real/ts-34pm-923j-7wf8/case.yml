@@ -1,0 +1,27 @@
+case_id: ts-34pm-923j-7wf8
+language: typescript
+family: xss
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-34pm-923j-7wf8
+source_cve: CVE-2026-55839
+source_repo: kestra-io/kestra
+source_fix_commit: 6c8e6d099ed172cbb6b003b7fb30b7bb1f8f710e
+source_cwes: [CWE-79]
+severity_reported: high
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: xss
+expected_file: ui/src/components/layout/Markdown.vue
+dropped_from_change: []
+summary: 'Kestra vulnerable to stored XSS via custom Markdown [[link]] attribute injection'

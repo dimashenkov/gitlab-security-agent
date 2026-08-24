@@ -1,0 +1,27 @@
+case_id: ts-v667-gc2r-2xm7
+language: typescript
+family: authn-authz
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-v667-gc2r-2xm7
+source_cve: CVE-2026-55445
+source_repo: whyour/qinglong
+source_fix_commit: 6bec52dca158481258315ba0fc2f11206df7b719
+source_cwes: [CWE-287]
+severity_reported: critical
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: authn-authz
+expected_file: back/loaders/express.ts
+dropped_from_change: []
+summary: 'Qinglong has an incomplete fix for CVE-2026-3965: Improper Authentication'

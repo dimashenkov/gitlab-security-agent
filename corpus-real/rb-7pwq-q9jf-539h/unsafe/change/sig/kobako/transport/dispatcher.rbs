@@ -1,0 +1,34 @@
+module Kobako
+  module Transport
+    module Dispatcher
+      class UndefinedTargetError < StandardError
+      end
+
+      BREAK_THROW: Symbol
+
+      def self?.dispatch: (String request_bytes, Kobako::Catalog::Namespaces namespaces, Kobako::Catalog::Handles handler, ^(String) -> String yield_to_guest) -> String
+
+      def self?.resolve_call_args: (Kobako::Transport::Request request, Kobako::Catalog::Handles handler) -> [Array[untyped], Hash[Symbol, untyped]]
+
+      def self?.encode_caught_error: (StandardError error) -> String
+
+      def self?.invoke: (untyped target, String method, Array[untyped] args, Hash[Symbol, untyped] kwargs, ?Kobako::Transport::Yielder? yielder) -> untyped
+
+      def self?.resolve_arg: (untyped value, Kobako::Catalog::Handles handler) -> untyped
+
+      def self?.resolve_target: (String | Kobako::Handle target, Kobako::Catalog::Namespaces namespaces, Kobako::Catalog::Handles handler) -> untyped
+
+      def self?.resolve_path: (String path, Kobako::Catalog::Namespaces namespaces) -> untyped
+
+      def self?.resolve_handle: (Kobako::Handle handle, Kobako::Catalog::Handles handler) -> untyped
+
+      def self?.require_live_object!: (Integer id, Kobako::Catalog::Handles handler) -> untyped
+
+      def self?.encode_ok: (untyped value, Kobako::Catalog::Handles handler) -> String
+
+      def self?.wrap_as_handle: (untyped value, Kobako::Catalog::Handles handler) -> Kobako::Handle
+
+      def self?.encode_error: (String type, String message) -> String
+    end
+  end
+end

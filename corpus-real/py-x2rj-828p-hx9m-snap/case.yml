@@ -1,0 +1,27 @@
+case_id: py-x2rj-828p-hx9m-snap
+language: python
+family: injection
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-x2rj-828p-hx9m
+source_cve: CVE-2026-61539
+source_repo: xorbitsai/inference
+source_fix_commit: 1b3d220f342ce68d34cec4586d9409d457dadc42
+source_cwes: [CWE-95]
+severity_reported: critical
+construction: snapshot
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: injection
+expected_file: xinference/model/llm/tool_parsers/llama3_tool_parser.py
+dropped_from_change: ['xinference/model/llm/tests/test_utils.py', 'xinference/model/llm/tool_parsers/tests/test_llama3_tool_parser.py']
+summary: 'Xinference vulnerable to remote code execution via unsafe `eval()` in Llama3 tool-call parsing'

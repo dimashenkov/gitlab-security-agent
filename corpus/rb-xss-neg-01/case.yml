@@ -1,0 +1,15 @@
+case_id: rb-xss-neg-01
+language: ruby
+family: xss
+framework: rails
+source: post body written by another user
+sink: view rendering
+decisive_control: what the string was before the escaping was turned off
+# html_safe turns Rails' escaping off, so both members contain the call that
+# gets a change flagged. In the safe member the string it is called on has just
+# come out of the sanitize helper with a named list of tags and two attributes,
+# which is what makes the claim html_safe is asserting a true one. The unsafe
+# member calls it on the stored body itself, where truncation is the only thing
+# that has happened to the markup.
+expected_category: xss
+expected_file: app/helpers/digest_helper.rb

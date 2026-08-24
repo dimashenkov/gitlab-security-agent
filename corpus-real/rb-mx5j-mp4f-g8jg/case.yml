@@ -1,0 +1,27 @@
+case_id: rb-mx5j-mp4f-g8jg
+language: ruby
+family: injection
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-mx5j-mp4f-g8jg
+source_cve: CVE-2026-53510
+source_repo: savonrb/savon
+source_fix_commit: 8f22eb543e7436f6247172c9be47e22792d375e9
+source_cwes: [CWE-94]
+severity_reported: high
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: injection
+expected_file: lib/savon/model.rb
+dropped_from_change: ['CHANGELOG.md', 'spec/savon/model_spec.rb']
+summary: 'Savon::Model evaluates WSDL operation names as Ruby source'

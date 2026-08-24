@@ -1,0 +1,16 @@
+case_id: py-deser-neg-01
+language: python
+family: deserialization
+framework: flask
+source: a spool file the service wrote itself, versus the request body
+sink: pickle.loads
+decisive_control: where the bytes come from, not which loader reads them
+# Both members call pickle.loads and both build an HMAC over the bytes they are
+# about to handle, so anything keyed on which names appear reports both and
+# measures nothing. In the safe member the bytes come back out
+# of the service's own spool directory, created 0o700 and written only by this
+# process, and the tag stored alongside them is recomputed and checked with
+# hmac.compare_digest before the load, so no reachable input is ever unpickled.
+# The unsafe member unpickles the request body.
+expected_category: deserialization
+expected_file: render.py

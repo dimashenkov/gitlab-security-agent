@@ -1,0 +1,27 @@
+case_id: rs-8rw6-p7m8-63jp
+language: rust
+family: authn-authz
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-8rw6-p7m8-63jp
+source_cve: none
+source_repo: surrealdb/surrealdb
+source_fix_commit: 8f89b260bb9692e5b0d58930793d482a8207eedc
+source_cwes: [CWE-863]
+severity_reported: medium
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: authn-authz
+expected_file: surrealdb/core/src/doc/output.rs
+dropped_from_change: []
+summary: 'SurrealDB: Array element-level (field.*) SELECT permissions leak denied elements to record users'

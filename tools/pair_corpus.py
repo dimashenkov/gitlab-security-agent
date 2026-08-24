@@ -190,12 +190,27 @@ def run_case(case: dict) -> dict:
 
         safe_hit = hits_target(members["safe"]["payload"], case)
         unsafe_hit = hits_target(members["unsafe"]["payload"], case)
+
+        # What was actually reported, not just whether. A pair that fails is a
+        # question — was that a real false positive, or is the case scored too
+        # loosely — and answering it from booleans means paying for the run
+        # twice.
+        def summarise(payload):
+            return [
+                {"category": f.get("category"), "file": f.get("file"),
+                 "severity": f.get("severity"), "title": f.get("title"),
+                 "blocking": f.get("fingerprint") in set(
+                     payload.get("verdict", {}).get("blocking_fingerprints", []))}
+                for f in payload.get("findings", [])
+            ]
         result.update({
             "safe_false_positive": safe_hit,
             "unsafe_recall": unsafe_hit,
             "pair_success": (not safe_hit) and unsafe_hit,
             "safe_exit": members["safe"]["exit_code"],
             "unsafe_exit": members["unsafe"]["exit_code"],
+            "safe_findings": summarise(members["safe"]["payload"]),
+            "unsafe_findings": summarise(members["unsafe"]["payload"]),
             "cost": sum(cost_of(m["payload"]["usage"]) for m in members.values()),
             "seconds": max(m["seconds"] for m in members.values()),
         })

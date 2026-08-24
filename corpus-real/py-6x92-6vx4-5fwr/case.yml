@@ -1,0 +1,27 @@
+case_id: py-6x92-6vx4-5fwr
+language: python
+family: authn-authz
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-6x92-6vx4-5fwr
+source_cve: CVE-2026-63003
+source_repo: django-cms/django-cms
+source_fix_commit: 3e1ccf7573eb1a74ebbbfaaa812c1f5cadf14e6c
+source_cwes: [CWE-639, CWE-862]
+severity_reported: medium
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: authn-authz
+expected_file: cms/admin/forms.py
+dropped_from_change: ['cms/tests/test_forms.py']
+summary: 'django CMS: Broken access control in page *Duplicate* allows reading the content of any page (cross-site / restriction bypass)'

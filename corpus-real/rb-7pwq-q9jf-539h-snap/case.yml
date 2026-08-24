@@ -1,0 +1,27 @@
+case_id: rb-7pwq-q9jf-539h-snap
+language: ruby
+family: injection
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-7pwq-q9jf-539h
+source_cve: CVE-2026-55107
+source_repo: elct9620/kobako
+source_fix_commit: 64f84700c81f44902bed9211318d5362f44987b3
+source_cwes: [CWE-94, CWE-470]
+severity_reported: critical
+construction: snapshot
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: injection
+expected_file: lib/kobako/transport/dispatcher.rb
+dropped_from_change: []
+summary: 'kobako Sandbox Escape: guest eval reaches host RCE via method_missing → public_send (any bound Service)'

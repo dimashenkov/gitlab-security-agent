@@ -1,0 +1,15 @@
+case_id: ts-xss-neg-01
+language: typescript
+family: xss
+framework: react
+source: article body written by another user
+sink: dangerouslySetInnerHTML
+decisive_control: what the markup passed to the sink has been through
+# Both members hand user-authored markdown to dangerouslySetInnerHTML, which is
+# the construct every scanner is tuned to shout about, and in one of them that
+# is the right answer. The safe member runs the rendered markdown through
+# DOMPurify with an explicit tag allowlist, no attributes and data attributes
+# refused, so what reaches the sink can no longer carry script or an event
+# handler. The unsafe member renders the markdown straight through.
+expected_category: xss
+expected_file: src/ArticleBody.tsx

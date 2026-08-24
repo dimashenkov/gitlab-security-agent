@@ -1,0 +1,27 @@
+case_id: rs-g9hv-x236-4qp3
+language: rust
+family: dos
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-g9hv-x236-4qp3
+source_cve: CVE-2026-73429
+source_repo: Eugeny/russh
+source_fix_commit: a7fc1eb5717264e31c3c5f7dd849b73989a08f3d
+source_cwes: [CWE-704, CWE-754]
+severity_reported: medium
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: dos
+expected_file: russh/src/kex/curve25519.rs
+dropped_from_change: []
+summary: 'Russh: client wrong-length X25519 `clone_from_slice` panic (pre-auth DoS)'

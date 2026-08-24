@@ -1,0 +1,27 @@
+case_id: jv-mqjf-5f49-2fjh
+language: java
+family: injection
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-mqjf-5f49-2fjh
+source_cve: CVE-2026-76904
+source_repo: geotools/geotools
+source_fix_commit: d821c4d321dd91c22e31fcd5b1ce676645da5176
+source_cwes: [CWE-89]
+severity_reported: critical
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: injection
+expected_file: modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/FilterToSqlHelper.java
+dropped_from_change: ['modules/plugin/jdbc/jdbc-postgis/src/test/java/org/geotools/data/postgis/PostgisJsonPathExistsTest.java']
+summary: 'GeoTools has unauthenticated SQL injection in the jsonArrayContains filter function against PostGIS layers'

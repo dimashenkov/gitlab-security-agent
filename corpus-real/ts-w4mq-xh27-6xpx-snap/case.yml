@@ -1,0 +1,27 @@
+case_id: ts-w4mq-xh27-6xpx-snap
+language: typescript
+family: xss
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-w4mq-xh27-6xpx
+source_cve: CVE-2026-63466
+source_repo: Unleash/unleash
+source_fix_commit: 002012cfdbedd2e9b7db9dc83b9f549f761db22e
+source_cwes: [CWE-116]
+severity_reported: medium
+construction: snapshot
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: xss
+expected_file: src/lib/addons/feature-event-formatter-md.ts
+dropped_from_change: []
+summary: 'Unleash: Global Mustache.escape override disables HTML escaping process-wide, enabling Slack/Teams link-injection via unrestricted username'
