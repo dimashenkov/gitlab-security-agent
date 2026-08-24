@@ -192,3 +192,42 @@ def test_the_two_members_are_exact_inverses(tmp_path):
                        case / "unsafe" / "handler.py", shallow=False)
     assert "os.system" in (case / "safe" / "handler.py").read_text()
     assert "shlex.split" in (case / "safe" / "change" / "handler.py").read_text()
+
+
+# ------------------------------------------------------------ snapshot shape
+
+
+def test_a_snapshot_case_always_has_a_baseline():
+    """An empty baseline cannot be committed, and passed every other check.
+
+    `git commit` refuses an empty tree, so such a case errors in any harness
+    that makes a baseline commit. It survived eleven soundness checks because
+    "both members' baselines match" is satisfied when both are empty — a check
+    that compares two things can always be passed by having neither.
+    """
+    root = Path(__file__).resolve().parents[1] / "corpus-real"
+    if not root.is_dir():
+        pytest.skip("corpus-real is not present")
+
+    offenders = []
+    for manifest in sorted(root.glob("*-snap/case.yml")):
+        case = manifest.parent
+        for member in ("safe", "unsafe"):
+            baseline = [p for p in (case / member).rglob("*")
+                        if p.is_file() and "change" not in p.relative_to(case / member).parts]
+            if not baseline:
+                offenders.append("{}/{}".format(case.name, member))
+    assert not offenders, offenders
+
+
+def test_every_case_has_content_on_both_sides_of_the_change():
+    root = Path(__file__).resolve().parents[1] / "corpus-real"
+    if not root.is_dir():
+        pytest.skip("corpus-real is not present")
+    empty = []
+    for manifest in sorted(root.glob("*/case.yml")):
+        for member in ("safe", "unsafe"):
+            change = manifest.parent / member / "change"
+            if not change.is_dir() or not any(p.is_file() for p in change.rglob("*")):
+                empty.append("{}/{}".format(manifest.parent.name, member))
+    assert not empty, empty

@@ -447,6 +447,26 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
                          context=context, construction=construction,
                          untouched=untouched)
 
+        if construction == SNAPSHOT:
+            # A snapshot member with nothing in its baseline cannot be built:
+            # `git commit` refuses an empty tree, so the case errors in every
+            # harness that makes a baseline commit — and it errored silently
+            # through eleven soundness checks, because "both baselines are
+            # empty" satisfies "both baselines match".
+            #
+            # It happens when the fix touched the only file in its directory,
+            # leaving no sibling to hold. Nothing to salvage: the construction
+            # needs a baseline for both members to add to.
+            empty = [m for m in ("safe", "unsafe")
+                     if not any(p.is_file() for p in (case_dir / m).glob("*")
+                                if p.parent.name != "change")]
+            if empty or not context:
+                shutil.rmtree(case_dir)
+                verdict["skipped"] = (
+                    "snapshot needs a baseline and this fix left no unchanged "
+                    "sibling in its directory")
+                return verdict
+
         leaks = leak_check(case_dir)
         if leaks:
             # Rejected, not patched. Editing real code to hide the answer makes
