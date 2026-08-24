@@ -6,11 +6,11 @@ export function linkTag(md: MarkdownIt) {
     md.inline.ruler.after("emphasis", "link_custom", (state, silent) => {
         if (silent) return false;
 
-        // Check if the current position is a link tag
+
         const match = state.src.match(linkTagRegex);
         if (!match) return false;
 
-        // Get the attributes, they must have the following format: key="value"
+
         const attrs = match[0].match(/\S+="(\S)+"/g)
             ?.map(attr => attr.split("="))
             .map(([name, value]): [string, string] => [name, value.replace(/"/g, "")]);

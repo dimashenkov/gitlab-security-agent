@@ -1,20 +1,20 @@
-/*
- *    GeoTools - The Open Source Java GIS Toolkit
- *    http://geotools.org
- *
- *    (C) 2019, Open Source Geospatial Foundation (OSGeo)
- *
- *    This library is free software; you can redistribute it and/or
- *    modify it under the terms of the GNU Lesser General Public
- *    License as published by the Free Software Foundation;
- *    version 2.1 of the License.
- *
- *    This library is distributed in the hope that it will be useful,
- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *    Lesser General Public License for more details.
- *
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.geotools.data.postgis;
 
 import java.io.IOException;
@@ -36,16 +36,16 @@ import org.locationtech.jts.io.ByteArrayInStream;
 import org.locationtech.jts.io.InStream;
 import org.locationtech.jts.io.ParseException;
 
-/**
- * Reads <a href="https://github.com/TWKB/Specification/blob/master/twkb.md">Tiny Well-known Binary</a> (TWKB)into a JTS
- * geometry.
- *
- * <p>This class is designed to support reuse of a single instance to read multiple geometries. This * class is not
- * thread-safe; each thread should create its own instance.
- *
- * @author James Hughes
- * @author Andrea Aime
- */
+
+
+
+
+
+
+
+
+
+
 public class TWKBReader {
 
     static final int twkbPoint = 1;
@@ -178,8 +178,8 @@ public class TWKBReader {
             int numGeom = dis.readUnsignedInt();
             Geometry[] geoms = new Geometry[numGeom];
             for (int i = 0; i < numGeom; i++) {
-                // from the spec, "for each geometry there will be a complete TWKB geometry,
-                // readable using the rules set out above", so need to reset the ordinates
+
+
                 if (i > 0) Arrays.fill(metadata.valueArray, 0);
                 geoms[i] = readGeometry();
             }
@@ -190,7 +190,7 @@ public class TWKBReader {
     }
 
     private LinearRing readLinearRing(TWKBMetadata metadata) throws IOException {
-        int size = dis.readUnsignedInt(); // .readInt();
+        int size = dis.readUnsignedInt();
         CoordinateSequence pts = readCoordinateSequenceRing(size, metadata);
         return factory.createLinearRing(pts);
     }
@@ -216,7 +216,7 @@ public class TWKBReader {
         metadata.setHeader(header);
 
         int dims = 2;
-        // according to https://github.com/TWKB/Specification/blob/master/twkb.md it is Z then M
+
         if (metadata.hasExtendedDims()) {
             int dimensions = dis.readByte();
 
@@ -233,7 +233,7 @@ public class TWKBReader {
         }
         metadata.setDims(dims);
 
-        // TODO: Read optional size?
+
         if (metadata.hasSize()) {
             metadata.setSize(dis.readSignedInt());
         } else {
@@ -248,7 +248,7 @@ public class TWKBReader {
                 bbox.setOrdinate(0, i, min);
                 bbox.setOrdinate(1, i, min + delta);
             }
-            // System.out.println("BBOX read " + bbox);
+
             metadata.setEnvelope(bbox);
         }
 
@@ -258,7 +258,7 @@ public class TWKBReader {
     protected CoordinateSequence readCoordinateSequence(int numPts, TWKBMetadata metadata) throws IOException {
         int dims = metadata.getDims();
 
-        // Create CoordinateSequence and read geometry
+
         CoordinateSequence seq = csFactory.create(numPts, dims);
         final double[] scales = new double[dims];
         for (int i = 0; i < scales.length; i++) {

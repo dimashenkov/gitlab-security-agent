@@ -1,20 +1,20 @@
 <?php
-/**
- * Function relative to the geolocation functions (ip <-> country <-> flags), currently
- * tied to Maxmind's GeoIP but this should evolve to become more pluggable
- */
 
-/**
- * Converts an IP to a 2 letter country code, using GeoIP database if available in includes/geo/
- *
- * @since 1.4
- * @param string $ip      IP or, if empty string, will be current user IP
- * @param string $default Default string to return if IP doesn't resolve to a country (malformed, private IP...)
- * @return string 2 letter country code (eg 'US') or $default
- */
+
+
+
+
+
+
+
+
+
+
+
+
 function yourls_geo_ip_to_countrycode( $ip = '', $default = '' ) {
-    // Allow plugins to short-circuit the Geo IP API
-    $location = yourls_apply_filter( 'shunt_geo_ip_to_countrycode', yourls_shunt_default(), $ip, $default ); // at this point $ip can be '', check if your plugin hooks in here
+
+    $location = yourls_apply_filter( 'shunt_geo_ip_to_countrycode', yourls_shunt_default(), $ip, $default );
     if ( yourls_shunt_default() !== $location ) {
         return $location;
     }
@@ -30,7 +30,7 @@ function yourls_geo_ip_to_countrycode( $ip = '', $default = '' ) {
         $ip = yourls_get_IP();
     }
 
-    // Allow plugins to stick to YOURLS internals but provide another DB
+
     $db = yourls_apply_filter( 'geo_ip_path_to_db', YOURLS_INC.'/geo/GeoLite2-Country.mmdb' );
     if ( !is_readable( $db ) ) {
         return $default;
@@ -39,43 +39,43 @@ function yourls_geo_ip_to_countrycode( $ip = '', $default = '' ) {
     try {
         $reader = new \GeoIp2\Database\Reader( $db );
         $record = $reader->country( $ip );
-        $location = $record->country->isoCode; // eg 'US'
+        $location = $record->country->isoCode;
     }
     catch ( \Exception $e ) {
-        /*
-        Unused for now, Exception and $e->getMessage() can be one of :
 
-        - Exception: \GeoIp2\Exception\AddressNotFoundException
-          When: valid IP not found
-          Error message: "The address 10.0.0.30 is not in the database"
 
-        - Exception: \InvalidArgumentException
-          When: IP is not valid, or DB not readable
-          Error message: "The value "10.0.0.300" is not a valid IP address", "The file "/path/to/GeoLite2-Country.mmdb" does not exist or is not readable"
 
-        - Exception: \MaxMind\Db\Reader\InvalidDatabaseException
-          When: DB is readable but is corrupt or invalid
-          Error message: "The MaxMind DB file's search tree is corrupt"
 
-        - or obviously \Exception for any other error (?)
-        */
+
+
+
+
+
+
+
+
+
+
+
+
+
     }
 
     return yourls_apply_filter( 'geo_ip_to_countrycode', empty( $location ) ? $default : $location, $ip, $default );
 }
 
-/**
- * Converts a 2 letter country code to long name (ie AU -> Australia)
- *
- * This associative array is the one used by MaxMind internal functions, it may differ from other lists (eg "A1" does
- * not universally stand for "Anon proxy")
- *
- * @since 1.4
- * @param string $code 2 letter country code, eg 'FR'
- * @return string Country long name (eg 'France') or an empty string if not found
- */
+
+
+
+
+
+
+
+
+
+
 function yourls_geo_countrycode_to_countryname( $code ) {
-    // Allow plugins to short-circuit the function
+
     $country = yourls_apply_filter( 'shunt_geo_countrycode_to_countryname', yourls_shunt_default(), $code );
     if ( yourls_shunt_default() !== $country ) {
         return $country;
@@ -83,7 +83,7 @@ function yourls_geo_countrycode_to_countryname( $code ) {
 
     $country = false;
 
-    // Weeeeeeeeeeee
+
     $countries = [
         'A1' => 'Anonymous Proxy', 'A2' => 'Satellite Provider', 'AD' => 'Andorra', 'AE' => 'United Arab Emirates', 'AF' => 'Afghanistan',
         'AG' => 'Antigua and Barbuda', 'AI' => 'Anguilla', 'AL' => 'Albania', 'AM' => 'Armenia', 'AO' => 'Angola',
@@ -143,11 +143,11 @@ function yourls_geo_countrycode_to_countryname( $code ) {
     return yourls_apply_filter( 'geo_countrycode_to_countryname', isset( $countries[ $code ] ) ? $countries[ $code ] : '' );
 }
 
-/**
- * Return flag URL from 2 letter country code
- * @param string $code
- * @return string
- */
+
+
+
+
+
 function yourls_geo_get_flag( $code ) {
     if ( !file_exists( YOURLS_INC.'/geo/flags/flag_'.strtolower( $code ).'.gif' ) ) {
         $code = '';

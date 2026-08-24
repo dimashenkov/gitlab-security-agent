@@ -1,21 +1,21 @@
-﻿//-----------------------------------------------------------------------------
-// Filename: SctpSackChunk.cs
-//
-// Description: Represents the SCTP Selective Acknowledgement (SACK) chunk.
-//
-// Remarks:
-// Defined in section 3.3.4 of RFC4960:
-// https://tools.ietf.org/html/rfc4960#section-3.3.4
-//
-// Author(s):
-// Aaron Clauson (aaron@sipsorcery.com)
-// 
-// History:
-// 20 Mar 2021	Aaron Clauson	Created, Dublin, Ireland.
-//
-// License: 
-// BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
-//-----------------------------------------------------------------------------
+﻿
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 using System;
 using System.Collections.Generic;
@@ -23,61 +23,61 @@ using SIPSorcery.Sys;
 
 namespace SIPSorcery.Net
 {
-    /// <summary>
-    /// This chunk is sent to the peer endpoint to acknowledge received DATA
-    /// chunks and to inform the peer endpoint of gaps in the received
-    /// sub-sequences of DATA chunks as represented by their Transmission
-    /// Sequence Numbers (TSN).
-    /// </summary>
+
+
+
+
+
+
     public class SctpSackChunk : SctpChunk
     {
         public const int FIXED_PARAMETERS_LENGTH = 12;
         private const int GAP_REPORT_LENGTH = 4;
         private const int DUPLICATE_TSN_LENGTH = 4;
 
-        /// <summary>
-        /// This parameter contains the TSN of the last chunk received in
-        /// sequence before any gaps.
-        /// </summary>
+
+
+
+
         public uint CumulativeTsnAck;
 
-        /// <summary>
-        /// Advertised Receiver Window Credit. This field indicates the updated 
-        /// receive buffer space in bytes of the sender of this SACK
-        /// </summary>
+
+
+
+
         public uint ARwnd;
 
-        /// <summary>
-        /// The gap ACK blocks. Each entry represents a gap in the forward out of order
-        /// TSNs received.
-        /// </summary>
+
+
+
+
         public List<SctpTsnGapBlock> GapAckBlocks = new List<SctpTsnGapBlock>();
 
-        /// <summary>
-        /// Indicates the number of times a TSN was received in duplicate
-        /// since the last SACK was sent.
-        /// </summary>
+
+
+
+
         public List<uint> DuplicateTSN = new List<uint>();
 
         private SctpSackChunk() : base(SctpChunkType.SACK)
         { }
 
-        /// <summary>
-        /// Creates a new SACK chunk.
-        /// </summary>
-        /// <param name="cumulativeTsnAck">The last TSN that was received from the remote party.</param>
-        /// <param name="arwnd">The current Advertised Receiver Window Credit.</param>
+
+
+
+
+
         public SctpSackChunk(uint cumulativeTsnAck, uint arwnd) : base(SctpChunkType.SACK)
         {
             CumulativeTsnAck = cumulativeTsnAck;
             ARwnd = arwnd;
         }
 
-        /// <summary>
-        /// Calculates the padded length for the chunk.
-        /// </summary>
-        /// <param name="padded">If true the length field will be padded to a 4 byte boundary.</param>
-        /// <returns>The length of the chunk.</returns>
+
+
+
+
+
         public override ushort GetChunkLength(bool padded)
         {
             var len = (ushort)(SCTP_CHUNK_HEADER_LENGTH + 
@@ -85,17 +85,17 @@ namespace SIPSorcery.Net
                 GapAckBlocks.Count * GAP_REPORT_LENGTH +
                 DuplicateTSN.Count * DUPLICATE_TSN_LENGTH);
 
-            // Guaranteed to be in a 4 byte boundary so no need to pad.
+
             return len;
         }
 
-        /// <summary>
-        /// Serialises the SACK chunk to a pre-allocated buffer.
-        /// </summary>
-        /// <param name="buffer">The buffer to write the serialised chunk bytes to. It
-        /// must have the required space already allocated.</param>
-        /// <param name="posn">The position in the buffer to write to.</param>
-        /// <returns>The number of bytes, including padding, written to the buffer.</returns>
+
+
+
+
+
+
+
         public override ushort WriteTo(byte[] buffer, int posn)
         {
             WriteChunkHeader(buffer, posn);
@@ -125,19 +125,19 @@ namespace SIPSorcery.Net
             return GetChunkLength(true);
         }
 
-        /// <summary>
-        /// Parses the SACK chunk fields.
-        /// </summary>
-        /// <param name="buffer">The buffer holding the serialised chunk.</param>
-        /// <param name="posn">The position to start parsing at.</param>
+
+
+
+
+
         public static SctpSackChunk ParseChunk(byte[] buffer, int posn)
         {
             var sackChunk = new SctpSackChunk();
             ushort chunkLen = sackChunk.ParseFirstWord(buffer, posn);
 
-            // The chunk must be long enough to hold the fixed parameters before they are read. The caller
-            // only guarantees the chunk length is at least an SCTP chunk header and that the chunk fits in
-            // the buffer, so anything shorter than this would read bytes belonging to whatever follows.
+
+
+
             if (chunkLen < SCTP_CHUNK_HEADER_LENGTH + FIXED_PARAMETERS_LENGTH)
             {
                 throw new ApplicationException($"The SCTP SACK chunk was too short. The minimum length is {SCTP_CHUNK_HEADER_LENGTH + FIXED_PARAMETERS_LENGTH} bytes but the chunk specified {chunkLen} bytes.");
@@ -150,14 +150,14 @@ namespace SIPSorcery.Net
             ushort numGapAckBlocks = NetConvert.ParseUInt16(buffer, startPosn + 8);
             ushort numDuplicateTSNs = NetConvert.ParseUInt16(buffer, startPosn + 10);
 
-            // The gap ack block and duplicate TSN counts are supplied by the remote party and each allows
-            // up to 65535 entries, so they must be checked against the length the chunk actually declared.
-            // Without this the loops below read whatever follows the chunk in the receive buffer: far
-            // enough past it and the read leaves the buffer entirely, and the resulting
-            // IndexOutOfRangeException is not one of the recoverable parse failures the SCTP receive loop
-            // expects, so it terminates the receive thread and with it the association. Short of that the
-            // reads stay in bounds and quietly turn stale bytes left by earlier packets into gap ack
-            // blocks and duplicate TSNs, corrupting the sender's retransmission state instead.
+
+
+
+
+
+
+
+
             int requiredLen = SCTP_CHUNK_HEADER_LENGTH + FIXED_PARAMETERS_LENGTH
                 + numGapAckBlocks * GAP_REPORT_LENGTH
                 + numDuplicateTSNs * DUPLICATE_TSN_LENGTH;

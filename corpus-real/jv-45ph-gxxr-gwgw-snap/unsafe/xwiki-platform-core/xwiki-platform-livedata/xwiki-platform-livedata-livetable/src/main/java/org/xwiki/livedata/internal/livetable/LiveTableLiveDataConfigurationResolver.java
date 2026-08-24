@@ -1,22 +1,22 @@
-/*
- * See the NOTICE file distributed with this work for additional
- * information regarding copyright ownership.
- *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.xwiki.livedata.internal.livetable;
 
 import java.util.ArrayList;
@@ -54,12 +54,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-/**
- * Converts the Live Table configuration into Live Data configuration.
- *
- * @version $Id$
- * @since 12.10
- */
+
+
+
+
+
+
 @Component
 @Named("liveTable")
 @Singleton
@@ -93,9 +93,9 @@ public class LiveTableLiveDataConfigurationResolver implements LiveDataConfigura
     @Inject
     private Logger logger;
 
-    /**
-     * Used to add missing live data configuration values specific to the live table source.
-     */
+
+
+
     @Inject
     @Named("liveTable")
     private LiveDataConfigurationResolver<LiveDataConfiguration> defaultConfigResolver;
@@ -155,8 +155,8 @@ public class LiveTableLiveDataConfigurationResolver implements LiveDataConfigura
             }
         }
 
-        // We handle the query filters separately because they can be specified either as a string (comma-separated) or
-        // as an array.
+
+
         JsonNode queryFilters = options.path(QUERY_FILTERS);
         if (queryFilters.isTextual()) {
             source.setParameter(QUERY_FILTERS, queryFilters.asText());
@@ -210,14 +210,14 @@ public class LiveTableLiveDataConfigurationResolver implements LiveDataConfigura
                 Map<String, List<String>> parameters = this.urlQueryStringParser.parse('?' + extraParams);
                 for (Map.Entry<String, List<String>> entry : parameters.entrySet()) {
                     if (queryConfig.getProperties().contains(entry.getKey())) {
-                        // Convert to a live data property filter.
+
                         Filter filter = new Filter();
                         filter.setProperty(entry.getKey());
                         filter.getConstraints()
                             .addAll(entry.getValue().stream().map(Constraint::new).collect(Collectors.toList()));
                         filters.add(filter);
                     } else if (entry.getValue().size() == 1) {
-                        // Convert to a live data source parameter.
+
                         queryConfig.getSource().setParameter(entry.getKey(), entry.getValue().get(0));
                     } else {
                         queryConfig.getSource().setParameter(entry.getKey(), entry.getValue());
@@ -271,14 +271,14 @@ public class LiveTableLiveDataConfigurationResolver implements LiveDataConfigura
         propertyDescriptor.setName(getPropertyName(columnProperties));
         propertyDescriptor.setType(getPropertyType(column, columnProperties, options));
 
-        // The live table macro considers all columns, except for "actions", as sortable by default.
+
         propertyDescriptor.setSortable(columnProperties.path("sortable").asBoolean(!columnProperties.has(ACTIONS)));
 
-        // All columns are visible by default, unless explicitly marked as hidden.
+
         propertyDescriptor.setVisible(!HIDDEN.equals(columnProperties.path(TYPE).asText()));
         propertyDescriptor.setDisplayer(getDisplayerConfig(column, columnProperties, options));
 
-        // The live table macro considers all columns, except for "actions", as filterable by default.
+
         propertyDescriptor.setFilterable(columnProperties.path("filterable").asBoolean(!columnProperties.has(ACTIONS)));
         propertyDescriptor.setFilter(getFilterConfig(columnProperties));
 
@@ -295,28 +295,28 @@ public class LiveTableLiveDataConfigurationResolver implements LiveDataConfigura
 
     private String getPropertyType(String column, ObjectNode columnProperties, ObjectNode options)
     {
-        // The property type is specified by the class that owns the property, and the class name can be specified
-        // either in the column configuration, for each column, or in the live table configuration, for all live table
-        // columns.
+
+
+
         JsonNode className = columnProperties.path("class");
         if (!className.isTextual()) {
             className = options.path(CLASS_NAME);
             if (!className.isTextual()) {
-                // We cannot determine the property type without the class name.
+
                 return null;
             }
         }
         return this.propertyTypeSupplier.getPropertyType(column, className.asText());
     }
 
-    /**
-     * Identifies the column's displayer according to the column's livetable properties and the livetable's options.
-     *
-     * @param column the column to analyse
-     * @param columnProperties the properties of the column
-     * @param options the properties of the livetable
-     * @return the displayer descriptor selected for the column
-     */
+
+
+
+
+
+
+
+
     private DisplayerDescriptor getDisplayerConfig(String column, ObjectNode columnProperties,
         ObjectNode options)
     {

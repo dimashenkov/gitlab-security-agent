@@ -73,7 +73,7 @@
                     r.disabled = true;
                 }
 
-                // route hack is still needed for blueprints
+
                 if (typeof r.href === "string" && r.href !== "/" && ($route.path.startsWith(r.href) || r.routes?.includes($route.name))) {
                     r.class = "vsm--link_active";
                 }
@@ -95,7 +95,7 @@
     }
 
     onUpdated(() => {
-        // Required here because in mounted() the menu is not yet rendered
+
         expandParentIfNeeded();
     })
 
@@ -110,8 +110,8 @@
                     class: "menu-icon",
                 },
                 child: [{
-                    // here we use only one component for all bookmarks
-                    // so when one edits the bookmark, it will be updated without closing the section
+
+
                     component: () => h(BookmarkLinkList, {pages: bookmarksStore.pages}),
                 }]
             }] : []),

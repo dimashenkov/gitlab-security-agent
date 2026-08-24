@@ -17,11 +17,11 @@ module Guard
       def dispatch(data)
         parser = Http::Parser.new
         parser << data
-        # prepend with '.' to make request url usable as a file path
+
         request_path = '.' + URI.parse(parser.request_url).path
         request_path += '/index.html' if File.directory? request_path
         if parser.http_method != 'GET' || parser.upgrade?
-          super # pass the request to websocket
+          super
         else
           _serve(request_path)
         end

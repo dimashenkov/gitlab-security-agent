@@ -1,9 +1,9 @@
-//! EmptyScan operator — produces zero rows.
-//!
-//! Selected when the planner can statically prove a SELECT cannot match any
-//! rows — for example a contradictory range (`a > 10 AND a < 5`), an empty
-//! `IN []`, or a WHERE clause folded to `false`. Returning an empty stream
-//! is strictly cheaper than reaching storage and filtering.
+
+
+
+
+
+
 
 use std::sync::Arc;
 
@@ -14,10 +14,10 @@ use crate::exec::{
 	OperatorMetrics, ValueBatchStream, monitor_stream,
 };
 
-/// Operator that produces no rows.
-///
-/// Used when the planner can statically prove a SELECT cannot match any
-/// rows (contradictory range, empty `IN []`, etc.).
+
+
+
+
 #[derive(Debug, Clone)]
 pub struct EmptyScan {
 	pub(crate) metrics: Arc<OperatorMetrics>,

@@ -26,11 +26,11 @@ struct Recalculation {
 }
 
 impl Document {
-	/// Processes any DEFINE TABLE AS clauses which
-	/// have been defined for the table which this
-	/// record belongs to. This functions loops
-	/// through the tables and processes them all
-	/// within the currently running transaction.
+
+
+
+
+
 	pub(super) async fn process_table_views(
 		&self,
 		stk: &mut Stk,
@@ -38,7 +38,7 @@ impl Document {
 		opt: &Options,
 		action: Action,
 	) -> Result<()> {
-		// Check import
+
 		if opt.import {
 			return Ok(());
 		}
@@ -56,13 +56,13 @@ impl Document {
 		opt: &Options,
 		act: Action,
 	) -> Result<()> {
-		// Get the foreign tables
+
 		let fts = self.doc_ctx.ft()?;
-		// Don't run permissions
+
 		let opt = &opt.new_with_perms(false);
-		// Loop through all foreign table statements
+
 		for ft in fts.iter() {
-			// Get the table definition
+
 			let Some(tb) = ft.view.as_ref() else {
 				fail!("Table stored as view table did not have a view");
 			};
@@ -72,7 +72,7 @@ impl Document {
 		Ok(())
 	}
 
-	/// Runs the computation for a single view.
+
 	async fn process_view(
 		&self,
 		stk: &mut Stk,
@@ -86,8 +86,8 @@ impl Document {
 			ViewDefinition::Select {
 				..
 			} => {
-				// Nothing to do
-				// Probably shouldn't even define it as a foreign table.
+
+
 				Ok(())
 			}
 			ViewDefinition::Materialized {
@@ -95,7 +95,7 @@ impl Document {
 				condition,
 				..
 			} => {
-				// Id of the document on the view
+
 				let id = &self.id()?.key;
 
 				let set = if let Some(cond) = condition {
@@ -132,7 +132,7 @@ impl Document {
 		}
 	}
 
-	/// Run the computations for an aggregated materialized view.
+
 	#[allow(clippy::too_many_arguments)]
 	async fn process_aggregate_view(
 		&self,
@@ -153,7 +153,7 @@ impl Document {
 						.catch_return()?
 						.is_truthy()
 				{
-					// Nothing to do.
+
 					return Ok(());
 				}
 
@@ -209,12 +209,12 @@ impl Document {
 				};
 
 				match (group_before, group_after) {
-					// Nothing to do
+
 					(None, None) => {}
 					(Some(before), Some(after)) => {
 						if before != after {
-							// Group changed, delete from the original group, and add to the new
-							// group.
+
+
 							self.process_view_record_delete(
 								stk,
 								ctx,
@@ -277,7 +277,7 @@ impl Document {
 						.catch_return()?
 						.is_truthy()
 				{
-					// Nothing to do.
+
 					return Ok(());
 				}
 
@@ -294,8 +294,8 @@ impl Document {
 		Ok(())
 	}
 
-	/// Run the computation for when a new record within the table on which the view is generated
-	/// is created.
+
+
 	async fn process_view_record_create(
 		&self,
 		stk: &mut Stk,
@@ -313,13 +313,13 @@ impl Document {
 		let k = key::record::new(db.namespace_id, db.database_id, view_table_name, &key);
 		let mut action = Action::Update;
 		let mut record = if let Some(bytes) = tx.get_raw(&k, None).await? {
-			// View-table aggregation rows store their `data` as an `Object`
-			// without an `id` field (the group key is the row's identity
-			// but is not duplicated into the body). Decoding via
-			// `Record::kv_decode_value` would splice the id back from the
-			// key, which is visible in event-trigger `$before`/`$after`
-			// payloads and changes pre-existing language-test semantics.
-			// Decode raw to preserve the on-disk shape exactly.
+
+
+
+
+
+
+
 			revision::from_slice::<Record>(&bytes)?
 		} else {
 			action = Action::Create;
@@ -407,8 +407,8 @@ impl Document {
 		Ok(())
 	}
 
-	/// Run the computation for when a record within the table on which the view is generated
-	/// is deleted.
+
+
 	async fn process_view_record_delete(
 		&self,
 		stk: &mut Stk,
@@ -424,9 +424,9 @@ impl Document {
 		let tx = ctx.tx();
 
 		let k = key::record::new(db.namespace_id, db.database_id, view_table_name, &key);
-		// View-table aggregation rows store `data` without an `id`; see the
-		// note on the matching read in the `Update` path above. Use raw
-		// decode so we don't splice the group key back into `data`.
+
+
+
 		let mut record = if let Some(bytes) = tx.get_raw(&k, None).await? {
 			revision::from_slice::<Record>(&bytes)?
 		} else {
@@ -444,7 +444,7 @@ impl Document {
 		};
 
 		if count == 1 {
-			// Only one record, we can just delete the record.
+
 			tx.del(&k).await?;
 
 			let ns = self.doc_ctx.ns();
@@ -511,8 +511,8 @@ impl Document {
 					};
 
 					if *n == *max {
-						// Collect all the things we need to recalculate into a list so
-						// that we can recalculate them in a single query.
+
+
 						recalculations.push(Recalculation {
 							function: "math::max".to_string(),
 							stat: idx,
@@ -617,7 +617,7 @@ impl Document {
 		}
 
 		if !recalculations.is_empty() {
-			// Build the expression which recalculates the values
+
 			let exprs = recalculations
 				.iter()
 				.map(|x| {
@@ -628,7 +628,7 @@ impl Document {
 				})
 				.collect();
 
-			// Build condition which filters out all values not belonging to the group.
+
 			let mut condition = None;
 			for (idx, g) in aggr.group_expressions.iter().enumerate() {
 				let expr = Expr::Binary {
@@ -650,17 +650,17 @@ impl Document {
 			let table_name = self.id()?.table.clone();
 
 			let recalc_stmt = SelectStatement {
-				// SELECT VALUE [recalc1, recalc2,..]
+
 				fields: Fields::Value(Box::new(Selector {
 					expr: Expr::Literal(Literal::Array(exprs)),
 					alias: None,
 				})),
-				// FROM ONLY table
+
 				only: true,
 				what: vec![Expr::Table(table_name.clone())],
-				// WHERE group_expr1 = group_value1 && group_expr2 = group_value2 && ..
+
 				cond: condition.map(Cond),
-				// GROUP ALL
+
 				group: Some(Groups(Vec::new())),
 				omit: vec![],
 				with: None,
@@ -780,8 +780,8 @@ impl Document {
 		Ok(())
 	}
 
-	/// Process an update to a entry in the materialized, aggregated view.
-	/// Only called for updates to values that remain within the same group.
+
+
 	async fn process_view_record_update(
 		&self,
 		stk: &mut Stk,
@@ -797,9 +797,9 @@ impl Document {
 		let tx = ctx.tx();
 
 		let k = key::record::new(db.namespace_id, db.database_id, view_table_name, &key);
-		// View-table aggregation rows store `data` without an `id`; see the
-		// note on the matching read in the `Update` path above. Use raw
-		// decode so we don't splice the group key back into `data`.
+
+
+
 		let mut record = if let Some(bytes) = tx.get_raw(&k, None).await? {
 			revision::from_slice::<Record>(&bytes)?
 		} else {
@@ -859,8 +859,8 @@ impl Document {
 					if *after >= *max {
 						*max = *after
 					} else if *before == *max {
-						// Collect all the things we need to recalculate into a list so
-						// that we can recalculate them in a single query.
+
+
 						recalculations.push(Recalculation {
 							function: "math::max".to_string(),
 							stat: idx,
@@ -1027,7 +1027,7 @@ impl Document {
 		}
 
 		if !recalculations.is_empty() {
-			// Build the expression which recalculates the values
+
 			let exprs = recalculations
 				.iter()
 				.map(|x| {
@@ -1038,7 +1038,7 @@ impl Document {
 				})
 				.collect();
 
-			// Build condition which filters out all values not belonging to the group.
+
 			let mut condition = None;
 			for (idx, g) in aggr.group_expressions.iter().enumerate() {
 				let expr = Expr::Binary {
@@ -1060,17 +1060,17 @@ impl Document {
 			let table_name = self.id()?.table.clone();
 
 			let recalc_stmt = SelectStatement {
-				// SELECT VALUE [recalc1, recalc2,..]
+
 				fields: Fields::Value(Box::new(Selector {
 					expr: Expr::Literal(Literal::Array(exprs)),
 					alias: None,
 				})),
-				// FROM ONLY table
+
 				only: true,
 				what: vec![Expr::Table(table_name.clone())],
-				// WHERE group_expr1 = group_value1 && group_expr2 = group_value2 && ..
+
 				cond: condition.map(Cond),
-				// GROUP ALL
+
 				group: Some(Groups(Vec::new())),
 				omit: vec![],
 				with: None,
@@ -1190,7 +1190,7 @@ impl Document {
 		Ok(())
 	}
 
-	/// Run triggers which are defined on the view, like events and second order views.
+
 	#[allow(clippy::too_many_arguments)]
 	pub(crate) async fn run_triggers(
 		stk: &mut Stk,
@@ -1202,18 +1202,18 @@ impl Document {
 		initial: Option<Arc<Record>>,
 		current: Option<Arc<Record>>,
 	) -> Result<()> {
-		// We can't insert view data via UpsertStatement/DeleteStatement
-		// directly because the view record's metadata (aggregation stats)
-		// can't be expressed in those statements — `tx.set_record` is
-		// called separately at the call site. After the raw KV write
-		// lands, run the same document-lifecycle hooks that the regular
-		// pipeline would so secondary indexes, dependent views, change
-		// feeds, live-query notifications, and events stay consistent
-		// with the stored view record. Field / table validation is intentionally skipped: the data
-		// was computed by the planner from the aggregation, so there is no
-		// user-supplied content to validate, and re-running validation
-		// would force every aggregation expression through the field
-		// pipeline a second time.
+
+
+
+
+
+
+
+
+
+
+
+
 
 		let mut document = Document {
 			doc_ctx,

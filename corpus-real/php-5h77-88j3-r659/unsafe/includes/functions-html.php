@@ -1,10 +1,10 @@
 <?php
 
-/**
- * Display <h1> header and logo
- *
- * @return void
- */
+
+
+
+
+
 function yourls_html_logo() {
     yourls_do_action( 'pre_html_logo' );
     ?>
@@ -18,21 +18,21 @@ function yourls_html_logo() {
     yourls_do_action( 'html_logo' );
 }
 
-/**
- * Display HTML head and <body> tag
- *
- * @param string $context Context of the page (stats, index, infos, ...)
- * @param string $title HTML title of the page
- * @return void
- */
+
+
+
+
+
+
+
 function yourls_html_head( $context = 'index', $title = '' ) {
 
     yourls_do_action( 'pre_html_head', $context, $title );
 
-    // All components to false, except when specified true
+
     $share = $insert = $tablesorter = $tabs = $cal = $charts = false;
 
-    // Load components as needed
+
     switch ( $context ) {
         case 'infos':
             $share = $tabs = $charts = true;
@@ -61,7 +61,7 @@ function yourls_html_head( $context = 'index', $title = '' ) {
             break;
     }
 
-    // Force no cache for all admin pages
+
     if( yourls_is_admin() && !headers_sent() ) {
         yourls_no_cache_headers();
         yourls_no_frame_header();
@@ -69,14 +69,14 @@ function yourls_html_head( $context = 'index', $title = '' ) {
         yourls_do_action( 'admin_headers', $context, $title );
     }
 
-    // Store page context
+
     yourls_set_html_context($context);
 
-    // Body class
+
     $bodyclass = yourls_apply_filter( 'bodyclass', '' );
     $bodyclass .= ( yourls_is_mobile_device() ? 'mobile' : 'desktop' );
 
-    // Page title
+
     $_title = 'YOURLS &mdash; Your Own URL Shortener | ' . yourls_link();
     $_title = empty($_title_page) ? $_title : $_title_page . ' &mdash; ' . $_title;
     $title = $title ? $title . " &laquo; " . $_title : $_title;
@@ -136,15 +136,15 @@ function yourls_html_head( $context = 'index', $title = '' ) {
     <?php
 }
 
-/**
- * Display HTML footer (including closing body & html tags)
- *
- * Function yourls_die() will call this function with the optional param set to false: most likely, if we're using yourls_die(),
- * there's a problem, so don't maybe add to it by sending another SQL query
- *
- * @param  bool $can_query  If set to false, will not try to send another query to DB server
- * @return void
- */
+
+
+
+
+
+
+
+
+
 function yourls_html_footer($can_query = true) {
     if($can_query & yourls_get_debug_mode()) {
         $num_queries = yourls_get_num_queries();
@@ -154,7 +154,7 @@ function yourls_html_footer($can_query = true) {
     }
 
     ?>
-    </div><?php // wrap ?>
+    </div><?php ?>
     <footer id="footer" role="contentinfo"><p>
         <?php
         $footer  = yourls_s( 'Powered by %s', '<a href="http://yourls.org/" title="YOURLS">YOURLS</a> v ' . YOURLS_VERSION );
@@ -173,13 +173,13 @@ function yourls_html_footer($can_query = true) {
     <?php
 }
 
-/**
- * Display "Add new URL" box
- *
- * @param string $url URL to prefill the input with
- * @param string $keyword Keyword to prefill the input with
- * @return void
- */
+
+
+
+
+
+
+
 function yourls_html_addnew( $url = '', $keyword = '' ) {
     $pre = yourls_apply_filter( 'shunt_html_addnew', yourls_shunt_default(), $url, $keyword );
     if ( yourls_shunt_default() !== $pre ) {
@@ -206,13 +206,13 @@ function yourls_html_addnew( $url = '', $keyword = '' ) {
     <?php
 }
 
-/**
- * Display hidden modal for link delete confirmation
- *
- * @since 1.10.3
- * @param void
- * @return void
- */
+
+
+
+
+
+
+
 function yourls_delete_link_modal() {
 	?>
     <dialog id="delete-confirm-dialog">
@@ -234,17 +234,17 @@ function yourls_delete_link_modal() {
 	<?php
 }
 
-/**
- * Display main table's footer
- *
- * The $param array is defined in /admin/index.php, check the yourls_html_tfooter() call
- *
- * @param array $params Array of all required parameters
- * @return void
- */
+
+
+
+
+
+
+
+
 function yourls_html_tfooter( $params = array() ) {
-    // Manually extract all parameters from the array. We prefer doing it this way, over using extract(),
-    // to make things clearer and more explicit about what var is used.
+
+
     $search       = $params['search'];
     $search_text  = $params['search_text'];
     $search_in    = $params['search_in'];
@@ -268,7 +268,7 @@ function yourls_html_tfooter( $params = array() ) {
                     <div id="filter_options">
                         <?php
 
-                        // First search control: text to search
+
                         $_input = '<input aria-label="' .yourls__( 'Search for' ). '" type="text" name="search" class="text" size="12" value="' . yourls_esc_attr( $search_text ) . '" />';
                         $_options = array(
                             'all'     => yourls__( 'All fields' ),
@@ -278,11 +278,11 @@ function yourls_html_tfooter( $params = array() ) {
                             'ip'      => yourls__( 'IP' ),
                         );
                         $_select = yourls_html_select( 'search_in', $_options, $search_in, false, yourls__( 'Search in' ) );
-                        /* //translators: "Search for <input field with text to search> in <select dropdown with URL, title...>" */
+
                         yourls_se( 'Search for %1$s in %2$s', $_input , $_select );
                         echo "&ndash;\n";
 
-                        // Second search control: order by
+
                         $_options = array(
                             'keyword'      => yourls__( 'Short URL' ),
                             'url'          => yourls__( 'URL' ),
@@ -298,28 +298,28 @@ function yourls_html_tfooter( $params = array() ) {
                             'desc' => yourls__( 'Descending' ),
                         );
                         $_select2 = yourls_html_select( 'sort_order', $_options, $sort_order, false,  yourls__( 'Sort order' ) );
-                        /* //translators: "Order by <criteria dropdown (date, clicks...)> in <order dropdown (Descending or Ascending)>" */
+
                         yourls_se( 'Order by %1$s %2$s', $_select , $_select2 );
                         echo "&ndash;\n";
 
-                        // Third search control: Show XX rows
-                        /* //translators: "Show <text field> rows" */
+
+
                         $_input = '<input aria-label="' .yourls__( 'Number of rows to show' ). '" type="text" name="perpage" class="text" size="2" value="' . $perpage . '" />';
                         yourls_se( 'Show %s rows',  $_input );
                         echo "<br/>\n";
 
-                        // Fourth search control: Show links with more than XX clicks
+
                         $_options = array(
                             'more' => yourls__( 'more' ),
                             'less' => yourls__( 'less' ),
                         );
                         $_select = yourls_html_select( 'click_filter', $_options, $click_filter, false, yourls__( 'Show links with' ) );
                         $_input  = '<input aria-label="' .yourls__( 'Number of clicks' ). '" type="text" name="click_limit" class="text" size="4" value="' . $click_limit . '" /> ';
-                        /* //translators: "Show links with <more/less> than <text field> clicks" */
+
                         yourls_se( 'Show links with %1$s than %2$s clicks', $_select, $_input );
                         echo "<br/>\n";
 
-                        // Fifth search control: Show links created before/after/between ...
+
                         $_options = array(
                             'before'  => yourls__('before'),
                             'after'   => yourls__('after'),
@@ -329,7 +329,7 @@ function yourls_html_tfooter( $params = array() ) {
                         $_input  = '<input aria-label="' .yourls__('Select a date') . '" type="text" name="date_first" id="date_first" class="text" size="12" value="' . $date_first . '" />';
                         $_and    = '<span id="date_and"' . ( $date_filter === 'between' ? ' style="display:inline"' : '' ) . '> &amp; </span>';
                         $_input2 = '<input aria-label="' .yourls__('Select an end date') . '" type="text" name="date_second" id="date_second" class="text" size="12" value="' . $date_second . '"' . ( $date_filter === 'between' ? ' style="display:inline"' : '' ) . '/>';
-                        /* //translators: "Show links created <before/after/between> <date input> <"and" if applicable> <date input if applicable>" */
+
                         yourls_se( 'Show links created %1$s %2$s %3$s %4$s', $_select, $_input, $_and, $_input2 );
                         ?>
 
@@ -344,8 +344,8 @@ function yourls_html_tfooter( $params = array() ) {
             </div>
 
             <?php
-            // Remove empty keys from the $params array so it doesn't clutter the pagination links
-            $params = array_filter( $params, function($val){ return $val !== '';} ); // remove keys with empty values
+
+            $params = array_filter( $params, function($val){ return $val !== '';} );
 
             if( isset( $search_text ) ) {
                 $params['search'] = $search_text;
@@ -359,7 +359,7 @@ function yourls_html_tfooter( $params = array() ) {
                     <span class="nav_total"><?php echo sprintf( yourls_n( '1 page', '%s pages', $total_pages ), $total_pages ); ?></span>
                     <?php
                     $base_page = yourls_admin_url( 'index.php' );
-                    // Pagination offsets: min( max ( zomg! ) );
+
                     $p_start = max(  min( $total_pages - 4, $page - 2 ), 1 );
                     $p_end = min( max( 5, $page + 2 ), $total_pages );
                     if( $p_start >= 2 ) {
@@ -391,20 +391,20 @@ function yourls_html_tfooter( $params = array() ) {
     <?php
 }
 
-/**
- * Return or display a select dropdown field
- *
- * @since 1.6
- *
- * @param  string  $name      HTML 'name' (also use as the HTML 'id')
- * @param  array   $options   array of 'value' => 'Text displayed'
- * @param  string  $selected  optional 'value' from the $options array that will be highlighted
- * @param  boolean $display   false (default) to return, true to echo
- * @param  string  $label     ARIA label of the element
- * @return string HTML content of the select element
- */
+
+
+
+
+
+
+
+
+
+
+
+
 function yourls_html_select( $name, $options, $selected = '', $display = false, $label = '' ) {
-    // Allow plugins to filter the options -- see #3262
+
     $options = yourls_apply_filter( 'html_select_options', $options, $name, $selected, $display, $label );
     $html = "<select aria-label='$label' name='$name' id='$name' size='1'>\n";
     foreach( $options as $value => $text ) {
@@ -420,31 +420,31 @@ function yourls_html_select( $name, $options, $selected = '', $display = false, 
 }
 
 
-/**
- * Display the Quick Share box
- *
- * @param string $longurl          Long URL
- * @param string $shorturl         Short URL
- * @param string $title            Title
- * @param string $text             Text to display
- * @param string $shortlink_title  Optional replacement for 'Your short link'
- * @param string $share_title      Optional replacement for 'Quick Share'
- * @param bool   $hidden           Optional. Hide the box by default (with css "display:none")
- * @return void
- */
+
+
+
+
+
+
+
+
+
+
+
+
 function yourls_share_box( $longurl, $shorturl, $title = '', $text='', $shortlink_title = '', $share_title = '', $hidden = false ) {
     if ( $shortlink_title == '' )
         $shortlink_title = '<h2>' . yourls__( 'Your short link' ) . '</h2>';
     if ( $share_title == '' )
         $share_title = '<h2>' . yourls__( 'Quick Share' ) . '</h2>';
 
-    // Allow plugins to short-circuit the whole function
+
     $pre = yourls_apply_filter( 'shunt_share_box', yourls_shunt_default() );
     if ( yourls_shunt_default() !== $pre ) {
         return $pre;
     }
 
-    // Make sure IDN domains are in their UTF8 form
+
     $shorturl = yourls_normalize_uri($shorturl);
 
     $text   = ( $text ? '"'.$text.'" ' : '' );
@@ -453,7 +453,7 @@ function yourls_share_box( $longurl, $shorturl, $title = '', $text='', $shortlin
     $count  = 280 - strlen( $share );
     $hidden = ( $hidden ? 'style="display:none;"' : '' );
 
-    // Allow plugins to filter all data
+
     $data = compact( 'longurl', 'shorturl', 'title', 'text', 'shortlink_title', 'share_title', 'share', 'count', 'hidden' );
     $data = yourls_apply_filter( 'share_box_data', $data );
     extract( $data );
@@ -490,7 +490,7 @@ function yourls_share_box( $longurl, $shorturl, $title = '', $text='', $shortlin
                 <a id="share_fb" href="https://www.facebook.com/share.php?u=<?php echo $_url; ?>" title="<?php yourls_e( 'Share on Facebook' ); ?>" onclick="share('fb');return false;">Facebook</a>
                 <?php
                 yourls_do_action( 'share_links', $longurl, $shorturl, $title, $text );
-                // Note: on the main admin page, there are no parameters passed to the sharebox when it's drawn.
+
                 ?>
             </p>
         </div>
@@ -502,15 +502,15 @@ function yourls_share_box( $longurl, $shorturl, $title = '', $text='', $shortlin
     <?php
 }
 
-/**
- * Die die die
- *
- * @see https://www.youtube.com/watch?v=zSiKETBjARk
- * @param string $message
- * @param string $title
- * @param int $header_code
- * @return void
- */
+
+
+
+
+
+
+
+
+
 function yourls_die( $message = '', $title = '', $header_code = 200 ) {
     yourls_do_action( 'pre_yourls_die', $message, $title, $header_code );
 
@@ -522,23 +522,23 @@ function yourls_die( $message = '', $title = '', $header_code = 200 ) {
     }
     echo yourls_apply_filter( 'die_title', "<h2>$title</h2>" );
     echo yourls_apply_filter( 'die_message', "<p>$message</p>" );
-    // Hook into 'yourls_die' to add more elements or messages to that page
+
     yourls_do_action( 'yourls_die' );
     if( !yourls_did_action( 'html_footer' ) ) {
         yourls_html_footer(false);
     }
 
-    // die with a value in case we're running tests, so PHPUnit doesn't exit with 0 as if success
+
     die(1);
 }
 
-/**
- * Return an "Edit" row for the main table
- *
- * @param string $keyword Keyword to edit
- * @param string $id
- * @return string HTML of the edit row
- */
+
+
+
+
+
+
+
 function yourls_table_edit_row( $keyword, $id ) {
     $keyword = yourls_sanitize_keyword($keyword);
     $url = yourls_get_keyword_longurl( $keyword );
@@ -547,7 +547,7 @@ function yourls_table_edit_row( $keyword, $id ) {
     $safe_title = yourls_esc_attr( $title );
     $safe_keyword = yourls_esc_attr( $keyword );
 
-    // Make strings sprintf() safe: '%' -> '%%'
+
     $safe_url = str_replace( '%', '%%', $safe_url );
     $safe_title = str_replace( '%', '%%', $safe_title );
 
@@ -569,18 +569,18 @@ RETURN;
     return $return;
 }
 
-/**
- * Return an "Add" row for the main table
- *
- * @param string $keyword     Keyword (short URL)
- * @param string $url         URL (long URL)
- * @param string $title       Title
- * @param string $ip          IP
- * @param string|int $clicks  Number of clicks
- * @param string $timestamp   Timestamp
- * @param int    $row_id      Numeric value used to form row IDs, defaults to one
- * @return string             HTML of the row
- */
+
+
+
+
+
+
+
+
+
+
+
+
 function yourls_table_add_row( $keyword, $url, $title, $ip, $clicks, $timestamp, $row_id = 1 ) {
     $keyword  = yourls_sanitize_keyword($keyword);
     $id       = yourls_unique_element_id('yid', $row_id);
@@ -596,7 +596,7 @@ function yourls_table_add_row( $keyword, $url, $title, $ip, $clicks, $timestamp,
         yourls_add_query_arg( array( 'id' => $id, 'action' => 'edit', 'keyword' => $keyword ), yourls_admin_url( 'admin-ajax.php' ) )
     );
 
-    // Action link buttons: the array
+
     $actions = array(
         'stats' => array(
             'href'    => $statlink,
@@ -628,7 +628,7 @@ function yourls_table_add_row( $keyword, $url, $title, $ip, $clicks, $timestamp,
     );
     $actions = yourls_apply_filter( 'table_add_row_action_array', $actions, $keyword );
 
-    // Action link buttons: the HTML
+
     $action_links = '';
     foreach( $actions as $key => $action ) {
         $onclick = isset( $action['onclick'] ) ? 'onclick="' . $action['onclick'] . '"' : '' ;
@@ -645,7 +645,7 @@ function yourls_table_add_row( $keyword, $url, $title, $ip, $clicks, $timestamp,
     if( ! in_array( yourls_get_protocol( $url ) , array( 'http://', 'https://' ) ) )
         $protocol_warning = yourls_apply_filter( 'add_row_protocol_warning', '<span class="warning" title="' . yourls__( 'Not a common link' ) . '">&#9733;</span>' );
 
-    // Row cells: the array
+
     $cells = array(
         'keyword' => array(
             'template'      => '<a href="%shorturl%">%keyword_html%</a>',
@@ -682,7 +682,7 @@ function yourls_table_add_row( $keyword, $url, $title, $ip, $clicks, $timestamp,
     );
     $cells = yourls_apply_filter( 'table_add_row_cell_array', $cells, $keyword, $url, $title, $ip, $clicks, $timestamp );
 
-    // Row cells: the HTML. Replace every %stuff% in 'template' with 'stuff' value.
+
     $row = "<tr id=\"id-$id\">";
     foreach( $cells as $cell_id => $elements ) {
         $row .= sprintf( '<td class="%s" id="%s">', $cell_id, $cell_id . '-' . $id );
@@ -695,11 +695,11 @@ function yourls_table_add_row( $keyword, $url, $title, $ip, $clicks, $timestamp,
     return $row;
 }
 
-/**
- * Echo the main table head
- *
- * @return void
- */
+
+
+
+
+
 function yourls_table_head() {
     $start = '<table id="main_table" class="tblSorter" cellpadding="0" cellspacing="1"><thead><tr>'."\n";
     echo yourls_apply_filter( 'table_head_start', $start );
@@ -720,43 +720,43 @@ function yourls_table_head() {
     echo yourls_apply_filter( 'table_head_end', $end );
 }
 
-/**
- * Echo the tbody start tag
- *
- * @return void
- */
+
+
+
+
+
 function yourls_table_tbody_start() {
     echo yourls_apply_filter( 'table_tbody_start', '<tbody>' );
 }
 
-/**
- * Echo the tbody end tag
- *
- * @return void
- */
+
+
+
+
+
 function yourls_table_tbody_end() {
     echo yourls_apply_filter( 'table_tbody_end', '</tbody>' );
 }
 
-/**
- * Echo the table start tag
- *
- * @return void
- */
+
+
+
+
+
 function yourls_table_end() {
     echo yourls_apply_filter( 'table_end', '</table></main>' );
 }
 
 
 
-/**
- * Echo HTML tag for a link
- *
- * @param string $href     URL to link to
- * @param string $anchor   Anchor text
- * @param string $element  Element id
- * @return void
-*/
+
+
+
+
+
+
+
+
 function yourls_html_link( $href, $anchor = '', $element = '' ) {
     if( !$anchor )
         $anchor = $href;
@@ -766,12 +766,12 @@ function yourls_html_link( $href, $anchor = '', $element = '' ) {
     echo yourls_apply_filter( 'html_link', $link );
 }
 
-/**
- * Display the login screen. Nothing past this point.
- *
- * @param string $error_msg  Optional error message to display
- * @return void
- */
+
+
+
+
+
+
 function yourls_login_screen( $error_msg = '' ) {
     yourls_html_head( 'login' );
 
@@ -781,7 +781,7 @@ function yourls_login_screen( $error_msg = '' ) {
     ?>
     <main role="main">
         <div id="login">
-            <form method="post" action="<?php echo $action; ?>"> <?php // reset any QUERY parameters ?>
+            <form method="post" action="<?php echo $action; ?>"> <?php ?>
                 <?php
                     if( !empty( $error_msg ) ) {
                         echo '<p id="error-message" class="error">'.$error_msg.'</p>';
@@ -816,16 +816,16 @@ function yourls_login_screen( $error_msg = '' ) {
 }
 
 
-/**
- * Display the admin menu
- *
- * @return void
- */
+
+
+
+
+
 function yourls_html_menu() {
-    // Build menu links
+
     if( defined( 'YOURLS_USER' ) ) {
-        // Create a logout link with a nonce associated to fake user 'logout' : the user is not yet defined
-        // when the logout check is done -- see yourls_is_valid_user()
+
+
         $logout_url = yourls_nonce_url( 'admin_logout',
         yourls_add_query_arg(['action' => 'logout'], yourls_admin_url('index.php')), 'nonce', 'logout');
         $logout_link = yourls_apply_filter('logout_link', sprintf( yourls__('Hello <strong>%s</strong>'), YOURLS_USER ) . ' (<a href="' . $logout_url . '" title="' . yourls_esc_attr__( 'Logout' ) . '">' . yourls__( 'Logout' ) . '</a>)' );
@@ -858,7 +858,7 @@ function yourls_html_menu() {
     $admin_links    = yourls_apply_filter( 'admin_links',    $admin_links );
     $admin_sublinks = yourls_apply_filter( 'admin_sublinks', $admin_sublinks );
 
-    // Now output menu
+
     echo '<nav role="navigation"><ul id="admin_menu">'."\n";
     if ( yourls_is_private() && !empty( $logout_link ) )
         echo '<li id="admin_menu_logout_link">' . $logout_link .'</li>';
@@ -869,7 +869,7 @@ function yourls_html_menu() {
             $title  = isset( $ar['title'] ) ? 'title="' . $ar['title'] . '"' : '';
             printf( '<li id="admin_menu_%s_link" class="admin_menu_toplevel"><a href="%s" %s>%s</a>', $link, $ar['url'], $title, $anchor );
         }
-        // Output submenu if any. TODO: clean up, too many code duplicated here
+
         if( isset( $admin_sublinks[$link] ) ) {
             echo "<ul>\n";
             foreach( $admin_sublinks[$link] as $link => $ar ) {
@@ -889,34 +889,34 @@ function yourls_html_menu() {
     yourls_do_action( 'admin_menu' );
     echo "</ul></nav>\n";
     yourls_do_action( 'admin_notices' );
-    yourls_do_action( 'admin_notice' ); // because I never remember if it's 'notices' or 'notice'
-    /*
-    To display a notice:
-    $message = "<div>OMG, dude, I mean!</div>" );
-    yourls_add_action( 'admin_notices', function() use ( $message ) { echo (string) $message; } );
-    */
+    yourls_do_action( 'admin_notice' );
+
+
+
+
+
 }
 
-/**
- * Wrapper function to display admin notices
- *
- * @param string $message Message to display
- * @param string $style    Message style (default: 'notice')
- * @return void
- */
+
+
+
+
+
+
+
 function yourls_add_notice( $message, $style = 'notice' ) {
-    // Escape single quotes in $message to avoid breaking the anonymous function
+
     $message = yourls_notice_box( strtr( $message, array( "'" => "\'" ) ), $style );
     yourls_add_action( 'admin_notices', function() use ( $message ) { echo (string) $message; } );
 }
 
-/**
- * Return a formatted notice
- *
- * @param string $message  Message to display
- * @param string $style    CSS class to use for the notice
- * @return string          HTML of the notice
- */
+
+
+
+
+
+
+
 function yourls_notice_box( $message, $style = 'notice' ) {
     return <<<HTML
     <div class="$style">
@@ -925,16 +925,16 @@ function yourls_notice_box( $message, $style = 'notice' ) {
 HTML;
 }
 
-/**
- * Display a page
- *
- * Includes content of a PHP file from the YOURLS_PAGEDIR directory, as if it
- * were a standard short URL (ie http://sho.rt/$page)
- *
- * @since 1.0
- * @param string $page  PHP file to display
- * @return void
- */
+
+
+
+
+
+
+
+
+
+
 function yourls_page( $page ) {
     if( !yourls_is_page($page)) {
         yourls_die( yourls_s('Page "%1$s" not found', $page), yourls__('Not found'), 404 );
@@ -948,15 +948,15 @@ function yourls_page( $page ) {
     yourls_do_action( 'post_page', $page );
 }
 
-/**
- * Display the language attributes for the HTML tag.
- *
- * Builds up a set of html attributes containing the text direction and language
- * information for the page. Stolen from WP.
- *
- * @since 1.6
- * @return void
- */
+
+
+
+
+
+
+
+
+
 function yourls_html_language_attributes() {
     $attributes = array();
     $output = '';
@@ -964,7 +964,7 @@ function yourls_html_language_attributes() {
     $attributes[] = ( yourls_is_rtl() ? 'dir="rtl"' : 'dir="ltr"' );
 
     $doctype = yourls_apply_filter( 'html_language_attributes_doctype', 'html' );
-    // Experimental: get HTML lang from locale. Should work. Convert fr_FR -> fr-FR
+
     if ( $lang = str_replace( '_', '-', yourls_get_locale() ) ) {
         if( $doctype == 'xhtml' ) {
             $attributes[] = "xml:lang=\"$lang\"";
@@ -978,12 +978,12 @@ function yourls_html_language_attributes() {
     echo $output;
 }
 
-/**
- * Output translated strings used by the Javascript calendar
- *
- * @since 1.6
- * @return void
- */
+
+
+
+
+
+
 function yourls_l10n_calendar_strings() {
     echo "\n<script>\n";
     echo "var l10n_cal_month = " . json_encode( array_values( yourls_l10n_months() ) ) . ";\n";
@@ -992,19 +992,19 @@ function yourls_l10n_calendar_strings() {
     echo "var l10n_cal_close = \"" . yourls_esc_js( yourls__( 'Close' ) ) . "\";\n";
     echo "</script>\n";
 
-    // Dummy returns, to initialize l10n strings used in the calendar
+
     yourls__( 'Today' );
     yourls__( 'Close' );
 }
 
 
-/**
- * Display a notice if there is a newer version of YOURLS available
- *
- * @since 1.7
- * @param string $compare_with Optional, YOURLS version to compare to
- * @return void
- */
+
+
+
+
+
+
+
 function yourls_new_core_version_notice($compare_with = null) {
     $compare_with = $compare_with ?: YOURLS_VERSION;
 
@@ -1018,15 +1018,15 @@ function yourls_new_core_version_notice($compare_with = null) {
     }
 }
 
-/**
- * Display or return HTML for a bookmarklet link
- *
- * @since 1.7.1
- * @param string $href    bookmarklet link (presumably minified code with "javascript:" scheme)
- * @param string $anchor  link anchor
- * @param bool   $echo    true to display, false to return the HTML
- * @return string         the HTML for a bookmarklet link
- */
+
+
+
+
+
+
+
+
+
 function yourls_bookmarklet_link( $href, $anchor, $echo = true ) {
     $alert = yourls_esc_attr__( 'Drag to your toolbar!' );
     $link = <<<LINK
@@ -1038,35 +1038,35 @@ LINK;
     return $link;
 }
 
-/**
- * Set HTML context (stats, index, infos, ...)
- *
- * @since  1.7.3
- * @param  string  $context
- * @return void
- */
+
+
+
+
+
+
+
 function yourls_set_html_context($context) {
     yourls_get_db('read-set_html_context')->set_html_context($context);
 }
 
-/**
- * Get HTML context (stats, index, infos, ...)
- *
- * @since  1.7.3
- * @return string
- */
+
+
+
+
+
+
 function yourls_get_html_context() {
     return yourls_get_db('read-get_html_context')->get_html_context();
 }
 
-/**
- * Print HTML link for favicon
- *
- * @since 1.7.10
- * @return mixed|void
- */
+
+
+
+
+
+
 function yourls_html_favicon() {
-    // Allow plugins to short-circuit the whole function
+
     $pre = yourls_apply_filter( 'shunt_html_favicon', yourls_shunt_default() );
     if ( yourls_shunt_default() !== $pre ) {
         return $pre;

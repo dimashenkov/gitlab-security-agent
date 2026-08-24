@@ -12,9 +12,9 @@ from cms.utils.urlutils import admin_reverse, static_with_version
 
 
 class PageSelectWidget(MultiWidget):
-    """A widget that allows selecting a page by first selecting a site and then
-    a page on that site in a two-step process.
-    """
+    ''
+
+
     template_name = 'cms/widgets/pageselectwidget.html'
 
     class Media:
@@ -31,10 +31,10 @@ class PageSelectWidget(MultiWidget):
         super().__init__((Select, Select, Select), attrs)
 
     def decompress(self, value):
-        """
-        receives a page_id in value and returns the site_id and page_id
-        of that page or the current site_id and None if no page_id is given.
-        """
+        ''
+
+
+
         if value:
             page = Page.objects.get(pk=value)
             return [page.site_id, page.pk, page.pk]
@@ -42,15 +42,15 @@ class PageSelectWidget(MultiWidget):
         return [site.pk, None, None]
 
     def _has_changed(self, initial, data):
-        # THIS IS A COPY OF django.forms.widgets.Widget._has_changed()
-        # (except for the first if statement)
 
-        """
-        Return True if data differs from initial.
-        """
-        # For purposes of seeing whether something has changed, None is
-        # the same as an empty string, if the data or initial value we get
-        # is None, replace it w/ ''.
+
+
+        ''
+
+
+
+
+
         if data is None or (len(data) >= 2 and data[1] in [None, '']):
             data_value = ''
         else:
@@ -85,7 +85,7 @@ class PageSelectWidget(MultiWidget):
 
 
 class PageSmartLinkWidget(TextInput):
-    """Presents the user with a Select2 widget to select a page and returns the link to this page as a string."""
+    ''
     template_name = 'cms/widgets/pagesmartlinkwidget.html'
 
     class Media:
@@ -126,20 +126,20 @@ class PageSmartLinkWidget(TextInput):
 
 
 class UserSelectAdminWidget(Select):
-    """Special widget used in page permission inlines, because we have to render
-    an add user (plus) icon, but point it somewhere else - to special user creation
-    view, which is accessible only if user haves "add user" permissions.
+    ''
 
-    Current user should be assigned to widget in form constructor as an user
-    attribute.
-    """
+
+
+
+
+
     def render(self, name, value, attrs=None, choices=(), renderer=None):
         output = [super().render(name, value, attrs, renderer=renderer)]
         if hasattr(self, 'user') and (
             self.user.is_superuser or self.user.has_perm(
                 PageUser._meta.app_label + '.' + get_permission_codename('add', PageUser._meta))
         ):
-            # append + icon
+
             add_url = admin_reverse('cms_pageuser_add')
             output.append(
                 '<a href="%s" class="add-another" id="add_id_%s" onclick="return showAddAnotherPopup(this);"> ' %
@@ -150,10 +150,10 @@ class UserSelectAdminWidget(Select):
 
 class AppHookSelect(Select):
 
-    """Special widget used for the App Hook selector in the Advanced Settings
-    of the Page Admin. It adds support for a data attribute per option and
-    includes supporting JS into the page.
-    """
+    ''
+
+
+
 
     class Media:
         js = (
@@ -177,7 +177,7 @@ class AppHookSelect(Select):
         if option_value in selected_choices:
             selected_html = mark_safe(' selected="selected"')
             if not self.allow_multiple_selected:
-                # Only allow for a single selection.
+
                 selected_choices.remove(option_value)
         else:
             selected_html = ''
@@ -194,16 +194,16 @@ class AppHookSelect(Select):
 
 
 class ApplicationConfigSelect(Select):
-    """
-    Special widget -populate by javascript- that shows application configurations
-    depending on selected Apphooks.
+    ''
 
-    Required data are injected in the page as JSON data that forms.apphookselect.js
-    uses to create the appropriate data structure.
 
-    A stub 'addlink' link is created and filled in with the correct URL by the same
-    javascript.
-    """
+
+
+
+
+
+
+
     template_name = 'cms/widgets/applicationconfigselect.html'
 
     class Media:
@@ -229,7 +229,7 @@ class ApplicationConfigSelect(Select):
             "apphooks_configuration": configs,
             "apphooks_configuration_url": urls,
             "apphooks_configuration_value": str(value) if value is not None else "",
-            # apphook_configuration_value needs to correspond to str(config.pk)
+
         }
 
     def get_context(self, name, value, attrs):

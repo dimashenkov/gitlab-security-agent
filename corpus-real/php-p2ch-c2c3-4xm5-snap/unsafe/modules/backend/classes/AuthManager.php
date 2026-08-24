@@ -5,12 +5,12 @@ use System\Classes\PluginManager;
 use Winter\Storm\Auth\Manager as StormAuthManager;
 use Winter\Storm\Exception\SystemException;
 
-/**
- * Back-end authentication manager.
- *
- * @package winter\wn-backend-module
- * @author Alexey Bobkov, Samuel Georges
- */
+
+
+
+
+
+
 class AuthManager extends StormAuthManager
 {
     protected static $instance;
@@ -25,9 +25,9 @@ class AuthManager extends StormAuthManager
 
     protected $requireActivation = false;
 
-    //
-    // Permission management
-    //
+
+
+
 
     protected static $permissionDefaults = [
         'code'    => null,
@@ -37,29 +37,29 @@ class AuthManager extends StormAuthManager
         'order'   => 500
     ];
 
-    /**
-     * @var array Cache of registration callbacks.
-     */
+
+
+
     protected $callbacks = [];
 
-    /**
-     * @var array List of registered permissions.
-     */
+
+
+
     protected $permissions = [];
 
-    /**
-     * @var array List of owner aliases. ['Aliased.Owner' => 'Real.Owner']
-     */
+
+
+
     protected $aliases = [];
 
-    /**
-     * @var array List of registered permission roles.
-     */
+
+
+
     protected $permissionRoles = false;
 
-    /**
-     * @var array Cache of registered permissions.
-     */
+
+
+
     protected $permissionCache = false;
 
     protected function init()
@@ -68,38 +68,38 @@ class AuthManager extends StormAuthManager
         parent::init();
     }
 
-    /**
-     * Registers a callback function that defines authentication permissions.
-     * The callback function should register permissions by calling the manager's
-     * registerPermissions() function. The manager instance is passed to the
-     * callback function as an argument. Usage:
-     *
-     *     BackendAuth::registerCallback(function ($manager) {
-     *         $manager->registerPermissions([...]);
-     *     });
-     *
-     * @param callable $callback A callable function.
-     */
+
+
+
+
+
+
+
+
+
+
+
+
     public function registerCallback(callable $callback)
     {
         $this->callbacks[] = $callback;
     }
 
-    /**
-     * Registers the back-end permission items.
-     * The argument is an array of the permissions. The array keys represent the
-     * permission codes, specific for the plugin/module. Each element in the
-     * array should be an associative array with the following keys:
-     * - label - specifies the menu label localization string key, required.
-     * - order - a position of the item in the menu, optional.
-     * - comment - a brief comment that describes the permission, optional.
-     * - tab - assign this permission to a tabbed group, optional.
-     * @param string $owner Specifies the permissions' owner plugin or module in the format Author.Plugin
-     * @param array $definitions An array of the menu item definitions.
-     */
+
+
+
+
+
+
+
+
+
+
+
+
     public function registerPermissions($owner, array $definitions)
     {
-        // Resolve alias
+
         $owner = $this->aliases[$owner] ?? $owner;
 
         foreach ($definitions as $code => $definition) {
@@ -111,35 +111,35 @@ class AuthManager extends StormAuthManager
             $this->permissions[] = $permission;
         }
 
-        // Clear the permission cache
+
         $this->permissionCache = false;
     }
 
-    /**
-     * Register a permission owner alias
-     *
-     * @param string $owner The owner to register an alias for. Example: Real.Owner
-     * @param string $alias The alias to register. Example: Aliased.Owner
-     * @return void
-     */
+
+
+
+
+
+
+
     public function registerPermissionOwnerAlias(string $owner, string $alias)
     {
         $this->aliases[$alias] = $owner;
     }
 
-    /**
-     * Removes a single back-end permission
-     * @param string $owner Specifies the permissions' owner plugin or module in the format Author.Plugin
-     * @param string $code The code of the permission to remove
-     * @return void
-     */
+
+
+
+
+
+
     public function removePermission($owner, $code)
     {
         if (!$this->permissions) {
             throw new SystemException('Unable to remove permissions before they are loaded.');
         }
 
-        // Resolve alias
+
         $owner = $this->aliases[$owner] ?? $owner;
 
         $ownerPermissions = array_filter($this->permissions, function ($permission) use ($owner) {
@@ -152,30 +152,30 @@ class AuthManager extends StormAuthManager
             }
         }
 
-        // Clear the permission cache
+
         $this->permissionCache = false;
     }
 
-    /**
-     * Returns a list of the registered permissions items.
-     * @return array
-     */
+
+
+
+
     public function listPermissions()
     {
         if ($this->permissionCache !== false) {
             return $this->permissionCache;
         }
 
-        /*
-         * Load module items
-         */
+
+
+
         foreach ($this->callbacks as $callback) {
             $callback($this);
         }
 
-        /*
-         * Load plugin items
-         */
+
+
+
         $plugins = PluginManager::instance()->getPlugins();
 
         foreach ($plugins as $id => $plugin) {
@@ -187,9 +187,9 @@ class AuthManager extends StormAuthManager
             $this->registerPermissions($id, $items);
         }
 
-        /*
-         * Sort permission items
-         */
+
+
+
         usort($this->permissions, function ($a, $b) {
             if ($a->order == $b->order) {
                 return 0;
@@ -201,10 +201,10 @@ class AuthManager extends StormAuthManager
         return $this->permissionCache = $this->permissions;
     }
 
-    /**
-     * Returns an array of registered permissions, grouped by tabs.
-     * @return array
-     */
+
+
+
+
     public function listTabbedPermissions()
     {
         $tabs = [];
@@ -222,27 +222,27 @@ class AuthManager extends StormAuthManager
         return $tabs;
     }
 
-    /**
-     * {@inheritdoc}
-     */
+
+
+
     protected function createUserModelQuery()
     {
         return parent::createUserModelQuery()->withTrashed();
     }
 
 
-    /**
-     * {@inheritdoc}
-     */
+
+
+
     protected function validateUserModel($user)
     {
         if ( ! $user instanceof $this->userModel) {
             return false;
         }
 
-        // Perform the deleted_at check manually since the relevant migrations
-        // might not have been run yet during the update to build 444.
-        // @see https://github.com/octobercms/october/issues/3999
+
+
+
         if (array_key_exists('deleted_at', $user->getAttributes()) && $user->deleted_at !== null) {
             return false;
         }
@@ -250,12 +250,12 @@ class AuthManager extends StormAuthManager
         return $user;
     }
 
-    /**
-     * Returns an array of registered permissions belonging to a given role code
-     * @param string $role
-     * @param bool $includeOrphans Include any permissons that do not have a default role specified
-     * @return array
-     */
+
+
+
+
+
+
     public function listPermissionsForRole($role, $includeOrphans = true)
     {
         if ($this->permissionRoles === false) {

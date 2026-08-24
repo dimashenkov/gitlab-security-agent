@@ -42,7 +42,7 @@ use super::TlsParameters;
 use crate::transport::smtp::client::net::resolved_address_filter;
 use crate::transport::smtp::{Error, error};
 
-/// A network stream
+
 #[derive(Debug)]
 #[deprecated(
     since = "0.11.14",
@@ -64,32 +64,32 @@ impl AsyncTokioStream for Tokio1TcpStream {
     }
 }
 
-/// Represents the different types of underlying network streams
-// usually only one TLS backend at a time is going to be enabled,
-// so clippy::large_enum_variant doesn't make sense here
+
+
+
 #[allow(clippy::large_enum_variant)]
 #[allow(dead_code)]
 #[derive(Debug)]
 enum InnerAsyncNetworkStream {
-    /// Plain Tokio 1.x TCP stream
+
     #[cfg(feature = "tokio1")]
     Tokio1Tcp(Box<dyn AsyncTokioStream>),
-    /// Encrypted Tokio 1.x TCP stream
+
     #[cfg(feature = "tokio1-native-tls")]
     Tokio1NativeTls(Tokio1TlsStream<Box<dyn AsyncTokioStream>>),
-    /// Encrypted Tokio 1.x TCP stream
+
     #[cfg(feature = "tokio1-rustls")]
     Tokio1Rustls(Tokio1RustlsStream<Box<dyn AsyncTokioStream>>),
-    /// Encrypted Tokio 1.x TCP stream
+
     #[cfg(feature = "tokio1-boring-tls")]
     Tokio1BoringTls(Tokio1SslStream<Box<dyn AsyncTokioStream>>),
-    /// Plain Tokio 1.x TCP stream
+
     #[cfg(feature = "async-std1")]
     AsyncStd1Tcp(AsyncStd1TcpStream),
-    /// Encrypted Tokio 1.x TCP stream
+
     #[cfg(feature = "async-std1-rustls")]
     AsyncStd1Rustls(AsyncStd1RustlsStream<AsyncStd1TcpStream>),
-    /// Can't be built
+
     None,
 }
 
@@ -103,7 +103,7 @@ impl AsyncNetworkStream {
         AsyncNetworkStream { inner }
     }
 
-    /// Returns peer's address
+
     pub fn peer_addr(&self) -> IoResult<SocketAddr> {
         match &self.inner {
             #[cfg(feature = "tokio1")]
@@ -209,9 +209,9 @@ impl AsyncNetworkStream {
         timeout: Option<Duration>,
         tls_parameters: Option<TlsParameters>,
     ) -> Result<AsyncNetworkStream, Error> {
-        // Unfortunately, there doesn't currently seem to be a way to set the local address.
-        // Whilst we can create a AsyncStd1TcpStream from an existing socket, it needs to first have
-        // been connected, which is a blocking operation.
+
+
+
         async fn try_connect_timeout<T: AsyncStd1ToSocketAddrs>(
             server: T,
             timeout: Duration,
@@ -277,7 +277,7 @@ impl AsyncNetworkStream {
                 feature = "tokio1-boring-tls"
             ))]
             InnerAsyncNetworkStream::Tokio1Tcp(_) => {
-                // get owned TcpStream
+
                 let tcp_stream = mem::replace(&mut self.inner, InnerAsyncNetworkStream::None);
                 let InnerAsyncNetworkStream::Tokio1Tcp(tcp_stream) = tcp_stream else {
                     unreachable!()
@@ -298,7 +298,7 @@ impl AsyncNetworkStream {
 
             #[cfg(feature = "async-std1-rustls")]
             InnerAsyncNetworkStream::AsyncStd1Tcp(_) => {
-                // get owned TcpStream
+
                 let tcp_stream = mem::replace(&mut self.inner, InnerAsyncNetworkStream::None);
                 let InnerAsyncNetworkStream::AsyncStd1Tcp(tcp_stream) = tcp_stream else {
                     unreachable!()

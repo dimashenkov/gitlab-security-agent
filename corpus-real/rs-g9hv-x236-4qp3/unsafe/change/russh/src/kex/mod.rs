@@ -1,20 +1,20 @@
-// Copyright 2016 Pierre-Étienne Meunier
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
 
-//!
-//! This module exports kex algorithm names for use with [Preferred].
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 mod curve25519;
 pub mod dh;
 mod ecdh_nistp;
@@ -56,7 +56,7 @@ use crate::{CryptoVec, Error, cipher};
 pub(crate) enum SessionKexState<K> {
     Idle,
     InProgress(K),
-    Taken, // some async activity still going on such as host key checks
+    Taken,
 }
 
 impl<K> PartialEq for SessionKexState<K> {
@@ -75,7 +75,7 @@ impl<K> SessionKexState<K> {
     }
 
     pub fn take(&mut self) -> Self {
-        // TODO maybe make this take a guarded closure
+
         std::mem::replace(
             self,
             match self {
@@ -180,12 +180,12 @@ pub(crate) trait KexAlgorithmImplementor {
 
     fn compute_shared_secret(&mut self, remote_pubkey_: &[u8]) -> Result<(), Error>;
 
-    /// Get the raw shared secret bytes.
-    ///
-    /// This is useful for protocols that need to derive additional keys from the
-    /// SSH shared secret (e.g., for secondary encrypted channels).
-    ///
-    /// Returns `None` if the shared secret hasn't been computed yet.
+
+
+
+
+
+
     fn shared_secret_bytes(&self) -> Option<&[u8]>;
 
     fn compute_exchange_hash(
@@ -228,45 +228,45 @@ impl TryFrom<&str> for Name {
     }
 }
 
-/// `curve25519-sha256`
+
 pub const CURVE25519: Name = Name("curve25519-sha256");
-/// `curve25519-sha256@libssh.org`
+
 pub const CURVE25519_PRE_RFC_8731: Name = Name("curve25519-sha256@libssh.org");
-/// `mlkem768x25519-sha256`
+
 pub const MLKEM768X25519_SHA256: Name = Name("mlkem768x25519-sha256");
-/// `diffie-hellman-group-exchange-sha1`.
+
 pub const DH_GEX_SHA1: Name = Name("diffie-hellman-group-exchange-sha1");
-/// `diffie-hellman-group-exchange-sha256`.
+
 pub const DH_GEX_SHA256: Name = Name("diffie-hellman-group-exchange-sha256");
-/// `diffie-hellman-group1-sha1`
+
 pub const DH_G1_SHA1: Name = Name("diffie-hellman-group1-sha1");
-/// `diffie-hellman-group14-sha1`
+
 pub const DH_G14_SHA1: Name = Name("diffie-hellman-group14-sha1");
-/// `diffie-hellman-group14-sha256`
+
 pub const DH_G14_SHA256: Name = Name("diffie-hellman-group14-sha256");
-/// `diffie-hellman-group15-sha512`
+
 pub const DH_G15_SHA512: Name = Name("diffie-hellman-group15-sha512");
-/// `diffie-hellman-group16-sha512`
+
 pub const DH_G16_SHA512: Name = Name("diffie-hellman-group16-sha512");
-/// `diffie-hellman-group17-sha512`
+
 pub const DH_G17_SHA512: Name = Name("diffie-hellman-group17-sha512");
-/// `diffie-hellman-group18-sha512`
+
 pub const DH_G18_SHA512: Name = Name("diffie-hellman-group18-sha512");
-/// `ecdh-sha2-nistp256`
+
 pub const ECDH_SHA2_NISTP256: Name = Name("ecdh-sha2-nistp256");
-/// `ecdh-sha2-nistp384`
+
 pub const ECDH_SHA2_NISTP384: Name = Name("ecdh-sha2-nistp384");
-/// `ecdh-sha2-nistp521`
+
 pub const ECDH_SHA2_NISTP521: Name = Name("ecdh-sha2-nistp521");
-/// `none`
+
 pub const NONE: Name = Name("none");
-/// `ext-info-c`
+
 pub const EXTENSION_SUPPORT_AS_CLIENT: Name = Name("ext-info-c");
-/// `ext-info-s`
+
 pub const EXTENSION_SUPPORT_AS_SERVER: Name = Name("ext-info-s");
-/// `kex-strict-c-v00@openssh.com`
+
 pub const EXTENSION_OPENSSH_STRICT_KEX_AS_CLIENT: Name = Name("kex-strict-c-v00@openssh.com");
-/// `kex-strict-s-v00@openssh.com`
+
 pub const EXTENSION_OPENSSH_STRICT_KEX_AS_SERVER: Name = Name("kex-strict-s-v00@openssh.com");
 
 const _CURVE25519: Curve25519KexType = Curve25519KexType {};
@@ -372,7 +372,7 @@ pub(crate) fn compute_keys<D: Digest>(
     let remote_to_local_mac = MACS.get(&remote_to_local_mac).ok_or(Error::UnknownAlgo)?;
     let local_to_remote_mac = MACS.get(&local_to_remote_mac).ok_or(Error::UnknownAlgo)?;
 
-    // https://tools.ietf.org/html/rfc4253#section-7.2
+
     BUFFER.with(|buffer| {
         KEY_BUF.with(|key| {
             NONCE_BUF.with(|nonce| {
@@ -397,7 +397,7 @@ pub(crate) fn compute_keys<D: Digest>(
                         key.extend(hash.as_ref());
 
                         while key.len() < len {
-                            // extend.
+
                             buffer.clear();
                             if let Some(shared) = shared_secret {
                                 buffer.extend(shared.as_bytes());
@@ -469,16 +469,16 @@ pub(crate) fn compute_keys<D: Digest>(
     })
 }
 
-// NOTE: using MpInt::from_bytes().encode() will randomly fail,
-// I'm assuming it's due to specific byte values / padding but no time to investigate
-#[allow(clippy::indexing_slicing)] // length is known
+
+
+#[allow(clippy::indexing_slicing)]
 pub(crate) fn encode_mpint<W: Writer>(s: &[u8], w: &mut W) -> Result<(), Error> {
-    // Skip initial 0s.
+
     let mut i = 0;
     while i < s.len() && s[i] == 0 {
         i += 1
     }
-    // If the first non-zero is >= 128, write its length (u32, BE), followed by 0.
+
     if s[i] & 0x80 != 0 {
         ((s.len() - i + 1) as u32).encode(w)?;
         0u8.encode(w)?;

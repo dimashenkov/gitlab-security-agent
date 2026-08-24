@@ -29,7 +29,7 @@ interface IFeatureEventFormatterMdArgs {
     formatStyle?: FormatStyle;
 }
 
-// This is not only formatting feature events. And it's also not only for (proper) markdown. We should probably revisit this sometime in the future and try to split it / refactor it.
+
 export class FeatureEventFormatterMd implements FeatureEventFormatter {
     private readonly unleashUrl: string;
 
@@ -47,11 +47,11 @@ export class FeatureEventFormatterMd implements FeatureEventFormatter {
         this.formatStyle = formatStyle;
     }
 
-    /**
-     * Returns the bold marker based on formatStyle, or wraps text with bold markers.
-     * @param text Optional text to wrap with bold markers.
-     * @returns Bold marker or bolded text.
-     */
+
+
+
+
+
     bold(text?: string): string {
         const boldChar = this.formatStyle === 'simple' ? '*' : '**';
         return text ? `${boldChar}${text}${boldChar}` : boldChar;

@@ -1,4 +1,4 @@
-// Package server is the HTTP daemon
+
 package server
 
 import (
@@ -32,25 +32,25 @@ import (
 )
 
 var (
-	// htmlPreviewRouteRe is a regexp to match the HTML preview route
+
 	htmlPreviewRouteRe *regexp.Regexp
 )
 
-// skipUIAuthKey is a private context key used to signal that UI basic-auth
-// should be bypassed for a specific request. This avoids mutating the global
-// auth.UICredentials pointer (which is a data race under concurrent load).
+
+
+
 type contextKey int
 
 const (
 	skipUIAuthKey contextKey = iota
-	// bodyLimitKey carries an optional request body size cap (in bytes) through the
-	// context. middleWareFunc reads it and applies it instead of the default 5 MB cap.
-	// A value of 0 means unlimited. Used by sendAPIAuthMiddleware to honour
-	// config.MaxMessageSize for the send endpoint.
+
+
+
+
 	bodyLimitKey
 )
 
-// Listen will start the httpd
+
 func Listen() {
 	setCORSOrigins()
 
@@ -60,8 +60,8 @@ func Listen() {
 
 	websockets.MessageHub = websockets.NewHub()
 
-	// set allowed websocket origins from configuration
-	// websockets.SetAllowedOrigins(AccessControlAllowWSOrigins)
+
+
 
 	go websockets.MessageHub.Run()
 
@@ -69,14 +69,14 @@ func Listen() {
 
 	r := apiRoutes()
 
-	// kubernetes probes
+
 	r.HandleFunc("GET "+config.Webroot+"livez", handlers.HealthzHandler)
 	r.HandleFunc("GET "+config.Webroot+"readyz", handlers.ReadyzHandler(isReady))
 
-	// proxy handler for screenshots
+
 	r.HandleFunc("GET "+config.Webroot+"proxy", middleWareFunc(handlers.ProxyHandler))
 
-	// virtual filesystem for /dist/ & some individual files
+
 	r.Handle("GET "+config.Webroot+"dist/", middleWareFunc(embedController))
 	r.Handle("GET "+config.Webroot+"api/", middleWareFunc(embedController))
 	r.Handle("GET "+config.Webroot+"favicon.ico", middleWareFunc(embedController))
@@ -84,22 +84,22 @@ func Listen() {
 	r.Handle("GET "+config.Webroot+"mailpit.svg", middleWareFunc(embedController))
 	r.Handle("GET "+config.Webroot+"notification.png", middleWareFunc(embedController))
 
-	// redirect to webroot if no trailing slash
+
 	if config.Webroot != "/" {
 		redirect := strings.TrimRight(config.Webroot, "/")
 		r.HandleFunc("GET "+redirect, middleWareFunc(addSlashToWebroot))
 	}
 
-	// UI shortcut
+
 	r.HandleFunc("GET "+config.Webroot+"view/latest", middleWareFunc(handlers.RedirectToLatestMessage))
 
-	// frontend testing + web UI via virtual index.html
-	// Go's ServeMux wildcards must span a full path segment so {id}.html is invalid;
-	// viewHandler dispatches on the path suffix instead.
+
+
+
 	r.HandleFunc("GET "+config.Webroot+"view/", middleWareFunc(viewHandler))
 
 	r.Handle("GET "+config.Webroot+"search", middleWareFunc(index))
-	// Exact-match the webroot; stdlib "/" is always a subtree so we guard inside.
+
 	r.HandleFunc("GET "+config.Webroot, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != config.Webroot {
 			http.NotFound(w, r)
@@ -112,7 +112,7 @@ func Listen() {
 		logger.Log().Info("[http] enabling basic authentication")
 	}
 
-	// Mark the application here as ready
+
 	isReady.Store(true)
 
 	server := &http.Server{
@@ -123,7 +123,7 @@ func Listen() {
 		Handler:           r,
 	}
 
-	// add temporary self-signed certificates to get deleted afterwards
+
 	for _, keyPair := range snakeoil.Certificates() {
 		storage.AddTempFile(keyPair.Public)
 		storage.AddTempFile(keyPair.Private)
@@ -146,7 +146,7 @@ func Listen() {
 				logger.Log().Fatal(err)
 			}
 
-			// delete the Unix socket file on exit
+
 			storage.AddTempFile(socketAddr)
 
 			ln, err := net.Listen("unix", socketAddr)
@@ -181,7 +181,7 @@ func Listen() {
 func apiRoutes() *http.ServeMux {
 	r := http.NewServeMux()
 
-	// API V1
+
 	r.HandleFunc("GET "+config.Webroot+"api/v1/messages", middleWareFunc(apiv1.GetMessages))
 	r.HandleFunc("PUT "+config.Webroot+"api/v1/messages", middleWareFunc(apiv1.SetReadStatus))
 	r.HandleFunc("DELETE "+config.Webroot+"api/v1/messages", middleWareFunc(apiv1.DeleteMessages))
@@ -207,51 +207,51 @@ func apiRoutes() *http.ServeMux {
 	r.HandleFunc("GET "+config.Webroot+"api/v1/webui", middleWareFunc(apiv1.WebUIConfig))
 	r.HandleFunc("GET "+config.Webroot+"api/v1/swagger.json", middleWareFunc(swaggerBasePath))
 
-	// Chaos
+
 	r.HandleFunc("GET "+config.Webroot+"api/v1/chaos", middleWareFunc(apiv1.GetChaos))
 	r.HandleFunc("PUT "+config.Webroot+"api/v1/chaos", middleWareFunc(apiv1.SetChaos))
 
-	// Prometheus metrics (if enabled and using existing server)
+
 	if prometheus.GetMode() == "integrated" {
 		r.HandleFunc("GET "+config.Webroot+"metrics", middleWareFunc(func(w http.ResponseWriter, r *http.Request) {
 			prometheus.GetHandler().ServeHTTP(w, r)
 		}))
 	}
 
-	// web UI websocket
+
 	r.HandleFunc("GET "+config.Webroot+"api/events", middleWareFunc(apiWebsocket))
 
-	// return blank 200 response for OPTIONS requests for CORS
+
 	r.Handle("OPTIONS "+config.Webroot+"api/v1/", middleWareFunc(apiv1.GetOptions))
 
 	return r
 }
 
-// BasicAuthResponse returns an basic auth response to the browser
+
 func basicAuthResponse(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", `Basic realm="Login"`)
 	w.WriteHeader(http.StatusUnauthorized)
 	_, _ = w.Write([]byte("Unauthorized.\n"))
 }
 
-// sendAPIAuthMiddleware handles authentication specifically for the send API endpoint.
-// It can use dedicated send API authentication or accept any credentials based on configuration.
-// It communicates skip-UI-auth intent via request context rather than mutating the global
-// auth.UICredentials pointer, which would be a data race under concurrent load.
+
+
+
+
 func sendAPIAuthMiddleware(fn http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Override the default 5 MB body cap with the send-specific limit so that
-		// middleWareFunc applies config.MaxMessageSize (0 = unlimited) instead.
+
+
 		r = r.WithContext(context.WithValue(r.Context(), bodyLimitKey, int64(config.MaxMessageSize)*1024*1024))
 
-		// If send API auth accept any is enabled, bypass all authentication.
+
 		if config.SendAPIAuthAcceptAny {
 			ctx := context.WithValue(r.Context(), skipUIAuthKey, true)
 			middleWareFunc(fn)(w, r.WithContext(ctx))
 			return
 		}
 
-		// If Send API credentials are configured, only accept those credentials.
+
 		if auth.SendAPICredentials != nil {
 			user, pass, ok := r.BasicAuth()
 
@@ -265,13 +265,13 @@ func sendAPIAuthMiddleware(fn http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 
-			// Valid Send API credentials — bypass UI auth via context flag.
+
 			ctx := context.WithValue(r.Context(), skipUIAuthKey, true)
 			middleWareFunc(fn)(w, r.WithContext(ctx))
 			return
 		}
 
-		// No Send API credentials configured — fall back to UI auth.
+
 		middleWareFunc(fn)(w, r)
 	}
 }
@@ -285,26 +285,26 @@ func (w gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
-// MiddleWareFunc http middleware adds optional basic authentication
-// and gzip compression.
+
+
 func middleWareFunc(fn http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Limit request body size to 5 MB to prevent memory-exhaustion DoS via large
-		// JSON bodies. sendAPIAuthMiddleware sets bodyLimitKey in the context to signal
-		// that the handler manages its own limit (send.go uses config.MaxMessageSize),
-		// so we skip the cap here for that route only.
+
+
+
+
 		if _, ok := r.Context().Value(bodyLimitKey).(int64); !ok {
 			r.Body = http.MaxBytesReader(w, r.Body, 5*1024*1024)
 		}
 
 		w.Header().Set("Referrer-Policy", "no-referrer")
 
-		// generate a new random nonce on every request
+
 		randomNonce := shortuuid.New()
-		// header used to pass nonce through to function
+
 		r.Header.Set("mp-nonce", randomNonce)
 
-		// Prevent JavaScript XSS by adding a nonce for script-src
+
 		cspHeader := strings.Replace(
 			config.ContentSecurityPolicy,
 			"script-src 'self';",
@@ -328,10 +328,10 @@ func middleWareFunc(fn http.HandlerFunc) http.HandlerFunc {
 			w.Header().Set("Access-Control-Allow-Headers", "*")
 		}
 
-		// Check basic authentication headers if configured.
-		// OPTIONS requests are skipped if CORS is enabled, since browsers omit credentials for preflight checks.
-		// skipUIAuthKey in the request context allows sendAPIAuthMiddleware to bypass UI auth
-		// for a specific request without touching the global auth.UICredentials pointer.
+
+
+
+
 		skipUIAuth, _ := r.Context().Value(skipUIAuthKey).(bool)
 		isCORSOptionsRequest := AccessControlAllowOrigin != "" && r.Method == http.MethodOptions
 		if !skipUIAuth && !isCORSOptionsRequest && auth.UICredentials != nil {
@@ -348,9 +348,9 @@ func middleWareFunc(fn http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 
-		// WebSocket upgrade requests must not be wrapped in a gzip writer:
-		// gzipResponseWriter does not implement http.Hijacker, which the
-		// WebSocket library requires to take over the raw TCP connection.
+
+
+
 		isWebSocketUpgrade := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 		if isWebSocketUpgrade || config.DisableHTTPCompression || !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 			fn(w, r)
@@ -365,14 +365,14 @@ func middleWareFunc(fn http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// Redirect to webroot
+
 func addSlashToWebroot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, config.Webroot, http.StatusFound)
 }
 
-// viewHandler routes /view/ requests based on path suffix.
-// Go's ServeMux requires wildcards to span a full path segment,
-// so patterns like /view/{id}.html are invalid; we dispatch manually here.
+
+
+
 func viewHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, config.Webroot+"view/")
 	switch {
@@ -385,14 +385,14 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Websocket to broadcast changes.
-// Authentication and CORS are handled by middleWareFunc before this is reached.
+
+
 func apiWebsocket(w http.ResponseWriter, r *http.Request) {
 	websockets.ServeWs(websockets.MessageHub, w, r)
 	storage.BroadcastMailboxStats()
 }
 
-// Wrapper to artificially inject a basePath to the swagger.json if a webroot has been specified
+
 func swaggerBasePath(w http.ResponseWriter, _ *http.Request) {
 	f, err := distFS.ReadFile("ui/api/v1/swagger.json")
 	if err != nil {
@@ -400,7 +400,7 @@ func swaggerBasePath(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	if config.Webroot != "/" {
-		// artificially inject a path at the start
+
 		replacement := fmt.Sprintf("{\n  \"basePath\": \"%s\",", strings.TrimRight(config.Webroot, "/"))
 
 		f = bytes.Replace(f, []byte("{"), []byte(replacement), 1)
@@ -410,7 +410,7 @@ func swaggerBasePath(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(f)
 }
 
-// Just returns the default HTML template
+
 func index(w http.ResponseWriter, r *http.Request) {
 
 	var h = `<!DOCTYPE html>

@@ -40,9 +40,9 @@ impl std::fmt::Debug for Curve25519Kex {
     }
 }
 
-// We used to support curve "NIST P-256" here, but the security of
-// that curve is controversial, see
-// http://safecurves.cr.yp.to/rigid.html
+
+
+
 impl KexAlgorithmImplementor for Curve25519Kex {
     fn skip_exchange(&self) -> bool {
         false
@@ -57,7 +57,7 @@ impl KexAlgorithmImplementor for Curve25519Kex {
                 return Err(crate::Error::Inconsistent);
             }
 
-            #[allow(clippy::indexing_slicing)] // length checked
+            #[allow(clippy::indexing_slicing)]
             let pubkey_len = BigEndian::read_u32(&payload[1..]) as usize;
 
             if pubkey_len != 32 {
@@ -69,7 +69,7 @@ impl KexAlgorithmImplementor for Curve25519Kex {
             }
 
             let mut pubkey = MontgomeryPoint([0; 32]);
-            #[allow(clippy::indexing_slicing)] // length checked
+            #[allow(clippy::indexing_slicing)]
             pubkey.0.clone_from_slice(&payload[5..5 + 32]);
             pubkey
         };
@@ -77,7 +77,7 @@ impl KexAlgorithmImplementor for Curve25519Kex {
         let server_secret = Scalar::from_bytes_mod_order(rand::random::<[u8; 32]>());
         let server_pubkey = (ED25519_BASEPOINT_TABLE * &server_secret).to_montgomery();
 
-        // fill exchange.
+
         exchange.server_ephemeral.clear();
         exchange
             .server_ephemeral
@@ -96,7 +96,7 @@ impl KexAlgorithmImplementor for Curve25519Kex {
         let client_secret = Scalar::from_bytes_mod_order(rand::random::<[u8; 32]>());
         let client_pubkey = (ED25519_BASEPOINT_TABLE * &client_secret).to_montgomery();
 
-        // fill exchange.
+
         client_ephemeral.clear();
         client_ephemeral.extend_from_slice(&client_pubkey.0);
 
@@ -126,7 +126,7 @@ impl KexAlgorithmImplementor for Curve25519Kex {
         exchange: &Exchange,
         buffer: &mut CryptoVec,
     ) -> Result<Vec<u8>, crate::Error> {
-        // Computing the exchange hash, see page 7 of RFC 5656.
+
         buffer.clear();
         exchange.client_id.encode(buffer)?;
         exchange.server_id.encode(buffer)?;

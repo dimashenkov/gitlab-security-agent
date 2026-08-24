@@ -1,22 +1,22 @@
-/*
- * See the NOTICE file distributed with this work for additional
- * information regarding copyright ownership.
- *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.xwiki.livedata.internal.livetable;
 
 import java.io.IOException;
@@ -41,13 +41,13 @@ import org.xwiki.livedata.LiveDataMeta;
 import org.xwiki.livedata.LiveDataPropertyDescriptor;
 import org.xwiki.livedata.LiveDataPropertyDescriptor.FilterDescriptor;
 
-/**
- * Provides the default live data configuration for the live table source.
- * 
- * @version $Id$
- * @since 12.10.4
- * @since 13.0
- */
+
+
+
+
+
+
+
 @Component
 @Named("liveTable")
 @Singleton
@@ -55,9 +55,9 @@ public class DefaultLiveDataConfigurationProvider implements Provider<LiveDataCo
 {
     private static final List<String> USER_DOC_PROPS = Arrays.asList("doc.creator", "doc.author");
 
-    /**
-     * Used to parse the default configuration JSON.
-     */
+
+
+
     @Inject
     private LiveDataConfigurationResolver<String> stringLiveDataConfigResolver;
 
@@ -65,9 +65,9 @@ public class DefaultLiveDataConfigurationProvider implements Provider<LiveDataCo
     @Named("wiki")
     private ConfigurationSource wikiConfig;
 
-    /**
-     * Cache the static default configuration JSON.
-     */
+
+
+
     private String defaultConfigJSON;
 
     @Override
@@ -118,7 +118,7 @@ public class DefaultLiveDataConfigurationProvider implements Provider<LiveDataCo
         if (property.getFilter() == null) {
             property.setFilter(new FilterDescriptor("list"));
         }
-        // TODO: Take into account the user scope. See suggestUsersAndGroups.js for an example.
+
         property.getFilter().setParameter("searchURL", "?xpage=uorgsuggest&uorg=user&input={encodedQuery}&media=json");
     }
 }

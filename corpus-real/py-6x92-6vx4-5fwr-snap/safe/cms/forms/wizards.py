@@ -12,7 +12,7 @@ from cms.utils.page import get_available_slug
 from cms.utils.page_permissions import user_can_add_page, user_can_add_subpage
 
 try:
-    # djangocms_text_ckeditor is not guaranteed to be available
+
     from djangocms_text_ckeditor.widgets import TextEditorWidget
     text_widget = TextEditorWidget
 except ImportError:
@@ -22,7 +22,7 @@ except ImportError:
 class CreateCMSPageForm(AddPageForm):
     sub_page_form = False
 
-    # Field overrides
+
     menu_title = None
     page_title = None
     meta_description = None
@@ -35,8 +35,8 @@ class CreateCMSPageForm(AddPageForm):
 
     class Media:
         js = (
-            # This simply adds some JS for
-            # hiding/showing the content field based on the selection of this select.
+
+
             'cms/js/widgets/wizard.pagetypeselect.js',
         )
 
@@ -47,10 +47,10 @@ class CreateCMSPageForm(AddPageForm):
         self.fields['slug'].help_text = _("Leave empty for automatic slug, or override as required.")
 
     def get_placeholder(self, page_content, slot=None):
-        """
-        Returns the named placeholder or, if no «slot» provided, the first
-        editable, non-static placeholder or None.
-        """
+        ''
+
+
+
         placeholders = page_content.get_placeholders()
 
         if slot:
@@ -66,11 +66,11 @@ class CreateCMSPageForm(AddPageForm):
         return self.language_code
 
     def clean(self):
-        """
-        Validates that either the slug is provided, or that slugification from
-        `title` produces a valid slug.
-        :return:
-        """
+        ''
+
+
+
+
         data = self.cleaned_data
 
         if self._errors:
@@ -100,16 +100,16 @@ class CreateCMSPageForm(AddPageForm):
         return data
 
     def clean_parent_page(self):
-        # Check to see if this user has permissions to make this page. We've
-        # already checked this when producing a list of wizard entries, but this
-        # is to prevent people from possible form-hacking.
+
+
+
         if self._page and self.sub_page_form:
-            # User is adding a page which will be a direct
-            # child of the current page.
+
+
             parent_page = self._page
         elif self._page and self._page.parent:
-            # User is adding a page which will be a right
-            # sibling to the current page.
+
+
             parent_page = self._page.parent
         else:
             parent_page = None
@@ -137,7 +137,7 @@ class CreateCMSPageForm(AddPageForm):
         if self.cleaned_data.get("page_type"):
             return new_page
 
-        # If the user provided content, then use that instead.
+
         content = self.cleaned_data.get('content')
         plugin_type = get_cms_setting('PAGE_WIZARD_CONTENT_PLUGIN')
         plugin_body = get_cms_setting('PAGE_WIZARD_CONTENT_PLUGIN_BODY')

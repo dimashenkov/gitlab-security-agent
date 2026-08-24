@@ -1,17 +1,17 @@
 <?php
 
-/**
- * Echoes an image tag of Google Charts map from sorted array of 'country_code' => 'number of visits' (sort by DESC)
- *
- * @param array $countries  Array of 'country_code' => 'number of visits'
- * @param string $id        Optional HTML element ID
- * @return void
- */
+
+
+
+
+
+
+
 function yourls_stats_countries_map($countries, $id = null) {
 
     yourls_do_action( 'pre_stats_countries_map' );
 
-    // if $id is null then assign a random string
+
     if( $id === null )
         $id = uniqid ( 'yourls_stats_map_' );
 
@@ -33,24 +33,24 @@ function yourls_stats_countries_map($countries, $id = null) {
 }
 
 
-/**
- * Echoes an image tag of Google Charts pie from sorted array of 'data' => 'value' (sort by DESC). Optional $limit = (integer) limit list of X first countries, sorted by most visits
- *
- * @param array $data  Array of 'data' => 'value'
- * @param int $limit   Optional limit list of X first countries
- * @param int $size    Optional size of the image
- * @param mixed $id    Optional HTML element ID
- * @return void
- */
+
+
+
+
+
+
+
+
+
 function yourls_stats_pie($data, $limit = 10, $size = '340x220', $id = null) {
 
     yourls_do_action( 'pre_stats_pie' );
 
-    // if $id is null then assign a random string
+
     if( $id === null )
         $id = uniqid ( 'yourls_stats_pie_' );
 
-    // Trim array: $limit first item + the sum of all others
+
     if ( count( $data ) > $limit ) {
         $i= 0;
         $trim_data = array( 'Others' => 0 );
@@ -65,7 +65,7 @@ function yourls_stats_pie($data, $limit = 10, $size = '340x220', $id = null) {
         $data = $trim_data;
     }
 
-    // Scale items
+
     $_data = yourls_scale_data( $data );
 
     list($width, $height) = explode( 'x', $size );
@@ -90,60 +90,60 @@ function yourls_stats_pie($data, $limit = 10, $size = '340x220', $id = null) {
 }
 
 
-/**
- * Build a list of all daily values between d1/m1/y1 to d2/m2/y2.
- *
- * @param array $dates
- * @return array[]  Array of arrays of days, months, years
- */
+
+
+
+
+
+
 function yourls_build_list_of_days($dates) {
-    /* Say we have an array like:
-    $dates = array (
-        2009 => array (
-            '08' => array (
-                29 => 15,
-                30 => 5,
-                ),
-            '09' => array (
-                '02' => 3,
-                '03' => 5,
-                '04' => 2,
-                '05' => 99,
-                ),
-            ),
-        )
-    */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     if( !$dates )
         return array();
 
-    // Get first & last years from our range. In our example: 2009 & 2009
+
     $first_year = key( $dates );
     $_keys      = array_keys( $dates );
     $last_year  = end( $_keys );
     reset( $dates );
 
-    // Get first & last months from our range. In our example: 08 & 09
+
     $first_month = key( $dates[ $first_year ] );
     $_keys       = array_keys( $dates[ $last_year ] );
     $last_month  = end( $_keys );
     reset( $dates );
 
-    // Get first & last days from our range. In our example: 29 & 05
+
     $first_day = key( $dates[ $first_year ][ $first_month ] );
     $_keys     = array_keys( $dates[ $last_year ][ $last_month ] );
     $last_day  = end( $_keys );
 
     unset( $_keys );
 
-    // Extend to today
+
     $today = new DateTime();
-    $today->setTime( 0, 0, 0 ); // Start of today
+    $today->setTime( 0, 0, 0 );
     $today_year = $today->format( 'Y' );
     $today_month = $today->format( 'm' );
     $today_day = $today->format( 'd' );
 
-    // Now build a list of all years (2009), month (08 & 09) and days (all from 2009-08-29 to 2009-09-05)
+
     $list_of_years  = array();
     $list_of_months = array();
     $list_of_days   = array();
@@ -173,28 +173,28 @@ function yourls_build_list_of_days($dates) {
 }
 
 
-/**
- * Echoes an image tag of Google Charts line graph from array of values (eg 'number of clicks').
- *
- * $legend1_list & legend2_list are values used for the 2 x-axis labels. $id is an HTML/JS id
- *
- * @param array $values  Array of values (eg 'number of clicks')
- * @param string $id     HTML element id
- * @return void
- */
+
+
+
+
+
+
+
+
+
 function yourls_stats_line($values, $id = null) {
 
     yourls_do_action( 'pre_stats_line' );
 
-    // if $id is null then assign a random string
+
     if( $id === null )
         $id = uniqid ( 'yourls_stats_line_' );
 
-    // If we have only 1 day of data, prepend a fake day with 0 hits for a prettier graph
+
     if ( count( $values ) == 1 )
         array_unshift( $values, 0 );
 
-    // Keep only a subset of values to keep graph smooth
+
     $values = yourls_array_granularity( $values, 30 );
 
     $data = array_merge( array( 'Time' => 'Hits' ), $values );
@@ -219,25 +219,25 @@ function yourls_stats_line($values, $id = null) {
 }
 
 
-/**
- * Return the number of days in a month. From php.net.
- *
- * @param int $month
- * @param int $year
- * @return int
- */
+
+
+
+
+
+
+
 function yourls_days_in_month($month, $year) {
-    // calculate number of days in a month
+
     return $month == 2 ? ( $year % 4 ? 28 : ( $year % 100 ? 29 : ( $year % 400 ? 28 : 29 ) ) ) : ( ( $month - 1 ) % 7 % 2 ? 30 : 31 );
 }
 
 
-/**
- * Get max value from date array of 'Aug 12, 2012' = '1337'
- *
- * @param array $list_of_days
- * @return array
- */
+
+
+
+
+
+
 function yourls_stats_get_best_day($list_of_days) {
     $max = max( $list_of_days );
     foreach( $list_of_days as $k=>$v ) {
@@ -246,22 +246,22 @@ function yourls_stats_get_best_day($list_of_days) {
     }
 }
 
-/**
- * Return domain of a URL
- *
- * @param string $url
- * @param bool $include_scheme
- * @return string
- */
+
+
+
+
+
+
+
 function yourls_get_domain(string $url, bool $include_scheme = false): string {
     $parse = parse_url($url);
 
-    // parse_url() returns false on seriously malformed URLs
+
     if ($parse === false) {
         return '';
     }
 
-    // Get host & scheme. Fall back to path if not found.
+
     $host = $parse['host'] ?? '';
     $scheme = $parse['scheme'] ?? '';
     $path = $parse['path'] ?? '';
@@ -269,10 +269,10 @@ function yourls_get_domain(string $url, bool $include_scheme = false): string {
         $host = $path;
     }
 
-    // Validate host: only allow valid hostname/IP characters.
-    // IPv6 addresses are wrapped in brackets eg [::1]
+
+
     if ($host && !preg_match('/^(\[[\da-fA-F:]+\]|[a-zA-Z0-9._-]+)$/', $host)) {
-        // ASCII check failed - may be an IDN hostname (eg münchen.de)
+
         if (function_exists('idn_to_ascii')) {
             $ascii = idn_to_ascii($host, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46);
             if ($ascii === false || !preg_match('/^[a-zA-Z0-9._-]+$/', $ascii)) {
@@ -280,7 +280,7 @@ function yourls_get_domain(string $url, bool $include_scheme = false): string {
             }
             $host = $ascii;
         } else {
-            // No intl extension: accept unicode letters/digits, dots and hyphens only
+
             if (!preg_match('/^[\pL\pN._-]+$/u', $host)) {
                 return '';
             }
@@ -295,22 +295,22 @@ function yourls_get_domain(string $url, bool $include_scheme = false): string {
 }
 
 
-/**
- * Return favicon URL
- *
- * @param string $url
- * @return string
- */
+
+
+
+
+
+
 function yourls_get_favicon_url(string $url): string {
     return yourls_match_current_protocol( '//www.google.com/s2/favicons?domain=' . yourls_esc_url(yourls_get_domain( $url, false ) ) );
 }
 
-/**
- * Scale array of data from 0 to 100 max
- *
- * @param array $data
- * @return array
- */
+
+
+
+
+
+
 function yourls_scale_data($data ) {
     $max = max( $data );
     if( $max > 100 ) {
@@ -322,23 +322,23 @@ function yourls_scale_data($data ) {
 }
 
 
-/**
- * Tweak granularity of array $array: keep only $grain values.
- *
- * This make less accurate but less messy graphs when too much values.
- * See https://developers.google.com/chart/image/docs/gallery/line_charts?hl=en#data-granularity
- *
- * @param array $array
- * @param int $grain
- * @param bool $preserve_max
- * @return array
- */
+
+
+
+
+
+
+
+
+
+
+
 function yourls_array_granularity($array, $grain = 100, $preserve_max = true) {
     if ( count( $array ) > $grain ) {
         $max = max( $array );
         $step = intval( count( $array ) / $grain );
         $i = 0;
-        // Loop through each item and unset except every $step (optional preserve the max value)
+
         foreach( $array as $k=>$v ) {
             $i++;
             if ( $i % $step != 0 ) {
@@ -354,12 +354,12 @@ function yourls_array_granularity($array, $grain = 100, $preserve_max = true) {
     return $array;
 }
 
-/**
- * Transform data array to data table for Google API
- *
- * @param array $data
- * @return string
- */
+
+
+
+
+
+
 function yourls_google_array_to_data_table(array $data): string {
     $str  = "var data = google.visualization.arrayToDataTable([\n";
     foreach( $data as $label => $values ){
@@ -376,20 +376,20 @@ function yourls_google_array_to_data_table(array $data): string {
         }
         $str .= "],\n";
     }
-    $str = substr( $str, 0, -2 ) . "\n"; // remove the trailing comma/return, reappend the return
-    $str .= "]);\n"; // wrap it up
+    $str = substr( $str, 0, -2 ) . "\n";
+    $str .= "]);\n";
     return $str;
 }
 
-/**
- * Return javascript code that will display the Google Chart
- *
- * @param string $graph_type
- * @param string $data
- * @param array  $options
- * @param string $id
- * @return string
- */
+
+
+
+
+
+
+
+
+
 function yourls_google_viz_code($graph_type, $data, $options, $id ) {
     $function_name = 'yourls_graph' . $id;
     $code  = "\n<script id=\"$function_name\" type=\"text/javascript\">\n";
@@ -404,7 +404,7 @@ function yourls_google_viz_code($graph_type, $data, $options, $id ) {
         }
         $code .= "\t'$field': $value,\n";
     }
-    $code  = substr( $code, 0, -2 ) . "\n"; // remove the trailing comma/return, reappend the return
+    $code  = substr( $code, 0, -2 ) . "\n";
     $code .= "\t}\n";
 
     $code .= "new google.visualization.$graph_type( document.getElementById('visualization_$id') ).draw( data, options );";

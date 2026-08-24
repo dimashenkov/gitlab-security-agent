@@ -13,7 +13,7 @@ export default async () => {
   const subscriptionService = Container.get(SubscriptionService);
   const sshKeyService = Container.get(SshKeyService);
 
-  // 生成内置token
+
   let tokenCommand = `ts-node-transpile-only ${join(
     config.rootPath,
     'back/token.ts',
@@ -38,7 +38,7 @@ export default async () => {
     true,
   );
 
-  // 运行删除日志任务
+
   const data = await systemService.getSystemConfig();
   if (data && data.info) {
     if (data.info.logRemoveFrequency) {
@@ -60,7 +60,7 @@ export default async () => {
 
     systemService.updateTimezone(data.info);
     
-    // Apply global SSH key if configured
+
     if (data.info.globalSshKey) {
       await sshKeyService.addGlobalSSHKey(data.info.globalSshKey, 'global');
     }

@@ -1,19 +1,19 @@
-/*
- *    GeoTools - The Open Source Java GIS Toolkit
- *    http://geotools.org
- *
- *    (C) 2002-2018, Open Source Geospatial Foundation (OSGeo)
- *
- *    This library is free software; you can redistribute it and/or
- *    modify it under the terms of the GNU Lesser General Public
- *    License as published by the Free Software Foundation;
- *    version 2.1 of the License.
- *
- *    This library is distributed in the hope that it will be useful,
- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *    Lesser General Public License for more details.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.geotools.data.postgis;
 
 import static org.geotools.data.postgis.PostGISDialect.PGSQL_V_12_0;
@@ -129,11 +129,11 @@ class FilterToSqlHelper {
 
     private static final Envelope WORLD = new Envelope(-180, 180, -90, 90);
 
-    /**
-     * Last resort flag to disable ST_Distance for cases where the geometry column might contain curves. Rationale:
-     * ST_Intersects will linearize curves, reducing the test precision, if we have a chance of geometries being curves
-     * we should use ST_Distance instead, which has a native curve implementation.
-     */
+
+
+
+
+
     private static final Boolean DISABLE_CURVE_ACCURATE_INTERSECTION =
             Boolean.getBoolean("org.geotools.postgis.disableCurveAccurateIntersection");
 
@@ -157,7 +157,7 @@ class FilterToSqlHelper {
         FilterCapabilities caps = new FilterCapabilities();
         caps.addAll(SQLDialect.BASE_DBMS_CAPABILITIES);
 
-        // adding the spatial filters support
+
         caps.addType(BBOX.class);
         caps.addType(BBOX3D.class);
         caps.addType(Contains.class);
@@ -171,7 +171,7 @@ class FilterToSqlHelper {
         caps.addType(DWithin.class);
         caps.addType(Beyond.class);
 
-        // temporal filters
+
         caps.addType(After.class);
         caps.addType(Before.class);
         caps.addType(Begins.class);
@@ -183,11 +183,11 @@ class FilterToSqlHelper {
         caps.addType(TEquals.class);
         caps.addType(JsonArrayContainsFunction.class);
 
-        // replacement for area function that was in deprecated dialect registerFunction
+
         caps.addType(FilterFunction_area.class);
 
         if (encodeFunctions) {
-            // add support for string functions
+
             caps.addType(FilterFunction_strConcat.class);
             caps.addType(FilterFunction_strEndsWith.class);
             caps.addType(FilterFunction_strStartsWith.class);
@@ -203,7 +203,7 @@ class FilterToSqlHelper {
             caps.addType(FilterFunction_strTrim.class);
             caps.addType(FilterFunction_strTrim2.class);
 
-            // add support for math functions
+
             caps.addType(FilterFunction_abs.class);
             caps.addType(FilterFunction_abs_2.class);
             caps.addType(FilterFunction_abs_3.class);
@@ -211,22 +211,22 @@ class FilterToSqlHelper {
             caps.addType(FilterFunction_ceil.class);
             caps.addType(FilterFunction_floor.class);
 
-            // time related functions
+
             caps.addType(DateDifferenceFunction.class);
 
-            // n nearest function
+
             caps.addType(FilterFunction_pgNearest.class);
 
-            // array functions
+
             caps.addType(InArrayFunction.class);
 
-            // compare functions
+
             caps.addType(FilterFunction_equalTo.class);
 
-            // one geometry function (to support testing, but otherwise fully functional)
+
             caps.addType(FilterFunction_buffer.class);
         }
-        // native filter support
+
         caps.addType(NativeFilter.class);
 
         return caps;
@@ -282,10 +282,10 @@ class FilterToSqlHelper {
     private String toNativeUnits(DistanceBufferOperator operator) {
         double distance;
         if (isCurrentGeography()) {
-            // need the value in meters
+
             distance = DistanceBufferUtil.getDistanceInMeters(operator);
         } else {
-            // need the value in native units
+
             if (delegate instanceof PostgisPSFilterToSql sql) {
                 distance = sql.getDistanceInNativeUnits(operator);
             } else {
@@ -300,11 +300,11 @@ class FilterToSqlHelper {
             BinarySpatialOperator filter, PropertyName property, Literal geometry, boolean swapped, Object extraData)
             throws IOException {
 
-        // if geography case, sanitize geometry first
+
         if (isCurrentGeography()) {
             geometry = clipToWorld(geometry);
             if (isWorld(geometry)) {
-                // nothing to filter in this case
+
                 out.write(" TRUE ");
                 return;
             } else if (isEmpty(geometry)) {
@@ -317,10 +317,10 @@ class FilterToSqlHelper {
             }
         }
 
-        // special case for 3D bbox, it requires a "weird" encoding, from a postgis mail
-        // No, just construct a 3D geometry as your query filter, not a 3d box.
-        // select count(*) from "3dfloor" where geom &&& ST_Makeline(ST_MakePoint(0,0,0),
-        // ST_MakePoint(1000000,1000000,1));
+
+
+
+
         if (filter instanceof BBOX3D bbox) {
             property.accept(delegate, extraData);
             out.write(" &&& ");
@@ -331,7 +331,7 @@ class FilterToSqlHelper {
             out.write(bounds.getMaxX() + "," + bounds.getMaxY() + "," + bounds.getMaxZ());
             out.write("))");
         } else {
-            // add && filter if possible
+
             if (!(filter instanceof Disjoint)) {
                 if (encodeBBOXFilterAsEnvelope && !isCurrentGeography()) {
                     out.write("ST_envelope(");
@@ -343,7 +343,7 @@ class FilterToSqlHelper {
                 out.write(" && ");
                 geometry.accept(delegate, extraData);
 
-                // if we're just encoding a bbox in loose mode, we're done
+
                 if (filter instanceof BBOX && looseBBOXEnabled) {
                     return;
                 }
@@ -359,8 +359,8 @@ class FilterToSqlHelper {
             BinarySpatialOperator filter, Expression e1, Expression e2, boolean swapped, Object extraData)
             throws IOException {
 
-        // ST_Intersects needs to linearize curves which reduces test precision, if we have a chance of
-        // geometries being curves we should use ST_Distance instead
+
+
         if (!DISABLE_CURVE_ACCURATE_INTERSECTION
                 && (filter instanceof Intersects || filter instanceof BBOX || filter instanceof Disjoint)
                 && (mayHaveCurves(e1) || mayHaveCurves(e2))) {
@@ -417,12 +417,12 @@ class FilterToSqlHelper {
         }
     }
 
-    /**
-     * Checks if the expression may contain curves, either because it is a geometry or because it is a property that
-     * might be a geometry. In particular, the geometry is considered to have curves if it is a {@link CurvedGeometry}
-     * or if it is a {@link GeometryCollection} or a {@link Geometry}. The latter cases are generic containers that may
-     * contain any sort of geometry, and thus, curved ones too.
-     */
+
+
+
+
+
+
     private boolean mayHaveCurves(Expression ex) {
         if (ex instanceof Literal) {
             Object value = ex.evaluate(null, Geometry.class);
@@ -459,17 +459,17 @@ class FilterToSqlHelper {
             Geometry g = geometry.evaluate(null, Geometry.class);
             if (g != null) {
                 Envelope env = g.getEnvelopeInternal();
-                // first, limit to world
+
                 if (!WORLD.contains(env)) {
                     g = sanitizePolygons(g.intersection(JTS.toGeometry(WORLD)));
                 }
 
-                // second, postgis will always use the shortest distance between two
-                // points, if an arc is longer than 180 degrees the opposite will
-                // be used instead, so we have to slice the geometry in parts
+
+
+
                 env = g.getEnvelopeInternal();
                 if (Math.sqrt(env.getWidth() * env.getWidth() + env.getHeight() * env.getHeight()) >= 180) {
-                    // slice in 90x90 degrees quadrants, none of them has a diagonal longer than 180
+
                     final List<Polygon> polygons = new ArrayList<>();
                     for (double lon = Math.floor(env.getMinX()); lon < env.getMaxX(); lon += 90) {
                         for (double lat = Math.floor(env.getMinY()); lat < env.getMaxY(); lat += 90) {
@@ -496,14 +496,14 @@ class FilterToSqlHelper {
         return geometry;
     }
 
-    /** Given a geometry that might contain heterogeneous components extracts only the polygonal ones */
+
     private Geometry sanitizePolygons(Geometry geometry) {
-        // already sane?
+
         if (geometry == null || geometry instanceof Polygon || geometry instanceof MultiPolygon) {
             return geometry;
         }
 
-        // filter out only polygonal parts
+
         final List<Polygon> polygons = new ArrayList<>();
         geometry.apply((GeometryComponentFilter) geom -> {
             if (geom instanceof Polygon polygon) {
@@ -511,7 +511,7 @@ class FilterToSqlHelper {
             }
         });
 
-        // turn filtered selection into a geometry
+
         return toPolygon(geometry.getFactory(), polygons);
     }
 
@@ -525,7 +525,7 @@ class FilterToSqlHelper {
         }
     }
 
-    /** Returns true if the geometry covers the entire world */
+
     private boolean isWorld(Literal geometry) {
         if (geometry != null) {
             Geometry g = geometry.evaluate(null, Geometry.class);
@@ -536,7 +536,7 @@ class FilterToSqlHelper {
         return false;
     }
 
-    /** Returns true if the geometry is fully empty */
+
     private boolean isEmpty(Literal geometry) {
         if (geometry != null) {
             Geometry g = geometry.evaluate(null, Geometry.class);
@@ -545,7 +545,7 @@ class FilterToSqlHelper {
         return false;
     }
 
-    /** Maps a function to its native db equivalent */
+
     public String getFunctionName(Function function) {
         if (function instanceof FilterFunction_strLength || function instanceof LengthFunction) {
             return "char_length";
@@ -562,28 +562,28 @@ class FilterToSqlHelper {
         return function.getName();
     }
 
-    /**
-     * Performs custom visits for functions that cannot be encoded as <code>
-     * functionName(p1, p2, ... pN).</code>
-     */
+
+
+
+
     public boolean visitFunction(Function function, Object extraData) throws IOException {
         if (function instanceof DateDifferenceFunction) {
             Expression d1 = getParameter(function, 0, true);
             Expression d2 = getParameter(function, 1, true);
 
             List<Expression> params = function.getParameters();
-            // extract epoch returns seconds, DateDifference can be defined in
-            // a different time unit instead (ms as default).
+
+
             double multiplyingFactor = 1000;
             if (params.size() == 3) {
                 Expression expression = getParameter(function, 2, false);
                 if (expression instanceof Literal) {
                     TimeUnit timeUnit = expression.evaluate(null, TimeUnit.class);
                     if (timeUnit != TimeUnit.MILLISECONDS) {
-                        // Let's identify the multiplying factor to go from seconds to the
-                        // target time unit.
-                        // Doing an inverse math since convert will return 0 when converting
-                        // smaller units (i.e. 1 second) to bigger units (i.e. days)
+
+
+
+
                         multiplyingFactor = 1d / TimeUnit.SECONDS.convert(1, timeUnit);
                     }
                 }
@@ -638,7 +638,7 @@ class FilterToSqlHelper {
             Expression first = getParameter(function, 0, true);
             Expression second = getParameter(function, 1, true);
 
-            // would be a simple call, but strIndexOf returns zero based indices
+
             out.write("(strpos(");
             first.accept(delegate, String.class);
             out.write(", ");
@@ -649,7 +649,7 @@ class FilterToSqlHelper {
             Expression start = getParameter(function, 1, true);
             Expression end = getParameter(function, 2, true);
 
-            // postgres does sub(string, start, count)... count instead of end, and 1 based indices
+
             out.write("substr(");
             string.accept(delegate, String.class);
             out.write(", ");
@@ -663,7 +663,7 @@ class FilterToSqlHelper {
             Expression string = getParameter(function, 0, true);
             Expression start = getParameter(function, 1, true);
 
-            // postgres does sub(string, start, count)... count instead of end, and 1 based indices
+
             out.write("substr(");
             string.accept(delegate, String.class);
             out.write(", ");
@@ -682,7 +682,7 @@ class FilterToSqlHelper {
         } else if (function instanceof FilterFunction_buffer) {
             encodeBuffer(function, extraData);
         } else {
-            // function not supported
+
             return false;
         }
 
@@ -703,7 +703,7 @@ class FilterToSqlHelper {
         Expression json = getParameter(jsonPointer, 0, true);
         Expression pointer = getParameter(jsonPointer, 1, true);
         if (json instanceof PropertyName && pointer instanceof Literal literal) {
-            // if not a string need to cast the json attribute
+
             boolean needCast = extraData != null && extraData instanceof Class && !extraData.equals(String.class);
 
             if (needCast) out.write('(');
@@ -714,17 +714,17 @@ class FilterToSqlHelper {
             for (int i = 0; i < pointerEl.size(); i++) {
                 String p = pointerEl.get(i);
                 if (i != pointerEl.size() - 1) out.write(" -> ");
-                // using for last element the ->> operator
-                // to have a text instead of a json returned
+
+
                 else out.write(" ->> ");
                 String preparedLiteral = this.prepareInputLiteralForExpression(p);
                 Literal elPointer = new LiteralExpressionImpl(preparedLiteral);
-                // since the input expression could have been changed, binding needs to use original source
+
                 Class binding = NumberUtils.isParsable(p) ? Integer.class : String.class;
                 elPointer.accept(delegate, binding);
             }
             if (needCast) {
-                // cast from text to needed type
+
                 out.write(')');
                 out.write(cast("", (Class) extraData));
             }
@@ -767,8 +767,8 @@ class FilterToSqlHelper {
 
         String[] strJsonPath = escapeJsonLiteral(jsonPath.getValue().toString()).split("/");
         if (strJsonPath.length > 0) {
-            // jsonb_path_exists was added in postgres 12, thus we are enabling only for 12 or later
-            // versions
+
+
             if (jsonPathExistsSupported) {
                 out.write("jsonb_path_exists(");
                 column.accept(delegate, null);
@@ -791,8 +791,8 @@ class FilterToSqlHelper {
     private String constructEquality(String[] jsonPath, Expression expected) {
         int lastIndex = jsonPath.length - 1;
         Object value = ((LiteralExpressionImpl) expected).getValue();
-        // Doing the explicit cast for each type because without it compiler will complain that
-        // Object can not be used for %d or %f in formatter
+
+
         if (value instanceof Integer integer) {
             return "(@.%s == %d)".formatted(jsonPath[lastIndex], integer);
         } else if (value instanceof Float float1) {
@@ -858,7 +858,7 @@ class FilterToSqlHelper {
         } else if (java.util.Date.class.isAssignableFrom(target)) {
             return property + "::timesamp";
         } else {
-            // dunno how to cast, leave as is
+
             return property;
         }
     }
@@ -900,25 +900,25 @@ class FilterToSqlHelper {
         }
 
         try {
-            // match any against non array literals? we need custom logic
+
             MultiValuedFilter.MatchAction matchAction = filter.getMatchAction();
             if ((matchAction == MatchAction.ANY || matchAction == MatchAction.ONE)
                     && !isArray(left)
                     && !isArray(right)) {
-                // the only indexable search in this block
+
                 if ("=".equalsIgnoreCase(type) && !isNull(left) && !isNull(right)) {
-                    // if using a prepared statement dialect we need the native type info
-                    // contained in the AttributeDescriptor to create a SQL array...
+
+
                     Object leftArrayContext = getArrayComparisonContext(left, right, leftContext);
                     writeBinaryExpressionMember(left, leftArrayContext);
                     out.write(leftCast);
-                    // use the overlap operator to avoid deciding which side is the expression
+
                     out.write(" && ");
                     Object rightArrayContext = getArrayComparisonContext(right, left, rightContext);
                     writeBinaryExpressionMember(right, rightArrayContext);
                     out.write(rightCast);
                 } else {
-                    // need to un-nest and apply element by element, this is not indexable
+
                     if (left instanceof PropertyName) {
                         rightContext = rightContext.getComponentType();
                     }
@@ -928,8 +928,8 @@ class FilterToSqlHelper {
 
                     boolean isPropertyLeft = left instanceof PropertyName;
                     boolean isPropertyRight = right instanceof PropertyName;
-                    // un-nesting the array to do element by element comparisons... the
-                    // generated "table" has "unnest" as the variable name
+
+
                     if (matchAction == MultiValuedFilter.MatchAction.ANY) {
                         out.write("EXISTS ( SELECT * from unnest(");
                     } else {
@@ -941,7 +941,7 @@ class FilterToSqlHelper {
                         right.accept(delegate, null);
                     }
                     out.write(") WHERE ");
-                    // oh fun, if there are nulls we cannot write the same sql
+
                     if (isPropertyLeft && isNull(right)
                             || isPropertyRight
                                     && isNull(left)
@@ -952,7 +952,7 @@ class FilterToSqlHelper {
                             out.write("unnest is NOT NULL");
                         }
                     } else {
-                        // no nulls, but we still have to consider the comparison direction
+
                         if (isPropertyLeft) {
                             out.write("unnest");
                             out.write(" " + type + " ");
@@ -970,10 +970,10 @@ class FilterToSqlHelper {
                     }
                 }
             } else if (matchAction == MultiValuedFilter.MatchAction.ALL || isArray(left) || isArray(right)) {
-                // for comparison against array literals we only support match-all style
-                // for the user it would be really strange to ask for equality on an array
-                // and get a positive match on a partial element overlap (filters build
-                // without explicit match action default to "ANY")
+
+
+
+
                 Object leftArrayContext = getArrayComparisonContext(left, right, leftContext);
                 writeBinaryExpressionMember(left, leftArrayContext);
                 out.write(leftCast);
@@ -988,21 +988,21 @@ class FilterToSqlHelper {
         }
     }
 
-    /**
-     * When using prepared statements we need the AttributeDescritor's stored native type name to set array values in
-     * the PreparedStatement
-     */
+
+
+
+
     private Object getArrayComparisonContext(Expression thisExpression, Expression otherExpression, Class context) {
         if (delegate instanceof PreparedFilterToSQL
                 && thisExpression instanceof Literal
                 && otherExpression instanceof PropertyName) {
-            // grab the info from the other side of the comparison
+
             AttributeDescriptor ad = otherExpression.evaluate(delegate.getFeatureType(), AttributeDescriptor.class);
             if (ad != null) {
                 return ad;
             }
         }
-        // all good, no extra info actually needed
+
         return context;
     }
 
@@ -1014,7 +1014,7 @@ class FilterToSqlHelper {
         }
     }
 
-    @SuppressWarnings("PMD.CloseResource") // tmp it a copy of out, that's managed elsewhere
+    @SuppressWarnings("PMD.CloseResource")
     protected void writeBinaryExpression(Expression e, Object context) throws IOException {
         Writer tmp = out;
         try {
@@ -1032,7 +1032,7 @@ class FilterToSqlHelper {
         }
     }
 
-    /** Returns the type cast needed to match this property */
+
     String getArrayTypeCast(PropertyName pn) {
         AttributeDescriptor at = pn.evaluate(delegate.getFeatureType(), AttributeDescriptor.class);
         if (at != null) {
@@ -1053,8 +1053,8 @@ class FilterToSqlHelper {
         Expression upperbounds = filter.getUpperBoundary();
 
         try {
-            // we have to un-nest
-            // generated "table" has "unnest" as the variable name
+
+
             MultiValuedFilter.MatchAction matchAction = filter.getMatchAction();
             if (matchAction == MultiValuedFilter.MatchAction.ANY) {
                 out.write("EXISTS ( SELECT * from unnest(");
@@ -1177,15 +1177,15 @@ class FilterToSqlHelper {
             }
             pgDialect.encodeTableName(delegate.getPrimaryKey().getTableName(), sb);
             sb.append(" order by ");
-            // geometry column name
+
             pgDialect.encodeColumnName(
                     null, delegate.getFeatureType().getGeometryDescriptor().getLocalName(), sb);
             sb.append(" <-> ");
-            // reference geometry
+
             Geometry geomValue = (Geometry) delegate.evaluateLiteral((Literal) geometryExp, Geometry.class);
             ctx.encodeGeometryValue.accept(geomValue, sb);
 
-            // num of features
+
             sb.append(" limit ");
             int numFeatures = numNearest.evaluate(null, Number.class).intValue();
             sb.append(numFeatures);
@@ -1198,7 +1198,7 @@ class FilterToSqlHelper {
         return extraData;
     }
 
-    /** Context data struct for nearest visit method */
+
     public static class NearestHelperContext {
         private SQLDialect pgDialect;
         private BiConsumer<Geometry, StringBuffer> encodeGeometryValue;
@@ -1226,12 +1226,12 @@ class FilterToSqlHelper {
         }
     }
 
-    /**
-     * Detects and return a InArrayFunction if found, otherwise null
-     *
-     * @param filter filter to evaluate
-     * @return FilterFunction_any if found
-     */
+
+
+
+
+
+
     public InArrayFunction getInArray(PropertyIsEqualTo filter) {
         Expression expr1 = filter.getExpression1();
         Expression expr2 = filter.getExpression2();
@@ -1245,12 +1245,12 @@ class FilterToSqlHelper {
         }
     }
 
-    /**
-     * Detects and return an equalTo function if found, otherwise null
-     *
-     * @param filter filter to evaluate
-     * @return FilterFunction_equalTo if found
-     */
+
+
+
+
+
+
     public FilterFunction_equalTo getEqualTo(PropertyIsEqualTo filter) {
         Expression expr1 = filter.getExpression1();
         Expression expr2 = filter.getExpression2();
@@ -1264,16 +1264,16 @@ class FilterToSqlHelper {
         }
     }
 
-    /**
-     * Detects and return a FilterFunction_pgNearest if found, otherwise null
-     *
-     * @param filter filter to evaluate
-     * @return FilterFunction_pgNearest if found
-     */
+
+
+
+
+
+
     public FilterFunction_pgNearest getNearestFilter(PropertyIsEqualTo filter) {
         Expression expr1 = filter.getExpression1();
         Expression expr2 = filter.getExpression2();
-        // if expr2 is nearest filter, switch positions
+
         if (expr2 instanceof FilterFunction_pgNearest) {
             Expression tmp = expr1;
             expr1 = expr2;

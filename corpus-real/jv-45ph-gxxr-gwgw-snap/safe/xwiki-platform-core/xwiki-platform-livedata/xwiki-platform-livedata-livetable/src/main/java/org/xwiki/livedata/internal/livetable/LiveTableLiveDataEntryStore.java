@@ -1,22 +1,22 @@
-/*
- * See the NOTICE file distributed with this work for additional
- * information regarding copyright ownership.
- *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.xwiki.livedata.internal.livetable;
 
 import java.util.LinkedList;
@@ -53,20 +53,20 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.xpn.xwiki.XWikiException;
 
-/**
- * {@link LiveDataEntryStore} implementation that reuses existing live table data.
- * 
- * @version $Id$
- * @since 12.10
- */
+
+
+
+
+
+
 @Component
 @Named(LiveTableLiveDataEntryStore.ROLE_HINT)
 @InstantiationStrategy(ComponentInstantiationStrategy.PER_LOOKUP)
 public class LiveTableLiveDataEntryStore extends WithParameters implements LiveDataEntryStore
 {
-    /**
-     * The hint of this component implementation.
-     */
+
+
+
     public static final String ROLE_HINT = "liveTable";
 
     private static final String CLASS_NAME_PARAMETER = "className";
@@ -104,8 +104,8 @@ public class LiveTableLiveDataEntryStore extends WithParameters implements LiveD
     public LiveData get(LiveDataQuery query) throws LiveDataException
     {
         try {
-            // We need to allow backslash escaping because some live table sources are generating the JSON by hand
-            // instead of serializing a map.
+
+
             ObjectMapper objectMapper =
                 JsonMapper.builder().enable(JsonReadFeature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER).build();
             JsonNode liveTableResults = getLiveTableResultsJSON(query, objectMapper);
@@ -123,7 +123,7 @@ public class LiveTableLiveDataEntryStore extends WithParameters implements LiveD
 
     private JsonNode getLiveTableResultsJSON(LiveDataQuery query, ObjectMapper objectMapper) throws Exception
     {
-        // Merge the parameters of this live data source with the parameters from the given query.
+
         Source originalSource = query.getSource();
         query.setSource(new Source(ROLE_HINT));
         query.getSource().getParameters().putAll(getParameters());
@@ -146,7 +146,7 @@ public class LiveTableLiveDataEntryStore extends WithParameters implements LiveD
 
             return objectMapper.readTree(liveTableResultsJSON);
         } finally {
-            // Restore the original query source.
+
             query.setSource(originalSource);
         }
     }
@@ -158,9 +158,9 @@ public class LiveTableLiveDataEntryStore extends WithParameters implements LiveD
         for (JsonNode row : rows) {
             if (row.isObject()) {
                 Map<String, Object> entry = objectMapper.readerForMapOf(Object.class).readValue(row);
-                // The special "doc.*" columns appear as "doc_*" inside the live table row. We need to fix this because
-                // the live data expects the entry (row) properties to match the properties (columns) specified in the
-                // live data query.
+
+
+
                 Set<String> keysToRename =
                     entry.keySet().stream().filter(key -> key.startsWith("doc_")).collect(Collectors.toSet());
                 keysToRename.forEach(key -> entry.put(DOC_PREFIX + key.substring(4), entry.remove(key)));
@@ -180,7 +180,7 @@ public class LiveTableLiveDataEntryStore extends WithParameters implements LiveD
             className = customClassName;
         }
 
-        // We can't update an object property if the object type is undefined.
+
         if (className == null && !StringUtils.defaultIfEmpty(property, "").startsWith(DOC_PREFIX)) {
             throw new LiveDataException(UNDEFINED_CLASS_ERROR_MESSAGE);
         }
@@ -245,8 +245,8 @@ public class LiveTableLiveDataEntryStore extends WithParameters implements LiveD
         if (entry.keySet().stream()
                 .filter(name -> !isDocumentProperty(name) && !REQUIRES_HTML_CONVERSION.equals(name))
                 .map(name -> {
-                    // If the property has a suffix related to HTML conversion, we remove it if the base property is
-                    // known to require HTML conversion.
+
+
                     if (name.endsWith("_syntax") || name.endsWith("_cache")) {
                         String baseName = StringUtils.substringBeforeLast(name, "_");
                         if (htmlConvertedProperties.contains(baseName)) {

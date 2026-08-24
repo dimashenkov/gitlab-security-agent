@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+
 
 import copy
 import functools
@@ -97,7 +97,7 @@ def _get_os_alias_target(target: str) -> str:
 
 
 class _Keys(str, Enum):
-    """Special keys in configs used by instantiate."""
+    ''
 
     TARGET = "_target_"
     CONVERT = "_convert_"
@@ -144,12 +144,12 @@ def _call_target(
     kwargs: Dict[str, Any],
     full_key: str,
 ) -> Any:
-    """Call target (type) with args and kwargs."""
+    ''
     try:
         args, kwargs = _extract_pos_args(args, kwargs)
-        # detaching configs from parent.
-        # At this time, everything is resolved and the parent link can cause
-        # issues when serializing objects in some scenarios.
+
+
+
         for arg in args:
             if OmegaConf.is_config(arg):
                 arg._set_parent(None)
@@ -218,7 +218,7 @@ def _prepare_input_dict_or_list(d: Union[Dict[Any, Any], List[Any]]) -> Any:
 def _resolve_target(
     target: Union[str, type, Callable[..., Any]], full_key: str
 ) -> Union[type, Callable[..., Any]]:
-    """Resolve target string, type or callable into type or callable."""
+    ''
     if isinstance(target, str):
         if _is_blocklisted_target(target):
             allowlist = os.environ.get("HYDRA_INSTANTIATE_ALLOWLIST_OVERRIDE", "")
@@ -251,45 +251,45 @@ def _resolve_target(
 
 
 def instantiate(config: Any, *args: Any, **kwargs: Any) -> Any:
-    """
-    :param config: An config object describing what to call and what params to use.
-                   In addition to the parameters, the config must contain:
-                   _target_ : target class or callable name (str)
-                   And may contain:
-                   _args_: List-like of positional arguments to pass to the target
-                   _recursive_: Construct nested objects as well (bool).
-                                True by default.
-                                may be overridden via a _recursive_ key in
-                                the kwargs
-                   _convert_: Conversion strategy
-                        none    : Passed objects are DictConfig and ListConfig, default
-                        partial : Passed objects are converted to dict and list, with
-                                  the exception of Structured Configs (and their fields).
-                        object  : Passed objects are converted to dict and list.
-                                  Structured Configs are converted to instances of the
-                                  backing dataclass / attr class.
-                        all     : Passed objects are dicts, lists and primitives without
-                                  a trace of OmegaConf containers. Structured configs
-                                  are converted to dicts / lists too.
-                   _partial_: If True, return functools.partial wrapped method or object
-                              False by default. Configure per target.
-    :param args: Optional positional parameters pass-through
-    :param kwargs: Optional named parameters to override
-                   parameters in the config object. Parameters not present
-                   in the config objects are being passed as is to the target.
-                   IMPORTANT: dataclasses instances in kwargs are interpreted as config
-                              and cannot be used as passthrough
-    :return: if _target_ is a class name: the instantiated object
-             if _target_ is a callable: the return value of the call
-    """
+    ''
 
-    # Return None if config is None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     if config is None:
         return None
 
-    # TargetConf edge case
+
     if isinstance(config, TargetConf) and config._target_ == "???":
-        # Specific check to give a good warning about failure to annotate _target_ as a string.
+
         raise InstantiationException(
             dedent(
                 f"""\
@@ -299,19 +299,19 @@ def instantiate(config: Any, *args: Any, **kwargs: Any) -> Any:
                 A common problem is forgetting to annotate _target_ as a string : '_target_: str = ...'"""
             )
         )
-        # TODO: print full key
+
 
     if isinstance(config, (dict, list)):
         config = _prepare_input_dict_or_list(config)
 
     kwargs = _prepare_input_dict_or_list(kwargs)
 
-    # Structured Config always converted first to OmegaConf
+
     if is_structured_config(config) or isinstance(config, (dict, list)):
         config = OmegaConf.structured(config, flags={"allow_objects": True})
 
     if OmegaConf.is_dict(config):
-        # Finalize config (convert targets to strings, merge with kwargs)
+
         config_copy = copy.deepcopy(config)
         config_copy._set_flag(
             flags=["allow_objects", "struct", "readonly"], values=[True, False, False]
@@ -332,7 +332,7 @@ def instantiate(config: Any, *args: Any, **kwargs: Any) -> Any:
             config, *args, recursive=_recursive_, convert=_convert_, partial=_partial_
         )
     elif OmegaConf.is_list(config):
-        # Finalize config (convert targets to strings, merge with kwargs)
+
         config_copy = copy.deepcopy(config)
         config_copy._set_flag(
             flags=["allow_objects", "struct", "readonly"], values=[True, False, False]
@@ -387,17 +387,17 @@ def instantiate_node(
     recursive: bool = True,
     partial: bool = False,
 ) -> Any:
-    # Return None if config is None
+
     if node is None or (OmegaConf.is_config(node) and node._is_none()):
         return None
 
     if not OmegaConf.is_config(node):
         return node
 
-    # Override parent modes from config if specified
+
     if OmegaConf.is_dict(node):
-        # using getitem instead of get(key, default) because OmegaConf will raise an exception
-        # if the key type is incompatible on get.
+
+
         convert = node[_Keys.CONVERT] if _Keys.CONVERT in node else convert
         recursive = node[_Keys.RECURSIVE] if _Keys.RECURSIVE in node else recursive
         partial = node[_Keys.PARTIAL] if _Keys.PARTIAL in node else partial
@@ -416,7 +416,7 @@ def instantiate_node(
             msg += f"\nfull_key: {full_key}"
         raise TypeError(msg)
 
-    # If OmegaConf list, create new list of instances if recursive
+
     if OmegaConf.is_list(node):
         items = [
             instantiate_node(item, convert=convert, recursive=recursive)
@@ -424,10 +424,10 @@ def instantiate_node(
         ]
 
         if convert in (ConvertMode.ALL, ConvertMode.PARTIAL, ConvertMode.OBJECT):
-            # If ALL or PARTIAL or OBJECT, use plain list as container
+
             return items
         else:
-            # Otherwise, use ListConfig as container
+
             lst = OmegaConf.create(items, flags={"allow_objects": True})
             lst._set_parent(node)
             return lst
@@ -451,21 +451,21 @@ def instantiate_node(
 
             return _call_target(_target_, partial, args, kwargs, full_key)
         else:
-            # If ALL or PARTIAL non structured or OBJECT non structured,
-            # instantiate in dict and resolve interpolations eagerly.
+
+
             if convert == ConvertMode.ALL or (
                 convert in (ConvertMode.PARTIAL, ConvertMode.OBJECT)
                 and node._metadata.object_type in (None, dict)
             ):
                 dict_items = {}
                 for key, value in node.items():
-                    # list items inherits recursive flag from the containing dict.
+
                     dict_items[key] = instantiate_node(
                         value, convert=convert, recursive=recursive
                     )
                 return dict_items
             else:
-                # Otherwise use DictConfig and resolve interpolations lazily.
+
                 cfg = OmegaConf.create({}, flags={"allow_objects": True})
                 for key, value in node.items():
                     cfg[key] = instantiate_node(

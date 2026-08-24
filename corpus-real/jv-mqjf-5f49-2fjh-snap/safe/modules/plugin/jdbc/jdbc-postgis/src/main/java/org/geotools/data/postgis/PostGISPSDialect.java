@@ -1,19 +1,19 @@
-/*
- *    GeoTools - The Open Source Java GIS Toolkit
- *    http://geotools.org
- *
- *    (C) 2002-2016, Open Source Geospatial Foundation (OSGeo)
- *
- *    This library is free software; you can redistribute it and/or
- *    modify it under the terms of the GNU Lesser General Public
- *    License as published by the Free Software Foundation;
- *    version 2.1 of the License.
- *
- *    This library is distributed in the hope that it will be useful,
- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *    Lesser General Public License for more details.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.geotools.data.postgis;
 
 import java.io.IOException;
@@ -46,7 +46,7 @@ public class PostGISPSDialect extends PreparedStatementSQLDialect {
     public PostGISPSDialect(JDBCDataStore store, PostGISDialect delegate) {
         super(store);
         this.delegate = delegate;
-        // prepared statements enable native binary transfer, no need to base64 encode
+
         this.delegate.base64EncodingEnabled = false;
     }
 
@@ -230,7 +230,7 @@ public class PostGISPSDialect extends PreparedStatementSQLDialect {
             throws SQLException {
         if (g != null) {
             if (g instanceof LinearRing ring) {
-                // postgis does not handle linear rings, convert to just a line string
+
                 g = g.getFactory().createLineString(ring.getCoordinateSequence());
             }
 
@@ -281,8 +281,8 @@ public class PostGISPSDialect extends PreparedStatementSQLDialect {
             return null;
         }
         String name = (String) att.getUserData().get(JDBCDataStore.JDBC_NATIVE_TYPENAME);
-        // in postgresql jdbc the database metadata TYPE_NAME column contains the
-        // array "base type" name, prefixed with an underscore
+
+
         if (name != null && name.startsWith("_")) {
             return name.substring(1);
         }

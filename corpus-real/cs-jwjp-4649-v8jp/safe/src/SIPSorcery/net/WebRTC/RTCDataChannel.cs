@@ -1,18 +1,18 @@
-﻿//-----------------------------------------------------------------------------
-// Filename: RTCDataChannel.cs
-//
-// Description: Contains an implementation for a WebRTC data channel.
-//
-// Author(s):
-// Aaron Clauson (aaron@sipsorcery.com)
-//
-// History:
-// 13 Jul 2020	Aaron Clauson	Created.
-// 22 Mar 2021  Aaron Clauson   Refactored for new SCTP implementation.
-//
-// License: 
-// BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
-//-----------------------------------------------------------------------------
+﻿
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 using System;
 using System.Text;
@@ -21,29 +21,29 @@ using SIPSorcery.Sys;
 
 namespace SIPSorcery.Net
 {
-    /// <summary>
-    /// The assignments for SCTP payload protocol IDs used with
-    /// WebRTC data channels.
-    /// </summary>
-    /// <remarks>
-    /// See https://tools.ietf.org/html/rfc8831#section-8
-    /// </remarks>
+
+
+
+
+
+
+
     public enum DataChannelPayloadProtocols : uint
     {
-        WebRTC_DCEP = 50,           // Data Channel Establishment Protocol (DCEP).
+        WebRTC_DCEP = 50,
         WebRTC_String = 51,
-        WebRTC_Binary_Partial = 52, // Deprecated.
+        WebRTC_Binary_Partial = 52,
         WebRTC_Binary = 53,
-        WebRTC_String_Partial = 54, // Deprecated.
+        WebRTC_String_Partial = 54,
         WebRTC_String_Empty = 56,
         WebRTC_Binary_Empty = 57
     }
 
-    /// <summary>
-    /// A WebRTC data channel is generic transport service
-    /// that allows peers to exchange generic data in a peer
-    /// to peer manner.
-    /// </summary>
+
+
+
+
+
     public class RTCDataChannel : IRTCDataChannel
     {
         private static readonly ILogger logger = LogFactory.CreateLogger<RTCDataChannel>();
@@ -69,7 +69,7 @@ namespace SIPSorcery.Net
         public ulong bufferedAmountLowThreshold { get; set; }
         public string binaryType { get; set; }
 
-        //public long MaxMessageSize { get; set; }
+
 
         public string Error { get; private set; }
 
@@ -78,9 +78,9 @@ namespace SIPSorcery.Net
         private RTCSctpTransport _transport;
 
         public event Action onopen;
-        //public event Action onbufferedamountlow;
+
         public event Action<string> onerror;
-        //public event Action onclosing;
+
         public event Action onclose;
         public event OnDataChannelMessageDelegate onmessage;
 
@@ -92,7 +92,7 @@ namespace SIPSorcery.Net
                 ordered = true;
                 return;
             }
-            // TODO: Utilize ordered, maxPacketLifeTime, maxRetransmits, and protocol;
+
             ordered = init.ordered ?? true;
             maxPacketLifeTime = init.maxPacketLifeTime;
             maxRetransmits = init.maxRetransmits;
@@ -109,9 +109,9 @@ namespace SIPSorcery.Net
             onopen?.Invoke();
         }
 
-        /// <summary>
-        /// Sets the error message is there was a problem creating the data channel.
-        /// </summary>
+
+
+
         internal void SetError(string error)
         {
             Error = error;
@@ -126,10 +126,10 @@ namespace SIPSorcery.Net
             onclose?.Invoke();
         }
 
-        /// <summary>
-        /// Sends a string data payload on the data channel.
-        /// </summary>
-        /// <param name="message">The string message to send.</param>
+
+
+
+
         public void send(string message)
         {
             if (message != null && Encoding.UTF8.GetByteCount(message) > _transport.maxMessageSize)
@@ -160,12 +160,12 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Sends a binary data payload on the data channel.
-        /// </summary>
-        /// <param name="data">The data to send.</param>
-        /// <param name="offset">The offset in <paramref name="data"/> at which to begin sending. Defaults to 0.</param>
-        /// <param name="count">The number of bytes to send. Defaults to -1, meaning all bytes from <paramref name="offset"/> to the end of the array.</param>
+
+
+
+
+
+
         public void send(byte[] data, int offset = 0, int count = -1)
         {
             int effectiveCount = count < 0 ? data.Length - offset : count;
@@ -198,10 +198,10 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Sends an OPEN Data Channel Establishment Protocol (DCEP) message
-        /// to open a data channel on the remote peer for send/receive.
-        /// </summary>
+
+
+
+
         internal void SendDcepOpen()
         {
             byte type = (byte)DataChannelTypes.DATA_CHANNEL_RELIABLE;
@@ -234,10 +234,10 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Sends an ACK response for a Data Channel Establishment Protocol (DCEP)
-        /// control message.
-        /// </summary>
+
+
+
+
         internal void SendDcepAck()
         {
             lock (this)
@@ -248,14 +248,14 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Event handler for an SCTP data chunk being received for this data channel.
-        /// </summary>
+
+
+
         internal void GotData(ushort streamID, ushort streamSeqNum, uint ppID, byte[] data)
         {
-            //logger.LogTrace($"WebRTC data channel GotData stream ID {streamID}, stream seqnum {streamSeqNum}, ppid {ppID}, label {label}.");
 
-            // If the ppID is not recognised default to binary.
+
+
             DataChannelPayloadProtocols payloadType = DataChannelPayloadProtocols.WebRTC_Binary;
 
             if (Enum.IsDefined(typeof(DataChannelPayloadProtocols), ppID))

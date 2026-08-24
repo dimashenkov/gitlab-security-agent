@@ -16,9 +16,9 @@ import type { InitialisedList } from '../initialise-lists'
 import { getDBFieldKeyForFieldOnMultiField } from '../utils'
 import { checkFilterOrderAccess } from '../filter-order-access'
 
-// we want to put the value we get back from the field's unique where resolver into an equals
-// rather than directly passing the value as the filter (even though Prisma supports that), we use equals
-// because we want to disallow fields from providing an arbitrary filter
+
+
+
 export function mapUniqueWhereToWhere(uniqueWhere: UniquePrismaFilter, list: InitialisedList) {
   const where: PrismaFilter = {}
   for (const key in uniqueWhere) {
@@ -47,7 +47,7 @@ export function* traverse(
     } else {
       yield { fieldKey, list }
 
-      // if it's a relationship, check the nested filters.
+
       const field = list.fields[fieldKey]
       if (field.dbField.kind === 'relation' && value !== null) {
         const foreignList = list.lists[field.dbField.list]
@@ -64,7 +64,7 @@ export async function accessControlledFilter (
   resolvedWhere: PrismaFilter,
   accessFilters: boolean | InputFilter
 ) {
-  // Merge the filter access control
+
   if (typeof accessFilters === 'object') {
     resolvedWhere = { AND: [resolvedWhere, await resolveWhereInput(accessFilters, list, context)] }
   }
@@ -77,24 +77,24 @@ export async function findOne (
   list: InitialisedList,
   context: KeystoneContext
 ) {
-  // check operation permission to pass into single operation
+
   const operationAccess = await getOperationAccess(list, context, 'query')
   if (!operationAccess) return null
 
   const accessFilters = await getAccessFilters(list, context, 'query')
   if (accessFilters === false) return null
 
-  // validate and resolve the input filter
+
   const uniqueWhere = await resolveUniqueWhereInput(args.where, list, context)
   const resolvedWhere = mapUniqueWhereToWhere(uniqueWhere, list)
 
-  // findOne requires at least one filter
+
   if (Object.keys(resolvedWhere).length === 0) return null
 
-  // check filter access
+
   await checkFilterOrderAccess([...traverse(list, args.where)], context, 'filter')
 
-  // apply access control
+
   const filter = await accessControlledFilter(list, context, resolvedWhere, accessFilters)
 
   return await context.prisma[list.listKey].findFirst({ where: filter })
@@ -112,28 +112,28 @@ export async function findMany (
     throw limitsExceededError({ list: list.listKey, type: 'maxTake', limit: maxTake })
   }
 
-  // check operation permission to pass into single operation
+
   const operationAccess = await getOperationAccess(list, context, 'query')
   if (!operationAccess) return []
 
   const accessFilters = await getAccessFilters(list, context, 'query')
   if (accessFilters === false) return []
 
-  // validate and resolve the input filter
+
   const resolvedWhere = await resolveWhereInput(where, list, context)
 
-  // check filter access (TODO: why isn't this using resolvedWhere)
+
   await checkFilterOrderAccess([...traverse(list, where)], context, 'filter')
 
-  // check filter access for cursor
+
   if (cursor) {
     await checkFilterOrderAccess([...traverse(list, cursor)], context, 'filter')
   }
 
-  // WARNING: this checks .isOrderable
+
   const orderBy = await resolveOrderBy(rawOrderBy, list, context)
 
-  // apply access control
+
   const filter = await accessControlledFilter(list, context, resolvedWhere, accessFilters)
   const results = await context.prisma[list.listKey].findMany({
     where: extraFilter === undefined ? filter : { AND: [filter, extraFilter] },
@@ -159,7 +159,7 @@ async function resolveOrderBy (
   list: InitialisedList,
   context: KeystoneContext
 ): Promise<readonly Record<string, OrderDirection>[]> {
-  // Check input format. FIXME: Group all errors
+
   orderBy.forEach(orderBySelection => {
     const keys = Object.keys(orderBySelection)
     if (keys.length !== 1) {
@@ -175,7 +175,7 @@ async function resolveOrderBy (
     }
   })
 
-  // Check orderBy access
+
   const orderByKeys = orderBy.map(orderBySelection => ({
     fieldKey: Object.keys(orderBySelection)[0],
     list,
@@ -191,8 +191,8 @@ async function resolveOrderBy (
       const resolve = field.input!.orderBy!.resolve
       const resolvedValue = resolve ? await resolve(value, context) : value
       if (field.dbField.kind === 'multi') {
-        // Note: no built-in field types support multi valued database fields *and* orderBy.
-        // This code path is only relevent to custom fields which fit that criteria.
+
+
         const keys = Object.keys(resolvedValue)
         if (keys.length !== 1) {
           throw new Error(
@@ -225,7 +225,7 @@ export async function count (
 
   const resolvedWhere = await resolveWhereInput(where, list, context)
 
-  // check filter access (TODO: why isn't this using resolvedWhere)
+
   await checkFilterOrderAccess([...traverse(list, where)], context, 'filter')
 
   const filter = await accessControlledFilter(list, context, resolvedWhere, accessFilters)

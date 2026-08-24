@@ -9,9 +9,9 @@ using Renci.SshNet.Common;
 
 namespace Renci.SshNet
 {
-    /// <summary>
-    /// Represents instance of the SSH shell object.
-    /// </summary>
+
+
+
     public sealed class Shell : IDisposable
     {
         private const int DefaultBufferSize = 1024;
@@ -32,53 +32,53 @@ namespace Renci.SshNet
         private AutoResetEvent _channelClosedWaitHandle;
         private Stream _input;
 
-        /// <summary>
-        /// Gets a value indicating whether this shell is started.
-        /// </summary>
-        /// <value>
-        /// <see langword="true"/> if started is started; otherwise, <see langword="false"/>.
-        /// </value>
+
+
+
+
+
+
         public bool IsStarted { get; private set; }
 
-        /// <summary>
-        /// Occurs when shell is starting.
-        /// </summary>
+
+
+
         public event EventHandler<EventArgs> Starting;
 
-        /// <summary>
-        /// Occurs when shell is started.
-        /// </summary>
+
+
+
         public event EventHandler<EventArgs> Started;
 
-        /// <summary>
-        /// Occurs when shell is stopping.
-        /// </summary>
+
+
+
         public event EventHandler<EventArgs> Stopping;
 
-        /// <summary>
-        /// Occurs when shell is stopped.
-        /// </summary>
+
+
+
         public event EventHandler<EventArgs> Stopped;
 
-        /// <summary>
-        /// Occurs when an error occurred.
-        /// </summary>
+
+
+
         public event EventHandler<ExceptionEventArgs> ErrorOccurred;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="Shell"/> class.
-        /// </summary>
-        /// <param name="session">The session.</param>
-        /// <param name="input">The input.</param>
-        /// <param name="output">The output.</param>
-        /// <param name="extendedOutput">The extended output.</param>
-        /// <param name="terminalName">Name of the terminal.</param>
-        /// <param name="columns">The columns.</param>
-        /// <param name="rows">The rows.</param>
-        /// <param name="width">The width.</param>
-        /// <param name="height">The height.</param>
-        /// <param name="terminalModes">The terminal modes.</param>
-        /// <param name="bufferSize">Size of the buffer for output stream.</param>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         internal Shell(ISession session, Stream input, Stream output, Stream extendedOutput, string terminalName, uint columns, uint rows, uint width, uint height, IDictionary<TerminalModes, uint> terminalModes, int bufferSize)
             : this(session, input, output, extendedOutput, bufferSize, noTerminal: false)
         {
@@ -90,28 +90,28 @@ namespace Renci.SshNet
             _terminalModes = terminalModes;
         }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="Shell"/> class.
-        /// </summary>
-        /// <param name="session">The session.</param>
-        /// <param name="input">The input.</param>
-        /// <param name="output">The output.</param>
-        /// <param name="extendedOutput">The extended output.</param>
-        /// <param name="bufferSize">Size of the buffer for output stream.</param>
+
+
+
+
+
+
+
+
         internal Shell(ISession session, Stream input, Stream output, Stream extendedOutput, int bufferSize)
             : this(session, input, output, extendedOutput, bufferSize, noTerminal: true)
         {
         }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="Shell"/> class.
-        /// </summary>
-        /// <param name="session">The session.</param>
-        /// <param name="input">The input.</param>
-        /// <param name="output">The output.</param>
-        /// <param name="extendedOutput">The extended output.</param>
-        /// <param name="bufferSize">Size of the buffer for output stream.</param>
-        /// <param name="noTerminal">Disables pseudo terminal allocation or not.</param>
+
+
+
+
+
+
+
+
+
         private Shell(ISession session, Stream input, Stream output, Stream extendedOutput, int bufferSize, bool noTerminal)
         {
             if (bufferSize == -1)
@@ -134,12 +134,12 @@ namespace Renci.SshNet
             _noTerminal = noTerminal;
         }
 
-        /// <summary>
-        /// Starts this shell.
-        /// </summary>
-        /// <exception cref="SshException">Shell is started.</exception>
-        /// <exception cref="SshException">The pseudo-terminal request was not accepted by the server.</exception>
-        /// <exception cref="SshException">The request to start a shell was not accepted by the server.</exception>
+
+
+
+
+
+
         public void Start()
         {
             if (IsStarted)
@@ -172,7 +172,7 @@ namespace Renci.SshNet
 
             _channelClosedWaitHandle = new AutoResetEvent(initialState: false);
 
-            // Start input stream listener
+
             _dataReaderTaskCompleted = new ManualResetEvent(initialState: false);
             ThreadAbstraction.ExecuteThread(() =>
             {
@@ -210,10 +210,10 @@ namespace Renci.SshNet
             Started?.Invoke(this, EventArgs.Empty);
         }
 
-        /// <summary>
-        /// Stops this shell.
-        /// </summary>
-        /// <exception cref="SshException">Shell is not started.</exception>
+
+
+
+
         public void Stop()
         {
             if (!IsStarted)
@@ -253,7 +253,7 @@ namespace Renci.SshNet
         {
             if (Stopping is not null)
             {
-                // Handle event on different thread
+
                 ThreadAbstraction.ExecuteThread(() => Stopping(this, EventArgs.Empty));
             }
 
@@ -275,20 +275,20 @@ namespace Renci.SshNet
 
             if (Stopped != null)
             {
-                // Handle event on different thread
+
                 ThreadAbstraction.ExecuteThread(() => Stopped(this, EventArgs.Empty));
             }
 
             _channel = null;
         }
 
-        /// <summary>
-        /// Unsubscribes the current <see cref="Shell"/> from session events.
-        /// </summary>
-        /// <param name="session">The session.</param>
-        /// <remarks>
-        /// Does nothing when <paramref name="session"/> is <see langword="null"/>.
-        /// </remarks>
+
+
+
+
+
+
+
         private void UnsubscribeFromSessionEvents(ISession session)
         {
             if (session is null)
@@ -302,19 +302,19 @@ namespace Renci.SshNet
 
         private bool _disposed;
 
-        /// <summary>
-        /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.
-        /// </summary>
+
+
+
         public void Dispose()
         {
             Dispose(disposing: true);
             GC.SuppressFinalize(this);
         }
 
-        /// <summary>
-        /// Releases unmanaged and - optionally - managed resources.
-        /// </summary>
-        /// <param name="disposing"><see langword="true"/> to release both managed and unmanaged resources; <see langword="false"/> to release only unmanaged resources.</param>
+
+
+
+
         private void Dispose(bool disposing)
         {
             if (_disposed)

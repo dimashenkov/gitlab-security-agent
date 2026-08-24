@@ -10,17 +10,17 @@ import (
 	"github.com/getkin/kin-openapi/routers"
 )
 
-// ValidationErrorEncoder wraps a base ErrorEncoder to handle ValidationErrors
+
 type ValidationErrorEncoder struct {
 	Encoder ErrorEncoder
 }
 
-// Encode implements the ErrorEncoder interface for encoding ValidationErrors
+
 func (enc *ValidationErrorEncoder) Encode(ctx context.Context, err error, w http.ResponseWriter) {
 	enc.Encoder(ctx, ConvertErrors(err), w)
 }
 
-// ConvertErrors converts all errors to the appropriate error format.
+
 func ConvertErrors(err error) error {
 	if e, ok := err.(*routers.RouteError); ok {
 		return convertRouteError(e)
@@ -104,7 +104,7 @@ func convertErrInvalidEmptyValue(e *RequestError) *ValidationError {
 }
 
 func convertParseError(e *RequestError, innerErr *ParseError) *ValidationError {
-	// We treat path params of the wrong type like a 404 instead of a 400
+
 	if innerErr.Kind == KindInvalidFormat && e.Parameter != nil && e.Parameter.In == "path" {
 		return &ValidationError{
 			Status: http.StatusNotFound,
@@ -135,28 +135,28 @@ func convertParseError(e *RequestError, innerErr *ParseError) *ValidationError {
 func convertSchemaError(e *RequestError, innerErr *openapi3.SchemaError) *ValidationError {
 	cErr := &ValidationError{Title: innerErr.Reason}
 
-	// Handle "Origin" error
+
 	if originErr, ok := innerErr.Origin.(*openapi3.SchemaError); ok {
 		cErr = convertSchemaError(e, originErr)
 	}
 
-	// Add http status code
+
 	if e.Parameter != nil {
 		cErr.Status = http.StatusBadRequest
 	} else if e.RequestBody != nil {
 		cErr.Status = http.StatusUnprocessableEntity
 	}
 
-	// Add error source
+
 	if e.Parameter != nil {
-		// We have a JSONPointer in the query param too so need to
-		// make sure 'Parameter' check takes priority over 'Pointer'
+
+
 		cErr.Source = &ValidationErrorSource{Parameter: e.Parameter.Name}
 	} else if ptr := innerErr.JSONPointer(); ptr != nil {
 		cErr.Source = &ValidationErrorSource{Pointer: toJSONPointer(ptr)}
 	}
 
-	// Add details on allowed values for enums
+
 	if innerErr.SchemaField == "enum" {
 		enums := make([]string, 0, len(innerErr.Schema.Enum))
 		for _, enum := range innerErr.Schema.Enum {

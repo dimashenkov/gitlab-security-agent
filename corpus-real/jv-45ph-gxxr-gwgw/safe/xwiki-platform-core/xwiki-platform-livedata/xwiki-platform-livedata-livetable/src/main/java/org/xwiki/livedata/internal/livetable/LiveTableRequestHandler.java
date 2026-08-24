@@ -1,22 +1,22 @@
-/*
- * See the NOTICE file distributed with this work for additional
- * information regarding copyright ownership.
- *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.xwiki.livedata.internal.livetable;
 
 import java.util.Collection;
@@ -49,12 +49,12 @@ import com.xpn.xwiki.doc.XWikiDocument;
 import com.xpn.xwiki.web.XWikiRequest;
 import com.xpn.xwiki.web.XWikiResponse;
 
-/**
- * Used to simulate a live table request and access the live table results.
- * 
- * @version $Id$
- * @since 12.10
- */
+
+
+
+
+
+
 @Component(roles = LiveTableRequestHandler.class)
 @Singleton
 public class LiveTableRequestHandler
@@ -85,14 +85,14 @@ public class LiveTableRequestHandler
     @Named("current")
     private DocumentReferenceResolver<String> currentDocumentReferenceResolver;
 
-    /**
-     * Converts the given live data query into a fake live table request and executes the given live table results
-     * supplier in the context of this fake live table request.
-     * 
-     * @param liveDataQuery the live data query to convert into a live table request
-     * @param liveTableResultsSupplier the actual code that produces the live table results
-     * @return the live table results JSON
-     */
+
+
+
+
+
+
+
+
     public String getLiveTableResults(LiveDataQuery liveDataQuery, Supplier<String> liveTableResultsSupplier)
     {
         XWikiContext xcontext = this.xcontextProvider.get();
@@ -112,8 +112,8 @@ public class LiveTableRequestHandler
         boolean finished = xcontext.isFinished();
         try {
             String liveTableResultsJSON = liveTableResultsSupplier.get();
-            // The supplier can write directly to the response, e.g. using the #jsonResponse Velocity macro, in which
-            // case the response should be already committed.
+
+
             return liveTableResponse.isCommitted() ? liveTableResponse.getContent() : liveTableResultsJSON;
         } finally {
             xcontext.setAction(originalAction);
@@ -148,41 +148,41 @@ public class LiveTableRequestHandler
     {
         Map<String, String[]> requestParams = new HashMap<>();
 
-        // Make sure we output plain syntax.
+
         requestParams.put("outputSyntax", new String[] {"plain"});
 
-        // Add source parameters.
+
         addSourceRequestParameters(query, requestParams);
 
-        // Remove internal source parameters.
+
         Stream.of(TEMPLATE, RESULT_PAGE, CONTEXT_DOC).forEach(requestParams::remove);
 
-        // Rename the className parameter.
+
         String[] className = requestParams.remove("className");
         if (className != null) {
             requestParams.put("classname", className);
         }
 
-        // Rename the translationPrefix parameter.
+
         String[] translationPrefix = requestParams.remove("translationPrefix");
         if (translationPrefix != null) {
             requestParams.put("transprefix", translationPrefix);
         }
 
-        // Add the list of columns.
+
         if (query.getProperties() != null) {
             requestParams.put("collist", new String[] {StringUtils.join(query.getProperties(), ",")});
         }
 
-        // Add the sort and direction.
+
         addSortRequestParameters(query, requestParams);
 
-        // Add the filters.
+
         if (query.getFilters() != null) {
             query.getFilters().stream().forEach(filter -> addFilterRequestParameters(filter, requestParams));
         }
 
-        // Add offset and limit. Note that the default live table results expects the offset to start from 1.
+
         if (query.getOffset() != null) {
             requestParams.put("offset", new String[] {String.valueOf(query.getOffset() + 1)});
         }
@@ -190,8 +190,8 @@ public class LiveTableRequestHandler
             requestParams.put("limit", new String[] {String.valueOf(query.getLimit())});
         }
 
-        // The live table widget is sending this parameter (in order to avoid handling a response for an obsolete
-        // request) and some live table sources are expecting it.
+
+
         requestParams.put("reqNo", new String[] {"1"});
 
         return requestParams;
@@ -206,7 +206,7 @@ public class LiveTableRequestHandler
                 if (entry.getValue() instanceof Collection) {
                     stream = ((Collection<Object>) entry.getValue()).stream();
                 } else {
-                    // This should work for both single value and arrays.
+
                     stream = Stream.of(entry.getValue());
                 }
                 List<String> values =
@@ -244,9 +244,9 @@ public class LiveTableRequestHandler
                 .collect(Collectors.toList());
             requestParams.put(filter.getProperty() + "_match", matchType.toArray(new String[matchType.size()]));
 
-            // Add a value to the empty fields since otherwise they are dismissed by LiveTableResultMacros.
-            // Changing the handling of empty values in the result templates is dangerous and could lead to regressions 
-            // when the livetable clients expected empty values to simply be dismissed.
+
+
+
             for (int i = 0; i < matchType.size(); i++) {
                 if (Objects.equals(matchType.get(i), "empty")) {
                     requestParams.get(filter.getProperty())[i] = "-";

@@ -34,9 +34,9 @@ class TabularInline(admin.TabularInline):
 
 class PagePermissionInlineAdmin(TabularInline):
     model = PagePermission
-    # use special form, so we can override of user and group field
+
     form = PagePermissionInlineAdminForm
-    extra = 0  # edit page load time boost
+    extra = 0
     show_with_view_permissions = False
 
     def has_change_permission(self, request, obj=None):
@@ -53,14 +53,14 @@ class PagePermissionInlineAdmin(TabularInline):
 
     @classproperty
     def raw_id_fields(cls):
-        # Dynamically set raw_id_fields based on settings
+
         threshold = get_cms_setting('RAW_ID_USERS')
 
-        # Given a fresh django-cms install and a django settings with the
-        # CMS_RAW_ID_USERS = CMS_PERMISSION = True
-        # django throws an OperationalError (sqlite) or ProgrammingError
-        # (postgres) when running ./manage migrate because the user table
-        # doesn't exist yet.
+
+
+
+
+
         try:
             threshold = threshold and get_user_model().objects.count() > threshold
         except (OperationalError, ProgrammingError):
@@ -69,27 +69,27 @@ class PagePermissionInlineAdmin(TabularInline):
         return ['user'] if threshold else []
 
     def get_queryset(self, request):
-        """
-        Queryset change, so user with global change permissions can see
-        all permissions. Otherwise user can see only permissions for
-        peoples which are under him (he can't see his permissions, because
-        this will lead to violation, when he can add more power to himself)
-        """
+        ''
+
+
+
+
+
         site = Site.objects.get_current(request)
 
         try:
-            # can see only permissions for users which are under him in tree
+
             qs = self.model.objects.subordinate_to_user(request.user, site)
         except NoPermissionsException:
             return self.model.objects.none()
         return qs.filter(can_view=self.show_with_view_permissions)
 
     def get_formset(self, request, obj=None, **kwargs):
-        """
-        Some fields may be excluded here. User can change only
-        permissions which are available for him. E.g. if user does not haves
-        can_change flag, he can't change assign can_change permissions.
-        """
+        ''
+
+
+
+
         exclude = self.exclude or []
         if obj:
             user = request.user
@@ -114,7 +114,7 @@ class PagePermissionInlineAdmin(TabularInline):
 
 
 class ViewRestrictionInlineAdmin(PagePermissionInlineAdmin):
-    extra = 0  # edit page load time boost
+    extra = 0
     form = ViewRestrictionInlineAdminForm
     verbose_name = _("View restriction")
     verbose_name_plural = _("View restrictions")
@@ -159,14 +159,14 @@ class GlobalPagePermissionAdmin(admin.ModelAdmin):
 
     @classproperty
     def raw_id_fields(cls):
-        # Dynamically set raw_id_fields based on settings
+
         threshold = get_cms_setting('RAW_ID_USERS')
 
-        # Given a fresh django-cms install and a django settings with the
-        # CMS_RAW_ID_USERS = CMS_PERMISSION = True
-        # django throws an OperationalError (sqlite) or ProgrammingError
-        # (postgres) when running ./manage migrate because the user table
-        # doesn't exist yet.
+
+
+
+
+
         try:
             threshold = threshold and get_user_model().objects.count() > threshold
         except (OperationalError, ProgrammingError):

@@ -14,11 +14,11 @@ var (
 	distFS embed.FS
 )
 
-// EmbedController is a simple controller to return a file from the embedded filesystem.
-//
-// This controller is replaces Go's default http.FileServer which, as of Go v1.23, removes
-// the Content-Encoding header from error responses, breaking pages such as 404's while
-// using gzip compression middleware.
+
+
+
+
+
 func embedController(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 
@@ -26,8 +26,8 @@ func embedController(w http.ResponseWriter, r *http.Request) {
 		p = p + "index.html"
 	}
 
-	p = strings.TrimPrefix(p, config.Webroot) // server webroot config
-	p = path.Join("ui", p)                    // add go:embed path to path prefix
+	p = strings.TrimPrefix(p, config.Webroot)
+	p = path.Join("ui", p)
 
 	b, err := distFS.ReadFile(p)
 	if err != nil {
@@ -35,13 +35,13 @@ func embedController(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ensure any HTML files have the correct nonce
+
 	if strings.HasSuffix(p, ".html") {
 		nonce := r.Header.Get("mp-nonce")
 		b = []byte(strings.ReplaceAll(string(b), "%%NONCE%%", nonce))
 	}
 
-	// allow browser cache except for ?dev queries and HTML files
+
 	if r.URL.RawQuery != "dev" && !strings.HasSuffix(p, ".html") {
 		w.Header().Set("Cache-Control", "max-age=31536000, public, immutable")
 	}
@@ -50,7 +50,7 @@ func embedController(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// ContentType supports only a few content types, limited to this application's needs.
+
 func contentType(p string) string {
 	switch {
 	case strings.HasSuffix(p, ".html"):

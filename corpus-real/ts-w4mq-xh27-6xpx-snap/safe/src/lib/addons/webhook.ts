@@ -52,7 +52,7 @@ export default class Webhook extends Addon {
         } = parameters;
         const context = {
             event,
-            // Stringify twice to avoid escaping in Mustache
+
             eventJson: JSON.stringify(JSON.stringify(event)),
             eventMarkdown: this.msgFormatter.format(event).text,
         };

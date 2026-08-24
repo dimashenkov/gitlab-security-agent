@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+
 
 module Savon
   module Model
@@ -11,8 +11,8 @@ module Savon
       instance_operation_module
     end
 
-    # Accepts one or more SOAP operations and generates both class and instance methods named
-    # after the given operations. Each generated method accepts an optional SOAP message Hash.
+
+
     def operations(*operations)
       operations.each do |operation|
         define_class_operation(operation)
@@ -26,25 +26,25 @@ module Savon
 
     private
 
-    # Defines a class-level SOAP operation.
+
     def define_class_operation(operation)
       class_operation_module.module_eval %{
-        def #{StringUtils.snakecase(operation.to_s)}(locals = {})
-          client.call #{operation.inspect}, locals
+        def
+          client.call
         end
-      }, __FILE__, __LINE__ - 4 # -4 points to the line where the eval string starts
+      }, __FILE__, __LINE__ - 4
     end
 
-    # Defines an instance-level SOAP operation.
+
     def define_instance_operation(operation)
       instance_operation_module.module_eval %{
-        def #{StringUtils.snakecase(operation.to_s)}(locals = {})
-          self.class.#{StringUtils.snakecase(operation.to_s)} locals
+        def
+          self.class.
         end
-      }, __FILE__, __LINE__ - 4 # -4 points to the line where the eval string starts
+      }, __FILE__, __LINE__ - 4
     end
 
-    # Class methods.
+
     def class_operation_module
       @class_operation_module ||= Module.new do
         def client(globals = {})
@@ -68,7 +68,7 @@ module Savon
       end.tap { |mod| extend(mod) }
     end
 
-    # Instance methods.
+
     def instance_operation_module
       @instance_operation_module ||= Module.new do
         def client

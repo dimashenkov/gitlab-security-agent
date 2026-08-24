@@ -1,16 +1,16 @@
-# Copyright 2022-2026 XProbe Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import logging
 import os
@@ -51,7 +51,7 @@ BUILTIN_LLM_MODEL_TOOL_CALL_FAMILIES: Set[str] = set()
 
 class LlamaCppLLMSpecV2(BaseModel):
     model_format: Literal["ggufv2"]
-    # Must in order that `str` first, then `int`
+
     model_size_in_billions: Union[str, int]
     quantization: str
     multimodal_projectors: Optional[List[str]]
@@ -62,7 +62,7 @@ class LlamaCppLLMSpecV2(BaseModel):
     model_hub: str = "huggingface"
     model_uri: Optional[str]
     model_revision: Optional[str]
-    # for MOE model, illustrates the activated model size
+
     activated_size_in_billions: Optional[Union[str, int]]
 
     @validator("model_size_in_billions", "activated_size_in_billions", pre=False)
@@ -70,7 +70,7 @@ class LlamaCppLLMSpecV2(BaseModel):
         if isinstance(v, str):
             if (
                 "_" in v
-            ):  # for example, "1_8" just returns "1_8", otherwise int("1_8") returns 18
+            ):
                 return v
             else:
                 return int(v)
@@ -79,14 +79,14 @@ class LlamaCppLLMSpecV2(BaseModel):
 
 class PytorchLLMSpecV2(BaseModel):
     model_format: Literal["pytorch", "gptq", "awq", "fp4", "fp8", "bnb"]
-    # Must in order that `str` first, then `int`
+
     model_size_in_billions: Union[str, int]
     quantization: str
     model_id: Optional[str]
     model_hub: str = "huggingface"
     model_uri: Optional[str]
     model_revision: Optional[str]
-    # for MOE model, illustrates the activated model size
+
     activated_size_in_billions: Optional[Union[str, int]]
 
     @validator("model_size_in_billions", "activated_size_in_billions", pre=False)
@@ -94,7 +94,7 @@ class PytorchLLMSpecV2(BaseModel):
         if isinstance(v, str):
             if (
                 "_" in v
-            ):  # for example, "1_8" just returns "1_8", otherwise int("1_8") returns 18
+            ):
                 return v
             else:
                 return int(v)
@@ -103,14 +103,14 @@ class PytorchLLMSpecV2(BaseModel):
 
 class MLXLLMSpecV2(BaseModel):
     model_format: Literal["mlx"]
-    # Must in order that `str` first, then `int`
+
     model_size_in_billions: Union[str, int]
     quantization: str
     model_id: Optional[str]
     model_hub: str = "huggingface"
     model_uri: Optional[str]
     model_revision: Optional[str]
-    # for MOE model, illustrates the activated model size
+
     activated_size_in_billions: Optional[Union[str, int]]
 
     @validator("model_size_in_billions", "activated_size_in_billions", pre=False)
@@ -118,7 +118,7 @@ class MLXLLMSpecV2(BaseModel):
         if isinstance(v, str):
             if (
                 "_" in v
-            ):  # for example, "1_8" just returns "1_8", otherwise int("1_8") returns 18
+            ):
                 return v
             else:
                 return int(v)
@@ -144,7 +144,7 @@ class LLMFamilyV2(BaseModel, ModelInstanceInfoMixin):
         ]
     ]
     model_description: Optional[str]
-    # reason for not required str here: legacy registration
+
     model_family: Optional[str]
     model_specs: List["LLMSpecV1"]
     chat_template: Optional[str]
@@ -205,10 +205,10 @@ class LLMFamilyV2(BaseModel, ModelInstanceInfoMixin):
         }
 
     def to_version_info(self):
-        """
-        Entering this function means it is already bound to a model instance,
-        so there is only one spec.
-        """
+        ''
+
+
+
         from .cache_manager import LLMCacheManager
         from .utils import get_model_version
 
@@ -243,7 +243,7 @@ class CustomLLMFamilyV2(LLMFamilyV2):
         proto: Protocol = None,
         allow_pickle: bool = False,
     ) -> LLMFamilyV2:
-        # See source code of BaseModel.parse_raw
+
         try:
             obj = load_str_bytes(
                 b,
@@ -262,13 +262,13 @@ class CustomLLMFamilyV2(LLMFamilyV2):
             if "vision" in family.model_ability
         }
 
-        # check model_family
+
         if llm_spec.model_family is None:
             raise ValueError(
                 f"You must specify `model_family` when registering custom LLM models."
             )
         assert isinstance(llm_spec.model_family, str)
-        # TODO: Currently, tool call and vision models cannot be registered if it is not the builtin model_family
+
         if (
             "tools" in llm_spec.model_ability
             and llm_spec.model_family not in BUILTIN_LLM_MODEL_TOOL_CALL_FAMILIES
@@ -285,11 +285,11 @@ class CustomLLMFamilyV2(LLMFamilyV2):
                 f"`model_family` for multimodal model must be one of the following values: \n"
                 f"{', '.join(list(vision_model_names))}"
             )
-        # set chat_template when it is the builtin model family
+
         if llm_spec.chat_template is None and "chat" in llm_spec.model_ability:
             llm_spec.chat_template = llm_spec.model_family
 
-        # handle chat_template when user choose existing model_family
+
         if (
             llm_spec.chat_template is not None
             and llm_spec.chat_template in BUILTIN_LLM_PROMPT_STYLE
@@ -308,9 +308,9 @@ class CustomLLMFamilyV2(LLMFamilyV2):
                 "chat_template"
             ]
 
-        # check model ability, registering LLM only provides generate and chat
-        # but for vision models, we add back the abilities so that
-        # gradio chat interface can be generated properly
+
+
+
         if (
             llm_spec.model_family in vision_model_names
             and "vision" not in llm_spec.model_ability
@@ -343,21 +343,21 @@ LLM_ENGINES: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
 SUPPORTED_ENGINES: Dict[str, List[Type[LLM]]] = {}
 
 
-# Add decorator definition
+
 def register_transformer(cls):
-    """
-    Decorator function to register a class as a transformer.
+    ''
 
-    This decorator appends the provided class to the TRANSFORMERS_CLASSES list.
-    It is used to keep track of classes that are considered transformers.
 
-    Args:
-        cls (class): The class to be registered as a transformer.
 
-    Returns:
-        class: The same class that was passed in, after being registered.
-    """
-    # Append the class to the list of transformer classes
+
+
+
+
+
+
+
+
+
     TRANSFORMERS_CLASSES.append(cls)
     return cls
 
@@ -365,9 +365,9 @@ def register_transformer(cls):
 def cache_model_tokenizer_and_config(
     llm_family: LLMFamilyV2,
 ) -> str:
-    """
-    Download model config.json and tokenizers only
-    """
+    ''
+
+
     llm_spec = llm_family.model_specs[0]
     cache_dir = _get_cache_dir_for_model_mem(llm_family, llm_spec, "tokenizer_config")
     os.makedirs(cache_dir, exist_ok=True)
@@ -411,9 +411,9 @@ def cache_model_tokenizer_and_config(
 
 
 def cache_model_config(llm_family: LLMFamilyV2):
-    """Download model config.json into cache_dir,
-    returns local filepath
-    """
+    ''
+
+
     llm_spec = llm_family.model_specs[0]
     cache_dir = _get_cache_dir_for_model_mem(llm_family, llm_spec, "model_mem")
     config_file = os.path.join(cache_dir, "config.json")
@@ -441,12 +441,12 @@ def _get_cache_dir_for_model_mem(
     category: str,
     create_if_not_exist=True,
 ):
-    """
-    Get file dir for special usage, like `cal-model-mem` and download partial files for
+    ''
 
-    e.g. for cal-model-mem, (might called from supervisor / cli)
-    Temporary use separate dir from worker's cache_dir, due to issue of different style of symlink.
-    """
+
+
+
+
     cache_dir_name = (
         f"{llm_family.model_name}-{llm_spec.model_format}"
         f"-{llm_spec.model_size_in_billions}b-{llm_spec.quantization}"
@@ -501,24 +501,24 @@ def match_llm(
         Literal["huggingface", "modelscope", "openmind_hub", "csghub"]
     ] = None,
 ) -> Optional[LLMFamilyV2]:
-    """
-    Find an LLM family, spec, and quantization that satisfy given criteria.
-    """
+    ''
+
+
     from .custom import get_user_defined_llm_families
 
     user_defined_llm_families = get_user_defined_llm_families()
 
     def _match_quantization(q: Union[str, None], quant: str):
-        # Currently, the quantization name could include both uppercase and lowercase letters,
-        # so it is necessary to ensure that the case sensitivity does not
-        # affect the matching results.
+
+
+
         if q is None or q.lower() != quant.lower():
             return None
         return quant
 
     def _apply_format_to_model_id(_spec: "LLMSpecV1", q: str) -> "LLMSpecV1":
-        # Different quantized versions of some models use different model ids,
-        # Here we check the `{}` in the model id to format the id.
+
+
         if _spec.model_id and "{" in _spec.model_id:
             _spec.model_id = _spec.model_id.format(quantization=q)
         return _spec
@@ -528,15 +528,15 @@ def match_llm(
     ) -> List["LLMSpecV1"]:
         return [x for x in _model_specs if x.model_hub == hub]
 
-    # priority: download_hub > download_from_modelscope() and download_from_csghub()
-    # set base model
+
+
     families = BUILTIN_LLM_FAMILIES + user_defined_llm_families
 
     for family in families:
         if model_name != family.model_name:
             continue
 
-        # prepare possible quantization matching options
+
         if download_hub is not None:
             if download_hub == "huggingface":
                 model_specs = _get_model_specs(family.model_specs, download_hub)
@@ -561,7 +561,7 @@ def match_llm(
                 model_specs = _get_model_specs(family.model_specs, "huggingface")
 
         for spec in model_specs:
-            # check model_format and model_size_in_billions
+
             if (
                 model_format
                 and model_format != spec.model_format
@@ -572,7 +572,7 @@ def match_llm(
             ):
                 continue
 
-            # Check quantization
+
             matched_quantization = _match_quantization(quantization, spec.quantization)
             if quantization and matched_quantization is None:
                 continue
@@ -583,7 +583,7 @@ def match_llm(
                 ]
                 return _llm_family
             else:
-                # TODO: If user does not specify quantization, just use the first one
+
                 _q = "none" if spec.model_format == "pytorch" else spec.quantization
                 _llm_family.model_specs = [_apply_format_to_model_id(spec, _q)]
                 return _llm_family

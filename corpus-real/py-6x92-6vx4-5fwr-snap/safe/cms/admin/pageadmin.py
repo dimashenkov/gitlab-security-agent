@@ -89,8 +89,8 @@ from cms.utils.urlutils import admin_reverse, static_with_version
 
 require_POST = method_decorator(require_POST)
 
-# Lazily-evaluated format_html so translatable admin labels containing markup are
-# resolved at render time (and in the active language), not at import time.
+
+
 format_html_lazy = lazy(format_html, str)
 
 
@@ -108,18 +108,18 @@ def get_site(request):
 
 
 class PageDeleteMessageMixin:
-    """Expressive and simplified delete confirmation message for pages and translations."""
+    ''
 
     delete_confirmation_template = "admin/cms/page/delete_confirmation.html"
 
     def get_deleted_objects(self, objs, request):
-        """Minimize complexity of delete selected confirmation: Only show pages, page contents and plugins numbers,
-        only show Page and PageContent objects in the details.
-        """
+        ''
+
+
 
         def recursively_remove(deleted_objects: list | str) -> list | str:
-            """Remove all objects that are not Page or PageContent from the nested list of deleted objects.
-            Reformat the messages."""
+            ''
+
             if isinstance(deleted_objects, str):
                 return deleted_objects
             result = []
@@ -141,7 +141,7 @@ class PageDeleteMessageMixin:
             return result
 
         if len(objs) == 1 and isinstance(objs[0], PageContent):
-            # Always look for all page/language combinations
+
             objs = list(PageContent.admin_manager.filter(page=objs[0].page, language=objs[0].language))
 
         to_delete, trad_model_count, perms_needed, protected = super().get_deleted_objects(objs, request)
@@ -167,19 +167,19 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
     title_frontend_editable_fields = ["title", "menu_title", "page_title"]
 
     def has_module_permission(self, request):
-        return False  # Hides page model from the admin index
+        return False
 
     def has_add_permission(self, request):
         return False
 
     def has_change_permission(self, request, obj=None):
-        """
-        Return true if the current user has permission on the page.
-        Return the string 'All' if the user has all rights.
-        """
+        ''
+
+
+
         site = get_site(request)
         if obj is None:
-            # Checks if user can change at least one page
+
             return page_permissions.user_can_change_at_least_one_page(
                 user=request.user,
                 site=site,
@@ -193,12 +193,12 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return page_permissions.user_can_change_page_advanced_settings(request.user, page=obj, site=site)
 
     def log_deletion(self, request, object, object_repr):
-        # DJANGO_42
-        # Block the admin log for deletion. A signal takes care of this!
+
+
         return
 
     def log_deletions(self, request, queryset):
-        # Block the admin log for deletion. A signal takes care of this!
+
         return
 
     def get_admin_url(self, action, *args):
@@ -206,10 +206,10 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return admin_reverse(url_name, args=args)
 
     def get_preserved_filters(self, request):
-        """
-        This override is in place to preserve the "language" get parameter in
-        the "Save" page redirect
-        """
+        ''
+
+
+
         site = get_site(request)
         preserved_filters_encoded = super().get_preserved_filters(request)
         preserved_filters = QueryDict(preserved_filters_encoded).copy()
@@ -235,7 +235,7 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return page
 
     def get_urls(self):
-        """Get the admin urls"""
+        ''
         info = f"{self.model._meta.app_label}_{self.model._meta.model_name}"
 
         def pat(regex, fn):
@@ -248,7 +248,7 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
             pat(r"^([0-9]+)/advanced-settings/$", self.advanced),
             pat(r"^([0-9]+)/move-page/$", self.move_page),
             pat(r"^([0-9]+)/copy-page/$", self.copy_page),
-            pat(r"^([0-9]+)/dialog/copy/$", self.get_copy_dialog),  # copy dialog
+            pat(r"^([0-9]+)/dialog/copy/$", self.get_copy_dialog),
             pat(r"^([0-9]+)/permissions/$", self.get_permissions),
             pat(r"^([0-9]+)/set-home/$", self.set_home),
         ]
@@ -268,10 +268,10 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return []
 
     def get_form(self, request, obj=None, **kwargs):
-        """
-        Get PageForm for the Page model and modify its fields depending on
-        the request.
-        """
+        ''
+
+
+
         form = super().get_form(request, obj, **kwargs)
         form._site = get_site(request)
         form._request = request
@@ -322,10 +322,10 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return self.change_view(request, object_id, extra_context=context)
 
     def response_post_save_change(self, request, obj):
-        """
-        Figure out where to redirect after the 'Save' button has been pressed
-        when adding a new object.
-        """
+        ''
+
+
+
         can_change_any_page = page_permissions.user_can_change_at_least_one_page(
             user=request.user,
             site=get_site(request),
@@ -355,8 +355,8 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
 
         new_home_tree, old_home_tree = page.set_as_homepage(request.user)
 
-        # Check if one of the affected pages either from the old homepage
-        # or the homepage had an apphook attached
+
+
         if old_home_tree:
             apphooks_affected = old_home_tree.has_apphooks()
         else:
@@ -366,15 +366,15 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
             apphooks_affected = new_home_tree.has_apphooks()
 
         if apphooks_affected:
-            # One or more pages affected by this operation was attached to an apphook.
-            # As a result, fire the apphook reload signal to reload the url patterns.
+
+
             set_restart_trigger()
         return HttpResponse("ok")
 
     def get_list(self, *args, **kwargs):
-        """
-        This view is used by the PageSmartLinkWidget as the user type to feed the autocomplete drop-down.
-        """
+        ''
+
+
         request = args[0]
 
         if request.headers.get("x-requested-with") == "XMLHttpRequest":
@@ -405,10 +405,10 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return HttpResponseRedirect(admin_reverse("cms_pagecontent_changelist") + parameter)
 
     def response_delete(self, request, obj_display, obj_id):
-        """
-        Determine the HttpResponse for the delete_view stage. Clear the user's permission
-        lru cache
-        """
+        ''
+
+
+
         clear_permission_lru_caches(request.user)
         return super().response_delete(request, obj_display, obj_id)
 
@@ -423,7 +423,7 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
             descendant_ids = obj.get_descendants().values_list("id", flat=True)
             cms_pages.extend(self.model.objects.filter(id__in=descendant_ids))
 
-        # Delete all associated pages contents
+
         ct_page_content = ContentType.objects.get_for_model(PageContent)
         page_content_objs = PageContent.admin_manager.filter(page__in=cms_pages).values_list("pk", flat=True)
         placeholders = Placeholder.objects.filter(
@@ -491,7 +491,7 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
 
         context = {
             "dialog_id": "dialog-copy",
-            "form": CopyPermissionForm(),  # class needs to be instantiated
+            "form": CopyPermissionForm(),
             "opts": self.opts,
         }
         return render(request, "admin/cms/page/tree/copy_premissions.html", context)
@@ -516,9 +516,9 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return page_permissions.user_can_change_page_permissions(request.user, page=obj, site=site)
 
     def has_delete_permission(self, request, obj=None):
-        """
-        Returns True if the current user has permission to delete the page.
-        """
+        ''
+
+
         if not obj:
             return False
         site = get_site(request)
@@ -533,26 +533,26 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
     @require_POST
     @transaction.atomic
     def move_page(self, request, page_id, extra_context=None):
-        """
-        Move the page to the requested target, at the given position.
+        ''
 
-        NOTE: We have to change from one "coordinate system" to another to
-        adapt JSTree to Django Treebeard.
 
-        If the Tree looks like this:
 
-            <root>
-               ⊢ …
-               ⊢ …
-               ⊢ Page 4
-                   ⊢ Page 5 (position 0)
-                   ⊢ …
 
-        For example,
-            target=4, position=1 => target=5, position="right"
-            target=4, position=0 => target=4, position="first-child"
 
-        """
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         site = get_site(request)
         page = self.get_object(request, object_id=page_id)
 
@@ -568,7 +568,7 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         target = form.cleaned_data["target"]
         can_move_page = self.has_move_page_permission(request, obj=page)
 
-        # Does the user have permissions to do this...?
+
         if not can_move_page or (target and not target.has_add_permission(user)):
             message = _("Error! You don't have permissions to move this page. Please reload the page")
             return jsonify_request(HttpResponseForbidden(message))
@@ -642,10 +642,10 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
     @require_POST
     @transaction.atomic
     def copy_page(self, request, page_id):
-        """
-        Copy the page and all its plugins and descendants to the requested
-        target, at the given position
-        """
+        ''
+
+
+
         page = self.get_page_from_id(page_id)
 
         if page is None:
@@ -661,15 +661,15 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         target = form.cleaned_data["target"]
         source_site = form.cleaned_data["source_site"]
 
-        # User can only copy pages he can see
+
         can_copy_page = page_permissions.user_can_view_page(user, page, source_site)
 
         if can_copy_page and target:
-            # User can only copy a page into another one if he has permission
-            # to add a page under the target page.
+
+
             can_copy_page = page_permissions.user_can_add_subpage(user, target, site)
         elif can_copy_page:
-            # User can only copy / paste a page if he has permission to add a page
+
             can_copy_page = page_permissions.user_can_add_page(user, site)
 
         if not can_copy_page:
@@ -709,13 +709,13 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         opts = PageContent._meta
 
         if not edit_fields:
-            # Defaults to title
+
             edit_fields = ("title",)
 
         class PageTitleForm(django.forms.ModelForm):
-            """
-            Dynamic form showing only the fields to be edited
-            """
+            ''
+
+
 
             class Meta:
                 model = PageContent
@@ -748,7 +748,7 @@ class PageAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
             "window_close_timeout": 10,
         }
         if cancel_clicked:
-            # cancel button was clicked
+
             context.update(
                 {
                     "cancel": True,
@@ -781,20 +781,20 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
     duplicate_form = DuplicatePageForm
 
     def log_addition(self, request, object, object_repr):
-        # Block the admin log for addition. A signal takes care of this!
+
         return
 
     def log_deletion(self, request, object, object_repr):
-        # DJANGO_42
-        # Block the admin log for deletion. A signal takes care of this!
+
+
         return
 
     def log_deletions(self, request, queryset):
-        # Block the admin log for deletion. A signal takes care of this!
+
         return
 
     def log_change(self, request, object, message):
-        # Block the admin log for change. A signal takes care of this!
+
         return
 
     def get_admin_url(self, action, *args):
@@ -802,10 +802,10 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return admin_reverse(url_name, args=args)
 
     def get_preserved_filters(self, request):
-        """
-        This override is in place to preserve the "language" get parameter in
-        the "Save" page redirect
-        """
+        ''
+
+
+
         site = get_site(request)
         preserved_filters_encoded = super().get_preserved_filters(request)
         preserved_filters = QueryDict(preserved_filters_encoded).copy()
@@ -823,7 +823,7 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return queryset
 
     def get_urls(self):
-        """Get the admin urls"""
+        ''
         info = f"{self.model._meta.app_label}_{self.model._meta.model_name}"
 
         def pat(regex, fn):
@@ -856,10 +856,10 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return self.add_form
 
     def get_form(self, request, obj=None, **kwargs):
-        """
-        Get PageForm for the Page model and modify its fields depending on
-        the request.
-        """
+        ''
+
+
+
         form = super().get_form(request, obj, form=self.get_form_class(request, obj), **kwargs)
         form._site = get_site(request)
         form._request = request
@@ -868,10 +868,10 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         readonly_fields = super().get_readonly_fields(request, obj)
         if obj is not None and url_is_locked(obj):
-            # The page's URL is shared with a published version (only possible
-            # with a versioning package installed). Editing the slug here would
-            # silently change the live URL, so render the slug and overwrite URL
-            # read-only. The values are supplied by the matching display methods.
+
+
+
+
             readonly_fields = (*readonly_fields, "slug", "overwrite_url")
         return readonly_fields
 
@@ -883,7 +883,7 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         )
     )
     def slug(self, obj):
-        # For read-only views: Get slug from the page content object
+
         if not hasattr(obj, "_url_obj"):
             obj._url_obj = obj.page.get_url(obj.language)
         return obj._url_obj.slug
@@ -896,7 +896,7 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         )
     )
     def overwrite_url(self, obj):
-        # For read-only views: Get the overwrite URL from the page content object
+
         if not hasattr(obj, "_url_obj"):
             obj._url_obj = obj.page.get_url(obj.language)
         if obj._url_obj.managed:
@@ -904,18 +904,18 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return obj._url_obj.path
 
     def duplicate(self, request, object_id):
-        """
-        Leverages the add view logic to duplicate the page.
-        """
+        ''
+
+
         obj = self.get_object(request, object_id=object_id)
 
         if obj is None:
             raise self._get_404_exception(object_id)
 
         if request.method == "GET":
-            # source is a field in the form
-            # because its value is in the url,
-            # we have to set the initial value manually
+
+
+
             request.GET = request.GET.copy()
             request.GET["source"] = obj.page_id
         return self.add_view(request)
@@ -935,7 +935,7 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
             cms_page = None
 
         if cms_page:
-            # Adding content for an existing page in a language it does not have yet
+
             extra_context["title"] = _("Add Translation")
         elif "duplicate" in request.path_info:
             extra_context["title"] = _("Add Page Copy")
@@ -953,9 +953,9 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return super().add_view(request, form_url, extra_context=extra_context)
 
     def change_view(self, request, object_id, form_url="", extra_context=None):
-        """
-        The 'change' admin view for the PageContent model.
-        """
+        ''
+
+
         if extra_context is None:
             extra_context = {"basic_info": True}
 
@@ -991,8 +991,8 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
 
             cache.delete(get_cache_key(request.user, "change_page"), version=get_cache_permission_version())
 
-            # redirect to the edit view if added from the toolbar
-            url = get_object_edit_url(obj)  # Redirects to preview if necessary
+
+            url = get_object_edit_url(obj)
             return HttpResponse(MODAL_HTML_REDIRECT.format(url=url))
         return super().response_add(request, obj)
 
@@ -1034,16 +1034,16 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return has_perm
 
     def has_add_permission(self, request):
-        """
-        Return true if the current user has permission to add a new page.
-        """
+        ''
+
+
         return self._has_add_permission_from_request(request)
 
     def has_change_permission(self, request, obj=None):
-        """
-        Return true if the current user has permission on the page.
-        Return the string 'All' if the user has all rights.
-        """
+        ''
+
+
+
         site = get_site(request)
 
         if obj:
@@ -1055,12 +1055,12 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return can_change_page
 
     def has_view_permission(self, request, obj=None):
-        """
-        Return true if the current user has permission on the page.
-        Return the string 'All' if the user has all rights.
-        """
-        # Identical to has_change_permission, but will remain untouched by any subclassing
-        # as done, e.g., by djangocms-versioning
+        ''
+
+
+
+
+
         site = get_site(request)
 
         if obj:
@@ -1073,9 +1073,9 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return can_view_page
 
     def has_delete_permission(self, request, obj=None):
-        """
-        Returns True if the current user has permission to delete the page.
-        """
+        ''
+
+
         if not obj:
             return False
         site = get_site(request)
@@ -1131,12 +1131,12 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
             changelist_form.full_clean()
             page_contents = changelist_form.run_filters(page_contents)
         except (ValueError, ValidationError):
-            # Wacky lookup parameters were given, so redirect to the main
-            # changelist page, without parameters, and pass an 'invalid=1'
-            # parameter via the query string. If wacky parameters were given
-            # and the 'invalid=1' parameter was already in the query string,
-            # something is screwed up with the database, so display an error
-            # page.
+
+
+
+
+
+
             if ERROR_FLAG in request.GET.keys():
                 return SimpleTemplateResponse(
                     "admin/invalid_setup.html",
@@ -1156,7 +1156,7 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         )
 
         if changelist_form.is_filtered():
-            # Evaluates the queryset
+
             has_items = len(pages) >= 1
         else:
             has_items = pages.exists()
@@ -1305,17 +1305,17 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
 
     @require_POST
     def change_innavigation(self, request, object_id):
-        """
-        Switch the in_navigation of a page
-        """
+        ''
+
+
         page_content = self.get_object(request, object_id=object_id)
 
         if not self.has_change_permission(request, obj=page_content):
             if self.has_change_permission(request):
-                # General (permission) problem
+
                 message = "You do not have permission to change a page's navigation status"
             else:
-                # Only this page? Can be permissions or versioning, or ...
+
                 message = "You cannot change this page's navigation status"
             return HttpResponseForbidden(_(message))
 
@@ -1323,16 +1323,16 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
             raise self._get_404_exception(object_id)
 
         page_content.toggle_in_navigation()
-        # 204 -> request was successful but no response returned.
+
         return HttpResponse(status=204)
 
     def get_tree(self, request):
-        """
-        Get html for the descendants (only) of given page or if no page_id is
-        provided, all the root nodes.
+        ''
 
-        Used for lazy loading pages in cms.pagetree.js
-        """
+
+
+
+
         site = get_site(request)
         pages = Page.objects.on_site(site).order_by("path")
         node_id = re.sub(r"[^\d]", "", request.GET.get("nodeId", "")) or None
@@ -1343,7 +1343,7 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         else:
             page = None
             pages = pages.filter(
-                # get all root pages or children which were previously open or children of the open descendants
+
                 Q(depth=1) | Q(depth=2, id__in=open_page_ids) | Q(parent__in=open_page_ids)
             )
         pages = pages.prefetch_related(
@@ -1363,10 +1363,10 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         return HttpResponse("".join(rows))
 
     def get_tree_rows(self, request, pages, language, depth=1, follow_descendants=True):
-        """
-        Used for rendering the page tree, inserts into context everything what
-        we need for single item
-        """
+        ''
+
+
+
         user = request.user
         site = get_site(request)
         permissions_on = get_cms_setting("PERMISSION")
@@ -1382,7 +1382,7 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
             has_move_page_permission = page_permissions.user_can_move_page(request.user, page, site=site)
 
             if permissions_on and not has_move_page_permission:
-                # TODO: check if this is really needed
+
                 metadata = '{"valid_children": False, "draggable": False}'
             else:
                 metadata = ""
@@ -1414,7 +1414,7 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         if follow_descendants:
             root_pages = (page for page in pages if page.depth == depth)
         else:
-            # When the tree is filtered, it's displayed as a flat structure
+
             root_pages = pages
 
         if depth == 1:
@@ -1425,7 +1425,7 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
             for page in root_pages:
                 yield render_page_row(page)
 
-    # Indicators in the page tree
+
     @property
     def indicator_descriptions(self):
         return {
@@ -1439,11 +1439,11 @@ class PageContentAdmin(PageDeleteMessageMixin, admin.ModelAdmin):
         if not page_content:
             return menu_template, [
                 (
-                    _("Create Content"),  # Entry
-                    "cms-icon-edit-new",  # Optional icon
+                    _("Create Content"),
+                    "cms-icon-edit-new",
                     admin_reverse("cms_pagecontent_add")
-                    + f"?cms_page={page_content.page.pk}&language={page_content.language}",  # url
-                    None,  # Optional add classes for <a>
+                    + f"?cms_page={page_content.page.pk}&language={page_content.language}",
+                    None,
                 ),
             ]
         return "", []

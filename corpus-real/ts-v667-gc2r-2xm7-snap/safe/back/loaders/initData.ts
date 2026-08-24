@@ -27,7 +27,7 @@ export default async () => {
   const userService = Container.get(UserService);
   const openService = Container.get(OpenService);
 
-  // 初始化增加系统配置
+
   let systemApp = (
     await AppModel.findOne({
       where: { name: 'system' },
@@ -94,7 +94,7 @@ export default async () => {
     }, 5000);
   };
 
-  // 初始化更新 linux/python/nodejs 镜像源配置
+
   if (systemConfig.info?.pythonMirror) {
     systemService.updatePythonMirror({
       pythonMirror: systemConfig.info?.pythonMirror,
@@ -117,7 +117,7 @@ export default async () => {
     });
   }
 
-  // 初始化新增默认全部任务视图
+
   CrontabViewModel.findAll({
     where: { type: CronViewType.系统, name: '全部任务' },
     raw: true,
@@ -131,10 +131,10 @@ export default async () => {
     }
   });
 
-  // 初始化更新所有任务状态为空闲
+
   await CrontabModel.update({ status: CrontabStatus.idle }, { where: {} });
 
-  // 初始化时执行一次所有的 ql repo 任务
+
   CrontabModel.findAll({
     where: {
       isDisabled: { [Op.ne]: 1 },
@@ -151,7 +151,7 @@ export default async () => {
     }
   });
 
-  // 更新2.11.3以前的脚本路径
+
   CrontabModel.findAll({
     where: {
       command: {
@@ -210,7 +210,7 @@ export default async () => {
     }
   });
 
-  // 初始化保存一次ck和定时任务数据
+
   await cronService.autosave_crontab();
   await envService.set_envs();
 

@@ -9,7 +9,7 @@ import (
 
 var _ error = &RequestError{}
 
-// RequestError is returned by ValidateRequest when request does not match OpenAPI spec
+
 type RequestError struct {
 	Input       *RequestValidationInput
 	Parameter   *openapi3.Parameter
@@ -43,7 +43,7 @@ func (err RequestError) Unwrap() error {
 
 var _ error = &ResponseError{}
 
-// ResponseError is returned by ValidateResponse when response does not match OpenAPI spec
+
 type ResponseError struct {
 	Input  *ResponseValidationInput
 	Reason string
@@ -70,8 +70,8 @@ func (err ResponseError) Unwrap() error {
 
 var _ error = &SecurityRequirementsError{}
 
-// SecurityRequirementsError is returned by ValidateSecurityRequirements
-// when no requirement is met.
+
+
 type SecurityRequirementsError struct {
 	SecurityRequirements openapi3.SecurityRequirements
 	Errors               []error

@@ -1,9 +1,9 @@
-# frozen_string_literal: true
+
 
 require "uri"
 
 module Savon
-  # Formats the replacement Faraday setup for one HTTPI-only option.
+
   class FaradayMigrationHint
     VALUE_AWARE_OPTIONS = %i[
       proxy

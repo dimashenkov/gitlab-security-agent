@@ -1,19 +1,19 @@
-﻿//-----------------------------------------------------------------------------
-// Filename: WebRTCWebSocketPeerAspNet.cs
-//
-// Description: This class is NOT a required component for using WebRTC. It is a
-// convenience class provided to assist when using a web socket server for the
-// WebRTC signalling.
-//
-// Author(s):
-// Aaron Clauson (aaron@sipsorcery.com)
-//
-// History:
-// 09 Apr 2025	Aaron Clauson	Created, Dublin, Ireland.
-//
-// License:
-// BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
-//-----------------------------------------------------------------------------
+﻿
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 using System;
 using System.Net.WebSockets;
@@ -24,11 +24,11 @@ using Microsoft.Extensions.Logging;
 
 namespace SIPSorcery.Net;
 
-/// <summary>
-/// This class is NOT a required component for using WebRTC. It is a convenience
-/// class provided to assist when using an ASP.NET web socket server for the WebRTC
-/// signalling.
-/// </summary>
+
+
+
+
+
 public class WebRTCWebSocketPeerAspNet
 {
     private static readonly ILogger _logger = LogFactory.CreateLogger<WebRTCWebSocketPeerAspNet>();
@@ -44,21 +44,21 @@ public class WebRTCWebSocketPeerAspNet
     private bool _keepalive = false;
     public TimeSpan KeepAliveTime = TimeSpan.FromSeconds(30);
 
-    /// <summary>
-    /// Optional property to allow the peer connection SDP offer options to be set.
-    /// </summary>
+
+
+
     public RTCOfferOptions OfferOptions { get; set; }
 
-    /// <summary>
-    /// Optional property to allow the peer connection SDP answer options to be set.
-    /// </summary>
+
+
+
     public RTCAnswerOptions AnswerOptions { get; set; }
 
-    /// <summary>
-    /// Optional filter that can be applied to remote ICE candidates. The filter is
-    /// primarily intended for use in testing. In real application scenarios it's
-    /// normally desirable to accept all remote ICE candidates.
-    /// </summary>
+
+
+
+
+
     public Func<RTCIceCandidateInit, bool> FilterRemoteICECandidates { get; set; }
 
     public Func<RTCConfiguration, Task<RTCPeerConnection>> CreatePeerConnection;
@@ -134,7 +134,7 @@ public class WebRTCWebSocketPeerAspNet
             });
         }
 
-        // Start the web socket receiving loop.
+
         await StartReceivingAsync(_cts.Token);
     }
 
@@ -248,7 +248,7 @@ public class WebRTCWebSocketPeerAspNet
     {
         _logger.LogDebug("WebSocket connection closed.");
 
-        // Cancel the receive loop.
+
         if (!_cts.IsCancellationRequested)
         {
             _cts.Cancel();
@@ -260,9 +260,9 @@ public class WebRTCWebSocketPeerAspNet
         }
     }
 
-    /// <summary>
-    /// Helper method to send a string message to the WebSocket connection.
-    /// </summary>
+
+
+
     private async Task SendMessageAsync(string message)
     {
         _logger.LogDebug("{name} sending message to remote web socket client.", nameof(WebRTCWebSocketPeerAspNet));

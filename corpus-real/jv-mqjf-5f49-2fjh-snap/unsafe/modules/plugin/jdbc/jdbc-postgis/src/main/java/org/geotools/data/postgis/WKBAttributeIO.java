@@ -1,19 +1,19 @@
-/*
- *    GeoTools - The Open Source Java GIS Toolkit
- *    http://geotools.org
- *
- *    (C) 2002-2008, Open Source Geospatial Foundation (OSGeo)
- *
- *    This library is free software; you can redistribute it and/or
- *    modify it under the terms of the GNU Lesser General Public
- *    License as published by the Free Software Foundation;
- *    version 2.1 of the License.
- *
- *    This library is distributed in the hope that it will be useful,
- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *    Lesser General Public License for more details.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 package org.geotools.data.postgis;
 
@@ -30,12 +30,12 @@ import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.io.ByteArrayInStream;
 import org.locationtech.jts.io.WKBWriter;
 
-/**
- * An attribute IO implementation that can manage the WKB
- *
- * @author Andrea Aime
- * @since 2.4.1
- */
+
+
+
+
+
+
 public class WKBAttributeIO {
     WKBReader wkbr;
     ByteArrayInStream inStream = new ByteArrayInStream(new byte[0]);
@@ -66,18 +66,18 @@ public class WKBAttributeIO {
         this.base64EncodingEnabled = base64EncodingEnabled;
     }
 
-    /**
-     * This method will convert a Well Known Binary representation to a JTS Geometry object.
-     *
-     * @param wkbBytes the wkb encoded byte array
-     * @return a JTS Geometry object that is equivalent to the WTB representation passed in by param wkb
-     * @throws IOException if more than one geometry object was found in the WTB representation, or if the parser could
-     *     not parse the WKB representation.
-     */
+
+
+
+
+
+
+
+
     private Geometry wkb2Geometry(byte[] wkbBytes) throws IOException {
-        if (wkbBytes == null) // DJB: null value from database --> null geometry (the same behavior as
-            // WKT).  NOTE: sending back a GEOMETRYCOLLECTION(EMPTY) is also a
-            // possibility, but this is not the same as NULL
+        if (wkbBytes == null)
+
+
             return null;
         try {
             inStream.setBytes(wkbBytes);
@@ -87,11 +87,11 @@ public class WKBAttributeIO {
         }
     }
 
-    /** @see org.geotools.data.jdbc.attributeio.AttributeIO#read(java.sql.ResultSet, int) */
+
     public Object read(ResultSet rs, String columnName) throws IOException {
         try {
             byte[] bytes = rs.getBytes(columnName);
-            if (bytes == null) // ie. its a null column -> return a null geometry!
+            if (bytes == null)
             return null;
             if (base64EncodingEnabled) {
                 bytes = Base64.decode(bytes);
@@ -102,11 +102,11 @@ public class WKBAttributeIO {
         }
     }
 
-    /** @see org.geotools.data.jdbc.attributeio.AttributeIO#read(java.sql.ResultSet, int) */
+
     public Object read(ResultSet rs, int columnIndex) throws IOException {
         try {
             byte[] bytes = rs.getBytes(columnIndex);
-            if (bytes == null) // ie. its a null column -> return a null geometry!
+            if (bytes == null)
             return null;
             if (base64EncodingEnabled) {
                 bytes = Base64.decode(bytes);
@@ -117,7 +117,7 @@ public class WKBAttributeIO {
         }
     }
 
-    /** @see org.geotools.data.jdbc.attributeio.AttributeIO#write(java.sql.PreparedStatement, int, java.lang.Object) */
+
     public void write(PreparedStatement ps, int position, Object value) throws IOException {
         try {
             if (value == null) {
@@ -130,7 +130,7 @@ public class WKBAttributeIO {
         }
     }
 
-    /** Turns a char that encodes four bits in hexadecimal notation into a byte */
+
     public static byte getFromChar(char c) {
         if (c <= '9') {
             return (byte) (c - '0');

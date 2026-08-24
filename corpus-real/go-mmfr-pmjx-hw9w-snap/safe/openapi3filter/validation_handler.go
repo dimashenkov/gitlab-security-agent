@@ -9,12 +9,12 @@ import (
 	legacyrouter "github.com/getkin/kin-openapi/routers/legacy"
 )
 
-// AuthenticationFunc allows for custom security requirement validation.
-// A non-nil error fails authentication according to https://spec.openapis.org/oas/v3.1.0#security-requirement-object
-// See ValidateSecurityRequirements
+
+
+
 type AuthenticationFunc func(context.Context, *AuthenticationInput) error
 
-// NoopAuthenticationFunc is an AuthenticationFunc
+
 func NoopAuthenticationFunc(context.Context, *AuthenticationInput) error { return nil }
 
 var _ AuthenticationFunc = NoopAuthenticationFunc
@@ -40,7 +40,7 @@ func (h *ValidationHandler) Load() error {
 		return err
 	}
 
-	// set defaults
+
 	if h.Handler == nil {
 		h.Handler = http.DefaultServeMux
 	}
@@ -58,17 +58,17 @@ func (h *ValidationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if handled := h.before(w, r); handled {
 		return
 	}
-	// TODO: validateResponse
+
 	h.Handler.ServeHTTP(w, r)
 }
 
-// Middleware implements gorilla/mux MiddlewareFunc
+
 func (h *ValidationHandler) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if handled := h.before(w, r); handled {
 			return
 		}
-		// TODO: validateResponse
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -82,7 +82,7 @@ func (h *ValidationHandler) before(w http.ResponseWriter, r *http.Request) (hand
 }
 
 func (h *ValidationHandler) validateRequest(r *http.Request) error {
-	// Find route
+
 	route, pathParams, err := h.router.FindRoute(r)
 	if err != nil {
 		return err
@@ -92,7 +92,7 @@ func (h *ValidationHandler) validateRequest(r *http.Request) error {
 		AuthenticationFunc: h.AuthenticationFunc,
 	}
 
-	// Validate request
+
 	requestValidationInput := &RequestValidationInput{
 		Request:    r,
 		PathParams: pathParams,

@@ -1,35 +1,35 @@
-# frozen_string_literal: true
+
 
 require_relative "../handle"
 require_relative "../codec"
 
 module Kobako
-  # See lib/kobako/transport.rb for the umbrella module doc; this file
-  # owns the Request value object and its +#encode+ / +.decode+ codec,
-  # plus the +STATUS_OK+ / +STATUS_ERROR+ constants shared with Response.
-  module Transport
-    # ---------------- Response status bytes (docs/wire-contract.md § Response Shape) ---
 
-    # Response variant marker for the success branch.
+
+
+  module Transport
+
+
+
     STATUS_OK    = 0
-    # Response variant marker for the fault branch.
+
     STATUS_ERROR = 1
 
-    # Value object for a single guest-initiated Transport Request
-    # ({docs/wire-codec.md Envelope Encoding → Request}[link:../../../docs/wire-codec.md]).
-    #
-    # 5-element msgpack array:
-    # +[target, method_name, args, kwargs, block_given]+. +target+ is
-    # either a +String+ (+"<Namespace>::<Member>"+, e.g. +"MyService::KV"+)
-    # or a {Handle}. SPEC pins +kwargs+ map keys to ext 0x00 Symbol;
-    # enforced at construction so the Value Object is the single source of
-    # truth. +block_given+ is a Boolean signalling whether the guest call
-    # site supplied a block (B-23); the block body itself never crosses the
-    # wire.
-    #
-    # Built on the +class X < Data.define(...)+ subclass form so the
-    # class body is fully Steep-visible; see +lib/kobako/outcome/panic.rb+
-    # for the rationale.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     class Request < Data.define(:target, :method_name, :args, :kwargs, :block_given)
       def initialize(target:, method_name:, args: [], kwargs: {}, block_given: false)
         unless target.is_a?(String) || target.is_a?(Kobako::Handle)
@@ -45,15 +45,15 @@ module Kobako
         super
       end
 
-      # Encode this Request to msgpack bytes. The Value Object's own
-      # invariants are the contract; this method does not re-check the shape.
+
+
       def encode
         Codec::Encoder.encode([target, method_name, args, kwargs, block_given])
       end
 
-      # Decode +bytes+ into a {Request}. Raises +Codec::InvalidType+ when the
-      # envelope is not the expected 5-element msgpack array, or when the
-      # Value Object's construction invariants reject the decoded fields.
+
+
+
       def self.decode(bytes)
         Codec::Decoder.decode(bytes) do |arr|
           unless arr.is_a?(Array) && arr.length == 5

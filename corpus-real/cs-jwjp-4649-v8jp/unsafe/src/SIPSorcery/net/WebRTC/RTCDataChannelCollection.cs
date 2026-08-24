@@ -74,9 +74,9 @@ namespace SIPSorcery.Net
             {
                 unchecked
                 {
-                    //  The SCTP stream identifier 65535 is reserved due to SCTP INIT and
-                    // INIT - ACK chunks only allowing a maximum of 65535 streams to be
-                    // negotiated(0 - 65534) - https://tools.ietf.org/html/rfc8832
+
+
+
                     if (lastChannelId == ushort.MaxValue - 3)
                         lastChannelId += 4;
                     else

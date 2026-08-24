@@ -54,10 +54,10 @@ class SettingsAdmin(admin.ModelAdmin):
         return super().change_view(request, str(obj.pk))
 
     def session_store(self, request):
-        """
-        either POST or GET
-        POST should have a settings parameter
-        """
+        ''
+
+
+
         if not request.user.is_staff:
             return HttpResponse(json.dumps(""),
                                 content_type="application/json")
@@ -108,17 +108,17 @@ class SettingsAdmin(admin.ModelAdmin):
         obj.save()
 
     def response_post_save_change(self, request, obj):
-        #
-        # When the user changes his language setting, we need to do two things:
-        # 1. Change the language-prefix for the sideframed admin view
-        # 2. Reload the whole window so that the new language affects the
-        #    toolbar, etc.
-        #
-        # To do this, we first redirect the sideframe to the correct new, URL,
-        # but we pass a GET param 'reload_window', which instructs JS on that
-        # page to strip (to avoid infinite redirection loops) that param then
-        # reload the whole window again.
-        #
+
+
+
+
+
+
+
+
+
+
+
         with override(obj.language):
             post_url = admin_reverse(
                 'cms_usersettings_change',
@@ -133,7 +133,7 @@ class SettingsAdmin(admin.ModelAdmin):
         return False
 
     def get_model_perms(self, request):
-        """
-        Return empty perms dict thus hiding the model from admin index.
-        """
+        ''
+
+
         return {}

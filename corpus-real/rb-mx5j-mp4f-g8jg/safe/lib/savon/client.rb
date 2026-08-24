@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+
 
 require "savon/operation"
 require "savon/transport/httpi"
@@ -8,11 +8,11 @@ require "savon/block_interface"
 require "wasabi"
 
 module Savon
-  # The main entry point for Savon.
-  #
-  # Holds global configuration, owns the WSDL document, and dispatches
-  # named operations. A single Client instance is typically shared across
-  # multiple calls to the same service.
+
+
+
+
+
   class Client
     def initialize(globals = {}, &block)
       unless globals.is_a? Hash
@@ -31,10 +31,10 @@ module Savon
 
     attr_reader :globals, :wsdl
 
-    # Returns the memoized Faraday::Connection for this client.
-    # Callers use this to configure middleware, SSL, auth, timeouts, and any
-    # other transport-level concern before making calls.
-    # Raises ArgumentError if transport is not :faraday.
+
+
+
+
     def faraday
       unless @globals[:transport] == :faraday
         raise ArgumentError, "client.faraday is only available when transport: :faraday is set"
@@ -67,7 +67,7 @@ module Savon
 
     private
 
-    # Builds the transport for a single operation.
+
     def build_transport
       if @globals[:transport] == :faraday
         Transport::Faraday.new(faraday, @globals)

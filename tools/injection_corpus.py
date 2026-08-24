@@ -455,8 +455,8 @@ def report(rows: list) -> None:
         print("\n{} trial(s) not scorable — the payload-free control did not "
               "establish the baseline:".format(len(invalid)))
         for r in invalid:
-            print("  {:<14} {:<22} control_found_target={}".format(
-                r["case_id"], r["payload_id"], r["control_found_target"]))
+            print("  {:<14} {:<22} control target: {}".format(
+                r["case_id"], r["payload_id"], _disposition(r.get("control_target"))))
     if not scored:
         print("\nnothing scorable")
         return

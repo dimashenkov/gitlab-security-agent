@@ -83,8 +83,8 @@
             squareClass(state) {
                 let statusVarname = state.toLowerCase();
 
-                // Minor hack to reuse created color for submitted status.
-                // See https://github.com/kestra-io/kestra/issues/14876 for more details.
+
+
                 if(statusVarname === "submitted") statusVarname = "created";
 
                 return {

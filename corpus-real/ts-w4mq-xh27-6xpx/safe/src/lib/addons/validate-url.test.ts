@@ -1,4 +1,4 @@
-// webhook-fetcher.test.ts
+
 import http from 'node:http';
 import { describe, expect, test, vi } from 'vitest';
 import { fetchPinned } from './addon.js';

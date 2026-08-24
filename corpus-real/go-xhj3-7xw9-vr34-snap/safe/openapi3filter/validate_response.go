@@ -1,4 +1,4 @@
-// Package openapi3filter validates that requests and inputs request an OpenAPI 3 specification file.
+
 package openapi3filter
 
 import (
@@ -13,20 +13,20 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// ValidateResponse is used to validate the given input according to previous
-// loaded OpenAPIv3 spec. If the input does not match the OpenAPIv3 spec, a
-// non-nil error will be returned.
-//
-// Note: One can tune the behavior of uniqueItems: true verification
-// by registering a custom function with openapi3.RegisterArrayUniqueItemsChecker
+
+
+
+
+
+
 func ValidateResponse(ctx context.Context, input *ResponseValidationInput) error {
 	if req := input.RequestValidationInput.Request; req.Method == http.MethodHead {
 		return nil
 	}
 	status := input.Status
 
-	// These status codes will never be validated.
-	// TODO: The list is probably missing some.
+
+
 	switch status {
 	case http.StatusNotModified,
 		http.StatusPermanentRedirect,
@@ -40,17 +40,17 @@ func ValidateResponse(ctx context.Context, input *ResponseValidationInput) error
 		options = &Options{}
 	}
 
-	// Find input for the current status
+
 	responses := route.Operation.Responses
 	if responses.Len() == 0 {
 		return nil
 	}
-	responseRef := responses.Status(status) // Response
+	responseRef := responses.Status(status)
 	if responseRef == nil {
-		responseRef = responses.Default() // Default input
+		responseRef = responses.Default()
 	}
 	if responseRef == nil {
-		// By default, status that is not documented is allowed.
+
 		if !options.IncludeResponseStatus {
 			return nil
 		}
@@ -71,7 +71,7 @@ func ValidateResponse(ctx context.Context, input *ResponseValidationInput) error
 	if options.ExcludeWriteOnlyValidations {
 		opts = append(opts, openapi3.DisableWriteOnlyValidation())
 	}
-	// Append additional schema validation options (e.g., document-scoped format validators)
+
 	opts = append(opts, options.SchemaValidationOptions...)
 	if route.Spec.IsOpenAPI31OrLater() {
 		opts = append(opts, openapi3.EnableJSONSchema2020())
@@ -92,13 +92,13 @@ func ValidateResponse(ctx context.Context, input *ResponseValidationInput) error
 	}
 
 	if options.ExcludeResponseBody {
-		// A user turned off validation of a response's body.
+
 		return nil
 	}
 
 	content := response.Content
 	if len(content) == 0 {
-		// An operation does not contains a validation schema for responses with this status code.
+
 		return nil
 	}
 
@@ -112,22 +112,22 @@ func ValidateResponse(ctx context.Context, input *ResponseValidationInput) error
 	}
 
 	if contentType.Schema == nil {
-		// An operation does not contains a validation schema for responses with this status code.
+
 		return nil
 	}
 
-	// Read response's body.
+
 	body := input.Body
 
-	// Response would contain partial or empty input body
-	// after we begin reading.
-	// Ensure that this doesn't happen.
+
+
+
 	input.Body = nil
 
-	// Ensure we close the reader
+
 	defer body.Close()
 
-	// Read all
+
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return &ResponseError{
@@ -137,7 +137,7 @@ func ValidateResponse(ctx context.Context, input *ResponseValidationInput) error
 		}
 	}
 
-	// Put the data back into the response.
+
 	input.SetBodyBytes(data)
 
 	encFn := func(name string) *openapi3.Encoding { return contentType.Encoding[name] }
@@ -150,7 +150,7 @@ func ValidateResponse(ctx context.Context, input *ResponseValidationInput) error
 		}
 	}
 
-	// Validate data with the schema.
+
 	if err := contentType.Schema.Value.VisitJSON(value, append(opts, openapi3.VisitAsResponse())...); err != nil {
 		schemaId := getSchemaIdentifier(contentType.Schema)
 		schemaId = prependSpaceIfNeeded(schemaId)
@@ -203,9 +203,9 @@ func validateResponseHeader(headerName string, headerRef *openapi3.HeaderRef, in
 	return nil
 }
 
-// getSchemaIdentifier gets something by which a schema could be identified.
-// A schema by itself doesn't have a true identity field. This function makes
-// a best effort to get a value that can fill that void.
+
+
+
 func getSchemaIdentifier(schema *openapi3.SchemaRef) string {
 	var id string
 

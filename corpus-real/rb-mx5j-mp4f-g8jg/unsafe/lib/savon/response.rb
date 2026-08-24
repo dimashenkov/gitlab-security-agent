@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+
 
 require "nori"
 require "savon/soap_fault"

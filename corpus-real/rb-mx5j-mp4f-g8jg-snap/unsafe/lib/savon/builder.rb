@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+
 
 require "savon/header"
 require "savon/message"
@@ -41,7 +41,7 @@ module Savon
     def build_document
       xml_result = build_xml
 
-      # if we have a signature sign the document
+
       if @signature
         @signature.document = xml_result
 
@@ -53,8 +53,8 @@ module Savon
         xml_result = @signature.document
       end
 
-      # if there are attachments for the request, we should build a multipart message according to
-      # https://www.w3.org/TR/SOAP-attachments
+
+
       if @locals[:attachments]
         build_multipart_message(xml_result)
       else
@@ -70,10 +70,10 @@ module Savon
       @body_attributes ||= @signature.nil? ? {} : @signature.body_attributes
     end
 
-    # Returns the request body as a String. When the caller supplies a pre-built
-    # envelope via the :xml local option it is used verbatim, but it must still
-    # be wrapped in a multipart message when :attachments are present.
-    # Otherwise the attachments are silently dropped.
+
+
+
+
     def to_s
       if @locals.include?(:xml)
         xml = @locals[:xml]
@@ -103,8 +103,8 @@ module Savon
 
       unless (identifier = namespace_by_uri(uri))
         wsdl_identifier = @wsdl.document? ? @wsdl.parser.namespaces.key(uri) : nil
-        # The prefix may already be taken by the target namespace or a user-supplied
-        # :namespaces override - fall back to ins0, ins1... rather than overwriting it.
+
+
         wsdl_identifier = nil if wsdl_identifier && namespaces.key?("xmlns:#{wsdl_identifier}")
         identifier = wsdl_identifier || "ins#{@internal_namespace_count}"
         namespaces["xmlns:#{identifier}"] = uri
@@ -122,11 +122,11 @@ module Savon
       @namespaces ||= begin
         namespaces = SCHEMA_TYPES.dup
 
-        # check namespace_identifier
+
         namespaces["xmlns#{namespace_identifier.nil? ? '' : ":#{namespace_identifier}"}"] =
           @globals[:namespace] || @wsdl.namespace
 
-        # check env_namespace
+
         namespaces["xmlns#{env_namespace && env_namespace != '' ? ":#{env_namespace}" : ''}"] =
           SOAP_NAMESPACE[@globals[:soap_version]]
 
@@ -197,7 +197,7 @@ module Savon
 
     def message
       element_form_default = @globals[:element_form_default] || @wsdl.element_form_default
-      # TODO: clean this up! [dh, 2012-12-17]
+
       Message.new(message_tag, namespace_identifier, @types, @used_namespaces, @locals[:message],
                   element_form_default, @globals[:convert_request_keys_to], @globals[:unwrap])
     end
@@ -253,8 +253,8 @@ module Savon
 
       multipart_message.ready_to_send!
 
-      # the mail.body.encoded algorithm reorders the parts, default order is [ "text/plain", "text/enriched", "text/html" ]
-      # should redefine the sort order, because the soap request xml should be the first
+
+
       multipart_message.body.set_sort_order ["text/xml"]
 
       multipart_message.body.encoded(multipart_message.content_transfer_encoding)
@@ -265,12 +265,12 @@ module Savon
       xml_part = Mail::Part.new do
         content_type 'text/xml'
         body message_xml
-        # in Content-Type the start parameter is recommended (RFC 2387)
+
         content_id '<soap-request-body@soap>'
       end
       multipart_message.add_part xml_part
 
-      # request.headers["Content-Type"] = "multipart/related; boundary=\"#{multipart_message.body.boundary}\"; type=\"text/xml\"; start=\"#{xml_part.content_id}\""
+
       @multipart = {
         multipart_boundary: multipart_message.body.boundary,
         start: xml_part.content_id
@@ -281,13 +281,13 @@ module Savon
 
     def add_attachments_to_multipart_message(multipart_message)
       if @locals[:attachments].is_a? Hash
-        # hash example: { 'att1' => '/path/to/att1', 'att2' => '/path/to/att2' }
+
         @locals[:attachments].each do |identifier, attachment|
           add_attachment_to_multipart_message(multipart_message, attachment, identifier)
         end
       elsif @locals[:attachments].is_a? Array
-        # array example: [ '/path/to/att1', '/path/to/att2' ]
-        # array example: [ { filename: 'att1.xml', content: '<x/>' }, { filename: 'att2.xml', content: '<y/>' } ]
+
+
         @locals[:attachments].each do |attachment|
           add_attachment_to_multipart_message(multipart_message, attachment, attachment.is_a?(String) ? File.basename(attachment) : attachment[:filename])
         end

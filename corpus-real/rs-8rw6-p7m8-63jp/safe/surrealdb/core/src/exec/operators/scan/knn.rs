@@ -1,8 +1,8 @@
-//! KNN scan operator for ANN index-backed vector search.
-//!
-//! This operator performs approximate nearest-neighbor search using an ANN
-//! index. It retrieves the top-K records closest to a query vector, ordered by
-//! distance (nearest first).
+
+
+
+
+
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -29,48 +29,48 @@ use crate::iam::Action;
 use crate::kvs::CachePolicy;
 use crate::val::Number;
 
-/// KNN scan operator using an ANN index.
-///
-/// Executes an approximate nearest-neighbor search against an ANN index
-/// and returns the top-K matching records ordered by distance.
+
+
+
+
 #[derive(Debug)]
 pub struct KnnScan {
-	/// Reference to the ANN index definition
+
 	pub index_ref: IndexRef,
-	/// The query vector to search for nearest neighbors of
+
 	pub vector: Vec<Number>,
-	/// Number of nearest neighbors to return
+
 	pub k: u32,
-	/// ANN search expansion factor
+
 	pub ef: u32,
-	/// Table name for record fetching
+
 	pub table_name: crate::val::TableName,
-	/// Optional VERSION timestamp for time-travel queries.
+
 	pub(crate) version: Option<Arc<dyn PhysicalExpr>>,
-	/// Plan-time resolved table context. When present, `execute()` skips
-	/// runtime table def + permission lookup.
+
+
 	pub(crate) resolved: Option<ResolvedTableContext>,
-	/// Per-operator runtime metrics for EXPLAIN ANALYZE.
+
 	pub(crate) metrics: Arc<OperatorMetrics>,
-	/// KNN distance context, shared with IndexFunctionExec for vector::distance::knn().
+
 	pub(crate) knn_context: Option<Arc<crate::exec::function::KnnContext>>,
-	/// Residual WHERE condition (non-KNN predicates) to push down into ANN
-	/// search. When present, the ANN search will only consider candidates that
-	/// satisfy this condition, preventing non-matching rows from consuming
-	/// top-K slots.
-	///
-	/// SECURITY: the cond is evaluated against raw stored records inside the
-	/// ANN search (`idx/trees/{hnsw,diskann}/filter.rs::is_record_truthy`),
-	/// before any SELECT pipeline filtering. The permission gate that keeps
-	/// this safe lives at that chokepoint, which applies the table's SELECT
-	/// permission to each candidate BEFORE invoking the cond — so hidden
-	/// rows are skipped pre-cond and a record user cannot use the cond to
-	/// probe their field values. Preserve that ordering when touching
-	/// `is_record_truthy`; see the SECURITY note there for the threat model.
+
+
+
+
+
+
+
+
+
+
+
+
+
 	pub(crate) residual_cond: Option<Cond>,
-	/// Projection-aware field set for computed-field materialization.
-	/// Outer `None` = sub-operator mode (parent handles fields).
-	/// `Some(None)` = all fields, `Some(Some(set))` = specific fields.
+
+
+
 	pub(crate) needed_fields: Option<Option<HashSet<String>>>,
 }
 
@@ -102,7 +102,7 @@ impl KnnScan {
 		}
 	}
 
-	/// Set the plan-time resolved table context.
+
 	pub(crate) fn with_resolved(mut self, resolved: ResolvedTableContext) -> Self {
 		self.resolved = Some(resolved);
 		self
@@ -120,12 +120,12 @@ impl ExecOperator for KnnScan {
 			("ef".to_string(), self.ef.to_string()),
 			("dimension".to_string(), self.vector.len().to_string()),
 		];
-		// Surface the residual WHERE that is pushed into the ANN search as a
-		// cond filter, so EXPLAIN shows it on the KnnScan line — mirroring how
-		// `TableScan` exposes its `predicate`. Without this, an indexed KNN
-		// with a pushed-down filter is indistinguishable in the plan from one
-		// without. Render the inner expression rather than the `Cond` to avoid
-		// a redundant `WHERE` prefix (matching TableScan's `to_sql()` output).
+
+
+
+
+
+
 		if let Some(cond) = &self.residual_cond {
 			attrs.push(("predicate".to_string(), cond.0.to_sql()));
 		}
@@ -151,13 +151,13 @@ impl ExecOperator for KnnScan {
 	fn execute(&self, ctx: &ExecutionContext) -> FlowResult<ValueBatchStream> {
 		let db_ctx = ctx.database()?.clone();
 
-		// Validate record user has access to this namespace/database
+
 		validate_record_user_access(&db_ctx)?;
 
-		// Check if we need to enforce permissions
+
 		let check_perms = should_check_perms(&db_ctx, Action::View)?;
 
-		// Clone for the async block
+
 		let index_ref = self.index_ref.clone();
 		let vector = self.vector.clone();
 		let k = self.k;
@@ -171,13 +171,13 @@ impl ExecOperator for KnnScan {
 		let ctx = ctx.clone();
 
 		let stream = async_stream::try_stream! {
-			// Get namespace and database context
+
 			let db_ctx = ctx.database().context("KnnScan requires database context")?;
 			let ns = Arc::clone(&db_ctx.ns_ctx.ns);
 			let db = Arc::clone(&db_ctx.db);
 			let txn = ctx.txn();
 
-			// Evaluate VERSION expression
+
 			let version: Option<u64> = match &version_expr {
 				Some(expr) => {
 					let eval_ctx = crate::exec::EvalContext::from_exec_ctx(&ctx);
@@ -191,11 +191,11 @@ impl ExecOperator for KnnScan {
 				None => ctx.version_stamp(),
 			};
 
-			// Get the FrozenContext from the root context
+
 			let root = ctx.root();
 			let frozen_ctx = &root.ctx;
 
-			// Resolve table permissions and table_id: plan-time fast path or runtime fallback
+
 			let (select_permission, table_id) = if let Some(ref res) = resolved {
 				let perm = res.select_permission(check_perms);
 				(perm, res.table_def.table_id)
@@ -228,14 +228,14 @@ impl ExecOperator for KnnScan {
 				(select_permission, table_def.table_id)
 			};
 
-			// Early exit if denied
+
 			if matches!(select_permission, PhysicalPermission::Deny) {
 				return;
 			}
 
-			// Resolve field state for computed fields and field-level
-			// permissions. When needed_fields is None (sub-operator mode),
-			// the parent operator handles field processing.
+
+
+
 			let field_state = match &needed_fields {
 				Some(nf) => {
 					if let Some(ref res) = resolved {
@@ -249,11 +249,11 @@ impl ExecOperator for KnnScan {
 				None => super::pipeline::FieldState::empty(),
 			};
 
-			// Get the ANN parameters from the index definition
+
 			let index_def = index_ref.definition();
 			let knn_results = match &index_def.index {
 				Index::Hnsw(hnsw_params) => {
-					// Obtain the shared HNSW index
+
 					let hnsw_index = frozen_ctx
 						.get_index_stores()
 						.get_index_hnsw(
@@ -267,7 +267,7 @@ impl ExecOperator for KnnScan {
 						.await
 						.context("Failed to get HNSW index")?;
 
-					// Ensure the HNSW index state is current
+
 					hnsw_index
 						.check_state(frozen_ctx)
 						.await
@@ -360,9 +360,9 @@ impl ExecOperator for KnnScan {
 			};
 
 			let mut rids = Vec::with_capacity(knn_results.len());
-			// Populate KNN distance context (if present) before yielding records.
-			// This makes distances available to vector::distance::knn() during
-			// downstream projection evaluation.
+
+
+
 			if let Some(ref knn_ctx) = knn_context {
 				for (rid, distance, _) in &knn_results {
 					knn_ctx.insert(rid.as_ref().clone(), Number::Float(*distance)).await;
@@ -374,8 +374,8 @@ impl ExecOperator for KnnScan {
 				}
 			}
 
-			// Table-level permissions are handled by fetch_and_filter_records_batch.
-			// The pipeline handles computed fields and field-level permissions.
+
+
 			let mut pipeline = ScanPipeline::new(
 				PhysicalPermission::Allow,
 				None,
@@ -385,7 +385,7 @@ impl ExecOperator for KnnScan {
 				0,
 			);
 
-			// Batch-fetch all records and apply permission filtering
+
 			let mut values = fetch_and_filter_records_batch(
 				&ctx,
 				&txn,

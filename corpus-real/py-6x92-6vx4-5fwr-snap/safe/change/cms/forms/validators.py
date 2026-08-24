@@ -12,7 +12,7 @@ from django.utils.translation import gettext
 from cms.utils.urlutils import admin_reverse, relative_url_regex
 
 if TYPE_CHECKING:
-    # Only needed for type hinting - avoid circular import
+
     from cms.models.pagemodel import Page
 
 
@@ -22,21 +22,21 @@ def validate_relative_url(value):
 
 def validate_url(value):
     try:
-        # Validate relative urls first
+
         validate_relative_url(value)
     except ValidationError:
-        # Fallback to absolute urls
+
         URLValidator()(value)
     else:
-        # ``relative_url_regex`` only constrains the *characters* of a relative
-        # path, not the part before the first slash. Values such as
-        # ``javascript:alert(1)/x``, ``data:text/html,...`` or ``vbscript:.../x``
-        # therefore match the relative branch while still carrying a scheme that
-        # executes script when the value is later rendered into an ``href``
-        # (CWE-79). A genuine relative URL has no scheme, so reject any value
-        # that does. (Off-site targets such as ``https://example.com`` or
-        # ``//example.com`` are intentionally permitted -- this field allows
-        # absolute redirects -- and navigate rather than execute script.)
+
+
+
+
+
+
+
+
+
         if urlsplit(value).scheme:
             raise ValidationError(
                 gettext("Enter a valid relative or absolute URL."),
@@ -47,7 +47,7 @@ def validate_url(value):
 def validate_url_uniqueness(
     site, path: str, language: str, user_language: str | None = None, exclude_page: Page | None = None
 ):
-    """Checks for conflicting urls"""
+    ''
     from cms.models.pagemodel import Page, PageUrl
 
     if "/" in path:
@@ -59,7 +59,7 @@ def validate_url_uniqueness(
     if exclude_page:
         page_urls = page_urls.exclude(page=exclude_page.pk)
 
-        # For parent-child relationships with same slug, check if this is valid
+
         if exclude_page.parent_id is not None:
             parent_path = (
                 PageUrl.objects.filter(page=exclude_page.parent_id, language=language)
@@ -68,11 +68,11 @@ def validate_url_uniqueness(
                 or ""
             )
 
-            # Get the slug from the path
+
             slug = path.split("/")[-1] if "/" in path else path
             expected_path = f"{parent_path}/{slug}" if parent_path else slug
 
-            # If the path matches what we'd expect from the parent, it's valid
+
             if path == expected_path:
                 return True
 
@@ -83,10 +83,10 @@ def validate_url_uniqueness(
 
     conflict_translation = conflict_page.get_content_obj(language, fallback=False)
 
-    if conflict_translation:  # No empty page content
+    if conflict_translation:
         change_url = admin_reverse("cms_pagecontent_change", args=[conflict_translation.pk])
     else:
-        change_url = ""  # Empty page has no slug
+        change_url = ""
     if user_language:
         change_url += f"?language={user_language}"
 

@@ -1,22 +1,22 @@
-/*
- * See the NOTICE file distributed with this work for additional
- * information regarding copyright ownership.
- *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.xwiki.livedata.internal.livetable;
 
 import java.io.UnsupportedEncodingException;
@@ -61,13 +61,13 @@ import com.xpn.xwiki.objects.classes.LevelsClass;
 import com.xpn.xwiki.objects.classes.ListClass;
 import com.xpn.xwiki.objects.classes.PropertyClass;
 
-/**
- * {@link LiveDataPropertyDescriptorStore} implementation that exposes the known live table columns as live data
- * properties.
- * 
- * @version $Id$
- * @since 12.10
- */
+
+
+
+
+
+
+
 @Component
 @Named("liveTable")
 @InstantiationStrategy(ComponentInstantiationStrategy.PER_LOOKUP)
@@ -105,8 +105,8 @@ public class LiveTableLiveDataPropertyStore extends WithParameters implements Li
         properties.addAll(getClassProperties());
         for (var parameter : getParameters().entrySet()) {
             String key = parameter.getKey();
-            // Load property descriptors for properties of extra classes that are specified in the form
-            // <property>_class=My.Class.
+
+
             if (key.endsWith(CLASS_SUFFIX) && parameter.getValue() instanceof String className) {
                 String propertyName = StringUtils.removeEnd(key, CLASS_SUFFIX);
                 getPropertyDescriptor(className, propertyName).ifPresent(properties::add);
@@ -127,7 +127,7 @@ public class LiveTableLiveDataPropertyStore extends WithParameters implements Li
 
     private Collection<LiveDataPropertyDescriptor> getDocumentProperties()
     {
-        // The default configuration includes only the descriptors for the document properties (which are read-only).
+
         return this.defaultConfigProvider.get().getMeta().getPropertyDescriptors();
     }
 
@@ -171,7 +171,7 @@ public class LiveTableLiveDataPropertyStore extends WithParameters implements Li
         }
     }
 
-    // TODO: we should have a helper in the localization component for this kind of fallback
+
     private String getRightTranslationWithFallback(String right)
     {
         String result = this.localizationManager.getTranslationPlain("rightsmanager." + right);
@@ -189,16 +189,16 @@ public class LiveTableLiveDataPropertyStore extends WithParameters implements Li
         descriptor.setName(xproperty.getTranslatedPrettyName(xcontext));
         descriptor.setDescription(xproperty.getHint());
         descriptor.setType(xproperty.getClassType());
-        // List properties are sortable by default, but only if they have single selection.
+
         if (xproperty instanceof ListClass && ((ListClass) xproperty).isMultiSelect()) {
             descriptor.setSortable(false);
         }
-        // The returned property value is the displayer output.
+
         descriptor.setDisplayer(new DisplayerDescriptor("xObjectProperty"));
         if (xproperty instanceof ListClass) {
             FilterDescriptor filterList = new FilterDescriptor("list");
             if (xproperty instanceof LevelsClass) {
-                // We need to provide a list of maps of value / labels so that selectize can interpret them.
+
                 filterList.setParameter("options", ((LevelsClass) xproperty).getList(xcontext)
                     .stream()
                     .map(item -> Map.of(
@@ -210,9 +210,9 @@ public class LiveTableLiveDataPropertyStore extends WithParameters implements Li
                 filterList.setParameter("searchURL", getSearchURL(xproperty));
             }
             if (xproperty.newProperty() instanceof StringListProperty) {
-                // The default live table results page currently supports only exact matching for list properties with
-                // multiple selection and no relational storage (selected values are stored concatenated on a single
-                // database column).
+
+
+
                 filterList.addOperator("empty", null);
                 filterList.addOperator(EQUALS_OPERATOR, null);
                 filterList.setDefaultOperator(EQUALS_OPERATOR);
@@ -239,7 +239,7 @@ public class LiveTableLiveDataPropertyStore extends WithParameters implements Li
             try {
                 return URLEncoder.encode(element, "UTF-8");
             } catch (UnsupportedEncodingException e) {
-                // This shouldn't happen.
+
                 return element;
             }
         }).collect(Collectors.joining("/"));

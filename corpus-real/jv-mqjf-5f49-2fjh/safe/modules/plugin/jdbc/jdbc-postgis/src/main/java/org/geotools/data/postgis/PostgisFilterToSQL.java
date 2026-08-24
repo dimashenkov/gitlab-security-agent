@@ -1,19 +1,19 @@
-/*
- *    GeoTools - The Open Source Java GIS Toolkit
- *    http://geotools.org
- *
- *    (C) 2002-2016, Open Source Geospatial Foundation (OSGeo)
- *
- *    This library is free software; you can redistribute it and/or
- *    modify it under the terms of the GNU Lesser General Public
- *    License as published by the Free Software Foundation;
- *    version 2.1 of the License.
- *
- *    This library is distributed in the hope that it will be useful,
- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *    Lesser General Public License for more details.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.geotools.data.postgis;
 
 import java.io.IOException;
@@ -71,11 +71,11 @@ public class PostgisFilterToSQL extends FilterToSQL {
 
     @Override
     protected void visitLiteralGeometry(Literal expression) throws IOException {
-        // evaluate the literal and store it for later
+
         Geometry geom = (Geometry) evaluateLiteral(expression, Geometry.class);
 
         if (geom instanceof LinearRing ring) {
-            // postgis does not handle linear rings, convert to just a line string
+
             geom = geom.getFactory().createLineString(ring.getCoordinateSequence());
         }
 
@@ -89,9 +89,9 @@ public class PostgisFilterToSQL extends FilterToSQL {
             out.write("ST_GeomFromText('");
             out.write(geom.toText());
             if (currentSRID == null && currentGeometry != null) {
-                // if we don't know at all, use the srid of the geometry we're comparing against
-                // (much slower since that has to be extracted record by record as opposed to
-                // being a constant)
+
+
+
                 out.write("', ST_SRID(" + escapeName(currentGeometry.getLocalName()) + "))");
             } else {
                 out.write("', " + currentSRID + ")");
@@ -142,7 +142,7 @@ public class PostgisFilterToSQL extends FilterToSQL {
 
     @Override
     public Object visit(Literal literal, Object extraData) {
-        // handle BigDate udt, encode it as a long
+
         if (extraData instanceof Class<?> class1 && BigDate.class.isAssignableFrom(class1)) {
             if (literal.getValue() instanceof Date) {
                 return super.visit(filterFactory.literal(((Date) literal.getValue()).getTime()), Long.class);
@@ -170,11 +170,11 @@ public class PostgisFilterToSQL extends FilterToSQL {
         return super.getDistanceInNativeUnits(operator);
     }
 
-    /**
-     * Overrides base behavior to handler arrays
-     *
-     * @param filter the comparison to be turned into SQL.
-     */
+
+
+
+
+
     @Override
     protected void visitBinaryComparisonOperator(BinaryComparisonOperator filter, Object extraData)
             throws RuntimeException {
@@ -183,8 +183,8 @@ public class PostgisFilterToSQL extends FilterToSQL {
         Class rightContext = super.getExpressionType(left);
         Class leftContext = super.getExpressionType(right);
 
-        // array comparison in PostgreSQL is strict, need to know the base type, that info is
-        // available only in the property name userdata
+
+
         String type = (String) extraData;
         if ((helper.isArray(rightContext) || helper.isArray(leftContext))
                 && (left instanceof PropertyName || right instanceof PropertyName)) {
@@ -199,12 +199,12 @@ public class PostgisFilterToSQL extends FilterToSQL {
         }
     }
 
-    /**
-     * Writes the SQL for the PropertyIsBetween Filter.
-     *
-     * @param filter the Filter to be visited.
-     * @throws RuntimeException for io exception with writer
-     */
+
+
+
+
+
+
     @Override
     public Object visit(PropertyIsBetween filter, Object extraData) throws RuntimeException {
         LOGGER.finer("exporting PropertyIsBetween");

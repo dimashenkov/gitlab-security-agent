@@ -5,78 +5,78 @@ use ArrayIterator;
 use ArrayAccess;
 use Traversable;
 
-/**
- * Form Tabs definition
- * A translation of the form field tab configuration
- *
- * @package winter\wn-backend-module
- * @author Alexey Bobkov, Samuel Georges
- */
+
+
+
+
+
+
+
 class FormTabs implements IteratorAggregate, ArrayAccess
 {
     const SECTION_OUTSIDE = 'outside';
     const SECTION_PRIMARY = 'primary';
     const SECTION_SECONDARY = 'secondary';
 
-    /**
-     * @var string Specifies the form section these tabs belong to.
-     */
+
+
+
     public $section = 'outside';
 
-    /**
-     * @var array Collection of panes fields to these tabs.
-     */
+
+
+
     public $fields = [];
 
-    /**
-     * @var array Names of tabs to lazy load.
-     */
+
+
+
     public $lazy = [];
 
-    /**
-     * @var string Default tab label to use when none is specified.
-     */
+
+
+
     public $defaultTab = 'backend::lang.form.undefined_tab';
 
-    /**
-     * @var array List of icons for their corresponding tabs.
-     */
+
+
+
     public $icons = [];
 
-    /**
-     * @var bool Should these tabs stretch to the bottom of the page layout.
-     */
+
+
+
     public $stretch;
 
-    /**
-     * @var boolean If set to TRUE, fields will not be displayed in tabs.
-     */
+
+
+
     public $suppressTabs = false;
 
-    /**
-     * @var string Specifies a CSS class to attach to the tab container.
-     */
+
+
+
     public $cssClass;
 
-    /**
-     * @var array Specifies a CSS class to an individual tab pane.
-     */
+
+
+
     public $paneCssClass;
 
-    /**
-     * @var bool Each tab gets url fragment to be linkable.
-     */
+
+
+
     public $linkable = true;
 
-    /**
-     * Constructor.
-     * Specifies a tabs rendering section. Supported sections are:
-     * - outside - stores a section of "tabless" fields.
-     * - primary - tabs section for primary fields.
-     * - secondary - tabs section for secondary fields.
-     * @param string $section Specifies a section as described above.
-     * @param array $config A list of render mode specific config.
-     */
+
+
+
+
+
+
+
+
+
     public function __construct($section, $config = [])
     {
         $this->section = strtolower($section) ?: $this->section;
@@ -87,9 +87,9 @@ class FormTabs implements IteratorAggregate, ArrayAccess
         }
     }
 
-    /**
-     * Process options and apply them to this object.
-     */
+
+
+
     protected function evalConfig(array $config): void
     {
         if (array_key_exists('defaultTab', $config)) {
@@ -125,12 +125,12 @@ class FormTabs implements IteratorAggregate, ArrayAccess
         }
     }
 
-    /**
-     * Add a field to the collection of tabs.
-     * @param string    $name
-     * @param FormField $field
-     * @param string    $tab
-     */
+
+
+
+
+
+
     public function addField($name, FormField $field, $tab = null)
     {
         if (!$tab) {
@@ -140,11 +140,11 @@ class FormTabs implements IteratorAggregate, ArrayAccess
         $this->fields[$tab][$name] = $field;
     }
 
-    /**
-     * Remove a field from all tabs by name.
-     * @param string    $name
-     * @return boolean
-     */
+
+
+
+
+
     public function removeField($name)
     {
         foreach ($this->fields as $tab => $fields) {
@@ -152,9 +152,9 @@ class FormTabs implements IteratorAggregate, ArrayAccess
                 if ($fieldName == $name) {
                     unset($this->fields[$tab][$fieldName]);
 
-                    /*
-                     * Remove empty tabs from collection
-                     */
+
+
+
                     if (!count($this->fields[$tab])) {
                         unset($this->fields[$tab]);
                     }
@@ -167,28 +167,28 @@ class FormTabs implements IteratorAggregate, ArrayAccess
         return false;
     }
 
-    /**
-     * Returns true if any fields have been registered for these tabs
-     * @return boolean
-     */
+
+
+
+
     public function hasFields()
     {
         return count($this->fields) > 0;
     }
 
-    /**
-     * Returns an array of the registered fields, including tabs.
-     * @return array
-     */
+
+
+
+
     public function getFields()
     {
         return $this->fields;
     }
 
-    /**
-     * Returns an array of the registered fields, without tabs.
-     * @return array
-     */
+
+
+
+
     public function getAllFields()
     {
         $tablessFields = [];
@@ -200,11 +200,11 @@ class FormTabs implements IteratorAggregate, ArrayAccess
         return $tablessFields;
     }
 
-    /**
-     * Returns an icon for the tab based on the tab's name.
-     * @param string $name
-     * @return string
-     */
+
+
+
+
+
     public function getIcon($name)
     {
         if (!empty($this->icons[$name])) {
@@ -212,12 +212,12 @@ class FormTabs implements IteratorAggregate, ArrayAccess
         }
     }
 
-    /**
-     * Returns a tab pane CSS class.
-     * @param string $index
-     * @param string $label
-     * @return string
-     */
+
+
+
+
+
+
     public function getPaneCssClass($index = null, $label = null)
     {
         if (is_string($this->paneCssClass)) {
@@ -233,9 +233,9 @@ class FormTabs implements IteratorAggregate, ArrayAccess
         }
     }
 
-    /**
-     * Get an iterator for the items.
-     */
+
+
+
     public function getIterator(): Traversable
     {
         return new ArrayIterator(
@@ -245,33 +245,33 @@ class FormTabs implements IteratorAggregate, ArrayAccess
         );
     }
 
-    /**
-     * ArrayAccess implementation
-     */
+
+
+
     public function offsetSet($offset, $value): void
     {
         $this->fields[$offset] = $value;
     }
 
-    /**
-     * ArrayAccess implementation
-     */
+
+
+
     public function offsetExists($offset): bool
     {
         return isset($this->fields[$offset]);
     }
 
-    /**
-     * ArrayAccess implementation
-     */
+
+
+
     public function offsetUnset($offset): void
     {
         unset($this->fields[$offset]);
     }
 
-    /**
-     * ArrayAccess implementation
-     */
+
+
+
     public function offsetGet($offset): mixed
     {
         return $this->fields[$offset] ?? null;

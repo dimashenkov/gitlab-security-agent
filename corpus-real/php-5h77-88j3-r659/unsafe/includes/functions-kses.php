@@ -1,56 +1,56 @@
 <?php
-/**
- * YOURLS modification of a small subset from WordPress' KSES implementation.
- * Straight from the Let's Not Reinvent The Wheel department.
- */
 
-/**
- * kses 0.2.2 - HTML/XHTML filter that only allows some elements and attributes
- * Copyright (C) 2002, 2003, 2005  Ulf Harnhammar
- *
- * This program is free software and open source software; you can redistribute
- * it and/or modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of the License,
- * or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
- * http://www.gnu.org/licenses/gpl.html
- *
- * [kses strips evil scripts!]
- *
- * @version 0.2.2
- * @copyright (C) 2002, 2003, 2005
- * @author Ulf Harnhammar <http://advogato.org/person/metaur/>
- *
- * @package External
- * @subpackage KSES
- *
- */
 
-/* NOTE ABOUT GLOBALS
- * Two globals are defined: $yourls_allowedentitynames and $yourls_allowedprotocols
- * - $yourls_allowedentitynames is used internally in KSES functions to sanitize HTML entities
- * - $yourls_allowedprotocols is used in various parts of YOURLS, not just in KSES, albeit being defined here
- * Two globals are not defined and unused at this moment: $yourls_allowedtags_all and $yourls_allowedtags
- * The code for these vars is here and ready for any future use
- */
 
-// Populate after plugins have loaded to allow user defined values
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 yourls_add_action( 'plugins_loaded', 'yourls_kses_init' );
 
-/**
- * Init KSES globals if not already defined (by a plugin)
- *
- * @since 1.6
- * @return void
- */
+
+
+
+
+
+
 function yourls_kses_init() {
     global $yourls_allowedentitynames, $yourls_allowedprotocols;
 
@@ -62,39 +62,39 @@ function yourls_kses_init() {
         $yourls_allowedprotocols   = yourls_apply_filter( 'kses_allowed_protocols', yourls_kses_allowed_protocols() );
     }
 
-    /** See NOTE ABOUT GLOBALS **
 
-    if( ! $yourls_allowedtags_all ) {
-        $yourls_allowedtags_all = yourls_kses_allowed_tags_all();
-        $yourls_allowedtags_all = array_map( '_yourls_add_global_attributes', $yourls_allowedtags_all );
-        $yourls_allowedtags_all = yourls_apply_filter( 'kses_allowed_tags_all', $yourls_allowedtags_all );
-    } else {
-        // User defined: let's sanitize
-        $yourls_allowedtags_all = yourls_kses_array_lc( $yourls_allowedtags_all );
-    }
 
-    if( ! $yourls_allowedtags ) {
-        $yourls_allowedtags = yourls_kses_allowed_tags();
-        $yourls_allowedtags = array_map( '_yourls_add_global_attributes', $yourls_allowedtags );
-        $yourls_allowedtags = yourls_apply_filter( 'kses_allowed_tags', $yourls_allowedtags );
-    } else {
-        // User defined: let's sanitize
-        $yourls_allowedtags = yourls_kses_array_lc( $yourls_allowedtags );
-    }
 
-    /**/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }
 
-/**
- * Kses global for all allowable HTML tags.
- *
- * Complete (?) list of HTML tags. Keep this function available for any plugin or
- * future feature that will want to display lots of HTML.
- *
- * @since 1.6
- *
- * @return array All tags
- */
+
+
+
+
+
+
+
+
+
+
 function yourls_kses_allowed_tags_all() {
     return array(
         'address' => array(),
@@ -412,15 +412,15 @@ function yourls_kses_allowed_tags_all() {
     );
 }
 
-/**
- * Kses global for default allowable HTML tags. TODO: trim down to necessary only.
- *
- * Short list of HTML tags used in YOURLS core for display
- *
- * @since 1.6
- *
- * @return array Allowed tags
- */
+
+
+
+
+
+
+
+
+
 function yourls_kses_allowed_tags() {
     return array(
         'a' => array(
@@ -452,13 +452,13 @@ function yourls_kses_allowed_tags() {
     );
 }
 
-/**
- * Kses global for allowable HTML entities.
- *
- * @since 1.6
- *
- * @return array Allowed entities
- */
+
+
+
+
+
+
+
 function yourls_kses_allowed_entities() {
     return array(
         'nbsp',    'iexcl',  'cent',    'pound',  'curren', 'yen',
@@ -505,17 +505,17 @@ function yourls_kses_allowed_entities() {
     );
 }
 
-/**
- * Kses global for allowable protocols.
- *
- * @since 1.6
- *
- * @return array Allowed protocols
- */
+
+
+
+
+
+
+
 function yourls_kses_allowed_protocols() {
-    // More or less common stuff in links. From http://en.wikipedia.org/wiki/URI_scheme
+
     return array(
-        // Common
+
         'http://', 'https://', 'ftp://',
         'file://', 'smb://',
         'sftp://',
@@ -523,61 +523,61 @@ function yourls_kses_allowed_protocols() {
         'mailto:',
         'news:', 'nntp://',
 
-        // Old school bearded geek
+
         'gopher://', 'telnet://', 'finger://',
         'nntp://', 'worldwind://',
 
-        // Dev
+
         'ssh://', 'svn://', 'svn+ssh://', 'git://', 'cvs://',
         'apt:',
-        'market://', // Google Play
+        'market://',
         'view-source:',
 
-        // P2P
+
         'ed2k://', 'magnet:', 'udp://',
 
-        // Streaming stuff
+
         'mms://', 'lastfm://', 'spotify:', 'rtsp://',
 
-        // Text & voice
+
         'aim:', 'facetime://', 'gtalk:', 'xmpp:',
         'irc://', 'ircs://', 'mumble://',
         'callto:', 'skype:', 'sip:',
         'teamspeak://', 'tel:', 'ventrilo://', 'xfire:',
         'ymsgr:', 'tg://', 'whatsapp://',
 
-        // Misc
+
         'steam:', 'steam://',
         'bitcoin:',
         'ldap://', 'ldaps://',
 
-        // Purposedly removed for security
-        /*
-        'about:', 'chrome://', 'chrome-extension://',
-        'javascript:',
-        'data:',
-        */
+
+
+
+
+
+
     );
 }
 
 
-/**
- * Converts and fixes HTML entities.
- *
- * This function normalizes HTML entities. It will convert "AT&T" to the correct
- * "AT&amp;T", "&#00058;" to "&#58;", "&#XYZZY;" to "&amp;#XYZZY;" and so on.
- *
- * @since 1.6
- *
- * @param string $string Content to normalize entities
- * @return string Content with normalized entities
- */
+
+
+
+
+
+
+
+
+
+
+
 function yourls_kses_normalize_entities($string) {
-    # Disarm all entities by converting & to &amp;
+
 
     $string = str_replace('&', '&amp;', $string);
 
-    # Change back the allowed entities in our entity whitelist
+
 
     $string = preg_replace_callback('/&amp;([A-Za-z]{2,8});/', 'yourls_kses_named_entities', $string);
     $string = preg_replace_callback('/&amp;#(0*[0-9]{1,7});/', 'yourls_kses_normalize_entities2', $string);
@@ -586,17 +586,17 @@ function yourls_kses_normalize_entities($string) {
     return $string;
 }
 
-/**
- * Callback for yourls_kses_normalize_entities() regular expression.
- *
- * This function only accepts valid named entity references, which are finite,
- * case-sensitive, and highly scrutinized by HTML and XML validators.
- *
- * @since 1.6
- *
- * @param array $matches preg_replace_callback() matches array
- * @return string Correctly encoded entity
- */
+
+
+
+
+
+
+
+
+
+
+
 function yourls_kses_named_entities($matches) {
     global $yourls_allowedentitynames;
 
@@ -607,18 +607,18 @@ function yourls_kses_named_entities($matches) {
     return ( ( ! in_array($i, $yourls_allowedentitynames) ) ? "&amp;$i;" : "&$i;" );
 }
 
-/**
- * Callback for yourls_kses_normalize_entities() regular expression.
- *
- * This function helps yourls_kses_normalize_entities() to only accept 16-bit values
- * and nothing more for &#number; entities.
- *
- * @access private
- * @since 1.6
- *
- * @param array $matches preg_replace_callback() matches array
- * @return string Correctly encoded entity
- */
+
+
+
+
+
+
+
+
+
+
+
+
 function yourls_kses_normalize_entities2($matches) {
     if ( empty($matches[1]) )
         return '';
@@ -634,18 +634,18 @@ function yourls_kses_normalize_entities2($matches) {
     return $i;
 }
 
-/**
- * Callback for yourls_kses_normalize_entities() for regular expression.
- *
- * This function helps yourls_kses_normalize_entities() to only accept valid Unicode
- * numeric entities in hex form.
- *
- * @access private
- * @since 1.6
- *
- * @param array $matches preg_replace_callback() matches array
- * @return string Correctly encoded entity
- */
+
+
+
+
+
+
+
+
+
+
+
+
 function yourls_kses_normalize_entities3($matches) {
     if ( empty($matches[1]) )
         return '';
@@ -654,15 +654,15 @@ function yourls_kses_normalize_entities3($matches) {
     return ( ( ! yourls_valid_unicode(hexdec($hexchars)) ) ? "&amp;#x$hexchars;" : '&#x'.ltrim($hexchars,'0').';' );
 }
 
-/**
- * Helper function to add global attributes to a tag in the allowed html list.
- *
- * @since 1.6
- * @access private
- *
- * @param array $value An array of attributes.
- * @return array The array of attributes with global attributes added.
- */
+
+
+
+
+
+
+
+
+
 function _yourls_add_global_attributes( $value ) {
     $global_attributes = array(
         'class' => true,
@@ -680,14 +680,14 @@ function _yourls_add_global_attributes( $value ) {
     return $value;
 }
 
-/**
- * Helper function to determine if a Unicode value is valid.
- *
- * @since 1.6
- *
- * @param int $i Unicode value
- * @return bool True if the value was a valid Unicode number
- */
+
+
+
+
+
+
+
+
 function yourls_valid_unicode($i) {
     return ( $i == 0x9 || $i == 0xa || $i == 0xd ||
             ($i >= 0x20 && $i <= 0xd7ff) ||
@@ -695,14 +695,14 @@ function yourls_valid_unicode($i) {
             ($i >= 0x10000 && $i <= 0x10ffff) );
 }
 
-/**
- * Goes through an array and changes the keys to all lower case.
- *
- * @since 1.6
- *
- * @param array $inarray Unfiltered array
- * @return array Fixed array with all lowercase keys
- */
+
+
+
+
+
+
+
+
 function yourls_kses_array_lc($inarray) {
     $outarray = array ();
 
@@ -713,24 +713,24 @@ function yourls_kses_array_lc($inarray) {
         foreach ( (array) $inval as $inkey2 => $inval2) {
             $outkey2 = strtolower($inkey2);
             $outarray[$outkey][$outkey2] = $inval2;
-        } # foreach $inval
-    } # foreach $inarray
+        }
+    }
 
     return $outarray;
 }
 
-/**
- * Convert all entities to their character counterparts.
- *
- * This function decodes numeric HTML entities (&#65; and &#x41;). It doesn't do
- * anything with other entities like &auml;, but we don't need them in the URL
- * protocol whitelisting system anyway.
- *
- * @since 1.6
- *
- * @param string $string Content to change entities
- * @return string Content after decoded entities
- */
+
+
+
+
+
+
+
+
+
+
+
+
 function yourls_kses_decode_entities($string) {
     $string = preg_replace_callback('/&#([0-9]+);/', '_yourls_kses_decode_entities_chr', $string);
     $string = preg_replace_callback('/&#[Xx]([0-9A-Fa-f]+);/', '_yourls_kses_decode_entities_chr_hexdec', $string);
@@ -738,38 +738,38 @@ function yourls_kses_decode_entities($string) {
     return $string;
 }
 
-/**
- * Regex callback for yourls_kses_decode_entities()
- *
- * @since 1.6
- *
- * @param array $match preg match
- * @return string
- */
+
+
+
+
+
+
+
+
 function _yourls_kses_decode_entities_chr( $match ) {
     return chr( $match[1] );
 }
 
-/**
- * Regex callback for yourls_kses_decode_entities()
- *
- * @since 1.6
- *
- * @param array $match preg match
- * @return string
- */
+
+
+
+
+
+
+
+
 function _yourls_kses_decode_entities_chr_hexdec( $match ) {
     return chr( hexdec( $match[1] ) );
 }
 
-/**
- * Removes any null characters in $string.
- *
- * @since 1.6
- *
- * @param string $string
- * @return string
- */
+
+
+
+
+
+
+
+
 function yourls_kses_no_null($string) {
     $string = preg_replace( '/\0+/', '', $string );
     $string = preg_replace( '/(\\\\0)+/', '', $string );

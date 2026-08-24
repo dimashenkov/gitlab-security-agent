@@ -18,7 +18,7 @@ export default async () => {
     await SubscriptionModel.sync();
     await CrontabViewModel.sync();
 
-    // 初始化新增字段
+
     const migrations = [
       {
         table: 'CrontabViews',
@@ -48,7 +48,7 @@ export default async () => {
           `alter table ${migration.table} add column ${migration.column} ${migration.type}`,
         );
       } catch (error) {
-        // Column already exists or other error, continue
+
       }
     }
 

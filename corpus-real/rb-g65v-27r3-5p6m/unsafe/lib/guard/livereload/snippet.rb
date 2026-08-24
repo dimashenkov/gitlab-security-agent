@@ -10,9 +10,9 @@ module Guard
       attr_reader :options
 
       def initialize(template, options)
-        @options = options # for ERB context
+        @options = options
 
-        # NOTE: use instance variable for Tempfile, so it's not GC'ed before sending
+
         @tmpfile = Tempfile.new('livereload.js')
         source = IO.read(template)
         data = ERB.new(source).result(binding)

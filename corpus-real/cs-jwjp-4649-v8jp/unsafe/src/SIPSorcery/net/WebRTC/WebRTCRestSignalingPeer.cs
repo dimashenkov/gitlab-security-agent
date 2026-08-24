@@ -1,21 +1,21 @@
-﻿//-----------------------------------------------------------------------------
-// Filename: WebRTCRestSignalingPeer.cs
-//
-// Description: This class is NOT a required component for using WebRTC. It is a
-// convenience class provided to perform the signaling via a HTTP REST server.
-//
-// Author(s):
-// Aaron Clauson (aaron@sipsorcery.com)
-//
-// History:
-// 29 Sep 2020	Aaron Clauson	Created, Dublin, Ireland.
-// 27 Jan 2021  Aaron Clauson   Switched from the nodejs Dead Simple signalling
-//                              server https://github.com/bengreenier/node-dss to
-//                              a custom HTTP REST API. The node-dss option was
-//                              a bit too simple.
-// License: 
-// BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
-//-----------------------------------------------------------------------------
+﻿
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 using System;
 using System.Net;
@@ -30,19 +30,19 @@ namespace SIPSorcery.Net
 {
     public enum WebRTCSignalTypesEnum
     {
-        any = 0,        // Any message type.
-        sdp = 2,        // SDP offer or answer.
-        ice = 3         // ICE candidates
+        any = 0,
+        sdp = 2,
+        ice = 3
     }
 
-    /// <summary>
-    /// This class is not a required component for using WebRTC. It is a
-    /// convenience class provided to perform the signalling via a HTTP REST server.
-    /// </summary>
+
+
+
+
     public class WebRTCRestSignalingPeer
     {
-        private const int REST_SERVER_POLL_PERIOD = 2000;   // Period in milliseconds to poll the HTTP server to check for new messages.
-        private const int CONNECTION_RETRY_PERIOD = 5000;   // Period in milliseconds to retry if the initial HTTP connection attempt fails.
+        private const int REST_SERVER_POLL_PERIOD = 2000;
+        private const int CONNECTION_RETRY_PERIOD = 5000;
 
         private static readonly ILogger logger = LogFactory.CreateLogger<WebRTCRestSignalingPeer>();
 
@@ -56,30 +56,30 @@ namespace SIPSorcery.Net
         private RTCPeerConnection _pc;
         public RTCPeerConnection RTCPeerConnection => _pc;
 
-        /// <summary>
-        /// Optional property to allow the peer connection SDP offer options to be set.
-        /// </summary>
+
+
+
         public RTCOfferOptions OfferOptions { get; set; }
 
-        /// <summary>
-        /// Optional property to allow the peer connection SDP answer options to be set.
-        /// </summary>
+
+
+
         public RTCAnswerOptions AnswerOptions { get; set; }
 
-        /// <summary>
-        /// Optional filter that can be applied to remote ICE candidates. The filter is 
-        /// primarily intended for use in testing. In real application scenarios it's 
-        /// normally desirable to accept all remote ICE candidates.
-        /// </summary>
+
+
+
+
+
         public Func<RTCIceCandidateInit, bool> FilterRemoteICECandidates { get; set; }
 
-        /// <summary>
-        /// Default constructor.
-        /// </summary>
-        /// <param name="restServerUri">The base URI of the HTTP REST server API.</param>
-        /// <param name="ourID">The arbitrary ID this peer is using.</param>
-        /// <param name="theirID">The arbitrary ID the remote peer is using.</param>
-        /// <param name="createPeerConnection">Function delegate used to create a new WebRTC peer connection.</param>
+
+
+
+
+
+
+
         public WebRTCRestSignalingPeer(
             string restServerUri,
             string ourID,
@@ -107,11 +107,11 @@ namespace SIPSorcery.Net
             _createPeerConnection = createPeerConnection;
         }
 
-        /// <summary>
-        /// Creates a new WebRTC peer connection and then starts polling the REST server.
-        /// If there is an offer waiting for this peer it will be retrieved and an answer posted.
-        /// If no offer is available we will post one and then poll for the answer,
-        /// </summary>
+
+
+
+
+
         public async Task Start(CancellationTokenSource cancellation)
         {
             var peerConnectedCancellation = new CancellationTokenSource();
@@ -132,7 +132,7 @@ namespace SIPSorcery.Net
             {
                 if (cand.type != RTCIceCandidateType.host)
                 {
-                    // Host candidates are always included in the SDP offer or answer.
+
                     logger.LogDebug("webrtc-rest onicecandidate: {CandidateStr}.", cand.ToShortString());
                     await SendToSignalingServer(restClient, cand.toJSON(), WebRTCSignalTypesEnum.ice);
                 }
@@ -143,9 +143,9 @@ namespace SIPSorcery.Net
             _receiveTask = Task.Run(() => ReceiveFromNSS(restClient, _pc, linkedSource.Token));
         }
 
-        /// <summary>
-        /// Creates a new WebRTC peer connection and send an SDP offer to the REST server.
-        /// </summary>
+
+
+
         private async Task SendOffer(HttpClient httpClient)
         {
             logger.LogDebug("webrtc-rest sending initial SDP offer to server.");
@@ -211,13 +211,13 @@ namespace SIPSorcery.Net
                     {
                         if (isInitialReceive)
                         {
-                            // We are the first peer to connect. Send the offer so it will be waiting
-                            // for the remote peer.
+
+
                             await SendOffer(httpClient).ConfigureAwait(false);
                         }
                         else
                         {
-                            // There are no waiting messages for us.
+
                             await Task.Delay(REST_SERVER_POLL_PERIOD).ConfigureAwait(false);
                         }
                     }
@@ -229,7 +229,7 @@ namespace SIPSorcery.Net
                     isInitialReceive = false;
                 }
             }
-            catch (OperationCanceledException) // Thrown if the task is explicitly cancelled by the consumer using a cancellation token.
+            catch (OperationCanceledException)
             { }
             catch (Exception excp)
             {
@@ -268,7 +268,7 @@ namespace SIPSorcery.Net
             else if (RTCSessionDescriptionInit.TryParse(signal, out var descriptionInit))
             {
                 logger.LogDebug("Got remote SDP, type {SdpType}.", descriptionInit.type);
-                //logger.LogDebug(descriptionInit.sdp);
+
 
                 var result = pc.setRemoteDescription(descriptionInit);
                 

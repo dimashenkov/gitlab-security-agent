@@ -120,7 +120,7 @@
         {immediate: true}
     );
     
-    // Watch for prop changes to keep pagination controls synchronized
+
     watch(() => props.page, (newPage) => {
         internalPage.value = newPage ?? 1;
     });

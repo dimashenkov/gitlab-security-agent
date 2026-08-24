@@ -1,12 +1,12 @@
 <?php namespace Backend\Classes;
 
-/**
- * Report Widget base class
- * Report widgets are used inside the ReportContainer.
- *
- * @package winter\wn-backend-module
- * @author Alexey Bobkov, Samuel Georges
- */
+
+
+
+
+
+
+
 class ReportWidgetBase extends WidgetBase
 {
     use \System\Traits\PropertyContainer;
@@ -15,10 +15,10 @@ class ReportWidgetBase extends WidgetBase
     {
         $this->properties = $this->validateProperties($properties);
 
-        /*
-         * Ensure the provided alias (if present) takes effect as the widget configuration is
-         * not passed to the WidgetBase constructor which would normally take care of that
-         */
+
+
+
+
         if (!isset($this->alias)) {
             $this->alias = $properties['alias'] ?? $this->defaultAlias;
         }

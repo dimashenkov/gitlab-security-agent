@@ -132,8 +132,8 @@
             const parentTitle = ancestors.length > 0 ? ancestors.join(" / ") : undefined;
             const icon = item.icon;
 
-            // Always include a "scope" entry for any item that has children (even if it has no href),
-            // so sections like "Blueprints" can be selected and scoped into.
+
+
             if (hasChildren) {
                 entries.push({
                     kind: "scope",
@@ -157,7 +157,7 @@
                 });
             }
 
-            // Include descendants for search (hierarchy preserved via parentTitle/depth).
+
             if (hasChildren) {
                 entries.push(...buildEntries(item.child!, [...ancestors, item.title], depth + 1, startOrder));
             }
@@ -173,7 +173,7 @@
 
         const root = scopeStack.value.length > 0 ? scopeStack.value[scopeStack.value.length - 1].items : menu.value;
         const order = {value: 0};
-        // When scoped, we treat the scope root as depth 0 for ordering.
+
         return buildEntries(root, [], 0, order);
     });
 
@@ -186,7 +186,7 @@
 
         const filtered = q ? navItems.value.filter(matches) : navItems.value;
 
-        // Prefer items closest to the current root (depth 0 first), while preserving menu order.
+
         return [...filtered].sort((a, b) => (a.depth - b.depth) || (a.order - b.order));
     });
 

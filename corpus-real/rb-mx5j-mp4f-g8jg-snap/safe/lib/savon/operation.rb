@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+
 
 require "savon/options"
 require "savon/block_interface"
@@ -10,21 +10,21 @@ require "savon/transport/faraday"
 require "mail"
 
 module Savon
-  # Represents a single named SOAP operation.
-  #
-  # Bridges the SOAP layer (envelope building, action headers, multipart) and the
-  # transport layer (execution, logging). Knows nothing about transport internals
-  # such as proxy, SSL, or auth.
+
+
+
+
+
   class Operation
-    # SOAP Content-Type values indexed by SOAP version.
-    # SOAP 1.1 §6 (HTTP binding), SOAP 1.2 Part 2 §7.1.4 (HTTP media type)
+
+
     CONTENT_TYPE = {
       1 => "text/xml;charset=%s",
       2 => "application/soap+xml;charset=%s"
     }.freeze
 
-    # Maps SOAP version to the base MIME type used in multipart requests.
-    # RFC 2387 §3.1 (multipart/related Content-Type parameter)
+
+
     SOAP_REQUEST_TYPE = {
       1 => "text/xml",
       2 => "application/soap+xml"
@@ -67,11 +67,11 @@ module Savon
       Builder.new(@name, @wsdl, @globals, @locals)
     end
 
-    # Executes the SOAP operation and returns a Savon::Response.
-    #
-    # Observer short-circuit: if any registered observer returns a
-    # Transport::Response (or legacy HTTPI::Response), the HTTP call
-    # is skipped and that response is used directly.
+
+
+
+
+
     def call(locals = {}, &block)
       builder  = build(locals, &block)
       response = Savon.notify_observers(@name, builder, @globals, @locals)
@@ -88,9 +88,9 @@ module Savon
       create_response(response)
     end
 
-    # Builds and returns the HTTPI::Request that would be sent for this
-    # operation, without executing it. Useful for inspection and debugging.
-    # Not supported with transport: :faraday.
+
+
+
     def request(locals = {}, &block)
       if @globals[:transport] == :faraday
         raise ArgumentError, "#request returns an HTTPI::Request and is not supported " \
@@ -99,7 +99,7 @@ module Savon
       end
 
       builder = build(locals, &block)
-      # Build the body before soap_headers - see #call.
+
       body = builder.to_s
       @transport.to_httpi_request(endpoint.to_s, soap_headers(builder), body, @locals)
     end
@@ -117,17 +117,17 @@ module Savon
       @locals = locals
     end
 
-    # Assembles the SOAP-level request headers for the given builder.
-    #
-    # Our responsibility regardless of transport:
-    #   * Content-Type (SOAP 1.1 §6 / SOAP 1.2 Part 2 §7.1.4)
-    #   * SOAPAction (SOAP 1.1 §6.1.1)
-    #   * Multipart Content-Type (RFC 2387), MIME-Version (RFC 2045 §4), Accept-Encoding (RFC 9110 §12.5.3)
+
+
+
+
+
+
     def soap_headers(builder)
       headers = {}
 
       if builder.multipart
-        # RFC 2387 §3 (multipart/related) - SOAP envelope is the root body part
+
         headers["Content-Type"] = [
           "multipart/related",
           "type=\"#{SOAP_REQUEST_TYPE[@globals[:soap_version]]}\"",
@@ -147,14 +147,14 @@ module Savon
     end
 
     def soap_action
-      # soap_action explicitly set to something falsy
+
       return if @locals.include?(:soap_action) && !@locals[:soap_action]
 
-      # get the soap_action from local options
+
       @locals[:soap_action] ||
-        # with no local option, but a wsdl, ask it for the soap_action
+
         @wsdl.document? && @wsdl.soap_action(@name.to_sym) ||
-        # if there is no soap_action up to this point, fallback to a simple default
+
         Gyoku.xml_tag(@name, key_converter: @globals[:convert_request_keys_to])
     end
 
@@ -168,11 +168,11 @@ module Savon
       end
     end
 
-    # Normalizes an observer return value into a Transport::Response.
-    #
-    # Accepts Transport::Response directly (current contract), wraps
-    # HTTPI::Response with a deprecation warning (legacy observer support),
-    # and raises on anything else.
+
+
+
+
+
     def normalize_observer_response(response)
       return response if response.is_a?(Transport::Response)
 

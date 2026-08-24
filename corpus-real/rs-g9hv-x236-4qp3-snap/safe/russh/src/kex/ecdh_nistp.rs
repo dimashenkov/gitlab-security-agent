@@ -94,14 +94,14 @@ where
                 return Err(crate::Error::Inconsistent);
             }
 
-            #[allow(clippy::indexing_slicing)] // length checked
+            #[allow(clippy::indexing_slicing)]
             let pubkey_len = BigEndian::read_u32(&payload[1..]) as usize;
 
             if payload.len() < 5 + pubkey_len {
                 return Err(crate::Error::Inconsistent);
             }
 
-            #[allow(clippy::indexing_slicing)] // length checked
+            #[allow(clippy::indexing_slicing)]
             elliptic_curve::PublicKey::<C>::from_sec1_bytes(&payload[5..(5 + pubkey_len)])
                 .map_err(|_| crate::Error::Inconsistent)?
         };
@@ -109,7 +109,7 @@ where
         let server_secret = elliptic_curve::ecdh::EphemeralSecret::<C>::generate_from_rng(&mut rand::rng());
         let server_pubkey = server_secret.public_key();
 
-        // fill exchange.
+
         exchange.server_ephemeral.clear();
         exchange
             .server_ephemeral
@@ -128,7 +128,7 @@ where
         let client_secret = elliptic_curve::ecdh::EphemeralSecret::<C>::generate_from_rng(&mut rand::rng());
         let client_pubkey = client_secret.public_key();
 
-        // fill exchange.
+
         client_ephemeral.clear();
         client_ephemeral.extend_from_slice(&client_pubkey.to_sec1_bytes());
 
@@ -159,7 +159,7 @@ where
         exchange: &Exchange,
         buffer: &mut CryptoVec,
     ) -> Result<Vec<u8>, crate::Error> {
-        // Computing the exchange hash, see page 7 of RFC 5656.
+
         buffer.clear();
         exchange.client_id.deref().encode(buffer)?;
         exchange.server_id.deref().encode(buffer)?;

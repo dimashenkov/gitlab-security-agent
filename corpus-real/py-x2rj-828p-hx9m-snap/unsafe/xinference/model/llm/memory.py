@@ -1,31 +1,31 @@
-# Copyright 2022-2026 XProbe Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
-# NOTE:
-#
-#   The algorithm is ported from https://github.com/RahulSChand/gpu_poor
-#
-#   Improvement:
-#
-#      The original js code only calculate kv_cache_dtype by float32, instead of most case we run model with float16.
-#
-#   Known Issue:
-#
-#       * On vllm, some MHA model use smaller memory than calculation (qwen1.5-7B-chat-gptq-int4,
-#       qwen1.5-14B-chat-gptq-int4 with large activation_mem).
-#
-#       * On vllm, gemma-it-7B pytorch format model use larger gpu mem than calculation
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import json
 import math
@@ -42,15 +42,15 @@ logger = getLogger(__name__)
 @dataclass
 class ModelLayersInfo:
     vocab_size: int
-    heads: int  # num_attention_heads, num_heads or n_head
-    hidden_dim: int  # hidden_size, d_model, or n_embd
-    inter_dim: int  # intermediate_size, n_inner or d_ff
-    num_layers: int  # num_layers, num_hidden_layers or n_layer
+    heads: int
+    hidden_dim: int
+    inter_dim: int
+    num_layers: int
 
 
 @dataclass
 class ModelMemInfo:
-    """Memory required by model, unit in MB"""
+    ''
 
     model_mem: int
     kv_cache_mem: int
@@ -96,18 +96,18 @@ GGUF_MULTI_FACTOR_DICT_COMBINE = {
 }
 
 
-# Return gpu memory in MB
+
 def estimate_llm_gpu_memory(
     model_size_in_billions: Union[str, int],
     quantization: Optional[str],
-    context_length: int,  # input+output
+    context_length: int,
     model_format: str,
     model_name: Optional[str] = None,
     kv_cache_dtype: int = 16,
 ) -> Optional[ModelMemInfo]:
-    """
-    model_size_in_billions: must be str like 1_8 or 46_7, to match llm.
-    """
+    ''
+
+
     info = get_model_layers_info(
         model_size_in_billions,
         model_name,
@@ -131,11 +131,11 @@ def estimate_llm_gpu_memory_details(
     info: ModelLayersInfo,
     size_in_billions: float,
     quantization: Optional[str],
-    context_length: int,  # input+output
+    context_length: int,
     model_format: str,
     kv_cache_dtype: int = 16,
 ) -> ModelMemInfo:
-    """return model_mem, kv_cache, overhead, activation_mem"""
+    ''
     if kv_cache_dtype not in [8, 16, 32]:
         raise ValueError(f"Invalid kv_cache_dtype {kv_cache_dtype}")
     if kv_cache_dtype == 8:
@@ -162,7 +162,7 @@ def estimate_llm_gpu_memory_details(
 
         model_size = size_in_billions * 1000000000.0
         model_size_in_mb = _convert_to_mb_model_size(model_size, quantization)
-        # KV cache
+
         inference_mem = float(
             context_length * 2 * kv_dtype_size * info.hidden_dim * info.num_layers
         )
@@ -276,7 +276,7 @@ def _convert_to_mb_model_size(model_size: float, quantization: Optional[str]) ->
     extra = 0.0
     fB = 2.0
     size = (model_size * fB) / (1024.0 * 1024.0)
-    # bnb_q4 == 4-bit ?
+
     if quantization == "8-bit" or quantization == "4-bit":
         extra = 0.06 * size
     if quantization == "8-bit":

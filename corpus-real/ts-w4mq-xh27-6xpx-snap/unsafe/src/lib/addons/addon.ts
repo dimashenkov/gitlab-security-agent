@@ -133,9 +133,9 @@ export const fetchPinned = async (
 ): Promise<Response> => {
     return ky(validated.url.href, {
         ...options,
-        // Do not let 30x redirect to metadata/internal hosts.
+
         redirect: 'manual',
-        // Important: return 30x responses instead of throwing.
+
         throwHttpErrors: false,
         fetch: (input, init) => fetchWithPinnedLookup(input, init, validated),
     });

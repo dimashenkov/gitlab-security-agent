@@ -1,38 +1,38 @@
-﻿//-----------------------------------------------------------------------------
-// Filename: RTCPeerConnection.cs
-//
-// Description: Represents a WebRTC RTCPeerConnection.
-//
-// Specification Soup (as of 13 Jul 2020):
-// - "Session Description Protocol (SDP) Offer/Answer procedures for
-//   Interactive Connectivity Establishment(ICE)" [ed: specification for
-//   including ICE candidates in SDP]:
-//   https://tools.ietf.org/html/rfc8839
-// - "Session Description Protocol (SDP) Offer/Answer Procedures For Stream
-//   Control Transmission Protocol(SCTP) over Datagram Transport Layer
-//   Security(DTLS) Transport." [ed: specification for negotiating
-//   data channels in SDP, this defines the SDP "sctp-port" attribute] 
-//   https://tools.ietf.org/html/rfc8841
-// - "SDP-based Data Channel Negotiation" [ed: not currently implemented,
-//   actually seems like a big pain to implement this given it can already
-//   be done in-band on the SCTP connection]:
-//   https://tools.ietf.org/html/rfc8864
-//
-// Author(s):
-// Aaron Clauson (aaron@sipsorcery.com)
-//
-// History:
-// 04 Mar 2016	Aaron Clauson	Created.
-// 25 Aug 2019  Aaron Clauson   Updated from video only to audio and video.
-// 18 Jan 2020  Aaron Clauson   Combined WebRTCPeer and WebRTCSession.
-// 16 Mar 2020  Aaron Clauson   Refactored to support RTCPeerConnection interface.
-// 13 Jul 2020  Aaron Clauson   Added data channel support.
-// 22 Mar 2021  Aaron Clauson   Refactored data channels logic for new SCTP
-//                              implementation.
-//
-// License: 
-// BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
-//-----------------------------------------------------------------------------
+﻿
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 using System;
 using System.Collections.Generic;
@@ -50,22 +50,22 @@ using SIPSorcery.Net.SharpSRTP.DTLSSRTP;
 
 namespace SIPSorcery.Net
 {
-    /// <summary>
-    /// Initialiser for the RTCSessionDescription instance.
-    /// </summary>
-    /// <remarks>
-    /// As specified in https://www.w3.org/TR/webrtc/#rtcsessiondescription-class.
-    /// </remarks>
+
+
+
+
+
+
     public class RTCSessionDescriptionInit
     {
-        /// <summary>
-        /// The type of the Session Description.
-        /// </summary>
+
+
+
         public RTCSdpType type { get; set; }
 
-        /// <summary>
-        /// A string representation of the Session Description.
-        /// </summary>
+
+
+
         public string sdp { get; set; }
 
         public string toJSON()
@@ -85,42 +85,42 @@ namespace SIPSorcery.Net
             {
                 init = TinyJson.JSONParser.FromJson<RTCSessionDescriptionInit>(json);
 
-                // To qualify as parsed all required fields must be set.
+
                 return init != null &&
                     init.sdp != null;
             }
         }
     }
 
-    /// <summary>
-    /// Represents a WebRTC RTCPeerConnection.
-    /// </summary>
-    /// <remarks>
-    /// Interface is defined in https://www.w3.org/TR/webrtc/#interface-definition.
-    /// The Session Description offer/answer mechanisms are detailed in
-    /// https://tools.ietf.org/html/rfc8829 "JavaScript Session Establishment Protocol (JSEP)".
-    /// </remarks>
+
+
+
+
+
+
+
+
     public class RTCPeerConnection : RTPSession, IRTCPeerConnection
     {
-        // SDP constants.
-        //private new const string RTP_MEDIA_PROFILE = "RTP/SAVP";
+
+
         private const string RTP_MEDIA_NON_FEEDBACK_PROFILE = "UDP/TLS/RTP/SAVP";
         private const string RTP_MEDIA_FEEDBACK_PROFILE = "UDP/TLS/RTP/SAVPF";
-        private const string RTP_MEDIA_DATACHANNEL_DTLS_PROFILE = "DTLS/SCTP"; // Legacy.
+        private const string RTP_MEDIA_DATACHANNEL_DTLS_PROFILE = "DTLS/SCTP";
         private const string RTP_MEDIA_DATACHANNEL_UDPDTLS_PROFILE = "UDP/DTLS/SCTP";
         private const string SDP_DATACHANNEL_FORMAT_ID = "webrtc-datachannel";
-        private const string RTCP_MUX_ATTRIBUTE = "a=rtcp-mux";    // Indicates the media announcement is using multiplexed RTCP.
+        private const string RTCP_MUX_ATTRIBUTE = "a=rtcp-mux";
         private const string BUNDLE_ATTRIBUTE = "BUNDLE";
-        private const string ICE_OPTIONS = "ice2,trickle";          // Supported ICE options.
+        private const string ICE_OPTIONS = "ice2,trickle";
         private const string NORMAL_CLOSE_REASON = "normal";
         private const ushort SCTP_DEFAULT_PORT = 5000;
 
-        /// <summary>
-        /// The period to wait for the SCTP association to complete before giving up.
-        /// In theory this should be very quick as the DTLS connection should already have been established
-        /// and the SCTP logic only needs to send the small handshake messages to establish
-        /// the association.
-        /// </summary>
+
+
+
+
+
+
         private const int SCTP_ASSOCIATE_TIMEOUT_SECONDS = 2;
 
         private new readonly string RTP_MEDIA_PROFILE = RTP_MEDIA_NON_FEEDBACK_PROFILE;
@@ -142,24 +142,24 @@ namespace SIPSorcery.Net
         private Task _iceInitiateGatheringTask;
         private readonly TaskCompletionSource<bool> _iceCompletedGatheringTask = new();
 
-        private Dictionary<string, int> _rtpExtensionsUsed; // < Uri, Id>
+        private Dictionary<string, int> _rtpExtensionsUsed;
 
-        /// <summary>
-        /// Local ICE candidates that have been supplied directly by the application.
-        /// Useful for cases where the application may has extra information about the
-        /// network set up such as 1:1 NATs as used by Azure and AWS.
-        /// </summary>
+
+
+
+
+
         private List<RTCIceCandidate> _applicationIceCandidates = new List<RTCIceCandidate>();
 
-        /// <summary>
-        /// The ICE role the peer is acting in.
-        /// </summary>
+
+
+
         public IceRolesEnum IceRole { get; set; } = IceRolesEnum.actpass;
 
-        /// <summary>
-        /// The DTLS fingerprint supplied by the remote peer in their SDP. Needs to be checked
-        /// that the certificate supplied during the DTLS handshake matches.
-        /// </summary>
+
+
+
+
         public RTCDtlsFingerprint RemotePeerDtlsFingerprint { get; private set; }
 
         public string DtlsCertificateSignatureAlgorithm { get; private set; } = string.Empty;
@@ -202,31 +202,31 @@ namespace SIPSorcery.Net
 
         private RTCConfiguration _configuration;
 
-        /// <summary>
-        /// The fingerprint of the certificate being used to negotiate the DTLS handshake with the 
-        /// remote peer.
-        /// </summary>
+
+
+
+
         public RTCDtlsFingerprint DtlsCertificateFingerprint { get; private set; }
 
-        /// <summary>
-        /// The SCTP transport over which SCTP data is sent and received.
-        /// </summary>
-        /// <remarks>
-        /// WebRTC API definition:
-        /// https://www.w3.org/TR/webrtc/#attributes-15
-        /// </remarks>
+
+
+
+
+
+
+
         public RTCSctpTransport sctp { get; private set; }
 
-        /// <summary>
-        /// Informs the application that session negotiation needs to be done (i.e. a createOffer call 
-        /// followed by setLocalDescription).
-        /// </summary>
+
+
+
+
         public event Action onnegotiationneeded;
 
         private event Action<RTCIceCandidate> _onIceCandidate;
-        /// <summary>
-        /// A new ICE candidate is available for the Peer Connection.
-        /// </summary>
+
+
+
         public event Action<RTCIceCandidate> onicecandidate
         {
             add
@@ -264,21 +264,21 @@ namespace SIPSorcery.Net
                 {
                     _requireRenegotiation = value;
 
-                    // RemoteDescription is intentionally preserved during renegotiation.
-                    // createBaseSdp() needs it to maintain the m-line order from the
-                    // previous offer/answer exchange (RFC 3264 §8).
-                    // if (_requireRenegotiation)
-                    // {
-                    //     RemoteDescription = null;
-                    // }
+
+
+
+
+
+
+
                 }
 
-                //Remove NegotiationTask when state not stable
+
                 if (!_requireRenegotiation || signalingState != RTCSignalingState.stable)
                 {
                     CancelOnNegotiationNeededTask();
                 }
-                //Call Renegotiation Delayed (We need to wait as user can try add multiple tracks in sequence)
+
                 else
                 {
                     StartOnNegotiationNeededTask();
@@ -286,50 +286,50 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// A failure occurred when gathering ICE candidates.
-        /// </summary>
+
+
+
         public event Action<RTCIceCandidate, string> onicecandidateerror;
 
-        /// <summary>
-        /// The signaling state has changed. This state change is the result of either setLocalDescription or 
-        /// setRemoteDescription being invoked.
-        /// </summary>
+
+
+
+
         public event Action onsignalingstatechange;
 
-        /// <summary>
-        /// This Peer Connection's ICE connection state has changed.
-        /// </summary>
+
+
+
         public event Action<RTCIceConnectionState> oniceconnectionstatechange;
 
-        /// <summary>
-        /// This Peer Connection's ICE gathering state has changed.
-        /// </summary>
+
+
+
         public event Action<RTCIceGatheringState> onicegatheringstatechange;
 
-        /// <summary>
-        /// The state of the peer connection. A state of connected means the ICE checks have 
-        /// succeeded and the DTLS handshake has completed. Once in the connected state it's
-        /// suitable for media packets can be exchanged.
-        /// </summary>
+
+
+
+
+
         public event Action<RTCPeerConnectionState> onconnectionstatechange;
 
-        /// <summary>
-        /// Fires when a new data channel is created by the remote peer.
-        /// </summary>
+
+
+
         public event Action<RTCDataChannel> ondatachannel;
 
-        /// <summary>
-        /// Constructor to create a new RTC peer connection instance.
-        /// </summary>
+
+
+
         public RTCPeerConnection() :
             this(null)
         { }
 
-        /// <summary>
-        /// Constructor to create a new RTC peer connection instance.
-        /// </summary>
-        /// <param name="configuration">Optional.</param>
+
+
+
+
         public RTCPeerConnection(RTCConfiguration configuration, int bindPort = 0, PortRange portRange = null, Boolean videoAsPrimary = false) :
             base(true, true, true, configuration?.X_BindAddress, bindPort, portRange)
         {
@@ -347,9 +347,9 @@ namespace SIPSorcery.Net
             {
                 _configuration = configuration;
 
-                //test turns:
-                //_configuration.iceTransportPolicy = RTCIceTransportPolicy.relay;
-                //_configuration.iceServers = _configuration.iceServers.Where(p => p.urls.StartsWith("turns")).ToList();
+
+
+
 
                 if (!InitializeCertificates(configuration))
                 {
@@ -368,7 +368,7 @@ namespace SIPSorcery.Net
 
             if (_dtlsCertificate == null)
             {
-                // No certificate was provided so create a new self signed one.
+
                 (_dtlsCertificate, _dtlsPrivateKey) = DtlsUtils.CreateSelfSignedTlsCert(_crypto, useRsa: _configuration.X_UseRsaForDtlsCertificate);
             }
 
@@ -377,13 +377,13 @@ namespace SIPSorcery.Net
             SessionID = Guid.NewGuid().ToString();
             LocalSdpSessionID = Crypto.GetRandomInt(5).ToString();
 
-            // Request the underlying RTP session to create a single RTP channel that will
-            // be used to multiplex all required media streams.
+
+
             addSingleTrack(videoAsPrimary);
 
             _rtpIceChannel = GetRtpChannel();
 
-            // Propagate any translator that was set before the channel existed.
+
             if (_remoteEndpointTranslator != null)
             {
                 _rtpIceChannel.RemoteEndpointTranslator = _remoteEndpointTranslator;
@@ -401,17 +401,17 @@ namespace SIPSorcery.Net
             OnRtpClosed += Close;
             OnRtcpBye += Close;
 
-            //Cancel Negotiation Task Event to Prevent Duplicated Calls
+
             onnegotiationneeded += CancelOnNegotiationNeededTask;
 
             sctp = new RTCSctpTransport(SCTP_DEFAULT_PORT, SCTP_DEFAULT_PORT, _rtpIceChannel.RTPPort);
 
             onnegotiationneeded?.Invoke();
 
-            // This is the point the ICE session potentially starts contacting STUN and TURN servers.
-            // This job was moved to a background thread as it was observed that interacting with the OS network
-            // calls and/or initialising DNS was taking up to 600ms, see
-            // https://github.com/sipsorcery-org/sipsorcery/issues/456.
+
+
+
+
             _iceInitiateGatheringTask = Task.Run(_rtpIceChannel.StartGathering);
         }
 
@@ -428,10 +428,10 @@ namespace SIPSorcery.Net
             return true;
         }
 
-        /// <summary>
-        /// Event handler for ICE connection state changes.
-        /// </summary>
-        /// <param name="iceState">The new ICE connection state.</param>
+
+
+
+
         private async void IceConnectionStateChange(RTCIceConnectionState iceState)
         {
             oniceconnectionstatechange?.Invoke(iceConnectionState);
@@ -443,7 +443,7 @@ namespace SIPSorcery.Net
                     if (base.PrimaryStream.DestinationEndPoint?.Address.Equals(_rtpIceChannel.NominatedEntry.RemoteCandidate.DestinationEndPoint.Address) == false ||
                         base.PrimaryStream.DestinationEndPoint?.Port != _rtpIceChannel.NominatedEntry.RemoteCandidate.DestinationEndPoint.Port)
                     {
-                        // Already connected and this event is due to change in the nominated remote candidate.
+
                         var connectedEP = _rtpIceChannel.NominatedEntry.RemoteCandidate.DestinationEndPoint;
 
                         SetGlobalDestination(connectedEP, connectedEP);
@@ -453,7 +453,7 @@ namespace SIPSorcery.Net
                     if (connectionState == RTCPeerConnectionState.disconnected ||
                         connectionState == RTCPeerConnectionState.failed)
                     {
-                        // The ICE connection state change is due to a re-connection.
+
                         connectionState = RTCPeerConnectionState.connected;
                         onconnectionstatechange?.Invoke(connectionState);
                     }
@@ -499,8 +499,8 @@ namespace SIPSorcery.Net
                     {
                         logger.LogWarning(excp, "RTCPeerConnection DTLS handshake failed. {ErrorMessage}", excp.Message);
 
-                        //connectionState = RTCPeerConnectionState.failed;
-                        //onconnectionstatechange?.Invoke(connectionState);
+
+
 
                         Close("dtls handshake failed");
                     }
@@ -509,10 +509,10 @@ namespace SIPSorcery.Net
 
             if (iceConnectionState == RTCIceConnectionState.checking)
             {
-                // Not sure about this correspondence between the ICE and peer connection states.
-                // TODO: Double check spec.
-                //connectionState = RTCPeerConnectionState.connecting;
-                //onconnectionstatechange?.Invoke(connectionState);
+
+
+
+
             }
             else if (iceConnectionState == RTCIceConnectionState.disconnected)
             {
@@ -534,11 +534,11 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Creates a new RTP ICE channel (which manages the UDP socket sending and receiving RTP
-        /// packets) for use with this session.
-        /// </summary>
-        /// <returns>A new RTPChannel instance.</returns>
+
+
+
+
+
         protected override RTPChannel CreateRtpChannel()
         {
             if (rtpSessionConfig.IsMediaMultiplexed)
@@ -565,7 +565,7 @@ namespace SIPSorcery.Net
 
             rtpIceChannel.OnRTPDataReceived += OnRTPDataReceived;
 
-            // Start the RTP, and if required the Control, socket receivers and the RTCP session.
+
             rtpIceChannel.Start();
 
             m_rtpChannelsCount++;
@@ -573,15 +573,15 @@ namespace SIPSorcery.Net
             return rtpIceChannel;
         }
 
-        /// <summary>
-        /// Sets the local SDP.
-        /// </summary>
-        /// <remarks>
-        /// As specified in https://www.w3.org/TR/webrtc/#dom-peerconnection-setlocaldescription.
-        /// </remarks>
-        /// <param name="init">Optional. The session description to set as 
-        /// local description. If not supplied then an offer or answer will be created as required.
-        /// </param>
+
+
+
+
+
+
+
+
+
         public Task setLocalDescription(RTCSessionDescriptionInit init)
         {
             localDescription = new RTCSessionDescription { type = init.type, sdp = SDP.ParseSDPDescription(init.sdp) };
@@ -605,16 +605,16 @@ namespace SIPSorcery.Net
             return Task.CompletedTask;
         }
 
-        /// <summary>
-        /// This set remote description overload is a convenience method for SIP/VoIP callers
-        /// instead of WebRTC callers. The method signature better matches what the SIP
-        /// user agent is expecting.
-        /// TODO: Using two very similar overloads could cause confusion. Possibly
-        /// consolidate.
-        /// </summary>
-        /// <param name="sdpType">Whether the remote SDP is an offer or answer.</param>
-        /// <param name="sessionDescription">The SDP from the remote party.</param>
-        /// <returns>The result of attempting to set the remote description.</returns>
+
+
+
+
+
+
+
+
+
+
         public override SetDescriptionResultEnum SetRemoteDescription(SdpType sdpType, SDP sessionDescription)
         {
             RTCSessionDescriptionInit init = new RTCSessionDescriptionInit
@@ -626,17 +626,17 @@ namespace SIPSorcery.Net
             return setRemoteDescription(init);
         }
 
-        /// <summary>
-        /// Updates the session after receiving the remote SDP.
-        /// </summary>
-        /// <param name="init">The answer/offer SDP from the remote party.</param>
+
+
+
+
         public SetDescriptionResultEnum setRemoteDescription(RTCSessionDescriptionInit init)
         {
             remoteDescription = new RTCSessionDescription { type = init.type, sdp = SDP.ParseSDPDescription(init.sdp) };
 
-            SDP remoteSdp = remoteDescription.sdp; // SDP.ParseSDPDescription(init.sdp);
+            SDP remoteSdp = remoteDescription.sdp;
 
-            // Need to store uri/id of know extensions
+
             _rtpExtensionsUsed ??= new Dictionary<string, int>();
             foreach (var ann in remoteSdp.Media)
             {
@@ -682,7 +682,7 @@ namespace SIPSorcery.Net
                         remoteIceRole = remoteIceRole ?? ann.IceRole;
                     }
 
-                    // Check for data channel announcements.
+
                     if (ann.Media == SDPMediaTypesEnum.application &&
                         ann.MediaFormats.Count() == 1 &&
                         ann.ApplicationMediaFormats.Single().Key == SDP_DATACHANNEL_FORMAT_ID)
@@ -712,10 +712,10 @@ namespace SIPSorcery.Net
                     _rtpIceChannel.IsController = true;
                     IceRole = remoteIceRole == IceRolesEnum.passive ? IceRolesEnum.active : IceRolesEnum.passive;
                 }
-                //As Chrome does not support changing IceRole while renegotiating we need to keep same previous IceRole if we already negotiated before
+
                 else
                 {
-                    // Set DTLS role as client.
+
                     IceRole = IceRolesEnum.active;
                 }
 
@@ -743,8 +743,8 @@ namespace SIPSorcery.Net
                     return SetDescriptionResultEnum.DtlsFingerprintMissing;
                 }
 
-                // All browsers seem to have gone to trickling ICE candidates now but just
-                // in case one or more are given we can start the STUN dance immediately.
+
+
                 if (remoteSdp.IceCandidates != null)
                 {
                     foreach (var iceCandidate in remoteSdp.IceCandidates)
@@ -782,9 +782,9 @@ namespace SIPSorcery.Net
                     onsignalingstatechange?.Invoke();
                 }
 
-                // Trigger the ICE candidate events for any non-host candidates, host candidates are always included in the
-                // SDP offer/answer. The reason for the trigger is that ICE candidates cannot be sent to the remote peer
-                // until it is ready to receive them which is indicated by the remote offer being received.
+
+
+
                 foreach (var nonHostCand in _rtpIceChannel.Candidates.Where(x => x.type != RTCIceCandidateType.host))
                 {
                     _onIceCandidate?.Invoke(nonHostCand);
@@ -794,17 +794,17 @@ namespace SIPSorcery.Net
             return setResult;
         }
 
-        /// <summary>
-        /// Close the session including the underlying RTP session and channels.
-        /// </summary>
-        /// <param name="reason">An optional descriptive reason for the closure.</param>
+
+
+
+
         public override void Close(string reason)
         {
             if (!IsClosed)
             {
                 logger.LogDebug("Peer connection closed with reason {Reason}.", reason != null ? reason : "<none>");
 
-                // Close all DataChannels
+
                 if (DataChannels?.Count > 0)
                 {
                     foreach (var dc in DataChannels)
@@ -818,33 +818,33 @@ namespace SIPSorcery.Net
 
                 sctp?.Close();
 
-                base.Close(reason); // Here Audio and/or Video Streams are closed
+                base.Close(reason);
 
                 connectionState = RTCPeerConnectionState.closed;
                 onconnectionstatechange?.Invoke(RTCPeerConnectionState.closed);
             }
         }
 
-        /// <summary>
-        /// Closes the connection with the default reason.
-        /// </summary>
+
+
+
         public void close()
         {
             Close(NORMAL_CLOSE_REASON);
         }
 
-        /// <summary>
-        /// Generates the SDP for an offer that can be made to a remote peer.
-        /// </summary>
-        /// <remarks>
-        /// As specified in https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-createoffer.
-        /// </remarks>
-        /// <param name="options">Optional. If supplied the options will be sued to apply additional
-        /// controls over the generated offer SDP.</param>
+
+
+
+
+
+
+
+
         public RTCSessionDescriptionInit createOffer(RTCOfferOptions options = null)
         {
             List<MediaStream> mediaStreamList = GetMediaStreams();
-            //Revert to DefaultStreamStatus
+
             foreach (var mediaStream in mediaStreamList)
             {
                 if (mediaStream.LocalTrack != null && mediaStream.LocalTrack.StreamStatus == MediaStreamStatusEnum.Inactive)
@@ -863,7 +863,7 @@ namespace SIPSorcery.Net
             _rtpExtensionsUsed ??= new Dictionary<string, int>();
             foreach (var ann in offerSdp.Media)
             {
-                // Audio - Add RTP Extension we want or can support
+
                 if (ann.Media == SDPMediaTypesEnum.audio)
                 {
                     ann.HeaderExtensions.Clear();
@@ -873,12 +873,12 @@ namespace SIPSorcery.Net
 
                     if (localHeaderExtensions?.Count > 0)
                     {
-                        // Do we have already some extensions set ?
+
                         if (remoteHeaderExtensions is null || remoteHeaderExtensions.Count == 0)
                         {
                             foreach (var localExtension in localHeaderExtensions)
                             {
-                                // We must ensure to use same Id by extension
+
                                 if (_rtpExtensionsUsed.ContainsKey(localExtension.Uri))
                                 {
                                     localExtension.Id = _rtpExtensionsUsed[localExtension.Uri];
@@ -899,9 +899,9 @@ namespace SIPSorcery.Net
                                 var localExtension = localHeaderExtensions.FirstOrDefault(ext => ext.MatchesExtension(remoteExtension.Uri));
                                 if ((localExtension != null) && _rtpExtensionsUsed.ContainsKey(remoteExtension.Uri))
                                 {
-                                    // We must ensure to use same Id by extension
+
                                     localExtension.Id = _rtpExtensionsUsed[remoteExtension.Uri];
-                                    localExtension.Uri = remoteExtension.Uri;// Keep same Uri as remote
+                                    localExtension.Uri = remoteExtension.Uri;
 
                                     logger.LogDebug("[createOffer] - {Media}:[{MediaID}] - Add HeaderExtensions:[{Id} - {Uri}]", ann.Media, ann.MediaID, localExtension.Id, localExtension.Uri);
                                     ann.HeaderExtensions.Add(localExtension.Id, localExtension);
@@ -911,7 +911,7 @@ namespace SIPSorcery.Net
                     }
                     indexAudioStream++;
                 }
-                // Video - Add RTP Extension we want or can support
+
                 else if (ann.Media == SDPMediaTypesEnum.video)
                 {
                     ann.HeaderExtensions.Clear();
@@ -920,12 +920,12 @@ namespace SIPSorcery.Net
                     var remoteHeaderExtensions = VideoStreamList[indexVideoStream].RemoteTrack?.HeaderExtensions?.Values;
                     if (localHeaderExtensions?.Count > 0)
                     {
-                        // Do we have already some extensions set ?
+
                         if (remoteHeaderExtensions is null || remoteHeaderExtensions.Count == 0)
                         {
                             foreach (var localExtension in localHeaderExtensions)
                             {
-                                // We must ensure to use same Id by extension
+
                                 if (_rtpExtensionsUsed.ContainsKey(localExtension.Uri))
                                 {
                                     localExtension.Id = _rtpExtensionsUsed[localExtension.Uri];
@@ -946,9 +946,9 @@ namespace SIPSorcery.Net
                                 var localExtension = localHeaderExtensions.FirstOrDefault(ext => ext.MatchesExtension(remoteExtension.Uri));
                                 if ((localExtension != null) && _rtpExtensionsUsed.ContainsKey(remoteExtension.Uri))
                                 {
-                                    // We must ensure to use same Id by extension
+
                                     localExtension.Id = _rtpExtensionsUsed[remoteExtension.Uri];
-                                    localExtension.Uri = remoteExtension.Uri;// Keep same Uri as remote
+                                    localExtension.Uri = remoteExtension.Uri;
 
                                     logger.LogDebug("[createOffer] - {Media}:[{MediaID}] - Add HeaderExtensions:[{Id} - {Uri}]", ann.Media, ann.MediaID, localExtension.Id, localExtension.Uri);
                                     ann.HeaderExtensions.Add(localExtension.Id, localExtension);
@@ -970,12 +970,12 @@ namespace SIPSorcery.Net
             return initDescription;
         }
 
-        /// <summary>
-        /// Convenience overload to suit SIP/VoIP callers.
-        /// TODO: Consolidate with createAnswer.
-        /// </summary>
-        /// <param name="connectionAddress">Not used.</param>
-        /// <returns>An SDP payload to answer an offer from the remote party.</returns>
+
+
+
+
+
+
         public override SDP CreateOffer(IPAddress connectionAddress)
         {
             var result = createOffer(null);
@@ -988,12 +988,12 @@ namespace SIPSorcery.Net
             return null;
         }
 
-        /// <summary>
-        /// Convenience overload to suit SIP/VoIP callers.
-        /// TODO: Consolidate with createAnswer.
-        /// </summary>
-        /// <param name="connectionAddress">Not used.</param>
-        /// <returns>An SDP payload to answer an offer from the remote party.</returns>
+
+
+
+
+
+
         public override SDP CreateAnswer(IPAddress connectionAddress)
         {
             var result = createAnswer(null);
@@ -1006,15 +1006,15 @@ namespace SIPSorcery.Net
             return null;
         }
 
-        /// <summary>
-        /// Creates an answer to an SDP offer from a remote peer.
-        /// </summary>
-        /// <remarks>
-        /// As specified in https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-createanswer and
-        /// https://tools.ietf.org/html/rfc3264#section-6.1.
-        /// </remarks>
-        /// <param name="options">Optional. If supplied the options will be used to apply additional
-        /// controls over the generated answer SDP.</param>
+
+
+
+
+
+
+
+
+
         public RTCSessionDescriptionInit createAnswer(RTCAnswerOptions options = null)
         {
             if (remoteDescription == null)
@@ -1024,7 +1024,7 @@ namespace SIPSorcery.Net
             else
             {
                 List<MediaStream> mediaStreamList = GetMediaStreams();
-                //Revert to DefaultStreamStatus
+
                 foreach (var mediaStream in mediaStreamList)
                 {
                     if (mediaStream.LocalTrack != null && mediaStream.LocalTrack.StreamStatus == MediaStreamStatusEnum.Inactive)
@@ -1042,7 +1042,7 @@ namespace SIPSorcery.Net
                 _rtpExtensionsUsed ??= new Dictionary<string, int>();
                 foreach (var ann in answerSdp.Media)
                 {
-                    // Audio - RTP Extension must be same on Local and Remote Track
+
                     if (ann.Media == SDPMediaTypesEnum.audio)
                     {
                         ann.HeaderExtensions.Clear();
@@ -1056,9 +1056,9 @@ namespace SIPSorcery.Net
                                 var localExtension = localHeaderExtensions.FirstOrDefault(ext => ext.MatchesExtension(remoteExtension.Uri));
                                 if ((localExtension != null) && _rtpExtensionsUsed.ContainsKey(remoteExtension.Uri))
                                 {
-                                    // We must ensure to use same Id by extension
+
                                     localExtension.Id = _rtpExtensionsUsed[remoteExtension.Uri];
-                                    localExtension.Uri = remoteExtension.Uri;// Keep same Uri as remote
+                                    localExtension.Uri = remoteExtension.Uri;
 
                                     logger.LogDebug("[createAnswer] - {Media}:[{MediaID}] - Add HeaderExtensions:[{Id} - {Uri}]", ann.Media, ann.MediaID, localExtension.Id, localExtension.Uri);
                                     ann.HeaderExtensions.Add(localExtension.Id, localExtension);
@@ -1067,7 +1067,7 @@ namespace SIPSorcery.Net
                         }
                         indexAudioStream++;
                     }
-                    // Video - RTP Extension must be same on Local and Remote Track
+
                     else if (ann.Media == SDPMediaTypesEnum.video)
                     {
                         ann.HeaderExtensions.Clear();
@@ -1081,9 +1081,9 @@ namespace SIPSorcery.Net
                                 var localExtension = localHeaderExtensions.FirstOrDefault(ext => ext.MatchesExtension(remoteExtension.Uri));
                                 if ((localExtension != null) && _rtpExtensionsUsed.ContainsKey(remoteExtension.Uri))
                                 {
-                                    // We must ensure to use same Id by extension
+
                                     localExtension.Id = _rtpExtensionsUsed[remoteExtension.Uri];
-                                    localExtension.Uri = remoteExtension.Uri; // Keep same Uri as remote
+                                    localExtension.Uri = remoteExtension.Uri;
 
                                     logger.LogDebug("[createAnswer] - {Media}:[{MediaID}] - Add HeaderExtensions:[{Id} - {Uri}]", ann.Media, ann.MediaID, localExtension.Id, localExtension.Uri);
                                     ann.HeaderExtensions.Add(localExtension.Id, localExtension);
@@ -1094,9 +1094,9 @@ namespace SIPSorcery.Net
                     }
                 }
 
-                // RFC 4145 Section 4.1: An SDP answer MUST use setup:active or
-                // setup:passive, never setup:actpass. Ensure all media
-                // announcements carry the resolved role.
+
+
+
                 var answerRole = (IceRole == IceRolesEnum.active)
                     ? IceRolesEnum.active
                     : IceRolesEnum.passive;
@@ -1116,52 +1116,52 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// For standard use this method should not need to be called. The remote peer's ICE
-        /// user and password will be set when from the SDP. This method is provided for 
-        /// diagnostics purposes.
-        /// </summary>
-        /// <param name="remoteIceUser">The remote peer's ICE user value.</param>
-        /// <param name="remoteIcePassword">The remote peer's ICE password value.</param>
+
+
+
+
+
+
+
         public void SetRemoteCredentials(string remoteIceUser, string remoteIcePassword)
         {
             _rtpIceChannel.SetRemoteCredentials(remoteIceUser, remoteIcePassword);
         }
 
-        /// <summary>
-        /// Gets the RTP channel being used to send and receive data on this peer connection.
-        /// Unlike the base RTP session peer connections only ever use a single RTP channel.
-        /// Audio and video (and RTCP) are all multiplexed on the same channel.
-        /// </summary>
+
+
+
+
+
         public RtpIceChannel GetRtpChannel()
         {
             return PrimaryStream.GetRTPChannel() as RtpIceChannel;
         }
 
-        /// <summary>
-        /// Generates the base SDP for an offer or answer. The SDP will then be tailored depending
-        /// on whether it's being used in an offer or an answer.
-        /// </summary>
-        /// <param name="mediaStreamList">THe media streamss to add to the SDP description.</param>
-        /// <param name="excludeIceCandidates">If true it indicates the caller does not want ICE candidates added
-        /// to the SDP.</param>
-        /// <param name="waitForIceGatheringToComplete">If set to true the SDP generation will wait until the ICE gathering is complete
-        /// before generating the SDP. This is a convenient way to get ICE candidates to be included in the SDP.</param>
-        /// <remarks>
-        /// From https://tools.ietf.org/html/draft-ietf-mmusic-ice-sip-sdp-39#section-4.2.5:
-        ///   "The transport address from the peer for the default destination
-        ///   is set to IPv4/IPv6 address values "0.0.0.0"/"::" and port value
-        ///   of "9".  This MUST NOT be considered as a ICE failure by the peer
-        ///   agent and the ICE processing MUST continue as usual."
-        /// </remarks>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         private SDP createBaseSdp(List<MediaStream> mediaStreamList, bool excludeIceCandidates = false, bool waitForIceGatheringToComplete = false)
         {
-            // Make sure the ICE gathering of local IP addresses is complete.
-            // This task should complete very quickly (<1s) but it is deemed very useful to wait
-            // for it to complete as it allows local ICE candidates to be included in the SDP.
-            // In theory it would be better to an async/await but that would result in a breaking
-            // change to the API and for a one off (once per class instance not once per method call)
-            // delay of a few hundred milliseconds it was decided not to break the API.
+
+
+
+
+
+
             using (var ct = new CancellationTokenSource(TimeSpan.FromMilliseconds(_configuration.X_GatherTimeoutMs)))
             {
                 try
@@ -1195,14 +1195,14 @@ namespace SIPSorcery.Net
             string dtlsFingerprint = this.DtlsCertificateFingerprint.ToString();
             bool iceCandidatesAdded = false;
 
-            // Local function to add ICE candidates to one of the media announcements.
+
             void AddIceCandidates(SDPMediaAnnouncement announcement)
             {
                 if (_rtpIceChannel.Candidates?.Count > 0)
                 {
                     announcement.IceCandidates = new List<string>();
 
-                    // Add ICE candidates.
+
                     foreach (var iceCandidate in _rtpIceChannel.Candidates)
                     {
                         announcement.IceCandidates.Add(iceCandidate.ToString());
@@ -1220,10 +1220,10 @@ namespace SIPSorcery.Net
                 }
             };
 
-            // Media announcements must be in the same order in the offer and answer.
-            // Existing media types reuse their index from the previous answer; new types
-            // (not present in RemoteDescription) are appended after all existing m-lines
-            // per RFC 3264 §8.
+
+
+
+
             int mediaIndex = 0;
             int audioMediaIndex = 0;
             int videoMediaIndex = 0;
@@ -1255,9 +1255,9 @@ namespace SIPSorcery.Net
 
                 if (mindex == SDP.MEDIA_INDEX_NOT_PRESENT)
                 {
-                    // New media type added after the initial offer/answer — append it
-                    // after all existing m-lines so the ordering of previously negotiated
-                    // m-lines is preserved (RFC 3264 §8).
+
+
+
                     mindex = nextNewMLineIndex;
                     midTag = nextNewMLineIndex.ToString();
                     nextNewMLineIndex++;
@@ -1341,7 +1341,7 @@ namespace SIPSorcery.Net
                 }
             }
 
-            // Set the Bundle attribute to indicate all media announcements are being multiplexed.
+
             if (offerSdp.Media?.Count > 0)
             {
                 offerSdp.Group = BUNDLE_ATTRIBUTE;
@@ -1354,40 +1354,40 @@ namespace SIPSorcery.Net
             return offerSdp;
         }
 
-        /// <summary>
-        /// From RFC5764: <![CDATA[
-        ///             +----------------+
-        ///             | 127 < B< 192  -+--> forward to RTP
-        ///             |                |
-        /// packet -->  |  19 < B< 64   -+--> forward to DTLS
-        ///             |                |
-        ///             |       B< 2    -+--> forward to STUN
-        ///             +----------------+
-        /// ]]>
-        /// </summary>
-        /// <paramref name="localPort">The local port on the RTP socket that received the packet.</paramref>
-        /// <param name="remoteEP">The remote end point the packet was received from.</param>
-        /// <param name="buffer">The data received.</param>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         private void OnRTPDataReceived(int localPort, IPEndPoint remoteEP, byte[] buffer)
         {
-            //logger.LogDebug($"RTP channel received a packet from {remoteEP}, {buffer?.Length} bytes.");
 
-            // By this point the RTP ICE channel has already processed any STUN packets which means 
-            // it's only necessary to separate RTP/RTCP from DTLS.
-            // Because DTLS packets can be fragmented and RTP/RTCP should never be, use the RTP/RTCP 
-            // prefix to distinguish.
+
+
+
+
+
 
             if (buffer?.Length > 0)
             {
-                // ICE source-address filter (issues #1559, #1731). Non-STUN packets are only
-                // forwarded to DTLS / RTP if their source matches one of the known remote ICE
-                // candidates (the remote SDP candidates plus peer-reflexive candidates discovered
-                // via authenticated STUN). This blocks an off-path attacker who guesses the local
-                // port from flooding DTLS ClientHello packets to interfere with a genuine handshake,
-                // while still accepting media that legitimately arrives from a valid-but-not-yet-
-                // nominated pair or an asymmetric path during ICE negotiation. STUN packets are
-                // filtered out earlier in the RTP channel and aren't subject to this check (consent
-                // freshness / ICE restart / new pair nomination still happen via the STUN path).
+
+
+
+
+
+
+
+
+
                 if (!(_rtpIceChannel?.IsKnownRemoteEndPoint(remoteEP) ?? false))
                 {
                     if (logger.IsEnabled(Microsoft.Extensions.Logging.LogLevel.Debug))
@@ -1403,14 +1403,14 @@ namespace SIPSorcery.Net
                 {
                     if (buffer?.Length > RTPHeader.MIN_HEADER_LEN && buffer[0] >= 128 && buffer[0] <= 191)
                     {
-                        // RTP/RTCP packet.
+
                         base.OnReceive(localPort, remoteEP, buffer);
                     }
                     else
                     {
                         if (_dtlsHandle != null)
                         {
-                            //logger.LogDebug($"DTLS transport received {buffer.Length} bytes from {AudioDestinationEndPoint}.");
+
                             _dtlsHandle.WriteToRecvStream(buffer);
                         }
                         else
@@ -1429,21 +1429,21 @@ namespace SIPSorcery.Net
 
         private Func<IPEndPoint, IPEndPoint> _remoteEndpointTranslator;
 
-        /// <summary>
-        /// Optional hook to normalize the source endpoint of received traffic before it's
-        /// compared against ICE candidates and the nominated pair. Used to reconcile the
-        /// address an in-process TURN relay socket uses when sending to a local destination
-        /// (a local interface IP) with the advertised relay address (typically a public IP
-        /// in <c>XOR-RELAYED-ADDRESS</c>).
-        ///
-        /// The delegate receives the observed source endpoint and returns either a
-        /// translated endpoint (when it recognizes the source as a known relay socket)
-        /// or <c>null</c> / the input unchanged when no translation applies.
-        ///
-        /// Setting this property also propagates the value to the underlying
-        /// <see cref="RtpIceChannel"/> so peer-reflexive candidate creation honours the
-        /// same mapping. When unset, behaviour is identical to prior versions.
-        /// </summary>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         public Func<IPEndPoint, IPEndPoint> RemoteEndpointTranslator
         {
             get => _remoteEndpointTranslator;
@@ -1457,27 +1457,27 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Used to add a local ICE candidate. These are for candidates that the application may
-        /// want to provide in addition to the ones that will be automatically determined. An
-        /// example is when a machine is behind a 1:1 NAT and the application wants a host 
-        /// candidate with the public IP address to be included.
-        /// </summary>
-        /// <param name="candidate">The ICE candidate to add.</param>
-        /// <example>
-        /// var natCandidate = new RTCIceCandidate(RTCIceProtocol.udp, natAddress, natPort, RTCIceCandidateType.host);
-        /// pc.addLocalIceCandidate(natCandidate);
-        /// </example>
+
+
+
+
+
+
+
+
+
+
+
         public void addLocalIceCandidate(RTCIceCandidate candidate)
         {
             candidate.usernameFragment = _rtpIceChannel.LocalIceUser;
             _applicationIceCandidates.Add(candidate);
         }
 
-        /// <summary>
-        /// Used to add remote ICE candidates to the peer connection's checklist.
-        /// </summary>
-        /// <param name="candidateInit">The remote ICE candidate to add.</param>
+
+
+
+
         public void addIceCandidate(RTCIceCandidateInit candidateInit)
         {
             RTCIceCandidate candidate = new RTCIceCandidate(candidateInit);
@@ -1492,40 +1492,40 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Restarts the ICE session gathering and connection checks.
-        /// </summary>
+
+
+
         public void restartIce()
         {
             _rtpIceChannel.Restart();
         }
 
-        /// <summary>
-        /// Gets the initial optional configuration settings this peer connection was created
-        /// with.
-        /// </summary>
-        /// <returns>If available the initial configuration options.</returns>
+
+
+
+
+
         public RTCConfiguration getConfiguration()
         {
             return _configuration;
         }
 
-        /// <summary>
-        /// Not implemented. Configuration options cannot currently be changed once the peer
-        /// connection has been initialised.
-        /// </summary>
+
+
+
+
         public void setConfiguration(RTCConfiguration configuration = null)
         {
             throw new NotImplementedException();
         }
 
-        /// <summary>
-        /// Once the SDP exchange has been made the SCTP transport ports are known. If the destination
-        /// port is not using the default value attempt to update it on teh SCTP transprot.
-        /// </summary>
+
+
+
+
         private void UpdatedSctpDestinationPort()
         {
-            // If a data channel was requested by the application then create the SCTP association.
+
             var sctpAnn = RemoteDescription.Media.Where(x => x.Media == SDPMediaTypesEnum.application).FirstOrDefault();
             ushort destinationPort = sctpAnn?.SctpPort != null ? sctpAnn.SctpPort.Value : SCTP_DEFAULT_PORT;
 
@@ -1535,15 +1535,15 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// These internal function is used to call Renegotiation Event with delay as the user should call addTrack/removeTrack in sequence so we need a small delay to prevent multiple renegotiation calls
-        /// </summary>
-        /// <returns>Current Executing Task</returns>
+
+
+
+
         protected virtual Task StartOnNegotiationNeededTask()
         {
             const int RENEGOTIATION_CALL_DELAY = 100;
 
-            //We need to reset the timer every time that we call this function
+
             CancelOnNegotiationNeededTask();
 
             CancellationToken token;
@@ -1556,14 +1556,14 @@ namespace SIPSorcery.Net
             {
                 try
                 {
-                    //Call Renegotiation Delayed
+
                     await Task.Delay(RENEGOTIATION_CALL_DELAY, token);
                 }
                 catch (TaskCanceledException)
                 {
                 }
 
-                //Prevent continue with cancellation requested
+
                 if (token.IsCancellationRequested)
                 {
                     return;
@@ -1572,16 +1572,16 @@ namespace SIPSorcery.Net
                 {
                     if (_requireRenegotiation)
                     {
-                        //We Already Subscribe CancelRenegotiationEventTask in Constructor so we dont need to handle with this function again here
+
                         onnegotiationneeded?.Invoke();
                     }
                 }
             }, token);
         }
 
-        /// <summary>
-        /// Cancel current Negotiation Event Call to prevent running thread to call OnNegotiationNeeded
-        /// </summary>
+
+
+
         protected virtual void CancelOnNegotiationNeededTask()
         {
             lock (_renegotiationLock)
@@ -1599,12 +1599,12 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Initialises the SCTP transport. This will result in the DTLS SCTP transport listening 
-        /// for incoming INIT packets if the remote peer attempts to create the association. The local
-        /// peer will NOT attempt to establish the association at this point. It's up to the
-        /// application to specify it wants a data channel to initiate the SCTP association attempt.
-        /// </summary>
+
+
+
+
+
+
         private async Task InitialiseSctpTransport()
         {
             try
@@ -1624,10 +1624,10 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Event handler for changes to the SCTP transport state.
-        /// </summary>
-        /// <param name="state">The new transport state.</param>
+
+
+
+
         private void OnSctpTransportStateChanged(RTCSctpTransportState state)
         {
             if (state == RTCSctpTransportState.Connected)
@@ -1638,7 +1638,7 @@ namespace SIPSorcery.Net
                 sctp.RTCSctpAssociation.OnDataChannelOpened += OnSctpAssociationDataChannelOpened;
                 sctp.RTCSctpAssociation.OnNewDataChannel += OnSctpAssociationNewDataChannel;
 
-                // Create new SCTP streams for any outstanding data channel requests.
+
                 foreach (var dataChannel in _dataChannels.ActivatePendingChannels())
                 {
                     OpenDataChannel(dataChannel);
@@ -1646,15 +1646,15 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Event handler for a new data channel being opened by the remote peer.
-        /// </summary>
+
+
+
         private void OnSctpAssociationNewDataChannel(ushort streamID, DataChannelTypes type, ushort priority, uint reliability, string label, string protocol)
         {
             logger.LogInformation("WebRTC new data channel opened by remote peer for stream ID {StreamID}, type {Type}, priority {Priority}, reliability {Reliability}, label {Label}, protocol {Protocol}.",
                 streamID, type, priority, reliability, label, protocol);
 
-            // TODO: Set reliability, priority etc. properties on the data channel.
+
             var dc = new RTCDataChannel(sctp)
             {
                 id = streamID,
@@ -1672,15 +1672,15 @@ namespace SIPSorcery.Net
             }
             else
             {
-                // TODO: What's the correct behaviour here?? I guess use the newest one and remove the old one?
+
                 logger.LogWarning("WebRTC duplicate data channel requested for stream ID {StreamID}.", streamID);
             }
         }
 
-        /// <summary>
-        /// Event handler for the confirmation that a data channel opened by this peer has been acknowledged.
-        /// </summary>
-        /// <param name="streamID">The ID of the stream corresponding to the acknowledged data channel.</param>
+
+
+
+
         private void OnSctpAssociationDataChannelOpened(ushort streamID)
         {
             _dataChannels.TryGetChannel(streamID, out var dc);
@@ -1698,9 +1698,9 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Event handler for an SCTP DATA chunk being received on the SCTP association.
-        /// </summary>
+
+
+
         private void OnSctpAssociationDataChunk(SctpDataFrame frame)
         {
             if (_dataChannels.TryGetChannel(frame.StreamID, out var dc))
@@ -1713,10 +1713,10 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// When a data channel is requested an SCTP association is needed. This method attempts to 
-        /// initialise the association if it is not already available.
-        /// </summary>
+
+
+
+
         private async Task InitialiseSctpAssociation()
         {
             if (sctp.RTCSctpAssociation.State != SctpAssociationState.Established)
@@ -1757,15 +1757,15 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Adds a new data channel to the peer connection.
-        /// </summary>
-        /// <remarks>
-        /// WebRTC API definition:
-        /// https://www.w3.org/TR/webrtc/#methods-11
-        /// </remarks>
-        /// <param name="label">The label used to identify the data channel.</param>
-        /// <returns>The data channel created.</returns>
+
+
+
+
+
+
+
+
+
         public async Task<RTCDataChannel> createDataChannel(string label, RTCDataChannelInit init = null)
         {
             logger.LogDebug("Data channel create request for label {Label}.", label);
@@ -1777,9 +1777,9 @@ namespace SIPSorcery.Net
 
             if (connectionState == RTCPeerConnectionState.connected)
             {
-                // If the peer connection is not in a connected state there's no point doing anything
-                // with the SCTP transport. If the peer connection does connect then a check will
-                // be made for any pending data channels and the SCTP operations will be done then.
+
+
+
 
                 if (sctp == null || sctp.state != RTCSctpTransportState.Connected)
                 {
@@ -1796,7 +1796,7 @@ namespace SIPSorcery.Net
                     _dataChannels.AddActiveChannel(channel);
                     OpenDataChannel(channel);
 
-                    // Wait for the DCEP ACK from the remote peer.
+
                     TaskCompletionSource<string> isopen = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
                     channel.onopen += () => isopen.TrySetResult(string.Empty);
                     channel.onerror += (err) => isopen.TrySetResult(err);
@@ -1814,19 +1814,19 @@ namespace SIPSorcery.Net
             }
             else
             {
-                // Data channels can be created prior to the SCTP transport being available.
-                // They will act as placeholders and then be opened once the SCTP transport 
-                // becomes available.
+
+
+
                 _dataChannels.AddPendingChannel(channel);
                 return channel;
             }
         }
 
-        /// <summary>
-        /// Sends the Data Channel Establishment Protocol (DCEP) OPEN message to configure the data
-        /// channel on the remote peer.
-        /// </summary>
-        /// <param name="dataChannel">The data channel to open.</param>
+
+
+
+
+
         private void OpenDataChannel(RTCDataChannel dataChannel)
         {
             if (dataChannel.negotiated)
@@ -1845,14 +1845,14 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        ///  DtlsHandshake requires DtlsSrtpTransport to work.
-        ///  DtlsSrtpTransport is similar to C++ DTLS class combined with Srtp class and can perform 
-        ///  Handshake as Server or Client in same call. The constructor of transport require a DtlsStrpClient 
-        ///  or DtlsSrtpServer to work.
-        /// </summary>
-        /// <param name="dtlsHandle">The DTLS transport handle to perform the handshake with.</param>
-        /// <returns>True if the DTLS handshake is successful or false if not.</returns>
+
+
+
+
+
+
+
+
         private bool DoDtlsHandshake(DtlsSrtpTransport dtlsHandle)
         {
             logger.LogDebug("RTCPeerConnection DoDtlsHandshake started.");
@@ -1861,7 +1861,7 @@ namespace SIPSorcery.Net
 
             dtlsHandle.OnDataReady += (buf) =>
             {
-                //logger.LogDebug($"DTLS transport sending {buf.Length} bytes to {AudioDestinationEndPoint}.");
+
                 rtpChannel.Send(RTPChannelSocketsEnum.RTP, PrimaryStream.DestinationEndPoint, buf);
             };
 
@@ -1905,33 +1905,33 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Event handler for TLS alerts from the DTLS transport.
-        /// </summary>
-        /// <param name="alertLevel">The level of the alert: warning or critical.</param>
-        /// <param name="alertType">The type of the alert.</param>
-        /// <param name="alertDescription">An optional description for the alert.</param>
+
+
+
+
+
+
         private void OnDtlsAlert(TlsAlertLevelsEnum alertLevel, TlsAlertTypesEnum alertType, string alertDescription)
         {
             if (alertType == TlsAlertTypesEnum.CloseNotify)
             {
                 logger.LogDebug("Closing peer connection as a result of DTLS close notification.");
 
-                // A DTLS close_notify from the remote peer means the secure
-                // channel is gone -- the entire peer connection is no longer
-                // usable. Per the WebRTC spec the RTCDtlsTransport state moves
-                // to "closed" which propagates to the RTCPeerConnection.
-                // libwebrtc, Firefox and pion all close the whole peer
-                // connection at this point.
-                //
-                // Without this Close() call the SCTP association alone is
-                // closed but the underlying RTP/UDP socket keeps running and
-                // continues to send periodic STUN consent freshness checks +
-                // RTP/RTCP packets at the now-gone remote port. The remote
-                // OS responds with ICMP "port unreachable" for each one,
-                // which surfaces as a tight loop of
-                //   SocketException UdpReceiver.EndReceiveFrom (ConnectionReset)
-                // warnings until the application shuts itself down.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
                 Close("Remote DTLS close notification received");
             }
             else
@@ -1941,17 +1941,17 @@ namespace SIPSorcery.Net
             }
         }
 
-        /// <summary>
-        /// Close the session if the instance is out of scope.
-        /// </summary>
+
+
+
         protected override void Dispose(bool disposing)
         {
             Close("disposed");
         }
 
-        /// <summary>
-        /// Close the session if the instance is out of scope.
-        /// </summary>
+
+
+
         public override void Dispose()
         {
             Close("disposed");

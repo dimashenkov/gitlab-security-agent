@@ -20,27 +20,27 @@ use super::InnerTlsParameters;
 use super::TlsParameters;
 use crate::transport::smtp::{Error, error};
 
-/// A network stream
+
 pub struct NetworkStream {
     inner: InnerNetworkStream,
 }
 
-/// Represents the different types of underlying network streams
-// usually only one TLS backend at a time is going to be enabled,
-// so clippy::large_enum_variant doesn't make sense here
+
+
+
 #[allow(clippy::large_enum_variant)]
 enum InnerNetworkStream {
-    /// Plain TCP stream
+
     Tcp(TcpStream),
-    /// Encrypted TCP stream
+
     #[cfg(feature = "native-tls")]
     NativeTls(TlsStream<TcpStream>),
-    /// Encrypted TCP stream
+
     #[cfg(feature = "rustls")]
     Rustls(StreamOwned<ClientConnection, TcpStream>),
     #[cfg(feature = "boring-tls")]
     BoringTls(SslStream<TcpStream>),
-    /// Can't be built
+
     None,
 }
 
@@ -53,7 +53,7 @@ impl NetworkStream {
         NetworkStream { inner }
     }
 
-    /// Returns peer's address
+
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
         match &self.inner {
             InnerNetworkStream::Tcp(s) => s.peer_addr(),
@@ -73,7 +73,7 @@ impl NetworkStream {
         }
     }
 
-    /// Shutdowns the connection
+
     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
         match &self.inner {
             InnerNetworkStream::Tcp(s) => s.shutdown(how),
@@ -156,7 +156,7 @@ impl NetworkStream {
 
             #[cfg(any(feature = "native-tls", feature = "rustls", feature = "boring-tls"))]
             InnerNetworkStream::Tcp(_) => {
-                // get owned TcpStream
+
                 let tcp_stream = mem::replace(&mut self.inner, InnerNetworkStream::None);
                 let InnerNetworkStream::Tcp(tcp_stream) = tcp_stream else {
                     unreachable!()
@@ -317,7 +317,7 @@ impl NetworkStream {
         }
     }
 
-    /// Set write timeout for IO calls
+
     pub fn set_write_timeout(&mut self, duration: Option<Duration>) -> io::Result<()> {
         match &mut self.inner {
             InnerNetworkStream::Tcp(stream) => stream.set_write_timeout(duration),
@@ -388,10 +388,10 @@ impl Write for NetworkStream {
     }
 }
 
-/// If the local address is set, binds the socket to this address.
-/// If local address is not set, then destination address is required to determine the default
-/// local address on some platforms.
-/// See: <https://github.com/hyperium/hyper/blob/faf24c6ad8eee1c3d5ccc9a4d4835717b8e2903f/src/client/connect/http.rs#L560>
+
+
+
+
 fn bind_local_address(
     socket: &socket2::Socket,
     dst_addr: &SocketAddr,
@@ -405,7 +405,7 @@ fn bind_local_address(
         }
         _ => {
             if cfg!(windows) {
-                // Windows requires a socket be bound before calling connect
+
                 let any: SocketAddr = match dst_addr {
                     SocketAddr::V4(_) => ([0, 0, 0, 0], 0).into(),
                     SocketAddr::V6(_) => ([0, 0, 0, 0, 0, 0, 0, 0], 0).into(),
@@ -417,8 +417,8 @@ fn bind_local_address(
     Ok(())
 }
 
-/// When we have an iterator of resolved remote addresses, we must filter them to be the same
-/// protocol as the local address binding. If no local address is set, then all will be matched.
+
+
 pub(crate) fn resolved_address_filter(
     resolved_addr: &SocketAddr,
     local_addr: Option<IpAddr>,

@@ -10,15 +10,15 @@ import (
 )
 
 var (
-	// AccessControlAllowOrigin CORS policy - set with flags/env
+
 	AccessControlAllowOrigin string
 
-	// CorsAllowOrigins are optional allowed origins by hostname, set via setCORSOrigins().
+
 	corsAllowOrigins = make(map[string]bool)
 )
 
-// equalASCIIFold reports whether s and t, interpreted as UTF-8 strings, are equal
-// under Unicode case folding, ignoring any difference in length.
+
+
 func asciiFoldString(s string) string {
 	b := make([]byte, len(s))
 	for i := range s {
@@ -27,8 +27,8 @@ func asciiFoldString(s string) string {
 	return string(b)
 }
 
-// toLowerASCIIFold returns the Unicode case-folded equivalent of the ASCII character c.
-// It is equivalent to the Unicode 13.0.0 function foldCase(c, CaseFoldingMapping).
+
+
 func toLowerASCIIFold(c byte) byte {
 	if 'A' <= c && c <= 'Z' {
 		return c + 'a' - 'A'
@@ -36,7 +36,7 @@ func toLowerASCIIFold(c byte) byte {
 	return c
 }
 
-// CorsOriginAccessControl checks if the request origin is allowed based on the configured CORS origins.
+
 func corsOriginAccessControl(r *http.Request) bool {
 	origin := r.Header["Origin"]
 
@@ -48,13 +48,13 @@ func corsOriginAccessControl(r *http.Request) bool {
 		}
 
 		_, allAllowed := corsAllowOrigins["*"]
-		// allow same origin, or if "*" is defined as an origin
+
 		if asciiFoldString(u.Host) == asciiFoldString(r.Host) || allAllowed {
 			return true
 		}
 
-		// match on full host:port so that example.com:8080 is not admitted
-		// by an allowlist entry for example.com (standard port 80/443).
+
+
 		originHostFold := asciiFoldString(u.Host)
 		if corsAllowOrigins[originHostFold] {
 			return true
@@ -68,9 +68,9 @@ func corsOriginAccessControl(r *http.Request) bool {
 	return true
 }
 
-// SetCORSOrigins sets the allowed CORS origins from a comma-separated string.
-// Origins are matched on the full host:port, so example.com and example.com:8080
-// are treated as distinct origins.
+
+
+
 func setCORSOrigins() {
 	corsAllowOrigins = make(map[string]bool)
 
@@ -84,7 +84,7 @@ func setCORSOrigins() {
 	}
 
 	if _, wildCard := corsAllowOrigins["*"]; wildCard {
-		// reset to just wildcard
+
 		corsAllowOrigins = make(map[string]bool)
 		corsAllowOrigins["*"] = true
 		logger.Log().Info("[cors] all origins are allowed due to wildcard \"*\"")
@@ -98,7 +98,7 @@ func setCORSOrigins() {
 	}
 }
 
-// extractOrigins extracts and returns a sorted list of origins from a comma-separated string.
+
 func extractOrigins(str string) []string {
 	origins := make([]string, 0)
 	s := strings.TrimSpace(str)
@@ -127,8 +127,8 @@ func extractOrigins(str string) []string {
 				continue
 			}
 
-			// Store host:port so port differences are respected.
-			// u.Host equals u.Hostname() when no port is present.
+
+
 			origins = append(origins, u.Host)
 		}
 	}

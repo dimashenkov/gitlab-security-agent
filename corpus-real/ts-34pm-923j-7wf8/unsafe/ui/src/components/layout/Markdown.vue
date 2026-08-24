@@ -33,9 +33,9 @@
 
     const router = useRouter();
 
-    /**
-     * Unified component props
-     */
+
+
+
     const props = withDefaults(
         defineProps<{
             source?: string;
@@ -54,16 +54,16 @@
             fontSizeVar: "font-size-sm",
             html: true,
             linkify: true,
-            showSearch: false, // good default for OSS docs
+            showSearch: false,
             collapseExamples: false,
             variant: "enhanced",
             showCopyButtons: true,
         }
     );
 
-    /**
-     * Reactive state
-     */
+
+
+
     const markdownHtml = ref<string>("");
     const searchQuery = ref("");
     const markdownContainer = ref<HTMLElement | null>(null);
@@ -72,15 +72,15 @@
     let themeObserver: MutationObserver | null = null;
     let isDarkTheme = false;
 
-    /**
-     * Derived values
-     */
+
+
+
     const fontSizeCss = computed(() => `var(--${props.fontSizeVar})`);
     const hasMatches = computed(() => hasMatchesRef.value);
 
-    /**
-     * RENDERING
-     */
+
+
+
     watch(
         () => props.source,
         async () => {
@@ -118,9 +118,9 @@
         themeObserver.observe(html, {attributes: true, attributeFilter: ["class"]});
     });
 
-    /**
-     * Main render function
-     */
+
+
+
     async function renderMarkdown() {
         if (typeof window === "undefined") {
             markdownHtml.value = props.source ?? "";
@@ -140,9 +140,9 @@
         applySearchFilter();
     }
 
-    /**
-     * Enhancement orchestration
-     */
+
+
+
     function enhanceContent() {
         cleanupEnhancements();
         const root = markdownContainer.value;
@@ -157,9 +157,9 @@
         setupSmoothScrolling(root);
     }
 
-    /**
-     * Remove any bound listeners / timeouts etc.
-     */
+
+
+
     function cleanupEnhancements() {
         while (cleanups.length) {
             const dispose = cleanups.pop();
@@ -167,9 +167,9 @@
         }
     }
 
-    /* -------------------------
-   Table -> Card Transformation
-   ------------------------- */
+
+
+
     function transformTables(root: HTMLElement) {
         const tables = Array.from(root.querySelectorAll<HTMLTableElement>("table"));
         const labelsToSkip = new Set(["description", "details"]);
@@ -259,9 +259,9 @@
         });
     }
 
-    /* -------------------------
-   Card toggles
-   ------------------------- */
+
+
+
     function setCardExpanded(card: HTMLElement, expanded: boolean) {
         if (!card.classList.contains("is-collapsible")) return;
 
@@ -297,9 +297,9 @@
         });
     }
 
-    /* -------------------------
-   Collapsibles & Sections
-   ------------------------- */
+
+
+
     function setupCollapsibles(root: HTMLElement) {
         const headings = Array.from(root.querySelectorAll<HTMLElement>("h2, h3"));
         headings.forEach((heading) => {
@@ -373,9 +373,9 @@
         return Number(node.tagName.substring(1)) <= level;
     }
 
-    /* -------------------------
-   Flow example toggle
-   ------------------------- */
+
+
+
     function setupFlowExampleToggle(root: HTMLElement) {
         if (!props.collapseExamples) return;
 
@@ -463,9 +463,9 @@
         cleanups.push(() => toggle.removeEventListener("click", onToggle));
     }
 
-    /* -------------------------
-   Copy buttons for code blocks
-   ------------------------- */
+
+
+
     function setupCopyButtons(root: HTMLElement) {
         const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>(".doc-copy-button"));
         buttons.forEach((button) => {
@@ -527,9 +527,9 @@
         }
     }
 
-    /* -------------------------
-   Smooth scrolling for anchors
-   ------------------------- */
+
+
+
     function setupSmoothScrolling(root: HTMLElement) {
         const handler = (event: Event) => {
             const target = event.target as HTMLElement | null;
@@ -554,9 +554,9 @@
         cleanups.push(() => root.removeEventListener("click", handler));
     }
 
-    /* -------------------------
-   Search filter
-   ------------------------- */
+
+
+
     function applySearchFilter() {
         const root = markdownContainer.value;
         if (!root) return;
@@ -615,9 +615,9 @@
         hasMatchesRef.value = matches > 0;
     }
 
-    /* -------------------------
-   Helpers
-   ------------------------- */
+
+
+
     function normalizeText(value: string) {
         return value.toLowerCase().replace(/\s+/g, " ").trim();
     }
@@ -680,7 +680,7 @@
   gap: var(--spacer, 1rem);
 }
 
-/* Heading decoration */
+
 :deep(.doc-heading) {
   color: var(--ks-content-primary);
   position: relative;
@@ -698,7 +698,7 @@
   border-radius: 999px;
 }
 
-/* Section wrapper */
+
 :deep(.doc-section) {
   background: var(--ks-background-panel);
   border: 1px solid var(--ks-border-primary);
@@ -707,7 +707,7 @@
   box-shadow: none;
 }
 
-/* Collapsibles */
+
 :deep(details.doc-collapsible) {
   background: var(--ks-background-card);
   border: 1px solid var(--ks-border-primary);
@@ -756,13 +756,13 @@
   gap: var(--spacer-sm, 0.75rem);
 }
 
-/* Card grid + card */
+
 :deep(.doc-card-grid) {
   container-type: inline-size;
   display: grid;
   gap: var(--spacer, 1rem);
-  // single column when component is narrow, otherwise auto-fit with a ma of 2 columns
-  // 45% is the min-size of a column when 2 fit side by side with gap
+
+
   grid-template-columns: repeat(auto-fit, minmax(max(260px, 45%), 1fr));
   align-items: start;
 }
@@ -852,7 +852,7 @@
   margin-top: 0.75rem;
 }
 
-/* Example wrapper */
+
 :deep(.doc-example) {
   margin-top: 1rem;
   border: 1px solid var(--ks-border-primary);
@@ -930,7 +930,7 @@
   margin-top: 0.75rem;
 }
 
-/* Card item */
+
 :deep(.doc-card__item) {
   background: var(--ks-background-panel);
   border: 1px solid var(--ks-border-tertiary, rgba(148, 163, 184, 0.2));
@@ -952,7 +952,7 @@
   line-height: 1.5;
 }
 
-/* Code block / toolbar / copy */
+
 :deep(.doc-code-block) {
   background: var(--ks-background-panel);
   border: 1px solid var(--ks-border-primary);
@@ -1015,7 +1015,7 @@
   line-height: 1.7;
 }
 
-/* Responsive */
+
 @media (max-width: 768px) {
   .enhanced-documentation {
     gap: 1rem;
@@ -1034,7 +1034,7 @@
   }
 }
 
-/* simple fade transition for search helper */
+
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;

@@ -1,19 +1,19 @@
-﻿//-----------------------------------------------------------------------------
-// Filename: WebRTCWebSocketPeer.cs
-//
-// Description: This class is NOT a required component for using WebRTC. It is a
-// convenience class provided to assist when using a web socket server for the
-// WebRTC signalling.
-//
-// Author(s):
-// Aaron Clauson (aaron@sipsorcery.com)
-//
-// History:
-// 12 Sep 2020	Aaron Clauson	Created, Dublin, Ireland.
-//
-// License:
-// BSD 3-Clause "New" or "Revised" License, see included LICENSE.md file.
-//-----------------------------------------------------------------------------
+﻿
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 using System;
 using System.Threading.Tasks;
@@ -23,11 +23,11 @@ using WebSocketSharp.Server;
 
 namespace SIPSorcery.Net
 {
-    /// <summary>
-    /// This class is NOT a required component for using WebRTC. It is a convenience
-    /// class provided to assist when using a web socket server for the  WebRTC
-    /// signalling.
-    /// </summary>
+
+
+
+
+
     public class WebRTCWebSocketPeer : WebSocketBehavior
     {
         private static readonly ILogger logger = LogFactory.CreateLogger<WebRTCWebSocketPeer>();
@@ -35,21 +35,21 @@ namespace SIPSorcery.Net
         private RTCPeerConnection _pc;
         public RTCPeerConnection RTCPeerConnection => _pc;
 
-        /// <summary>
-        /// Optional property to allow the peer connection SDP offer options to be set.
-        /// </summary>
+
+
+
         public RTCOfferOptions OfferOptions { get; set; }
 
-        /// <summary>
-        /// Optional property to allow the peer connection SDP answer options to be set.
-        /// </summary>
+
+
+
         public RTCAnswerOptions AnswerOptions { get; set; }
 
-        /// <summary>
-        /// Optional filter that can be applied to remote ICE candidates. The filter is
-        /// primarily intended for use in testing. In real application scenarios it's
-        /// normally desirable to accept all remote ICE candidates.
-        /// </summary>
+
+
+
+
+
         public Func<RTCIceCandidateInit, bool> FilterRemoteICECandidates { get; set; }
 
         public Func<Task<RTCPeerConnection>> CreatePeerConnection;
@@ -59,7 +59,7 @@ namespace SIPSorcery.Net
 
         protected override async void OnMessage(MessageEventArgs e)
         {
-            //logger.LogDebug($"OnMessage: {e.Data}");
+
 
             if (RTCIceCandidateInit.TryParse(e.Data, out var iceCandidateInit))
             {
@@ -88,7 +88,7 @@ namespace SIPSorcery.Net
                 {
                     logger.LogWarning("Failed to set remote description, {Result}.", result);
 
-                    // No harm logging the SDP for a failed attempt. The cryptographic information is ephemeral.
+
                     logger.LogTrace("Remote SDP was:\n{Description}", descriptionInit.sdp);
 
                     _pc.Close("failed to set remote description");
@@ -102,8 +102,8 @@ namespace SIPSorcery.Net
                         await _pc.setLocalDescription(answerSdp).ConfigureAwait(false);
 
                         logger.LogDebug("Sending SDP answer to client {UserEndPoint}.", Context.UserEndPoint);
-                        // Don't log SDP can contain sensitive info, albeit very short lived.
-                        //logger.LogDebug(answerSdp.sdp);
+
+
 
                         Context.WebSocket.Send(answerSdp.toJSON());
                     }
@@ -138,8 +138,8 @@ namespace SIPSorcery.Net
                 await _pc.setLocalDescription(offerSdp).ConfigureAwait(false);
 
                 logger.LogDebug("Sending SDP offer to client {UserEndPoint}.", Context.UserEndPoint);
-                // Don't log SDP can contain sensitive info, albeit very short lived.
-                //logger.LogDebug(offerSdp.sdp);
+
+
 
                 try
                 {

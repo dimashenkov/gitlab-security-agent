@@ -1,16 +1,16 @@
-# Copyright 2022-2026 XProbe Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import base64
 import functools
@@ -88,10 +88,10 @@ def _collect_context_length_candidates(
 def get_context_length_from_config(
     config: Union[dict, Any], nested_attrs: Iterable[str] = ("text_config",)
 ) -> int:
-    """
-    Determine a reasonable context length from model config dictionaries or
-    HuggingFace config objects.
-    """
+    ''
+
+
+
     candidates = _collect_context_length_candidates(config, nested_attrs)
     if not candidates:
         return 2048
@@ -155,8 +155,8 @@ QWEN_TOOL_CALL_SYMBOLS = ["<tool_call>", "</tool_call>"]
 
 class ChatModelMixin:
     def __init__(self):
-        # Only set attributes if they don't already exist
-        # to avoid overriding values set by parent classes
+
+
         if not hasattr(self, "model_family"):
             self.model_family = None
         if not hasattr(self, "model_uid"):
@@ -169,9 +169,9 @@ class ChatModelMixin:
     @staticmethod
     @functools.lru_cache
     def _compile_jinja_template(chat_template):
-        """
-        Copied from transformers source code.
-        """
+        ''
+
+
         try:
             from jinja2.exceptions import TemplateError
             from jinja2.sandbox import ImmutableSandboxedEnvironment
@@ -227,8 +227,8 @@ class ChatModelMixin:
                 )
                 return self._build_from_raw_template(messages, chat_template, **kwargs)
         else:
-            # build from jinja
-            # Compilation function uses a cache to avoid recompiling the same template
+
+
             return self._build_from_raw_template(messages, chat_template, **kwargs)
 
     @staticmethod
@@ -252,7 +252,7 @@ class ChatModelMixin:
                     f"`chat_template_kwargs` but be a JSON parsable str or dict, got: {kwargs}"
                 )
         elif reasoning_parser:
-            # pass enable_thinking to chat template
+
             return {"enable_thinking": reasoning_parser.enable_thinking}
         return None
 
@@ -260,9 +260,9 @@ class ChatModelMixin:
     def convert_messages_with_content_list_to_str_conversion(
         messages: List[Dict],
     ) -> List[Dict]:
-        """
-        Handles messages with content list conversion, in order to support Cline, see GH#2659 .
-        """
+        ''
+
+
         for message in messages:
             texts = ""
             msg_content = message.get("content")
@@ -277,11 +277,11 @@ class ChatModelMixin:
 
     @staticmethod
     def get_specific_prompt(model_family: str, messages: List[ChatCompletionMessage]):
-        """
-        Inspired by FastChat. Format chat history into a prompt according to the prompty style of
-        different models.
-        """
-        _messages = [x for x in messages]  # copy for not modifying the origin messages
+        ''
+
+
+
+        _messages = [x for x in messages]
         _messages.append({"role": "assistant", "content": ""})
 
         if "internvl" in model_family.lower():
@@ -363,7 +363,7 @@ class ChatModelMixin:
             delta = first_choice["delta"]
             if first_choice["finish_reason"] is None:
                 if reasoning_parser and reasoning_parser.check_content_parser():
-                    # process parsing reasoning content
+
                     assert previous_texts is not None
                     if text := delta.get("content"):
                         current_text = previous_texts[-1] + text
@@ -384,7 +384,7 @@ class ChatModelMixin:
                     delta["role"] = "assistant"
                 if "content" not in delta:
                     delta["content"] = None
-            # Already a ChatCompletionChunk, we don't need to convert chunk.
+
             return cast(ChatCompletionChunk, chunk)
 
         choices_list: List[ChatCompletionChunkChoice] = []
@@ -500,10 +500,10 @@ class ChatModelMixin:
         if reasoning_parse:
             chunks = reasoning_parse.prepare_reasoning_content_sync(chunks)
         for _, chunk in enumerate(chunks):
-            # usage
+
             choices = chunk.get("choices")
             if not choices:
-                # Fallback: convert plain content to choices for streaming
+
                 content = cast(Optional[str], chunk.get("content"))
                 if content is not None:
                     finish_reason = cast(Optional[str], chunk.get("finish_reason"))
@@ -531,8 +531,8 @@ class ChatModelMixin:
     def _tools_to_messages_for_deepseek(
         cls, messages: List[dict], tools: Iterable[dict]
     ):
-        # deepseek integrates tool calls into messages
-        # we follow the chat template rule to integrate tools into messages
+
+
         tool_call_message: Dict[str, Any] = {
             "role": "assistant",
             "content": None,
@@ -570,7 +570,7 @@ class ChatModelMixin:
         previous_texts = [""]
         full_text = ""
         is_first_chunk = True
-        # Process chunks
+
         if reasoning_parser:
             set_context()
             chunks = reasoning_parser.prepare_reasoning_content_streaming(chunks)
@@ -578,7 +578,7 @@ class ChatModelMixin:
             set_context()
             choices = chunk.get("choices")
             if not choices:
-                # usage
+
                 chat_chunk = cls._get_final_chat_completion_chunk(chunk)
             else:
                 if choices[0].get("text"):
@@ -598,18 +598,18 @@ class ChatModelMixin:
     def _to_chat_completion(
         completion: Completion, reasoning_parser: Optional[ReasoningParser] = None
     ) -> ChatCompletion:
-        # prepare reasoning content
+
         if reasoning_parser:
             completion = reasoning_parser.prepare_reasoning_content(completion)
 
         if completion.get("object") == "chat.completion" and completion.get("choices"):
-            # Already a ChatCompletion
+
             for choice in completion["choices"]:
                 message = choice["message"]  # type: ignore
-                text = message["content"]  # Original content from the message
+                text = message["content"]
 
                 if reasoning_parser and reasoning_parser.check_content_parser():
-                    # Parse into reasoning and content parts
+
                     (
                         reasoning_val,
                         content_val,
@@ -631,7 +631,7 @@ class ChatModelMixin:
 
             message = {"role": "assistant", "content": content}
 
-            # add only reasoning_content is None
+
             if reasoning_content is not None:
                 message["reasoning_content"] = reasoning_content
 
@@ -653,9 +653,9 @@ class ChatModelMixin:
 
     @staticmethod
     def _eval_glm_chat_arguments(c) -> List[Tuple]:
-        """
-        Currently, glm4 tool call only supports one function
-        """
+        ''
+
+
         try:
             if isinstance(c, dict):
                 try:
@@ -673,19 +673,19 @@ class ChatModelMixin:
         text: str = text.strip()  # type: ignore
 
         def split_into_blocks(text: str) -> list[str]:
-            # Match blocks starting with <think> or <tool_call> and ending with </think> or </tool_call>
+
             pattern = r"(<(think|tool_call)>.*?</\2>)"
             parts = []
             last_end = 0
-            # Find all label blocks and record their positions
+
             for m in re.finditer(pattern, text, re.DOTALL):
-                # Text before adding tags
+
                 if m.start() > last_end:
                     parts.append(text[last_end : m.start()])
-                # Add label block
+
                 parts.append(m.group(0))
                 last_end = m.end()
-            # Text after adding the last tag
+
             if last_end < len(text):
                 parts.append(text[last_end:])
             return parts
@@ -701,14 +701,14 @@ class ChatModelMixin:
                 if pos2 != -1:
                     content = content[:pos2]
 
-                # Skip empty content after extraction
+
                 if not content.strip():
                     continue
 
                 try:
                     res = json.loads(content, strict=False)
                     if isinstance(res, dict):
-                        # Check if required fields exist
+
                         if "name" in res and "arguments" in res:
                             results.append((None, res["name"], res["arguments"]))
                         else:
@@ -757,29 +757,29 @@ class ChatModelMixin:
 
     @classmethod
     def _eval_deepseek_chat_arguments(cls, c) -> List[Tuple]:
-        """
-        Parses tool calls from deepseek-v3 format and removes duplicates.
+        ''
 
-        Returns:
-        List[Tuple[Optional[str], Optional[str], Optional[dict]]]
-        - (None, function_name, arguments) if successfully parsed.
-        - (content, None, None) if parsing failed (content is raw JSON text).
 
-        Example input:
-        ```json
-        {
-            "name": "get_weather_and_time",
-            "parameters": {
-                "location": "Hangzhou"
-            }
-        }
-        ```
 
-        Output:
-        [
-            (None, "get_current_weather", {"location": "Hangzhou"})
-        ]
-        """
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         text = c["choices"][0]["text"]
 
@@ -789,14 +789,14 @@ class ChatModelMixin:
         if not matches:
             return [(text, None, None)]
 
-        tool_calls = set()  # Used for deduplication
+        tool_calls = set()
         results = []
 
         for raw_json in matches:
             func_and_args = None
             try:
                 func_and_args = json.loads(raw_json)
-                # Convert dictionary to frozenset for deduplication
+
                 arguments_hashable = frozenset(func_and_args["parameters"])
                 tool_call_tuple = (
                     None,
@@ -808,10 +808,10 @@ class ChatModelMixin:
                     raw_json,
                     None,
                     None,
-                )  # If parsing fails, treat as raw content
-                arguments_hashable = None  # No need for hashing
+                )
+                arguments_hashable = None
 
-            # Avoid duplicate entries
+
             dedup_key = (
                 (func_and_args["name"], arguments_hashable)
                 if func_and_args is not None
@@ -825,12 +825,12 @@ class ChatModelMixin:
 
     @classmethod
     def _eval_deepseek_r1_arguments(cls, c) -> List[Tuple]:
-        """
-        Parses tool calls from deepseek-r1 (0528) chat template format.
-        Returns:
-            List of (None, function_name, arguments_dict)
-            or (raw_content, None, None) if parsing fails.
-        """
+        ''
+
+
+
+
+
         text = c["choices"][0]["text"]
         pattern = (
             r"<\｜tool▁call▁begin｜>function<\｜tool▁sep｜>([^\n]+)\n"
@@ -953,7 +953,7 @@ class ChatModelMixin:
             "tool_calls": tool_calls,
         }
 
-        # For tool completion chunks, use None for usage, actual values for stop
+
         if finish_reason == "tool_calls":
             usage = None
         else:
@@ -987,18 +987,18 @@ class ChatModelMixin:
         reasoning_content = None
         content = ""
 
-        # First, process reasoning content if reasoning parser exists
+
         text = c["choices"][0]["text"]
         if self.reasoning_parser and self.reasoning_parser.check_content_parser():
-            # Extract reasoning content directly from the original text
+
             reasoning_content, processed_content = (
                 self.reasoning_parser.extract_reasoning_content(text)
             )
-            # Use the processed content (without thinking tags) for tool parsing
+
             if processed_content:
                 text = processed_content
 
-        # Then, extract tool calls from the processed text (without thinking tags)
+
         tool_calls = []
         failed_contents = []
         if isinstance(self.tool_parser, Glm4ToolParser):
@@ -1006,7 +1006,7 @@ class ChatModelMixin:
         else:
             tool_result = self.tool_parser.extract_tool_calls(text)
 
-        # Process tool results
+
         for tool_content, func, args in tool_result:
             if func:
                 tool_calls.append(
@@ -1023,12 +1023,12 @@ class ChatModelMixin:
                 if tool_content:
                     failed_contents.append(tool_content)
 
-        # Determine the final content
+
         if tool_calls:
-            # For tool calls, the main content should be empty or contain only non-tool parts
+
             content = "".join(failed_contents) if failed_contents else ""
         else:
-            # For non-tool calls, use the processed content from reasoning parser
+
             content = text
 
         finish_reason = "tool_calls" if tool_calls else "stop"
@@ -1038,11 +1038,11 @@ class ChatModelMixin:
             "content": content,
             "tool_calls": tool_calls,
         }
-        # add only reasoning_content is None
+
         if reasoning_content is not None:
             m["reasoning_content"] = reasoning_content
 
-        # For tool completion chunks, use actual usage values when available
+
         usage = c.get("usage")
         if not usage or not isinstance(usage, dict) or "prompt_tokens" not in usage:
             usage = {
@@ -1157,8 +1157,8 @@ def get_model_version(
 def _decode_image(_url):
     if _url.startswith("data:"):
         logging.info("Parse url by base64 decoder.")
-        # https://platform.openai.com/docs/guides/vision/uploading-base-64-encoded-images
-        # e.g. f"data:image/jpeg;base64,{base64_image}"
+
+
         _type, data = _url.split(";")
         _, ext = _type.split("/")
         data = data[len("base64,") :]
@@ -1176,8 +1176,8 @@ def _decode_image(_url):
 def _decode_image_without_rgb(_url):
     if _url.startswith("data:"):
         logging.info("Parse url by base64 decoder.")
-        # https://platform.openai.com/docs/guides/vision/uploading-base-64-encoded-images
-        # e.g. f"data:image/jpeg;base64,{base64_image}"
+
+
         _type, data = _url.split(";")
         _, ext = _type.split("/")
         data = data[len("base64,") :]
@@ -1307,13 +1307,13 @@ def get_stop_token_ids_from_config_file(model_path: str) -> Optional[List[int]]:
 def normalize_response_format(
     response_format: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    """
-    Normalize OpenAI-style response_format into a simple dict.
-    Returns:
-        None if missing/unsupported, or a dict with keys:
-            - type: "json_schema" | "json_object"
-            - schema_dict: dict (only for json_schema)
-    """
+    ''
+
+
+
+
+
+
     if not response_format or not isinstance(response_format, dict):
         return None
 
@@ -1331,10 +1331,10 @@ def normalize_response_format(
 
 
 def parse_messages(messages: List[Dict]) -> Tuple:
-    """
-    Some older models still follow the old way of parameter passing.
-    This function helps to parse out the needed information from OpenAI-compatible `messages`.
-    """
+    ''
+
+
+
     system_messages = [mess["content"] for mess in messages if mess["role"] == "system"]
     content_messages = [mess for mess in messages if mess["role"] != "system"]
     prompt = content_messages[-1]["content"]

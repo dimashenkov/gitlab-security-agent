@@ -1,19 +1,19 @@
-/*
- *    GeoTools - The Open Source Java GIS Toolkit
- *    http://geotools.org
- *
- *    (C) 2019, Open Source Geospatial Foundation (OSGeo)
- *
- *    This library is free software; you can redistribute it and/or
- *    modify it under the terms of the GNU Lesser General Public
- *    License as published by the Free Software Foundation;
- *    version 2.1 of the License.
- *
- *    This library is distributed in the hope that it will be useful,
- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *    Lesser General Public License for more details.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package org.geotools.data.postgis;
 
 import org.geotools.api.feature.type.GeometryDescriptor;
@@ -34,9 +34,9 @@ public class GeometryColumnEncoder {
             boolean stPreserveTopologyEnabled,
             boolean encodeBase64,
             PostGISDialect dialect) {
-        // version should not be null in normal usage, as it's set when SQLDialect
-        // initializeConnection is called, however, let's cover all the bases and consider
-        // possible usage outside JDBCDataStore (or unforeseens usages inside of it)
+
+
+
         this.atLeast2_2_0 = version != null && version.compareTo(PostGISDialect.V_2_2_0) >= 0;
         this.stSimplifyEnabled = stSimplifyEnabled;
         this.stPreserveTopologyEnabled = stPreserveTopologyEnabled;
@@ -105,7 +105,7 @@ public class GeometryColumnEncoder {
                 sql.append(")");
             }
         } else {
-            // may have curves mixed in, cannot use TWKB and need to guard ST_Simplify
+
             sql.append("ST_AsBinary(");
             sql.append("CASE WHEN ST_HasArc(");
             dialect.encodeColumnName(prefix, gatt.getLocalName(), sql);
@@ -136,14 +136,14 @@ public class GeometryColumnEncoder {
         }
     }
 
-    /** Computes the number of digits preserved by TWKB based on the magnitude of the simplification distance */
+
     private int getTWKBDigits(Double distance) {
         if (distance.doubleValue() == 0D) {
             return 7;
         }
         int result = -(int) Math.floor(Math.log10(distance));
-        // Prevent PostGIS ERROR: lwgeom_write_to_buffer: X/Z precision cannot be greater than 7 or
-        // less than -7
+
+
         if (result > 7) {
             result = 7;
         } else if (result < -7) {

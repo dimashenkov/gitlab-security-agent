@@ -23,7 +23,7 @@ var JSONPrefixes = []string{
 	")]}',\n",
 }
 
-// TrimJSONPrefix trims one of the possible prefixes
+
 func TrimJSONPrefix(data []byte) []byte {
 search:
 	for _, prefix := range JSONPrefixes {

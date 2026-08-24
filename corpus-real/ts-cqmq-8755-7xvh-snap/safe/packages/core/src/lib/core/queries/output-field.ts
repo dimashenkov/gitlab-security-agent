@@ -43,14 +43,14 @@ function getRelationVal (
   } else {
     return async () => {
       if (fk === null) {
-        // If the foreign key is explicitly null, there's no need to anything else,
-        // since we know the related item doesn't exist.
+
+
         return null
       }
-      // for one-to-many relationships, the one side always owns the foreign key
-      // so that means we have the id for the related item and we're fetching it by _its_ id.
-      // for the a one-to-one relationship though, the id might be on the related item
-      // so we need to fetch the related item by the id of the current item on the foreign key field
+
+
+
+
       const currentItemOwnsForeignKey = fk !== undefined
       return fetchRelatedItem(context)(foreignList)(
         currentItemOwnsForeignKey ? 'id' : `${dbField.field}Id`
@@ -140,7 +140,7 @@ function getValueForDBField (
     )
   }
   if (dbField.kind === 'relation') {
-    // If we're holding a foreign key value, let's take advantage of that.
+
     let fk: IdType | undefined
     if (dbField.mode === 'one' && dbField.foreignIdField.kind !== 'none') {
       fk = rootVal[`${fieldPath}Id`] as IdType
@@ -173,7 +173,7 @@ export function outputTypeField (
       const fieldAccess = await getOperationFieldAccess(rootVal, list, fieldKey, context, 'read')
       if (!fieldAccess) return null
 
-      // only static cache hints are supported at the field level until a use-case makes it clear what parameters a dynamic hint would take
+
       if (cacheHint && info) {
         maybeCacheControlFromInfo(info)?.setCacheHint(cacheHint)
       }

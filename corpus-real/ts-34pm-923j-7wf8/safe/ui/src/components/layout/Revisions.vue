@@ -123,7 +123,7 @@
 
     export interface Revision {
         revision: number;
-        updated?: string;  // ISO datetime string
+        updated?: string;
         source?: string;
     }
 

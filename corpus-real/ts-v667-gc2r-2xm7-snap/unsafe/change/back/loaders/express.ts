@@ -13,18 +13,18 @@ import { isValidToken } from '../shared/auth';
 import path from 'path';
 
 export default ({ app }: { app: Application }) => {
-  // Security: Enable strict routing to prevent case-insensitive path bypass
+
   app.set('case sensitive routing', true);
   app.set('strict routing', true);
   app.set('trust proxy', 'loopback');
   app.use(cors());
   
-  // Security: Path normalization middleware to prevent case variation attacks
+
   app.use((req, res, next) => {
     const originalPath = req.path;
     const normalizedPath = originalPath.toLowerCase();
     
-    // Block requests with case variations on protected paths
+
     if (originalPath !== normalizedPath && 
         (normalizedPath.startsWith('/api/') || normalizedPath.startsWith('/open/'))) {
       return res.status(400).json({
@@ -36,8 +36,8 @@ export default ({ app }: { app: Application }) => {
     next();
   });
   
-  // Rewrite URLs to strip baseUrl prefix if configured
-  // This allows the rest of the app to work without baseUrl awareness
+
+
   if (config.baseUrl) {
     app.use(rewrite(`${config.baseUrl}/*`, '/$1'));
   }

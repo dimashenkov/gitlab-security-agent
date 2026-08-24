@@ -1,16 +1,16 @@
-# Copyright 2022-2026 XProbe Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import abc
 import inspect
@@ -84,10 +84,10 @@ class LLM(abc.ABC):
     @staticmethod
     @lru_cache
     def _has_cuda_device():
-        """
-        Use pynvml to impl this interface.
-        DO NOT USE torch to impl this, which will lead to some unexpected errors.
-        """
+        ''
+
+
+
         from pynvml import nvmlDeviceGetCount, nvmlInit, nvmlShutdown
 
         device_count = 0
@@ -107,10 +107,10 @@ class LLM(abc.ABC):
     @staticmethod
     @lru_cache
     def _has_mlu_device():
-        """
-        Use cnmon command to detect MLU devices.
-        DO NOT USE torch to impl this, which will lead to some unexpected errors.
-        """
+        ''
+
+
+
         try:
             import subprocess
 
@@ -124,10 +124,10 @@ class LLM(abc.ABC):
     @staticmethod
     @lru_cache
     def _has_vacc_device():
-        """
-        Use glob command to detect VACC devices.
-        DO NOT USE torch to impl this, which will lead to some unexpected errors.
-        """
+        ''
+
+
+
         try:
             import glob
 
@@ -138,10 +138,10 @@ class LLM(abc.ABC):
     @staticmethod
     @lru_cache
     def _has_musa_device():
-        """
-        Use pymtml to impl this interface.
-        DO NOT USE torch to impl this, which will lead to some unexpected errors.
-        """
+        ''
+
+
+
         try:
             from pymtml import nvmlDeviceGetCount, nvmlInit, nvmlShutdown
         except Exception:
@@ -211,7 +211,7 @@ class LLM(abc.ABC):
             )
         abilities = self.model_family.model_ability or []
         auto_insert_start_tag = "hybrid" not in abilities
-        # Initialize reasoning parser if model has reasoning ability
+
         self.reasoning_parser = ReasoningParser(  # type: ignore
             reasoning_content,
             self.model_family.reasoning_start_tag,  # type: ignore
@@ -229,20 +229,20 @@ class LLM(abc.ABC):
         self.tool_parser = tool_parser()
 
 
-# Context variable for passing per-request chat context (e.g., chat_template_kwargs).
-# This variable should be set at the beginning of each chat or stream_chat call.
-# It allows downstream components (e.g., reasoning_parser) to access request-specific
-# settings like 'enable_thinking', without requiring those values to be passed explicitly
-# through every function layer.
-#
-# The context is automatically isolated per thread or coroutine, so concurrent requests
-# will not interfere with each other.
+
+
+
+
+
+
+
+
 chat_context_var: ContextVar[dict] = ContextVar("chat_context_var", default={})
 
 
 def generate_llm_version_info(llm_family: "LLMFamilyV2") -> Dict[str, List[Dict]]:
     res = defaultdict(list)
-    # Use model_specs from huggingface, as HuggingFace is the most comprehensive.
+
     hf_specs = [
         spec for spec in llm_family.model_specs if spec.model_hub == "huggingface"
     ]

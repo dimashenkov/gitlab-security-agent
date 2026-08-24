@@ -20,7 +20,7 @@ import type { IntegrationEventsService } from '../services/index.js';
 import { vi } from 'vitest';
 import nock from 'nock';
 
-// TODO: delete this as soon as all clients have migrated to Slack App.
+
 
 const registerEventMock = vi.fn();
 

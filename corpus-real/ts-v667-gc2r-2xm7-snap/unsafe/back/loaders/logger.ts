@@ -4,10 +4,10 @@ import config from '../config';
 import path from 'path';
 
 const levelMap: Record<string, string> = {
-  info: 'ℹ️', // info图标
-  warn: '⚠️', // 警告图标
-  error: '❌', // 错误图标
-  debug: '🐛', // debug调试图标
+  info: 'ℹ️',
+  warn: '⚠️',
+  error: '❌',
+  debug: '🐛',
 };
 
 const baseFormat = [

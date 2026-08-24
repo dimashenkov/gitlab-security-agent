@@ -1,19 +1,19 @@
-﻿  //-----------------------------------------------------------------------------
-// Filename: TurnClient.cs
-//
-// Description: TURN client implementation. Initial use case is to allocate a relay
-// socket on a TURN server for use on a SIP call.
-//
-// Author(s):
-// Aaron Clauson (aaron@sipsorcery.com)
-//
-// History:
-// 14 Aug 2025  Aaron Clauson   Created, Wexford, Ireland.
-//
-// License: 
-// BSD 3-Clause "New" or "Revised" License and the additional
-// BDS BY-NC-SA restriction, see included LICENSE.md file.
-//-----------------------------------------------------------------------------
+﻿
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 using System;
 using System.Net;
@@ -32,9 +32,9 @@ public class TurnClient
 {
     private const int MAX_ALLOCATE_ATTEMPTS = 5;
 
-    /// <summary>
-    /// The lifetime value used in refresh request.
-    /// </summary>
+
+
+
     private const uint ALLOCATION_TIME_TO_EXPIRY_SECONDS = 600;
 
     private const int ALLOCATE_RETRY_PERIOD_MILLISECONDS = 1000;
@@ -65,14 +65,14 @@ public class TurnClient
 
     private Timer _permissionsRenewalTimer = null;
 
-    /// <summary>
-    /// This event gets fired when a STUN message is sent by this channel.
-    /// The event is for diagnostic purposes only.
-    /// Parameters:
-    ///  - STUNMessage: The STUN message that was sent.
-    ///  - IPEndPoint: The remote end point the STUN message was sent to.
-    ///  - bool: True if the message was sent via a TURN server relay.
-    /// </summary>
+
+
+
+
+
+
+
+
     public event Action<STUNMessage, IPEndPoint, bool> OnStunMessageSent;
 
     public TurnClient(string turnServerUrl)
@@ -93,14 +93,14 @@ public class TurnClient
         _rtpChannel.OnClosed += OnClosed;
     }
 
-    /// <summary>
-    /// Allocates (or returns cached) TURN relayed endpoint.
-    /// </summary>
+
+
+
     public async Task<IPEndPoint> GetRelayEndPoint(int timeoutMilliseconds = ALLOCATE_DEFAULT_TIMEOUT_MILLISECONDS, CancellationToken cancellationToken = default)
     {
         if (_iceServer?.RelayEndPoint != null)
         {
-            // Already resolved and allocated.
+
             return _iceServer.RelayEndPoint;
         }
 
@@ -179,24 +179,24 @@ public class TurnClient
         return SendTurnCreatePermissionsRequest(_iceServer, remoteEndPoint);
     }
 
-    /// <summary>
-    /// Handler for a STUN response received in response to an ICE server connectivity check.
-    /// Note that no STUN requests are expected to be received from an ICE server during the initial
-    /// connection to an ICE server. Requests will only arrive if a TURN relay is used and data
-    /// indications arrive but this will be at a later stage.
-    /// </summary>
-    /// <param name="stunResponse">The STUN response received.</param>
-    /// <param name="remoteEndPoint">The remote end point the STUN response was received from.</param>
-    /// <returns>True if the STUN response resulted in new ICE candidates being available (which
-    /// will be either a "server reflexive" or "relay" candidate.</returns>
+
+
+
+
+
+
+
+
+
+
     private void GotStunResponse(STUNMessage stunResponse, IPEndPoint remoteEndPoint, bool wasRelayed)
     {
         string txID = Encoding.ASCII.GetString(stunResponse.Header.TransactionId);
 
-        // Ignore responses to old requests on the assumption they are retransmits.
+
         if (_iceServer.TransactionID == txID)
         {
-            // The STUN response is for a check sent to an ICE server.
+
             _iceServer.LastResponseReceivedAt = DateTime.Now;
             _iceServer.OutstandingRequestsSent = 0;
 
@@ -241,10 +241,10 @@ public class TurnClient
                     {
                         logger.LogWarning("TURN client error response code {errorCode} for an Allocate request to {Uri} from {remoteEP}.", errCodeAttribute.ErrorCode, _iceServer.Uri, remoteEndPoint);
 
-                        // Set the authentication properties authenticate.
+
                         SetAuthenticationFields(stunResponse);
 
-                        // Set a new transaction ID.
+
                         _iceServer.GenerateNewTransactionID();
 
                         _iceServer.ErrorResponseCount = 1;
@@ -257,7 +257,7 @@ public class TurnClient
 
                         logger.LogWarning("TURN client received an alternate respose for an Allocate request to {Uri}, changed server url to {ServerEndPoint}.", _iceServer.Uri, _iceServer.ServerEndPoint);
 
-                        // Set a new transaction ID.
+
                         _iceServer.GenerateNewTransactionID();
 
                         _iceServer.ErrorResponseCount = 1;
@@ -315,10 +315,10 @@ public class TurnClient
                     {
                         logger.LogWarning("TURN client error response code {errorCode} for a Create Permission request to {Uri} from {remoteEP}.", errCodeAttribute.ErrorCode, _iceServer.Uri, remoteEndPoint);
 
-                        // Set the authentication properties authenticate.
+
                         SetAuthenticationFields(stunResponse);
 
-                        // Set a new transaction ID.
+
                         _iceServer.GenerateNewTransactionID();
 
                         _iceServer.ErrorResponseCount = 1;
@@ -387,13 +387,13 @@ public class TurnClient
         }, null, renewalMilliseconds, -1);
     }
 
-    /// <summary>
-    /// Extracts the fields required for authentication from a STUN error response.
-    /// </summary>
-    /// <param name="stunResponse">The STUN authentication required error response.</param>
+
+
+
+
     private void SetAuthenticationFields(STUNMessage stunResponse)
     {
-        // Set the authentication properties authenticate.
+
         var nonceAttribute = stunResponse.GetFirstAttribute(STUNAttributeTypesEnum.Nonce);
         _iceServer.Nonce = nonceAttribute?.Value;
 
@@ -401,11 +401,11 @@ public class TurnClient
         _iceServer.Realm = realmAttribute?.Value;
     }
 
-    /// <summary>
-    /// Sends an allocate request to a TURN server.
-    /// </summary>
-    /// <param name="iceServer">The TURN server to send the request to.</param>
-    /// <returns>The result from the socket send (not the response code from the TURN server).</returns>
+
+
+
+
+
     private SocketError SendTurnAllocateRequest(IceServer iceServer)
     {
         if (_rtpChannel == null || _rtpChannel.IsClosed)
@@ -451,18 +451,18 @@ public class TurnClient
         return sendResult;
     }
 
-    /// <summary>
-    /// Sends a create permissions request to a TURN server for a peer end point.
-    /// </summary>
-    /// <param name="iceServer">The ICE server to send the request to.</param>
-    /// <param name="peerEndPoint">The peer end point to request the channel bind for.</param>
-    /// <returns>The result from the socket send (not the response code from the TURN server).</returns>
-    /// <remarks>
-    /// A TURN CreatePermission request is how a client tells the TURN server which peer IP addresses it is
-    /// allowed to exchange UDP with on a given allocation. The server installs (or refreshes) a “permission”
-    /// for each peer IP you include, and will only relay traffic to/from those peers; packets from any other
-    /// IPs are silently dropped. This prevents the relay from being abused to send data to arbitrary hosts.
-    /// </remarks>
+
+
+
+
+
+
+
+
+
+
+
+
     private SocketError SendTurnCreatePermissionsRequest(IceServer iceServer, IPEndPoint peerEndPoint)
     {
         if(_rtpChannel == null || _rtpChannel.IsClosed)
@@ -501,15 +501,15 @@ public class TurnClient
         return sendResult;
     }
 
-    /// <summary>
-    /// Sends a refresh request to a TURN server.
-    /// </summary>
-    /// <param name="iceServer">The TURN server to send the request to.</param>
-    /// <returns>The result from the socket send (not the response code from the TURN server).</returns>
-    /// <remarks>
-    /// A TURN Refresh request is how a client keeps an existing allocation alive—or deletes it.
-    /// It updates the allocation’s time-to-expiry, or, if you set LIFETIME=0, it tears the allocation down immediately.
-    /// </remarks>
+
+
+
+
+
+
+
+
+
     private SocketError SendTurnRefreshRequest(IceServer iceServer)
     {
         iceServer.OutstandingRequestsSent += 1;
@@ -550,17 +550,17 @@ public class TurnClient
         return sendResult;
     }
 
-    /// <summary>
-    /// Adds the authentication fields to a STUN request.
-    /// </summary>
-    /// <returns>The serialised STUN request.</returns>
+
+
+
+
     private byte[] GetAuthenticatedStunRequest(STUNMessage stunRequest, string username, byte[] realm, string password, byte[] nonce)
     {
         stunRequest.Attributes.Add(new STUNAttribute(STUNAttributeTypesEnum.Nonce, nonce));
         stunRequest.Attributes.Add(new STUNAttribute(STUNAttributeTypesEnum.Realm, realm));
         stunRequest.AddUsernameAttribute(username);
 
-        // See https://tools.ietf.org/html/rfc5389#section-15.4
+
         string key = $"{username}:{Encoding.UTF8.GetString(realm)}:{password}";
         var buffer = Encoding.UTF8.GetBytes(key);
         var md5Digest = new MD5Digest();

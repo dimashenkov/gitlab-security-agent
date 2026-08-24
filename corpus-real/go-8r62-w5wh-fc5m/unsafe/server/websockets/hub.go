@@ -1,4 +1,4 @@
-// Package websockets is used to broadcast messages to connected clients
+
 package websockets
 
 import (
@@ -9,32 +9,32 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Hub maintains the set of active clients and broadcasts messages to the
-// clients.
+
+
 type Hub struct {
-	// Registered clients.
+
 	Clients map[*Client]bool
 
-	// Inbound messages from the clients.
+
 	Broadcast chan []byte
 
-	// Register requests from the clients.
+
 	register chan *Client
 
-	// Unregister requests from clients.
+
 	unregister chan *Client
 
-	// clientCount is an atomic count of connected clients, safe for concurrent reads.
+
 	clientCount atomic.Int64
 }
 
-// WebsocketNotification struct for responses
+
 type WebsocketNotification struct {
 	Type string
 	Data any
 }
 
-// NewHub returns a new hub configuration
+
 func NewHub() *Hub {
 	return &Hub{
 		Broadcast:  make(chan []byte),
@@ -44,7 +44,7 @@ func NewHub() *Hub {
 	}
 }
 
-// Run runs the listener
+
 func (h *Hub) Run() {
 	for {
 		select {
@@ -80,7 +80,7 @@ func (h *Hub) Run() {
 	}
 }
 
-// Broadcast will spawn a broadcast message to all connected clients
+
 func Broadcast(t string, msg any) {
 	if MessageHub == nil || MessageHub.clientCount.Load() == 0 {
 		return
@@ -99,7 +99,7 @@ func Broadcast(t string, msg any) {
 	go func() { MessageHub.Broadcast <- b }()
 }
 
-// BroadCastClientError is a wrapper to broadcast client errors to the web UI
+
 func BroadCastClientError(severity, errorType, ip, message string) {
 	msg := struct {
 		Level   string

@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+
 
 require "savon/qualified_message"
 require "gyoku"

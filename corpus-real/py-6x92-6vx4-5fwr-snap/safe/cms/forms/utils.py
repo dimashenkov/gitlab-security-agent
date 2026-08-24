@@ -49,8 +49,8 @@ def get_page_choices_for_site(site, language):
         pagecontent_by_language = {trans.language: trans.title for trans in translations}
 
         for lang in languages:
-            # EmptyPageContent is used to prevent the cms from trying
-            # to find a translation in the database
+
+
             if lang in pagecontent_by_language:
                 title = pagecontent_by_language[lang]
                 indent = "&nbsp;&nbsp;" * (page.depth - 1)
@@ -75,7 +75,7 @@ def update_site_and_page_choices(language=None):
 
     from django.core.cache import cache
 
-    # We set it to 1 day here because we actively invalidate this cache.
+
     cache.set(site_choices_key, site_choices, 86400)
     cache.set(page_choices_key, page_choices, 86400)
     return site_choices, page_choices

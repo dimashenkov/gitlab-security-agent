@@ -80,9 +80,9 @@ def get_permission_accessor(obj):
 
 
 def get_page_changed_by_filter_choices():
-    # This is not site-aware
-    # Been like this forever
-    # Would be nice for it to filter out by site
+
+
+
     values = Page.objects.distinct().order_by("changed_by").values_list("changed_by", flat=True)
 
     yield ("", _("All"))
@@ -98,16 +98,16 @@ def get_page_template_filter_choices():
 
 
 def get_main_language_page_content_template(new_page):
-    # If you have djangocms-versioning installed, this will get the latest version of the page content, and ignore drafts.
-    # Get the main language page content template if available
+
+
     if new_page:
         try:
             main_language = new_page.get_languages()[0]
             main_language_page_content = new_page.get_admin_content(language=main_language)
             return main_language_page_content.template if main_language_page_content else None
         except (IndexError, AttributeError):
-            # Handle cases where get_languages() returns empty list
-            # or if there's any attribute access error
+
+
             pass
     return None
 
@@ -121,7 +121,7 @@ def save_permissions(data, obj):
     )
 
     if not obj.pk:
-        # save obj, otherwise we can't assign permissions to him
+
         obj.save()
 
     permission_accessor = get_permission_accessor(obj)
@@ -129,7 +129,7 @@ def save_permissions(data, obj):
     for model, name in models:
         content_type = ContentType.objects.get_for_model(model)
         for key in ("add", "change", "delete"):
-            # add permission `key` for model `model`
+
             codename = get_permission_codename(key, model._meta)
             permission = Permission.objects.get(content_type=content_type, codename=codename)
             field = f"can_{key}_{name}"
@@ -141,9 +141,9 @@ def save_permissions(data, obj):
 
 
 class CopyPermissionForm(forms.Form):
-    """
-    Holds the specific field for permissions
-    """
+    ''
+
+
 
     copy_permissions = forms.BooleanField(
         label=_("Copy permissions"),
@@ -153,10 +153,10 @@ class CopyPermissionForm(forms.Form):
 
 
 class SlugWidget(forms.widgets.TextInput):
-    """
-    Special widget for the slug field that requires Title field to be there.
-    Adds the js for the slugifying.
-    """
+    ''
+
+
+
 
     def __init__(self, attrs=None):
         if attrs is None:
@@ -263,7 +263,7 @@ class AddPageForm(BasePageContentForm):
         widget=forms.HiddenInput(),
     )
     edit = forms.IntegerField(
-        # Got to edit/preview mode after adding
+
         required=False,
         widget=forms.HiddenInput(),
     )
@@ -290,7 +290,7 @@ class AddPageForm(BasePageContentForm):
         root_page = PageType.get_root_page(site=self._site)
 
         if root_page:
-            # Set the choicefield's choices to the various page_types
+
             descendants = root_page.get_descendant_pages().filter(is_page_type=True)
             titles = PageContent.objects.filter(page__in=descendants, language=self._language)
             choices = [("", "---------")]
@@ -306,8 +306,8 @@ class AddPageForm(BasePageContentForm):
         data = self.cleaned_data
 
         if self._errors:
-            # Form already has errors, best to let those be
-            # addressed first.
+
+
             return data
 
         parent_page = data.get("parent_page")
@@ -319,7 +319,7 @@ class AddPageForm(BasePageContentForm):
             path = data["slug"]
 
         try:
-            # Validate the url
+
             validate_url_uniqueness(
                 self._site,
                 path=path,
@@ -433,7 +433,7 @@ class AddPageForm(BasePageContentForm):
         is_first = not (Page.objects.on_site(self._site).exclude(pk=new_page.id).exists())
 
         if is_first and not new_page.is_page_type:
-            # it's the first page. Make it the homepage
+
             new_page.set_as_homepage(self._user)
 
         send_post_page_operation(
@@ -463,10 +463,10 @@ class AddPageTypeForm(AddPageForm):
     }
 
     def get_or_create_root(self):
-        """
-        Creates the root node used to store all page types
-        for the current site if it doesn't exist.
-        """
+        ''
+
+
+
         root_page = PageType.get_root_page(site=self._site)
         if not root_page:
             root_page = Page(is_page_type=True)
@@ -491,8 +491,8 @@ class AddPageTypeForm(AddPageForm):
             raise ValidationError("Parent has to be a page type.")
 
         if not parent_page:
-            # parent was not explicitly selected.
-            # fallback to the page types root
+
+
             parent_page = self.get_or_create_root()
         return parent_page
 
@@ -512,8 +512,8 @@ class AddPageTypeForm(AddPageForm):
         new_page = super().save(*args, **kwargs)
 
         if not self.cleaned_data.get("source"):
-            # User has created a page-type via "Add page"
-            # instead of from another page.
+
+
             new_page.update(is_page_type=True)
         return new_page
 
@@ -527,32 +527,32 @@ class DuplicatePageForm(AddPageForm):
 
     def clean_source(self):
         source = self.cleaned_data.get("source")
-        # ``source`` is a hidden field whose value is fully controlled by the
-        # client on POST and whose queryset spans every page on every site.
-        # ``has_add_permission`` only checks that the user may create *a* page,
-        # not that they may read ``source``. Without an explicit object-level
-        # check, a staff user with only "add page" rights could duplicate (and
-        # thereby read the plugin content of) any page -- bypassing per-page
-        # view restrictions and multi-site isolation (CWE-639 / CWE-862).
-        # ``copy(..., permissions=False)`` even strips the source's view
-        # restrictions, leaving the copy fully readable. Require that the user
-        # is actually allowed to view the page they are copying.
+
+
+
+
+
+
+
+
+
+
         if source and not user_can_view_page(self._user, source):
             raise ValidationError(_("You do not have permission to copy this page."))
         return source
 
 
 def url_is_locked(page_content: PageContent) -> bool:
-    """Return whether ``page_content``'s URL is shared with a published
-    (publicly visible) version of the same page and language.
+    ''
 
-    With a versioning package installed the slug and path live on the
-    (unversioned) :class:`~cms.models.pagemodel.PageUrl` and are therefore
-    shared across all versions of a page. Editing the slug of a draft would
-    silently change the URL of the already published version. Without versioning
-    the content being edited *is* the public version, so the URL is never
-    locked.
-    """
+
+
+
+
+
+
+
+
     if page_content is None or page_content.pk is None:
         return False
     return (
@@ -645,11 +645,11 @@ class ChangePageForm(BasePageContentForm):
             self.fields["overwrite_url"].initial = self.url_obj.path
 
         if self._url_is_locked:
-            # The URL is shared with a published version of this page (only
-            # possible with a versioning package installed). Changing the slug
-            # or overwrite URL would silently change the live URL, so drop those
-            # fields from the editable form. PageContentAdmin renders them as
-            # read-only instead (see PageContentAdmin.get_readonly_fields()).
+
+
+
+
+
             self.fields.pop("slug", None)
             self.fields.pop("overwrite_url", None)
 
@@ -665,14 +665,14 @@ class ChangePageForm(BasePageContentForm):
         data = super().clean()
 
         if self._errors:
-            # Form already has errors, best to let those be
-            # addressed first.
+
+
             return data
 
         page = self.instance.page
 
         if self._url_is_locked:
-            # The slug and overwrite URL are read-only; the URL must not change.
+
             return data
 
         if page.is_home:
@@ -700,7 +700,7 @@ class ChangePageForm(BasePageContentForm):
         user_language = get_site_language_from_request(self._request, site_id=self._site.pk)
 
         try:
-            # Validate the url
+
             validate_url_uniqueness(
                 self._site,
                 path=path,
@@ -717,7 +717,7 @@ class ChangePageForm(BasePageContentForm):
 
     def clean_xframe_options(self):
         if "xframe_options" not in self.fields:
-            return  # nothing to do, field isn't present
+            return
 
         xframe_options = self.cleaned_data["xframe_options"]
 
@@ -744,8 +744,8 @@ class ChangePageForm(BasePageContentForm):
             **data,
         )
         if not self._url_is_locked:
-            # When the URL is shared with a published version the slug/path must
-            # not change, so the (read-only) URL fields are ignored on save.
+
+
             page.update_urls(
                 self._language,
                 path=page_path,
@@ -756,7 +756,7 @@ class ChangePageForm(BasePageContentForm):
         page.clear_cache(menu=True)
 
         if not self._url_is_locked and page.application_urls and "slug" in self.changed_data:
-            # Connects the apphook restart handler to the request finished signal
+
             set_restart_trigger()
         send_post_page_operation(
             request=self._request,
@@ -778,8 +778,8 @@ class AdvancedSettingsForm(forms.ModelForm):
         required=False,
         help_text=_("Hook application to this page."),
     )
-    # This is really a 'fake' field which does not correspond to any Page attribute
-    # But creates a stub field to be populate by js
+
+
     application_configs = forms.CharField(
         label=_("Application configurations"),
         required=False,
@@ -804,8 +804,8 @@ class AdvancedSettingsForm(forms.ModelForm):
             navigation_extenders = self.get_navigation_extenders()
             self.fields["navigation_extenders"].widget = forms.Select({}, [("", "---------")] + navigation_extenders)
         if "application_urls" in self.fields:
-            # Prepare a dict mapping the apps by class name ('PollApp') to
-            # their app_name attribute ('polls'), if any.
+
+
             app_namespaces = {}
             app_configs = {}
             for hook in apphook_pool.get_apphooks():
@@ -837,9 +837,9 @@ class AdvancedSettingsForm(forms.ModelForm):
                         config = configs.get(namespace=self.initial["application_namespace"])
                         self.fields["application_configs"].initial = config.pk
                     except ObjectDoesNotExist:
-                        # Provided apphook configuration doesn't exist (anymore),
-                        # just skip it
-                        # The user will choose another value anyway
+
+
+
                         pass
 
     @cached_property
@@ -850,7 +850,7 @@ class AdvancedSettingsForm(forms.ModelForm):
         cleaned_data = super().clean()
 
         if self._errors:
-            # Fail fast if there's errors in the form
+
             return cleaned_data
 
         if "reverse_id" in self.fields:
@@ -862,19 +862,19 @@ class AdvancedSettingsForm(forms.ModelForm):
                         [_("A page with this reverse URL id exists already.")]
                     )
         apphook = cleaned_data.get("application_urls", None)
-        # The field 'application_namespace' is a misnomer. It should be
-        # 'instance_namespace'.
+
+
         instance_namespace = cleaned_data.get("application_namespace", None)
         application_config = cleaned_data.get("application_configs", None)
 
         if apphook:
             apphooks_with_config = self.get_apphooks_with_config()
 
-            # application_config wins over application_namespace
+
             if apphook in apphooks_with_config and application_config:
-                # the value of the application config namespace is saved in
-                # the 'usual' namespace field to be backward compatible
-                # with existing apphooks
+
+
+
                 try:
                     appconfig_pk = forms.IntegerField(required=True).to_python(application_config)
                 except ValidationError:
@@ -888,8 +888,8 @@ class AdvancedSettingsForm(forms.ModelForm):
                     return self.cleaned_data
 
                 if self._check_unique_namespace_instance(config.namespace):
-                    # Looks like there's already one with the default instance
-                    # namespace defined.
+
+
                     self._errors["application_configs"] = ErrorList(
                         [_("An application instance using this configuration already exists.")]
                     )
@@ -902,23 +902,23 @@ class AdvancedSettingsForm(forms.ModelForm):
                             [_("An application instance with this name already exists.")]
                         )
                 else:
-                    # The attribute on the apps 'app_name' is a misnomer, it should be
-                    # 'application_namespace'.
+
+
                     application_namespace = apphook_pool.get_apphook(apphook).app_name
                     if application_namespace and not instance_namespace:
                         if self._check_unique_namespace_instance(application_namespace):
-                            # Looks like there's already one with the default instance
-                            # namespace defined.
+
+
                             self._errors["application_namespace"] = ErrorList(
                                 [_("An application instance with this name already exists.")]
                             )
                         else:
-                            # OK, there are zero instances of THIS app that use the
-                            # default instance namespace, so, since the user didn't
-                            # provide one, we'll use the default. NOTE: The following
-                            # line is really setting the "instance namespace" of the
-                            # new app to the app's "application namespace", which is
-                            # the default instance namespace.
+
+
+
+
+
+
                             self.cleaned_data["application_namespace"] = application_namespace
 
         if instance_namespace and not apphook:
@@ -999,9 +999,9 @@ class PageTreeForm(forms.Form):
         try:
             return siblings[position], "left"
         except IndexError:
-            # The position requested is not occupied.
-            # Add the node as the last root node,
-            # relative to the current site.
+
+
+
             return siblings.reverse()[0], "right"
 
     def _get_tree_options_for_parent(self, parent_page, position):
@@ -1012,8 +1012,8 @@ class PageTreeForm(forms.Form):
         try:
             return siblings[position], "left"
         except IndexError:
-            # The position requested is not occupied.
-            # Add the node to be the parent's first child
+
+
             return parent_page, "last-child"
 
 
@@ -1054,16 +1054,16 @@ class MovePageForm(PageTreeForm):
 
         if self.page.path < target_page.path:
             if self.page.is_sibling_of(target_page):
-                # The page being moved appears before the target page and is a sibling of the target node.
-                # The user is moving from left to right.
+
+
                 return target_page, "right"
 
-            # The node being moved appears before the target node but is not a sibling of the target node.
-            # The user is moving from right to left.
+
+
             return target_page, "left"
 
-        # The node being moved appears after the target node.
-        # The user is moving from right to left.
+
+
         return target_page, "left"
 
     def move_page(self):
@@ -1121,8 +1121,8 @@ class CopyPageForm(PageTreeForm):
         try:
             return super()._get_tree_options_for_root(position)
         except IndexError:
-            # The user is copying a page to a site with no pages
-            # Add the node as the last root node.
+
+
             siblings = self.get_root_pages().reverse()
             return (siblings[0], "right")
 
@@ -1177,12 +1177,12 @@ class BasePermissionAdminForm(forms.ModelForm):
 
 
 class PagePermissionInlineAdminForm(BasePermissionAdminForm):
-    """
-    Page permission inline admin form used in inline admin. Required, because
-    user and group queryset must be changed. User can see only users on the same
-    level or under him in chosen page tree, and users which were created by him,
-    but aren't assigned to higher page level than current user.
-    """
+    ''
+
+
+
+
+
 
     page = forms.ModelChoiceField(
         queryset=Page.objects.all(),
@@ -1193,42 +1193,42 @@ class PagePermissionInlineAdminForm(BasePermissionAdminForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        user = get_current_user()  # current user from threadlocals
+        user = get_current_user()
         site = Site.objects.get_current()
         sub_users = get_subordinate_users(user, site)
 
         limit_choices = True
         use_raw_id = False
 
-        # Unfortunately, if there are > 500 users in the system, non-superusers
-        # won't see any benefit here because if we ask Django to put all the
-        # user PKs in limit_choices_to in the query string of the popup we're
-        # in danger of causing 414 errors so we fall back to the normal input
-        # widget.
+
+
+
+
+
         if get_cms_setting("RAW_ID_USERS"):
             if sub_users.count() < 500:
-                # If there aren't too many users, proceed as normal and use a
-                # raw id field with limit_choices_to
+
+
                 limit_choices = True
                 use_raw_id = True
             elif get_user_permission_level(user, site) == ROOT_USER_LEVEL:
-                # If there are enough choices to possibly cause a 414 request
-                # URI too large error, we only proceed with the raw id field if
-                # the user is a superuser & thus can legitimately circumvent
-                # the limit_choices_to condition.
+
+
+
+
                 limit_choices = False
                 use_raw_id = True
 
-        # We don't use the fancy custom widget if the admin form wants to use a
-        # raw id field for the user
+
+
         if use_raw_id:
             from django.contrib.admin.widgets import ForeignKeyRawIdWidget
 
-            # This check will be False if the number of users in the system
-            # is less than the threshold set by the RAW_ID_USERS setting.
+
+
             if isinstance(self.fields["user"].widget, ForeignKeyRawIdWidget):
-                # We can't set a queryset on a raw id lookup, but we can use
-                # the fact that it respects the limit_choices_to parameter.
+
+
                 if limit_choices:
                     self.fields["user"].widget.rel.limit_choices_to = dict(
                         id__in=list(sub_users.values_list("pk", flat=True))
@@ -1236,7 +1236,7 @@ class PagePermissionInlineAdminForm(BasePermissionAdminForm):
         else:
             self.fields["user"].widget = UserSelectAdminWidget()
             self.fields["user"].queryset = sub_users
-            self.fields["user"].widget.user = user  # assign current user
+            self.fields["user"].widget.user = user
 
         self.fields["group"].queryset = get_subordinate_groups(user, site)
 
@@ -1301,7 +1301,7 @@ class GlobalPagePermissionAdminForm(BasePermissionAdminForm):
 
 
 class GenericCmsPermissionForm(forms.ModelForm):
-    """Generic form for User & Group permissions in cms"""
+    ''
 
     _current_user = None
 
@@ -1309,8 +1309,8 @@ class GenericCmsPermissionForm(forms.ModelForm):
     can_change_page = forms.BooleanField(label=_("Change"), required=False, initial=True)
     can_delete_page = forms.BooleanField(label=_("Delete"), required=False)
 
-    # pageuser is for pageuser & group - they are combined together,
-    # and read out from PageUser model
+
+
     can_add_pageuser = forms.BooleanField(label=_("Add"), required=False)
     can_change_pageuser = forms.BooleanField(label=_("Change"), required=False)
     can_delete_pageuser = forms.BooleanField(label=_("Delete"), required=False)
@@ -1319,9 +1319,9 @@ class GenericCmsPermissionForm(forms.ModelForm):
     can_change_pagepermission = forms.BooleanField(label=_("Change"), required=False)
     can_delete_pagepermission = forms.BooleanField(label=_("Delete"), required=False)
 
-    # Maps the ``can_<action>_<name>`` permission fields to the model whose
-    # permission they grant. Mirrors ``save_permissions`` and the fieldsets
-    # rendered by ``PageUserGroupAdmin``/``PageUserAdmin``.
+
+
+
     _permission_models = ((Page, "page"), (PageUser, "pageuser"), (PagePermission, "pagepermission"))
 
     def __init__(self, *args, **kwargs):
@@ -1337,7 +1337,7 @@ class GenericCmsPermissionForm(forms.ModelForm):
     def clean(self):
         data = super().clean()
 
-        # Validate Page options
+
         if not data.get("can_change_page"):
             if data.get("can_add_page"):
                 message = _(
@@ -1365,7 +1365,7 @@ class GenericCmsPermissionForm(forms.ModelForm):
                 )
                 raise ValidationError(message)
 
-        # Validate PagePermission options
+
         if not data.get("can_change_pagepermission"):
             if data.get("can_add_pagepermission"):
                 message = _(
@@ -1381,23 +1381,23 @@ class GenericCmsPermissionForm(forms.ModelForm):
                 )
                 raise ValidationError(message)
 
-        # Enforce "nobody can grant more than they have" at the data layer.
+
         self._drop_unauthorized_permissions(data)
         return data
 
     def _drop_unauthorized_permissions(self, data):
-        """Remove ``can_*`` entries the current manager is not allowed to manage.
+        ''
 
-        ``PageUserGroupAdmin.get_fieldsets`` only *renders* the permission
-        checkboxes the manager actually holds, but the ``can_*`` fields are
-        declared on this form and therefore stay in ``base_fields`` regardless
-        of the admin's ``fields=`` restriction. A crafted POST can set the
-        hidden ones, and ``save_permissions`` would then grant them -- letting a
-        delegated manager escalate a group beyond their own rights (CWE-269).
-        Dropping the unauthorized entries here means they are neither granted
-        nor revoked, so any existing value the manager may not touch is left
-        untouched as well.
-        """
+
+
+
+
+
+
+
+
+
+
         user = self._current_user
         for model, name in self._permission_models:
             for action in ("add", "change", "delete"):
@@ -1409,7 +1409,7 @@ class GenericCmsPermissionForm(forms.ModelForm):
         return data
 
     def populate_initials(self, obj):
-        """Read out permissions from permission system."""
+        ''
         initials = {}
         permission_accessor = get_permission_accessor(obj)
 
@@ -1452,8 +1452,8 @@ class PageUserAddForm(forms.ModelForm):
         instance.created_by = self._current_user
 
         for field in user._meta.fields:
-            # assign all the fields - we can do this, because object is
-            # subclassing User (one to one relation)
+
+
             value = getattr(user, field.name)
             setattr(instance, field.name, value)
 
@@ -1473,13 +1473,13 @@ class PageUserChangeForm(UserChangeForm):
         super().__init__(*args, **kwargs)
 
         if not self._current_user.is_superuser:
-            # Limit permissions to include only
-            # the permissions available to the manager.
+
+
             permissions = self.get_available_permissions()
             self.fields["user_permissions"].queryset = permissions
 
-            # Limit groups to include only those where
-            # the manager is a member.
+
+
             self.fields["groups"].queryset = self.get_available_groups()
 
     def get_available_permissions(self):
@@ -1596,7 +1596,7 @@ class RequestToolbarForm(forms.Form):
             raise forms.ValidationError(message)
 
         try:
-            # Use admin manager if available for the toolbar form
+
             if issubclass(model_class, PageContent):
                 generic_obj = model_class.admin_manager.select_related("page").get(pk=obj_id)
             elif hasattr(model_class, "admin_manager"):

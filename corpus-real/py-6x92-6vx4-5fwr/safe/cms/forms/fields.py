@@ -11,14 +11,14 @@ from cms.models.pagemodel import Page
 
 
 class PageSelectFormField(forms.MultiValueField):
-    """
-    Behaves like a :class:`django.forms.ModelChoiceField` field for the
-    :class:`cms.models.pagemodel.Page` model, but displays itself as a split
-    field with a select drop-down for the site and one for the page. It also
-    indents the page names based on what level they're on, so that the page
-    select drop-down is easier to use. This takes the same arguments as
-    :class:`django.forms.ModelChoiceField`.
-    """
+    ''
+
+
+
+
+
+
+
     widget = PageSelectWidget
     default_error_messages = {
         'invalid_site': _('Select a valid site'),
@@ -37,9 +37,9 @@ class PageSelectFormField(forms.MultiValueField):
             ChoiceField(choices=get_page_choices, required=False, error_messages={'invalid': errors['invalid_page']}),
         )
 
-        # Remove the unexpected blank kwarg if it's supplied,
-        # causes an error where the MultiValueField doesn't expect it
-        # https://github.com/django/django/commit/da79ee472d803963dc3ea81ee67767dc06068aac
+
+
+
         if 'blank' in kwargs:
             del kwargs['blank']
 
@@ -63,9 +63,9 @@ class PageSelectFormField(forms.MultiValueField):
             self.widget.decompress = self.widget.widget.decompress
 
         if is_empty and initial is None:
-            # when empty data will have [u'1', u'', u''] as value
-            # this will cause django to always return True because of the '1'
-            # so we simply follow django's default behavior when initial is None and data is "empty"
+
+
+
             data = ['' for x in range(0, len(data))]
         return super().has_changed(initial, data)
 
@@ -74,17 +74,17 @@ class PageSelectFormField(forms.MultiValueField):
 
 
 class PageSmartLinkField(forms.CharField):
-    """
-    A field making use of ``cms.forms.widgets.PageSmartLinkWidget``.
-    This field will offer you a list of matching internal pages as you type.
-    You can either pick one or enter an arbitrary URL to create a non-existing entry.
-    Takes a `placeholder_text` argument to define the text displayed inside the
-    input before you type.
+    ''
 
-    The widget uses an ajax request to try to find pages match. It will try to find
-    case-insensitive matches amongst public and published pages on the `title`, `path`,
-    `page_title`, `menu_title` fields.
-    """
+
+
+
+
+
+
+
+
+
     widget = PageSmartLinkWidget
     default_validators = [validate_url]
 

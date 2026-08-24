@@ -15,7 +15,7 @@ export interface IAddonProviders {
 export const getAddons: (args: IAddonConfig) => IAddonProviders = (args) => {
     const addons: Addon[] = [
         new Webhook(args),
-        new SlackAddon(args), // TODO: remove this as soon as all clients migrate to SlackApp
+        new SlackAddon(args),
         new SlackAppAddon(args),
         new TeamsAddon(args),
         new DatadogAddon(args),
