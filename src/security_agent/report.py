@@ -192,19 +192,20 @@ def _finding(candidate: Candidate, excluded_by_policy: bool = False) -> List[str
 
     lines = [
         "### {} `{}` · {} — {}".format(
-            emoji, candidate.severity, finding.category, finding.title),
+            emoji, candidate.severity, _plain(finding.category),
+            _plain(finding.title)),
         "",
-        "`{}:{}` · {}".format(finding.file, candidate.line, " · ".join(tags)),
+        "{} · {}".format(
+            _code_span("{}:{}".format(finding.file, candidate.line)),
+            " · ".join(tags)),
         "",
-        "```{}".format(_fence_language(finding.file)),
-        finding.evidence.strip(),
-        "```",
+        *_fenced(finding.evidence.strip(), _fence_language(finding.file)),
         "",
-        "**What is wrong.** {}".format(finding.description.strip()),
+        "**What is wrong.** {}".format(_plain(finding.description)),
         "",
-        "**How it is exploited.** {}".format(finding.exploit_scenario.strip()),
+        "**How it is exploited.** {}".format(_plain(finding.exploit_scenario)),
         "",
-        "**Fix.** {}".format(finding.recommendation.strip()),
+        "**Fix.** {}".format(_plain(finding.recommendation)),
         "",
     ]
 
@@ -216,7 +217,7 @@ def _finding(candidate: Candidate, excluded_by_policy: bool = False) -> List[str
         lines += [
             "<details><summary>{}</summary>".format(label),
             "",
-            candidate.verdict_reason,
+            _plain(candidate.verdict_reason),
             "",
             "</details>",
             "",
@@ -234,16 +235,16 @@ def _refuted_section(candidates: Sequence[Candidate]) -> List[str]:
     lines: List[str] = []
     for candidate in sorted(candidates, key=lambda c: c.sort_key):
         lines += [
-            "**{} `{}` — {}** · `{}:{}`".format(
+            "**{} `{}` — {}** · {}".format(
                 SEVERITY_EMOJI.get(candidate.finding.severity, "⚪"),
                 candidate.finding.severity,
-                candidate.finding.title,
-                candidate.finding.file,
-                candidate.line),
+                _plain(candidate.finding.title),
+                _code_span("{}:{}".format(candidate.finding.file, candidate.line))),
             "",
-            "Claimed: {}".format(candidate.finding.description.strip()),
+            "Claimed: {}".format(_plain(candidate.finding.description)),
             "",
-            "Refuted: {}".format(candidate.verdict_reason or "no reason recorded"),
+            "Refuted: {}".format(
+                _plain(candidate.verdict_reason) or "no reason recorded"),
             "",
         ]
     return lines
@@ -253,9 +254,10 @@ def _suppressed_section(candidates: Sequence[Candidate]) -> List[str]:
     lines: List[str] = []
     for candidate in sorted(candidates, key=lambda c: c.sort_key):
         lines += [
-            "- **{}** (`{}:{}`, {}) — {}".format(
-                candidate.finding.title, candidate.finding.file, candidate.line,
-                candidate.severity, candidate.suppressed_by),
+            "- **{}** ({}, {}) — {}".format(
+                _plain(candidate.finding.title),
+                _code_span("{}:{}".format(candidate.finding.file, candidate.line)),
+                candidate.severity, _plain(candidate.suppressed_by)),
         ]
     return [*lines, ""]
 
@@ -267,8 +269,8 @@ def _rejected_section(outcome: ScanOutcome) -> List[str]:
     }
     lines = []
     for claim in outcome.rejected_claims:
-        lines.append("- **{}** (`{}`) — {}".format(
-            claim.title, claim.file,
+        lines.append("- **{}** ({}) — {}".format(
+            _plain(claim.title), _code_span(claim.file),
             reasons.get(claim.reason, claim.reason)))
     return [*lines, ""]
 
@@ -280,7 +282,7 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
         "",
     ]
     if outcome.files_examined:
-        lines += ["- `{}`".format(path) for path in sorted(outcome.files_examined)]
+        lines += ["- {}".format(_code_span(path)) for path in sorted(outcome.files_examined)]
     else:
         lines.append("- _none_")
 
@@ -384,6 +386,73 @@ def _collapsed(title: str, body: Sequence[str], note: str = "") -> List[str]:
     lines += list(body)
     lines += ["", "</details>", ""]
     return lines
+
+
+def _fenced(code: str, language: str) -> List[str]:
+    """A code block that attacker-authored code cannot break out of.
+
+    The quoted code is written by whoever opened the merge request. A fixed
+    three-backtick fence ends the moment their code contains one, and every
+    line after that renders as report content — headings, links, raw HTML —
+    published by a bot holding a GitLab token, under the security tool's name.
+    A contributor could make the security report say anything.
+
+    CommonMark closes a fence only on a run of backticks at least as long as
+    the one that opened it, so the fence is made one longer than the longest
+    run in the content. The code itself is never altered: mangling the evidence
+    would break the one property layer 1 exists to guarantee — that the quote
+    matches the file.
+    """
+    longest = 0
+    run = 0
+    for character in code:
+        run = run + 1 if character == "`" else 0
+        longest = max(longest, run)
+    fence = "`" * max(3, longest + 1)
+    return [fence + language, code, fence]
+
+
+def _plain(text: str) -> str:
+    """Model-written prose, rendered as text rather than as Markdown.
+
+    The model is summarising attacker-authored code, so its output can carry
+    text the attacker chose. Escaping the characters that start a block —
+    rather than stripping them — keeps the sentence readable while ensuring it
+    renders as one paragraph and not as a heading, a list, a table, a fence, or
+    an HTML tag.
+    """
+    text = " ".join((text or "").split())
+    # Only the inline constructs. Headings, lists, tables and fences all need
+    # the start of a line, and this text is collapsed to one line that always
+    # follows other content — so escaping `#`, `|`, `*` and `_` would buy no
+    # safety and would turn every `get_user` into `get\\_user`, which is worse
+    # to read and breaks anything grepping the report.
+    for character in ("\\", "`", "<", ">", "[", "]"):
+        text = text.replace(character, "\\" + character)
+    return text
+
+
+def _code_span(text: str) -> str:
+    """A path or identifier rendered inline, that cannot end its own span.
+
+    `_plain` is wrong here: inside a code span a backslash is a literal
+    backslash, not an escape, so escaping would both fail to contain the text
+    and put visible slashes in the path. CommonMark ends a span only on a
+    backtick run at least as long as the opening one, so the delimiter is made
+    one longer than the longest run inside — the same rule as `_fenced`. A
+    span whose content begins or ends with a backtick needs one space of
+    padding, which the reader does not see.
+    """
+    text = " ".join((text or "").split())
+    longest = 0
+    run = 0
+    for character in text:
+        run = run + 1 if character == "`" else 0
+        longest = max(longest, run)
+    if not longest:
+        return "`{}`".format(text)
+    ticks = "`" * (longest + 1)
+    return "{} {} {}".format(ticks, text, ticks)
 
 
 def _fence_language(path: str) -> str:
