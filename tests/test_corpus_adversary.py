@@ -27,6 +27,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from corpus_adversary import (
+    BETWEEN_MEMBER,
+    WITHIN_MEMBER,
     byte_count,
     comment_lines,
     evaluate,
@@ -66,13 +68,49 @@ def test_no_code_blind_rule_can_score_the_corpus(corpus):
     scores = evaluate([root])
     name, accuracy, row = worst(scores, MIN_FIRES)
     if not name:
-        pytest.skip("no rule fired often enough to judge {}".format(corpus))
+        # Not a skip. No within-member rule firing is the outcome this gates
+        # on, and reporting it as "did not run" would make the healthy state
+        # indistinguishable from a broken harness.
+        fired = {n: scores[n]["fired"] for n in WITHIN_MEMBER if n in scores}
+        assert all(count < MIN_FIRES for count in fired.values()), fired
+        return
 
     assert abs(accuracy - 0.5) <= THRESHOLD - 0.5, (
         "{}: the rule {!r} reads no code and is right {:.0f}% of the time over "
         "{} case(s). The corpus is measuring that rule, not the reviewer."
         .format(corpus, name, 100 * accuracy, row["fired"])
     )
+
+
+def test_the_gate_covers_only_cues_the_reviewer_can_see():
+    """The split has to be justified, not merely convenient.
+
+    Gating on within-member cues alone is defensible exactly because each
+    review is shown one member and never the other — so a size difference
+    between them cannot reach it. That premise is worth stating as a test,
+    because the day a harness batches both members into one prompt, this
+    exemption becomes wrong and someone needs to find out from a failure
+    rather than from a bad number.
+    """
+    assert set(WITHIN_MEMBER) & set(BETWEEN_MEMBER) == set()
+    # A comment inside a file is read by whoever opens that file.
+    assert "more comment lines" in WITHIN_MEMBER
+    # Size and import counts exist only as a comparison.
+    assert "more bytes" in BETWEEN_MEMBER
+    assert "more lines" in BETWEEN_MEMBER
+
+
+def test_a_between_member_cue_does_not_fail_the_gate(tmp_path):
+    """Reported loudly, not gated on — and the test says which."""
+    for index in range(8):
+        write_case(tmp_path, "case{}".format(index),
+                   "x = 1\ny = 2\nz = 3\n", "x = 1\n")
+    scores = evaluate([tmp_path])
+    assert scores["more bytes"]["correct"] == 8
+    name, _, _ = worst(scores, MIN_FIRES)
+    assert name == "", "a size cue must not fail the build"
+    name, accuracy, _ = worst(scores, MIN_FIRES, within_only=False)
+    assert name == "more bytes" and accuracy == 1.0
 
 
 @pytest.mark.parametrize("corpus", ["corpus", "corpus-real"])
@@ -118,7 +156,10 @@ def test_a_rule_that_picks_the_unsafe_member_leaks_just_as_much(tmp_path):
     and ranking on accuracy alone would score it 0% and call it harmless.
     """
     for index in range(8):
-        write_case(tmp_path, "case{}".format(index), "x = 1\n", "x = 1\ny = 2\n")
+        # A within-member cue pointing the wrong way: the *unsafe* member is
+        # the one carrying the comment.
+        write_case(tmp_path, "case{}".format(index),
+                   "x = 1\n", "# a note\nx = 1\n")
     _, accuracy, row = worst(evaluate([tmp_path]), MIN_FIRES)
     assert row["fired"] == 8
     assert accuracy == 0.0

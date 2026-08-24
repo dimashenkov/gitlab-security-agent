@@ -209,6 +209,7 @@ def run_case(case: dict) -> dict:
             "pair_success": (not safe_hit) and unsafe_hit,
             "safe_exit": members["safe"]["exit_code"],
             "unsafe_exit": members["unsafe"]["exit_code"],
+            "size_delta": size_delta(case["_dir"]),
             "safe_findings": summarise(members["safe"]["payload"]),
             "unsafe_findings": summarise(members["unsafe"]["payload"]),
             "cost": sum(cost_of(m["payload"]["usage"]) for m in members.values()),
@@ -220,6 +221,55 @@ def run_case(case: dict) -> dict:
         return result
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def size_delta(case_dir: Path) -> float:
+    """How much bigger one member's change is than the other's, as a fraction.
+
+    Positive means the safe member is larger, which is the usual direction: a
+    security fix adds code. This is a confound that cannot be removed from real
+    harvested cases without padding them into unreality, so it is measured and
+    reported instead of hidden.
+    """
+    sizes = {}
+    for member in ("safe", "unsafe"):
+        change = case_dir / member / "change"
+        sizes[member] = sum(
+            len(p.read_bytes()) for p in change.rglob("*") if p.is_file()
+        ) if change.is_dir() else 0
+    total = sizes["safe"] + sizes["unsafe"]
+    if not total:
+        return 0.0
+    return (sizes["safe"] - sizes["unsafe"]) / (total / 2)
+
+
+# Below this, the two members are close enough in size that "pick the bigger
+# one" cannot be what decided the answer. Chosen before seeing any score, so it
+# is not a threshold fitted to make a number look better.
+BALANCED = 0.10
+
+
+def _stratified(done: list) -> str:
+    """The score on the cases where size cannot have carried it.
+
+    A corpus built from real fixes leaks size: the safe member is the one with
+    the fix in it, and a fix is usually more code. Reporting only the headline
+    would let that cue stand in for recognition. Reporting the balanced subset
+    says what the score is where the cue is unavailable — and if the two numbers
+    diverge, the difference is the size of the problem.
+    """
+    balanced = [r for r in done if abs(r.get("size_delta", 0.0)) < BALANCED]
+    if not balanced:
+        return ("\nNo case has members within {:.0f}% in size, so every pair "
+                "here carries a size cue.".format(100 * BALANCED))
+    passed = sum(r["pair_success"] for r in balanced)
+    return (
+        "\nOn the {} pair(s) whose members are within {:.0f}% in size — where "
+        "'pick the larger member' cannot decide it — {} discriminated ({:.0f}%). "
+        "Headline was {:.0f}%.".format(
+            len(balanced), 100 * BALANCED, passed, 100 * passed / len(balanced),
+            100 * sum(r["pair_success"] for r in done) / len(done))
+    )
 
 
 def report(results: list) -> None:
@@ -263,6 +313,8 @@ def report(results: list) -> None:
     if families:
         print("\nfailing families: " + ", ".join(
             "{} ({})".format(f, n) for f, n in families.most_common()))
+
+    print(_stratified(done))
 
     print("\ntotal cost ${:.2f} across {} pairs".format(
         sum(r["cost"] for r in done), len(done)))

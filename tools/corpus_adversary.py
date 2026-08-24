@@ -93,12 +93,32 @@ def import_lines(member: Path) -> int:
 # Each rule returns the member it believes is safe, or "" to abstain. Abstaining
 # matters: a rule that fires twice and is right twice has found nothing, and
 # reporting it as 100% would bury the rule that fires forty times.
-RULES = {
+# Two kinds of cue, and only one of them can reach the reviewer.
+#
+# **Within-member.** Something inside a single member gives the answer away —
+# a comment naming the CWE, a `SECURITY:` marker, a test named after the
+# attack. The agent reads exactly that file, so it can use this, and a corpus
+# carrying it is measuring label-reading. These are gated on.
+#
+# **Between-member.** A property that only exists by comparison — the safe
+# member being larger, because a fix adds code. Nothing in the pipeline ever
+# sees both members: `pair_corpus.py` runs two independent reviews, each shown
+# one member and no reference to the other. This cue is unavailable to the
+# thing being measured, so it is reported and not gated on.
+#
+# The distinction is not a licence to ignore the second kind. It matters for a
+# human grading by hand, for anything training on pairs, and for a future
+# harness that batches both members into one prompt. It is recorded so that the
+# day one of those exists, the size of the problem is already known.
+WITHIN_MEMBER = {
     "more comment lines": comment_lines,
+}
+BETWEEN_MEMBER = {
     "more bytes": byte_count,
     "more lines": line_count,
     "more imports": import_lines,
 }
+RULES = {**WITHIN_MEMBER, **BETWEEN_MEMBER}
 
 
 def judge(case: Path, measure) -> str:
@@ -144,12 +164,18 @@ def evaluate(roots: list) -> dict:
     return scores
 
 
-def worst(scores: dict, min_fires: int = 6) -> tuple:
-    """The strongest rule that fired often enough to mean anything."""
+def worst(scores: dict, min_fires: int = 6, within_only: bool = True) -> tuple:
+    """The strongest rule that fired often enough to mean anything.
+
+    By default only within-member rules count, because those are the only ones
+    the reviewer can act on. Pass `within_only=False` to rank everything, which
+    is what a human grader or a pair-consuming harness would face.
+    """
+    considered = WITHIN_MEMBER if within_only else RULES
     ranked = [
         (name, row["correct"] / row["fired"], row)
         for name, row in scores.items()
-        if row["fired"] >= min_fires
+        if row["fired"] >= min_fires and name in considered
     ]
     if not ranked:
         return ("", 0.0, {})
@@ -167,20 +193,36 @@ def main() -> int:
     args = parser.parse_args()
 
     scores = evaluate(args.roots)
-    print("{:<24}{:>8}{:>10}{:>12}   {}".format(
-        "code-blind rule", "fires", "correct", "accuracy", "examples"))
-    print("-" * 78)
-    for name, row in scores.items():
-        accuracy = row["correct"] / row["fired"] if row["fired"] else 0.0
-        print("{:<24}{:>8}{:>10}{:>11.0f}%   {}".format(
-            name, row["fired"], row["correct"], 100 * accuracy,
-            ", ".join(row["examples"][:3])))
 
-    name, accuracy, row = worst(scores, args.min_fires)
+    def show(title, names, note):
+        print("\n{}\n{}".format(title, "-" * 78))
+        for name in names:
+            row = scores.get(name)
+            if not row:
+                continue
+            accuracy = row["correct"] / row["fired"] if row["fired"] else 0.0
+            print("  {:<24}{:>7} fires{:>7} correct{:>9.0f}%   {}".format(
+                name, row["fired"], row["correct"], 100 * accuracy,
+                ", ".join(row["examples"][:2])))
+        print("  " + note)
+
+    show("Within-member cues — the reviewer reads these, so they are gated on",
+         list(WITHIN_MEMBER),
+         "A comment naming the weakness sits in the file the agent opens.")
+    show("Between-member cues — only visible by comparison, so reported only",
+         [*BETWEEN_MEMBER, "comments, then bytes"],
+         "Each review is shown one member and no reference to the other. The\n"
+         "  composite is the audit's original rule; with the comment signal gone\n"
+         "  it is now decided entirely by its between-member tiebreak.")
+
     total = next(iter(scores.values()))["cases"]
     print("\n{} case(s) examined.".format(total))
+
+    name, accuracy, row = worst(scores, args.min_fires)
     if not name:
-        print("No rule fired often enough to judge.")
+        print("No within-member rule fired often enough to judge. The cues that "
+              "could reach the reviewer are absent, which is the property this "
+              "gates on — the between-member table above is still worth reading.")
         return 0
 
     print("Strongest code-blind rule: {!r} at {:.0f}% over {} case(s).".format(
