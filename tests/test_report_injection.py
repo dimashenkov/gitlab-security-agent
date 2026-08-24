@@ -224,3 +224,37 @@ def test_the_verification_block_cannot_close_its_own_details():
     outcome = _outcome()
     outcome.reported = [candidate]
     assert "<h1>" not in _render(outcome)
+
+
+# ------------------------------------------- a review that never happened
+
+
+def test_an_incomplete_review_cannot_get_a_green_tick_when_the_gate_is_off():
+    """The header keyed on the exit code, and the two come apart.
+
+    `SECURITY_SCAN_FAIL_ON_INCOMPLETE=false` makes the gate return 0 on a
+    review that stopped early. The header then read
+    "✅ AI security review — no findings" — the one line visible in the merge
+    request preview — over a review that never looked. The warning further
+    down the body does not undo a green tick at the top.
+    """
+    outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+    outcome.stop_reason = "context_exhausted"
+    cfg = Config(post_comment=False, fail_on_incomplete=False)
+    decision = decide(cfg, outcome)
+
+    assert decision.exit_code == 0, "the gate is off; that is the premise"
+    markdown = render_markdown(cfg, outcome, decision)
+    assert markdown.index("did not complete") < markdown.index("Coverage is partial")
+    assert "✅" not in markdown
+    assert "no findings" not in markdown.split("\n")[2].lower()
+
+
+def test_a_finished_review_with_nothing_to_report_says_reported():
+    """Never "no vulnerabilities". The agent read what it read and said
+    nothing about the rest."""
+    outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+    cfg = Config(post_comment=False)
+    markdown = render_markdown(cfg, outcome, decide(cfg, outcome))
+    assert "no findings reported" in markdown.lower()
+    assert "no vulnerabilit" not in markdown.lower()

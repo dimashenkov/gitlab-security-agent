@@ -106,8 +106,13 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         outcome = agent.run(mode=mode, briefing=build_briefing(cfg, workspace, mode))
     candidates = list(agent.candidates)
     log.info(
-        "agent finished: %s, %d turn(s), %d candidate finding(s)",
-        outcome.stop_reason, outcome.turns, len(candidates),
+        "agent finished: %s%s, %d turn(s), %d candidate finding(s)",
+        outcome.stop_reason,
+        # Which limit burned, not just that one did. The log said `error` and
+        # left the reader to guess between a context overflow, a bad request
+        # and a dead network.
+        " ({})".format(outcome.stop_detail) if outcome.stop_detail else "",
+        outcome.turns, len(candidates),
     )
 
     # Layers 2 and 3 of the hallucination check. Layer 1 already ran inside

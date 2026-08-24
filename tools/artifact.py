@@ -170,6 +170,9 @@ def signature(payload: dict, case: dict) -> dict:
     return {
         "complete": bool(payload.get("complete")),
         "stop_reason": payload.get("stop_reason", ""),
+        # The only field that says which limit burned. Dropping it is what made
+        # four incomplete runs undiagnosable without paying for them again.
+        "stop_detail": payload.get("stop_detail", ""),
         "exit_code": verdict.get("exit_code"),
         "blocked": bool(verdict.get("blocked")),
         "target": target_disposition(payload, case),

@@ -19,7 +19,7 @@ import pytest
 from fakes import FakeClient, FakeResponse, text, tool_use
 from security_agent.agent import SecurityAgent, _is_capability_error
 from security_agent.config import Config, GitLabContext
-from security_agent.models import STOP_COMPLETED, STOP_ERROR
+from security_agent.models import STOP_COMPLETED, STOP_ERROR, STOP_TRANSPORT
 from security_agent.workspace import Workspace
 
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
@@ -228,8 +228,12 @@ class TestTransientFailures:
         cfg.use_refusal_fallback = False
         outcome = SecurityAgent(cfg, ws, client=Dead()).run("repo", "go")
 
-        # Classified, not crashed: the loop already knows how to report this.
-        assert outcome.stop_reason == STOP_ERROR
+        # Classified by cause, not crashed and not swept into `error`.
+        # "the network was down" and "the conversation outgrew the model" used
+        # to record the same word, and four incomplete runs could not be told
+        # apart afterwards because of it.
+        assert outcome.stop_reason == STOP_TRANSPORT
+        assert outcome.stop_reason != STOP_ERROR
         assert "could not reach the Claude API" in outcome.stop_detail
         assert not outcome.complete
 
@@ -251,3 +255,35 @@ class TestTransientFailures:
         cfg.use_refusal_fallback = False
         SecurityAgent(cfg, ws, client=Rejecting()).run("repo", "go")
         assert calls["n"] == 1  # spending money to get the same 400 helps nobody
+
+
+class TestStopReasonsAreDistinguishable:
+    """`error` used to hold six different causes.
+
+    Four reviews stopped early and every one of them recorded the same word, so
+    "did it read more than it could hold, or did the network drop" had no answer
+    in the artifact. The separating evidence lived only in `stop_detail`, and
+    nothing downstream kept that field.
+    """
+
+    def test_a_context_overflow_is_named(self):
+        from security_agent.agent import _is_context_error
+
+        assert _is_context_error(400, "prompt is too long: 210000 tokens > 200000 maximum")
+        assert _is_context_error(400, "input exceeds the maximum context length")
+
+    def test_a_different_bad_request_is_not_called_a_context_overflow(self):
+        """A 400 is also how a malformed request arrives, and the two need
+        different answers: one means read less, the other means fix the code."""
+        from security_agent.agent import _is_context_error
+
+        assert not _is_context_error(400, "tools.0.custom.name: invalid value")
+        assert not _is_context_error(429, "rate limit exceeded")
+        assert not _is_context_error(500, "internal server error")
+
+    def test_every_incomplete_reason_has_an_explanation(self):
+        """A named reason nobody wrote a sentence for is the old bucket again."""
+        from security_agent.models import INCOMPLETE_STOPS, STOP_EXPLANATIONS
+
+        missing = [s for s in INCOMPLETE_STOPS if s not in STOP_EXPLANATIONS]
+        assert not missing, missing

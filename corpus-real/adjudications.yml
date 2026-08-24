@@ -1,0 +1,108 @@
+# Findings adjudicated by hand, against the code in the corpus.
+#
+# The scorer counts a finding of the target category in the target file of the
+# SAFE member as "the reviewer says the advisory weakness is still there". That
+# is a claim which can be right — a maintainer's fix is not proof of absence —
+# and it used to be scored as a false positive by construction. Nothing
+# automatable decides which; this file is where a human decision is recorded so
+# it is not made twice and not made silently.
+#
+# Keys are case_id + member + file, not the title. Titles are reworded every
+# run; that is the whole reason the fingerprint stopped being built from prose.
+# Category is recorded where it is known — for the three below it is not, because
+# the run's artifacts were deleted by the corpus runner before anyone thought to
+# keep them. That is itself a finding: the runner now persists per-member
+# `signature()` output for every case, scored or not.
+#
+# `verdict` is one of:
+#   real      the weakness is present in the fixed code as described
+#   not_real  the claim is wrong; `refuted_by` says which part and where
+#   unclear   the corpus does not contain enough code to decide
+#
+# `unclear` is a real answer here for the same reason it is one in the product.
+
+adjudications:
+
+  - case_id: py-2cp2-2r3c-7p7r-snap
+    member: safe
+    file: hydra/_internal/instantiate/_instantiate2.py
+    severity_reported: critical
+    claim: Target blocklist is a string denylist checked pre-resolution
+    verdict: real
+    adjudicated_on: 2026-08-24
+    evidence: >-
+      `_resolve_target` decides on the spelling of the target
+      (`_is_blocklisted_target(target)`) and only then resolves the string to an
+      object (`_locate(target)`). The only normalisation rewrites two prefixes,
+      `posix.` and `nt.`. Two paths follow. Aliasing: `os.system` is blocked and
+      `subprocess.os.system` is not — that `_locate` walks attribute chains of
+      that shape is established by the blocklist's own entry
+      `ctypes.cdll.LoadLibrary`. Incompleteness: `builtins.exec`/`eval`/`compile`
+      are blocked, but `timeit.timeit(stmt=...)`, `cProfile.run(...)` and
+      `pdb.run(...)` each exec a caller-supplied string and need only
+      `module.function` resolution, the shape of blocklisted `runpy.run_path`.
+    # This is the decisive part, and it is about the case rather than the finding.
+    case_is_malformed: true
+    why_malformed: >-
+      The advisory is CWE-94/CWE-470 in `hydra.utils.instantiate`, and the
+      maintainers' fix IS this blocklist. So the finding is not incidental: the
+      reviewer is saying the shipped fix does not close the advisory's own class
+      of bug, and it is right. The safe member is therefore only partially safe,
+      and a pair whose safe member still carries the weakness cannot measure
+      discrimination in either direction. Exclude it from the score; do not
+      count it as a failure.
+
+  - case_id: rs-8rw6-p7m8-63jp-snap
+    member: safe
+    file: surrealdb/core/src/doc/output.rs
+    severity_reported: high
+    claim: Computed fields are re-added after permission reduction
+    verdict: real
+    adjudicated_on: 2026-08-24
+    incidental: true          # unrelated to the advisory, which is about
+                              # array element-level `field.*` SELECT permissions
+    evidence: >-
+      `output_select` computes fields, reduces the document, and then computes
+      fields again on the reduced document. `reduce_document` cuts computed
+      fields whose `select_permission` is `None` or falsy;
+      `computed_fields_inner` then writes the value back with no permission
+      check. The memo flag does not stop it: `reduce_document` returns a fresh
+      `CursorDoc`, and `CursorDoc::new` sets `fields_computed: false`. A record
+      user selecting an expression over the field —
+      `SELECT string::concat(secret_computed, '') AS x` — gets it: the backstop
+      `apply_select_field_permissions` cuts paths named for the field, and the
+      projection is named `x`. The maintainers agree the re-filter is required:
+      `filter_computed_field_permissions` exists for exactly this and is wired
+      into the live-query path in `lives.rs` and into no path in `output.rs`.
+    not_verifiable: >-
+      `expr/field.rs` is absent from the corpus, so `Fields::compute` cannot be
+      read to prove it applies no permission check of its own.
+
+  - case_id: php-p2ch-c2c3-4xm5-snap
+    member: safe
+    file: modules/backend/classes/Controller.php
+    severity_reported: medium
+    claim: execPageAction discards its 404 and invokes actions that failed
+    verdict: not_real
+    adjudicated_on: 2026-08-24
+    incidental: true
+    evidence: >-
+      The first half is true — `Response::make(View::make('backend::404'), 404)`
+      is built and discarded, and control falls through to
+      `call_user_func_array`. The second half does not happen. Every caller
+      validates with the identical predicate on the identical object first:
+      `BackendController::resolveController` runs `$controllerObj->actionExists($action)`
+      and stores null otherwise, and only a non-null controller is run. The
+      other two callers pass `$this->action`, the same validated value. The one
+      way the two checks could diverge is `hiddenActions` growing between them,
+      and it cannot: `ControllerBehavior::hideAction` runs from the behavior's
+      constructor, which runs inside `Controller::__construct` via
+      `extendableConstruct()` — before the check.
+    # What this one is evidence of, which matters more than the verdict.
+    failure_mode: reachability-discipline
+    failure_mode_detail: >-
+      A genuine local defect, correctly described at the statement level,
+      promoted to a security weakness without reading the caller. The reviewer
+      stopped one hop short of the gate that refutes it. Not fabrication — the
+      quoted code is real and the description of it is accurate — but the claim
+      that makes it a security finding was never checked.

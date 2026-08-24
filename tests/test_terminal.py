@@ -78,7 +78,21 @@ def test_findings_that_do_not_block_do_not_say_blocked():
 def test_clean_run_says_so_without_a_findings_block():
     text = terminal.render(make_outcome(), Decision(exit_code=0, reason="no findings"))
     assert "PASSED" in text
-    assert "No findings." in text
+    # "reported", not a claim about the code. The agent read what it read.
+    assert "No findings reported." in text
+
+
+def test_an_empty_finding_list_from_an_incomplete_run_is_not_green():
+    """The list is empty because the review stopped, not because it looked.
+
+    Same two words on screen, opposite meanings, and the colour was the only
+    thing distinguishing them — it said green for both.
+    """
+    outcome = make_outcome()
+    outcome.stop_reason = "context_exhausted"
+    text = terminal.render(outcome, Decision(exit_code=2, reason="did not complete"))
+    assert "did not complete" in text
+    assert "No findings reported." not in text
 
 
 def test_incomplete_review_is_not_reported_as_a_pass():

@@ -22,9 +22,12 @@ from .config import Config
 from .models import (
     STOP_BUDGET,
     STOP_COMPLETED,
+    STOP_CONTEXT,
     STOP_ERROR,
     STOP_REFUSAL,
+    STOP_RESPONSE_TOO_LONG,
     STOP_TIME_LIMIT,
+    STOP_TRANSPORT,
     STOP_TURN_LIMIT,
     Provenance,
     Revision,
@@ -37,6 +40,27 @@ from .transport import TransportFailure, split_capability_error, stream_message
 from .workspace import Workspace
 
 log = logging.getLogger(__name__)
+
+# What the API says when the conversation no longer fits. Matched on the
+# message rather than the status code alone: a 400 is also how a malformed
+# request arrives, and the two need different answers — one means read less,
+# the other means fix the code.
+_CONTEXT_MARKERS = ("prompt is too long", "context window", "too many tokens",
+                    "maximum context length", "exceeds the maximum")
+
+
+def _is_context_error(status_code: int, message: str) -> bool:
+    """Did the conversation outgrow the model, or is this a different 400?
+
+    This distinction is the whole reason `error` was split. Four reviews
+    stopped early and every one of them recorded `error`, so the question
+    "did it read more than it could hold, or did the network drop" had no
+    answer in the artifact — only in `stop_detail`, which nothing kept.
+    """
+    if status_code != 400:
+        return False
+    lowered = (message or "").lower()
+    return any(marker in lowered for marker in _CONTEXT_MARKERS)
 
 # A security reviewer discusses exploitation for a living, so a policy decline is
 # a realistic failure mode for this workload specifically. With server-side
@@ -133,12 +157,15 @@ class SecurityAgent:
             try:
                 response = self._request(system, messages, tools)
             except anthropic.APIStatusError as exc:
-                stop_reason = STOP_ERROR
-                stop_detail = "API error {}: {}".format(
-                    exc.status_code, getattr(exc, "message", str(exc)))
+                message = getattr(exc, "message", "") or str(exc)
+                stop_reason = (
+                    STOP_CONTEXT if _is_context_error(exc.status_code, message)
+                    else STOP_ERROR
+                )
+                stop_detail = "API error {}: {}".format(exc.status_code, message)
                 break
             except (anthropic.APIConnectionError, TransportFailure) as exc:
-                stop_reason = STOP_ERROR
+                stop_reason = STOP_TRANSPORT
                 stop_detail = "could not reach the Claude API: {}".format(exc)
                 break
 
@@ -155,7 +182,7 @@ class SecurityAgent:
                 break
 
             if response.stop_reason == "max_tokens":
-                stop_reason = STOP_ERROR
+                stop_reason = STOP_RESPONSE_TOO_LONG
                 stop_detail = (
                     "a single response hit max_tokens ({}); raise "
                     "SECURITY_SCAN_MAX_TOKENS".format(self.cfg.max_tokens)

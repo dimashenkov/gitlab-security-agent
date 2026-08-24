@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from pair_corpus import _is_target, hits_target, report
+from pair_corpus import _is_target, _keep_artifacts, _progress, hits_target, report
 
 CASE = {"case_id": "py-2cp2", "language": "python", "family": "injection",
         "expected_category": "injection", "expected_file": "app/views.py"}
@@ -157,3 +157,122 @@ def test_a_run_of_nothing_but_unresolved_cases_scores_nothing(capsys):
     out = capsys.readouterr().out
     assert "did not complete" in out
     assert "nothing to score" in out
+
+
+# ------------------------------------------- the line that threw away a run
+
+
+def test_the_progress_line_survives_every_shape_a_case_can_finish_in():
+    """It indexed `r["pair_success"]`, which an unresolved case does not have.
+
+    The KeyError was raised inside the `as_completed` loop — before the
+    `--json` write — so the first case that stopped early discarded every case
+    already paid for. The progress line is the least important thing on that
+    screen and must not be able to end the run.
+    """
+    for row in ({"error": "boom"},
+                {"incomplete": ["unsafe"]},
+                {"incomplete": ["safe", "unsafe"]},
+                {"pair_success": True},
+                {"pair_success": False},
+                {}):
+        assert _progress(row)          # a string, and no exception
+
+    assert _progress({"pair_success": True}) == "pass"
+    assert _progress({"pair_success": False}) == "FAIL"
+    assert "did not complete" in _progress({"incomplete": ["unsafe"]})
+
+
+# ------------------------------------------------------- hand adjudications
+
+
+def test_an_adjudicated_finding_shows_its_verdict(capsys):
+    report(
+        [{"case_id": "rs-8rw6", "language": "rust", "family": "authz",
+          "pair_success": False, "safe_false_positive": False,
+          "unsafe_recall": False, "cost": 1.4, "size_delta": 0.0,
+          "safe_incidental": [{"category": "authorization", "file": "doc/output.rs",
+                               "severity": "high", "title": "Computed fields re-added"}],
+          "unsafe_incidental": []}],
+        adjudications=[{"case_id": "rs-8rw6", "member": "safe",
+                        "file": "doc/output.rs", "verdict": "real"}],
+    )
+    out = capsys.readouterr().out
+    assert "real" in out
+
+
+def test_an_unadjudicated_finding_says_so_rather_than_looking_decided(capsys):
+    """Blank would read as 'nothing to see'. Two of the first three adjudicated
+    were real, so a silent blank understates the product."""
+    report([{"case_id": "x", "language": "go", "family": "injection",
+             "pair_success": False, "safe_false_positive": False,
+             "unsafe_recall": False, "cost": 0.5, "size_delta": 0.0,
+             "safe_incidental": [{"category": "injection", "file": "a.go",
+                                  "severity": "low", "title": "Something"}],
+             "unsafe_incidental": []}])
+    out = capsys.readouterr().out
+    assert "unadjudicated" in out
+
+
+def test_a_malformed_case_is_excluded_by_name(tmp_path):
+    """py-2cp2's safe member still carries the advisory's own weakness, so the
+    pair cannot discriminate in either direction. Excluding it must be visible
+    — a corpus that quietly shrinks has a denominator nobody can check."""
+    from pair_corpus import load_cases, malformed_cases
+
+    (tmp_path / "adjudications.yml").write_text(
+        "adjudications:\n"
+        "  - case_id: bad-case\n"
+        "    case_is_malformed: true\n"
+        "    why_malformed: the safe member is not safe\n")
+    for name in ("bad-case", "good-case"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "case.yml").write_text("language: go\nfamily: injection\n")
+
+    assert "bad-case" in malformed_cases(tmp_path)
+    assert [c["case_id"] for c in load_cases(tmp_path)] == ["good-case"]
+
+
+# ------------------------------------------------- keeping the evidence
+
+
+def test_the_artifact_of_a_run_that_stopped_early_is_kept(tmp_path):
+    """The runner deleted its temp directory unconditionally.
+
+    When four reviews stopped early, the only record of which limit burned was
+    already gone, and the diagnosis had to be reconstructed from the product's
+    source — ending in "one of these two causes, cannot tell from here".
+    """
+    work, keep = tmp_path / "work", tmp_path / "keep"
+    (work / "unsafe-out").mkdir(parents=True)
+    (work / "unsafe-out" / "findings.json").write_text(
+        '{"complete": false, "stop_reason": "context_exhausted", '
+        '"stop_detail": "API error 400: prompt is too long"}')
+
+    _keep_artifacts(work, {"case_id": "py-2cp2", "incomplete": ["unsafe"]}, keep)
+
+    saved = keep / "py-2cp2" / "unsafe" / "findings.json"
+    assert saved.is_file()
+    assert "prompt is too long" in saved.read_text()
+
+
+def test_a_clean_pass_leaves_nothing_behind(tmp_path):
+    """It has nothing to explain, and 48 cases of artifacts is its own problem."""
+    work, keep = tmp_path / "work", tmp_path / "keep"
+    (work / "safe-out").mkdir(parents=True)
+    (work / "safe-out" / "findings.json").write_text("{}")
+
+    _keep_artifacts(work, {"case_id": "ok", "pair_success": True}, keep)
+    assert not keep.exists() or not list(keep.rglob("findings.json"))
+
+
+def test_stop_detail_survives_into_the_signature():
+    """It is the only field that says which limit burned, and it was dropped."""
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "tools"))
+    from artifact import signature
+
+    row = signature({"complete": False, "stop_reason": "context_exhausted",
+                     "stop_detail": "API error 400: prompt is too long"}, {})
+    assert row["stop_detail"] == "API error 400: prompt is too long"

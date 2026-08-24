@@ -43,6 +43,7 @@ import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Optional, Sequence
 
 import yaml
 
@@ -75,7 +76,43 @@ def cost_of(usage: dict) -> float:
     return tally.cost_usd(input_rate, output_rate, CACHE_TTL)
 
 
+ADJUDICATIONS = "adjudications.yml"
+
+
+def load_adjudications(root: Path) -> list:
+    """Hand decisions about findings the tool cannot score by itself.
+
+    A finding in the safe member is a claim that the maintainers' fix did not
+    close the weakness. That claim can be true — of the first three adjudicated,
+    two were — and scoring it as a false positive by construction penalised
+    correct work. Nothing automatable decides it, so the decision is recorded
+    once, in a file, rather than made silently on every reading of the table.
+    """
+    path = root / ADJUDICATIONS
+    if not path.is_file():
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("adjudications") or [])
+
+
+def malformed_cases(root: Path) -> dict:
+    """Cases an adjudication has ruled cannot measure anything, and why.
+
+    `py-2cp2` is the example: the advisory is about `instantiate`, the fix IS
+    the blocklist, and the reviewer's finding — that a string denylist checked
+    before resolution is bypassable — is a correct statement about the fix. A
+    pair whose safe member still carries the advisory's own weakness cannot
+    discriminate in either direction, and counting it as a failure records the
+    corpus's defect against the product.
+    """
+    return {
+        row["case_id"]: row.get("why_malformed", "adjudicated malformed")
+        for row in load_adjudications(root) if row.get("case_is_malformed")
+    }
+
+
 def load_cases(root: Path, language: str = "", family: str = "") -> list:
+    excluded = malformed_cases(root)
     cases = []
     for manifest in sorted(root.rglob("case.yml")):
         spec = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
@@ -84,6 +121,13 @@ def load_cases(root: Path, language: str = "", family: str = "") -> list:
         if language and spec.get("language") != language:
             continue
         if family and spec.get("family") != family:
+            continue
+        if spec["case_id"] in excluded:
+            # Named on stderr rather than dropped in silence. A corpus that
+            # quietly shrinks is a corpus whose denominator nobody can check.
+            print("excluded {}: {}".format(
+                spec["case_id"], " ".join(excluded[spec["case_id"]].split())),
+                file=sys.stderr)
             continue
         cases.append(spec)
     return cases
@@ -194,7 +238,32 @@ def hits_target(payload: dict, case: dict):
     return any(_is_target(f, case) for f in payload.get("findings", []))
 
 
-def run_case(case: dict) -> dict:
+def _keep_artifacts(work: Path, result: dict, keep_dir: Optional[Path]) -> None:
+    """Copy out the `findings.json` of anything that did not finish cleanly.
+
+    The runner deleted its temp directory unconditionally, so when four
+    reviews stopped early the only evidence of why was already gone — the
+    diagnosis had to be reconstructed from the product's source, and ended in
+    "one of these two causes, cannot tell". `stop_detail` names the limit, and
+    it lives in the artifact and nowhere else.
+
+    Only the runs worth keeping. A clean pass has nothing to explain and
+    copying every artifact of a 48-case run is a different problem.
+    """
+    if keep_dir is None:
+        return
+    if not (result.get("error") or result.get("incomplete")):
+        return
+    for member in ("safe", "unsafe"):
+        source = work / (member + "-out") / "findings.json"
+        if not source.is_file():
+            continue
+        destination = keep_dir / result["case_id"] / member
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination / "findings.json")
+
+
+def run_case(case: dict, keep_dir: Optional[Path] = None) -> dict:
     # Resolved, because on macOS the temp directory is reached through a symlink
     # (/var -> /private/var) and the report writer refuses to write through one.
     work = Path(tempfile.mkdtemp(prefix="pair-{}-".format(case["case_id"]))).resolve()
@@ -298,6 +367,7 @@ def run_case(case: dict) -> dict:
         result["error"] = "{}: {}".format(type(exc).__name__, exc)
         return result
     finally:
+        _keep_artifacts(work, result, keep_dir)
         shutil.rmtree(work, ignore_errors=True)
 
 
@@ -350,7 +420,22 @@ def _stratified(done: list) -> str:
     )
 
 
-def report(results: list) -> None:
+def _progress(row: dict) -> str:
+    """One word for a finished case, for every shape a case can finish in."""
+    if row.get("error"):
+        return str(row["error"])[:60]
+    if row.get("incomplete"):
+        return "did not complete ({})".format(", ".join(row["incomplete"]))
+    if "pair_success" not in row:
+        return "no result recorded"
+    return "pass" if row["pair_success"] else "FAIL"
+
+
+def report(results: list, adjudications: Sequence[dict] = ()) -> None:
+    verdicts = {
+        (row.get("case_id"), row.get("member"), row.get("file")): row.get("verdict", "?")
+        for row in adjudications
+    }
     done = [r for r in results if "pair_success" in r]
     broken = [r for r in results if "error" in r]
     unresolved = [r for r in results if r.get("incomplete")]
@@ -392,12 +477,23 @@ def report(results: list) -> None:
         # Reported, never scored. These are weaknesses outside what the advisory
         # was about — some real, some not. Counting them as errors would punish
         # a correct finding; counting them as successes would credit a guess.
-        # Neither is decidable here, so they are listed for adjudication.
-        print("\nIncidental findings — outside the advisory, unadjudicated:")
+        # Neither is decidable here, so each carries its hand decision or the
+        # word `unadjudicated`, and the word is the point: it says the number
+        # above does not account for these.
+        print("\nIncidental findings — outside the advisory:")
         for case_id, side, f in incidental:
-            print("  {:<24}{:<7}{:<10}{:<22}{}".format(
+            print("  {:<24}{:<7}{:<10}{:<20}{:<14}{}".format(
                 case_id, side, f.get("severity") or "?",
-                f.get("category") or "?", (f.get("title") or "")[:44]))
+                f.get("category") or "?",
+                verdicts.get((case_id, side, f.get("file") or ""), "unadjudicated"),
+                (f.get("title") or "")[:38]))
+        undecided = sum(
+            1 for case_id, side, f in incidental
+            if (case_id, side, f.get("file") or "") not in verdicts)
+        if undecided:
+            print("  {} of {} not yet adjudicated. Two of the first three "
+                  "adjudicated were real, so treating these as errors would "
+                  "understate the product.".format(undecided, len(incidental)))
 
     print("\n{:<14}{:>7}{:>16}{:>12}{:>14}".format(
         "language", "pairs", "discrimination", "still-there", "recall"))
@@ -436,7 +532,17 @@ def main() -> int:
                              "handful after a fix beats re-running the corpus.")
     parser.add_argument("-c", "--concurrency", type=int, default=4)
     parser.add_argument("--json", metavar="PATH")
+    parser.add_argument("--keep-artifacts", metavar="DIR",
+                        help="Copy the findings.json of any case that failed "
+                             "or did not complete here. On by default under "
+                             "the --json path's directory; the reason a run "
+                             "stopped lives in the artifact and nowhere else.")
     args = parser.parse_args()
+
+    keep_dir = Path(args.keep_artifacts) if args.keep_artifacts else (
+        Path(args.json).resolve().parent / "incomplete" if args.json else None)
+    if keep_dir:
+        keep_dir.mkdir(parents=True, exist_ok=True)
 
     cases = load_cases(Path(args.cases), args.language or "", args.family or "")
     if args.case:
@@ -452,20 +558,24 @@ def main() -> int:
 
     results = []
     with ThreadPoolExecutor(max_workers=max(1, min(args.concurrency, len(cases)))) as pool:
-        futures = {pool.submit(run_case, c): c for c in cases}
+        futures = {pool.submit(run_case, c, keep_dir): c for c in cases}
         for future in as_completed(futures):
             r = future.result()
             results.append(r)
-            print("  {:<20} {}".format(
-                r["case_id"],
-                r.get("error") or ("pass" if r["pair_success"] else "FAIL")))
+            # Never index into the row here. This line ran `r["pair_success"]`
+            # and a case with an unresolved member has no such key, so the
+            # first incomplete run raised KeyError inside the loop — before the
+            # `--json` write below — and threw away every case already paid
+            # for. The progress line is the least important thing on this
+            # screen and it must not be able to end the run.
+            print("  {:<20} {}".format(r["case_id"], _progress(r)))
 
     # Written before the report. A crash while formatting would otherwise throw
     # away runs already paid for.
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2))
         print("\nraw results written to {}".format(args.json))
-    report(results)
+    report(results, load_adjudications(Path(args.cases)))
     return 0
 
 

@@ -439,15 +439,33 @@ STOP_TURN_LIMIT = "turn_limit"
 STOP_TIME_LIMIT = "time_limit"
 STOP_BUDGET = "budget_exhausted"
 STOP_REFUSAL = "refusal"
+# Three reasons that were one. `error` used to hold everything from "the
+# conversation outgrew the context window" to "the network was down", and a
+# review that stopped early could not be diagnosed from its own artifact —
+# the only field separating them was `stop_detail`, which no consumer kept.
+# Diagnosing four incomplete runs afterwards cost a day and still ended in
+# "one of these two, cannot tell from the code".
+STOP_CONTEXT = "context_exhausted"
+STOP_RESPONSE_TOO_LONG = "response_too_long"
+STOP_TRANSPORT = "transport_error"
 STOP_ERROR = "error"
 
-INCOMPLETE_STOPS = (STOP_TURN_LIMIT, STOP_TIME_LIMIT, STOP_BUDGET, STOP_REFUSAL, STOP_ERROR)
+INCOMPLETE_STOPS = (
+    STOP_TURN_LIMIT, STOP_TIME_LIMIT, STOP_BUDGET, STOP_REFUSAL,
+    STOP_CONTEXT, STOP_RESPONSE_TOO_LONG, STOP_TRANSPORT, STOP_ERROR,
+)
 
 STOP_EXPLANATIONS = {
     STOP_TURN_LIMIT: "the agent hit its turn limit before finishing the review",
     STOP_TIME_LIMIT: "the agent hit its time limit before finishing the review",
     STOP_BUDGET: "the agent exhausted its token budget before finishing the review",
     STOP_REFUSAL: "the model declined to continue the review",
+    STOP_CONTEXT: (
+        "the conversation outgrew the model's context window — the review read "
+        "more than it could hold"
+    ),
+    STOP_RESPONSE_TOO_LONG: "a single response hit the per-response token limit",
+    STOP_TRANSPORT: "the Claude API could not be reached",
     STOP_ERROR: "the review ended with an error",
 }
 

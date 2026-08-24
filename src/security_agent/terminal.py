@@ -78,7 +78,13 @@ def render(outcome: ScanOutcome, decision: Decision, report_path: str = "") -> s
                           id(candidate) in excluded)
 
     if not ordered:
-        lines += ["", INDENT + s("No findings.", "32")]
+        # Green only when the review actually finished. An incomplete run has
+        # an empty finding list because it stopped, not because it looked and
+        # found nothing, and colouring that green says the opposite.
+        if outcome.complete:
+            lines += ["", INDENT + s("No findings reported.", "32")]
+        else:
+            lines += ["", INDENT + s("No findings — the review did not complete.", "33")]
 
     lines += _dropped(s, outcome)
     if decision.non_blocking_reasons:

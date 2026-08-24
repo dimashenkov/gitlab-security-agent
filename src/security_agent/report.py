@@ -116,6 +116,19 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
 
 
 def _header(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
+    # Keyed on whether the review finished, NOT on the exit code. Those come
+    # apart: `SECURITY_SCAN_FAIL_ON_INCOMPLETE=false` makes the gate return 0
+    # on a review that stopped early, and this then printed "✅ no findings" —
+    # the one line a reader sees in the merge request preview — over a review
+    # that never looked. The warning further down the body does not undo a
+    # green tick at the top.
+    if not outcome.complete:
+        return [
+            "## ⚠️ AI security review did not complete",
+            "",
+            decision.reason or STOP_EXPLANATIONS.get(
+                outcome.stop_reason, "the review did not finish"),
+        ]
     if decision.exit_code == 2:
         return ["## ⚠️ AI security review did not complete", "", decision.reason]
     if decision.blocking:
@@ -132,7 +145,9 @@ def _header(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
             "## 🟡 AI security review — {} finding{}, none blocking".format(
                 len(outcome.reported), "" if len(outcome.reported) == 1 else "s"),
         ]
-    return ["## ✅ AI security review — no findings"]
+    # "no findings reported", never "no vulnerabilities". The agent read what
+    # it read and said nothing about the rest.
+    return ["## ✅ AI security review — no findings reported"]
 
 
 def _meta_line(cfg: Config, outcome: ScanOutcome) -> List[str]:
