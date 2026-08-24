@@ -549,6 +549,37 @@ class Coverage:
 
 
 @dataclass
+class Revision:
+    """Which commits were actually read.
+
+    A finding is a claim about code at a moment. Without the moment it cannot
+    be checked: `HEAD` and `main` name different commits on different days, and
+    an archived artifact saying it reviewed `HEAD` says nothing at all. The
+    accepted-risk file is matched against findings, so an entry accepted
+    against one revision has to be traceable to it.
+
+    Both forms are kept. The symbolic one is what the operator configured and
+    is what appears in a pipeline definition; the resolved SHA is the only part
+    that identifies a commit.
+    """
+
+    mode: str = ""
+    base: str = ""
+    head: str = ""
+    base_sha: str = ""
+    head_sha: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "base": self.base,
+            "head": self.head,
+            "base_sha": self.base_sha,
+            "head_sha": self.head_sha,
+        }
+
+
+@dataclass
 class Provenance:
     """What actually produced this verdict.
 
@@ -612,6 +643,7 @@ class ScanOutcome:
     usage: Usage = field(default_factory=Usage)
     verification_usage: Usage = field(default_factory=Usage)
     provenance: Provenance = field(default_factory=Provenance)
+    revision: Revision = field(default_factory=Revision)
     coverage: Coverage = field(default_factory=Coverage)
     metrics: StageMetrics = field(default_factory=StageMetrics)
 

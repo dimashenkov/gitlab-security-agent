@@ -27,6 +27,7 @@ from .models import (
     STOP_TIME_LIMIT,
     STOP_TURN_LIMIT,
     Provenance,
+    Revision,
     ScanOutcome,
     ToolCallRecord,
     Usage,
@@ -103,6 +104,7 @@ class SecurityAgent:
 
         outcome = ScanOutcome(mode=mode, model=self.cfg.model)
         outcome.provenance = _provenance(self.cfg)
+        outcome.revision = self._revision(mode)
         if diff_available:
             outcome.coverage.changed = [path for path, _ in self.ws.changed_files()]
         deadline = time.monotonic() + self.cfg.max_runtime_seconds
@@ -193,6 +195,24 @@ class SecurityAgent:
     @property
     def candidates(self) -> List[Any]:
         return self.session.candidates
+
+    def _revision(self, mode: str) -> Revision:
+        """Resolve what was reviewed to commits, not to names.
+
+        `HEAD` and a branch name point somewhere different tomorrow, so an
+        archived artifact that records only the symbolic form cannot say what
+        it read. Both are kept: the symbolic form is what the pipeline was
+        configured with, the SHA is what identifies the commit.
+        """
+        def resolve(rev: str) -> str:
+            if not rev:
+                return ""
+            return self.ws.git("rev-parse", rev, check=False).strip()
+
+        base = self.ws.diff_base if mode == "diff" else ""
+        head = self.ws.diff_head or "HEAD"
+        return Revision(mode=mode, base=base, head=head,
+                        base_sha=resolve(base), head_sha=resolve(head))
 
     # -------------------------------------------------------------- requests
 

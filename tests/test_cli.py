@@ -132,6 +132,30 @@ class TestArtifacts:
         assert payload["counts"]["blocking"] == 1
         assert payload["findings"][0]["file"] == "app/views.py"
 
+    def test_the_artifact_says_which_commits_were_read(self, git_repo, monkeypatch, tmp_path):
+        """A finding is a claim about code at a moment.
+
+        Without the moment it cannot be checked: `HEAD` and a branch name point
+        somewhere different tomorrow, and an accepted risk recorded against one
+        revision has to be traceable to it. The artifact recorded mode, model,
+        prompts and policy — and not this.
+        """
+        out = tmp_path / "out"
+        install_client(monkeypatch, [FakeResponse([text("Nothing found.")],
+                                                  stop_reason="end_turn")])
+        run(git_repo, "--output-dir", str(out))
+
+        revision = json.loads((out / "findings.json").read_text())["revision"]
+        assert revision["head_sha"], "no commit recorded for what was reviewed"
+        assert len(revision["head_sha"]) == 40, revision["head_sha"]
+        # Both forms: the symbolic one is what the pipeline was configured
+        # with, the SHA is the only part that identifies a commit.
+        assert revision["head"]
+        assert revision["mode"] in ("diff", "repo")
+        # A whole-repository review has no base, and must not invent one.
+        if revision["mode"] == "repo":
+            assert revision["base"] == "" and revision["base_sha"] == ""
+
     def test_artifacts_are_written_even_when_the_review_fails(self, git_repo, monkeypatch, tmp_path):
         out = tmp_path / "out"
         install_client(monkeypatch, [FakeResponse([tool_use("git_log", {}, id="t1")],

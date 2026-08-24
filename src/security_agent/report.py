@@ -277,7 +277,22 @@ def _rejected_section(outcome: ScanOutcome) -> List[str]:
 
 def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
     usage = outcome.total_usage()
-    lines = [
+    lines: List[str] = []
+
+    # First, because everything below it is a claim about this code and no
+    # other. A reader checking a finding needs the commit before the finding.
+    revision = outcome.revision
+    if revision.head_sha or revision.base_sha:
+        lines.append("**Reviewed at:**")
+        lines.append("")
+        if revision.base_sha:
+            lines.append("- base {} ({})".format(
+                _code_span(revision.base_sha[:12]), _plain(revision.base) or "resolved"))
+        lines.append("- head {} ({})".format(
+            _code_span(revision.head_sha[:12]), _plain(revision.head) or "resolved"))
+        lines.append("")
+
+    lines += [
         "**Files opened by the agent ({}):**".format(len(outcome.files_examined)),
         "",
     ]
@@ -506,6 +521,9 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
             ],
         },
         "usage": usage.to_dict(),
+        # Which commits were read. A finding is a claim about code at a
+        # moment, and an artifact recording only `HEAD` cannot say which.
+        "revision": outcome.revision.to_dict(),
         "provenance": outcome.provenance.to_dict(),
         "coverage_accounting": outcome.coverage.to_dict(),
         "stage_metrics": outcome.metrics.to_dict(),
