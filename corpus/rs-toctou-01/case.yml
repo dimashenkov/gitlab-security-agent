@@ -1,6 +1,6 @@
 case_id: rs-toctou-01
 language: rust
-family: race_condition
+family: race-condition
 framework: std::fs
 source: a directory other local processes can write
 sink: file creation

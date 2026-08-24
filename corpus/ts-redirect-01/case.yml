@@ -1,6 +1,6 @@
 case_id: ts-redirect-01
 language: typescript
-family: open_redirect
+family: open-redirect
 framework: express
 source: next query parameter
 sink: res.redirect

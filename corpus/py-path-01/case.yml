@@ -1,6 +1,6 @@
 case_id: py-path-01
 language: python
-family: path_traversal
+family: path-traversal
 framework: flask
 source: caller-supplied file name
 sink: send_file

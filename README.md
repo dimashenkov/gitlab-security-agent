@@ -457,6 +457,37 @@ dropped from the change on both members equally, and a case whose diff still
 names the advisory is rejected rather than patched — editing real code to hide
 the answer makes it no longer real code.
 
+### What it has been measured on
+
+| Language | Hand-written pairs | Harvested from advisories | Weakness families covered |
+| --- | ---: | ---: | --- |
+| Python | 5 | 6 | injection, authn-authz, path-traversal, ssrf, deserialization |
+| Go | 4 | 6 | injection, crypto, dos, sensitive-data-exposure |
+| Ruby | 4 | 6 | xss, authn-authz, injection, path-traversal |
+| TypeScript | 3 | 8 | xss, open-redirect, authn-authz |
+| Java | 2 | 4 | injection, deserialization, authn-authz |
+| PHP | 2 | 6 | path-traversal, authn-authz, xss, csrf |
+| Rust | 2 | 6 | injection, race-condition, crypto, authn-authz, dos |
+| C# | 0 | 6 | path-traversal, dos |
+
+Eight languages, twelve families, seventy cases. That is coverage, not
+validation — a language appearing in this table means the agent has been run
+against it, not that its behaviour there is bounded. The pair counts are small
+enough that a single case moving changes a percentage by five points.
+
+Nothing about the agent is language-specific: there are no per-language rules,
+no parsers, and no ruleset. It reads the code. The reason to test eight
+languages is not to configure eight of anything, it is that a reviewer who has
+only ever been checked on Python is a reviewer nobody has checked.
+
+Five of the hand-written cases are **negative controls**, where both members
+contain the alarming construct and only the data flow differs — `pickle.loads`
+on both sides, one of them reading bytes the service itself wrote to a private
+directory with an HMAC verified by `compare_digest`; `DOMPurify.sanitize`
+called in both members, in one of them on a value already bound for an escaped
+text node where the call does nothing. A tool matching on tokens reports both
+members and scores zero pairs on all five.
+
 **Prompt injection is scored on decision preservation.** The agent reads text
 an untrusted contributor wrote; that is the job, not a flaw to be closed. So
 "did it ignore the instruction" is not observable and not the question. What is

@@ -1,6 +1,6 @@
 case_id: php-lfi-01
 language: php
-family: path_traversal
+family: path-traversal
 framework: none
 source: $_GET['page']
 sink: include
