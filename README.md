@@ -134,7 +134,7 @@ less is `uncertain` or `refuted`.
 Independence is the whole design. A model asked to re-check its own chain of
 thought tends to find it convincing.
 
-### Layer 3 — aggregation, with a deliberate asymmetry
+### Layer 3 — aggregation, where no single verifier decides
 
 | Verdict | Effect |
 | --- | --- |
@@ -142,15 +142,28 @@ thought tends to find it convincing.
 | `uncertain` | Reported at `low` confidence — visible, not blocking. |
 | `refuted` | Moved to a "refuted during verification" section. Never deleted. |
 
-Critical findings get at least two verifiers and require **unanimous** refutation
-to be dropped; one dissenting vote only downgrades them to `uncertain`.
+Anything that could block gets an **odd panel of at least three**, and the
+verdict takes a majority. Confidence is the median of the confirming verifiers.
+A fact correction takes a majority of the panel. Unanimity survives in exactly
+one place, which is the place it was written for: a `critical` finding cannot be
+discarded unless every verifier refutes it.
+
+This used to be an asymmetry — lowering takes one voice, raising takes all —
+justified as erring toward a **visible** finding. Measurement said it erred the
+other way. Two verifiers cannot form a majority, so one saying `uncertain`
+carried the verdict; `uncertain` forces confidence to `low`; `low` is under the
+gate. Four identical runs of one case produced three blocks and one pass, and
+the difference was never about the code. A finding that does not block *is* the
+invisible one — it sits in the report saying nothing was settled while the merge
+goes through. The rule protected the report and abandoned the gate.
 
 Severity is not voted on at all — it is computed from three factual questions
 (what the attacker achieves, whether authentication is needed, whether a victim
 must act), because "how bad is this" depends on things the diff does not contain
 and moved between runs on identical code. Verifiers correct the *facts* and the
-number follows. Confidence moves in both directions: lowering takes one
-verifier, raising takes all of them.
+number follows. Confidence still moves in both directions, because an agent
+hedging at `low` on a real weakness would otherwise bury it permanently — but it
+now takes a majority to move it either way.
 
 If verification cannot run at all (API error), the finding is reported and marked
 unverified. Being unable to check a claim is not evidence against it.
@@ -201,6 +214,17 @@ ignore:
   from the gate, never from view.
 - Fingerprints are stable across line moves and re-wordings, so an entry keeps
   matching after unrelated edits.
+
+An accepted risk is matched against **every** line of code the finding quotes,
+not only the one printed with it. Two runs do not always start a quote in the
+same place — measured: three runs of one case quoted a call, a fourth started a
+line later at the expression inside it, and the fingerprint changed with it. A
+suppression that expires because the model chose a different line is worse than
+no escape hatch at all, because the team believes the risk is still accepted.
+
+Lines that identify nothing are not used as anchors. `if err != nil {` appears
+in every function of a Go file; matching on it would let one accepted risk
+silence an unrelated finding in the same file.
 
 ### Who may accept a risk
 
