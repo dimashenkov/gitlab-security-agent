@@ -4,12 +4,14 @@ family: xss
 framework: react
 source: article body written by another user
 sink: dangerouslySetInnerHTML
-decisive_control: what the markup passed to the sink has been through
-# Both members hand user-authored markdown to dangerouslySetInnerHTML, which is
-# the construct every scanner is tuned to shout about, and in one of them that
-# is the right answer. The safe member runs the rendered markdown through
-# DOMPurify with an explicit tag allowlist, no attributes and data attributes
-# refused, so what reaches the sink can no longer carry script or an event
-# handler. The unsafe member renders the markdown straight through.
+decisive_control: which of the two strings DOMPurify.sanitize was called on
+# Both members import DOMPurify and call sanitize once with the same options,
+# both hand a string to dangerouslySetInnerHTML, and both package.json files
+# list the same dependencies, so anything keyed on which names appear reports
+# both and measures nothing. What differs is where the call lands. The safe
+# member sanitizes the rendered markdown and passes that to the sink, while the
+# standfirst is JSX text React escapes on its own. The unsafe member sanitizes
+# the standfirst — where the call changes nothing, since a text node was never
+# markup — and passes the rendered markdown to the sink untouched.
 expected_category: xss
 expected_file: src/ArticleBody.tsx

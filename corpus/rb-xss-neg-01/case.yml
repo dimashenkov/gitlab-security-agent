@@ -4,12 +4,14 @@ family: xss
 framework: rails
 source: post body written by another user
 sink: view rendering
-decisive_control: what the string was before the escaping was turned off
-# html_safe turns Rails' escaping off, so both members contain the call that
-# gets a change flagged. In the safe member the string it is called on has just
-# come out of the sanitize helper with a named list of tags and two attributes,
-# which is what makes the claim html_safe is asserting a true one. The unsafe
-# member calls it on the stored body itself, where truncation is the only thing
-# that has happened to the markup.
+decisive_control: which of the two strings the sanitize helper was called on
+# Both members call html_safe, and both call sanitize with the same tag and
+# attribute lists, so anything keyed on which names appear reports both and
+# measures nothing. What differs is where each call lands. The safe member
+# sanitizes the stored body and renders that result, while the summary line is
+# plain text Rails escapes on its own. The unsafe member sanitizes the summary
+# snippet — which was already going into an escaped text node, so the call
+# changes nothing there — and renders the stored body through html_safe with
+# nothing between the two.
 expected_category: xss
 expected_file: app/helpers/digest_helper.rb

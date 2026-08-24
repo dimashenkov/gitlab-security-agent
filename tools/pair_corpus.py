@@ -239,7 +239,7 @@ def report(results: list) -> None:
         "case", "language", "family", "safe", "unsafe", "pair"))
     print("-" * 78)
     for r in sorted(done, key=lambda r: (r["language"], r["family"], r["case_id"])):
-        print("{:<20}{:<12}{:<16}{:>8}{:>10}{:>9}".format(
+        print("{:<22} {:<11} {:<16}{:>8}{:>10}{:>9}".format(
             r["case_id"], r["language"], r["family"],
             "FP" if r["safe_false_positive"] else "quiet",
             "found" if r["unsafe_recall"] else "MISS",

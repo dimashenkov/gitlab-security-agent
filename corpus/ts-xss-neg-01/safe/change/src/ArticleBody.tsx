@@ -9,16 +9,17 @@ const MARKUP = {
   ALLOW_DATA_ATTR: false,
 };
 
-type Article = { id: string; body: string };
+type Article = { id: string; body: string; standfirst: string };
 
-// Renders an article body written by another user.
+// Renders an article written by another user: the standfirst as a line of
+// text, then the body the author submitted as markdown.
 export function ArticleBody({ article }: { article: Article }) {
+  const standfirst = article.standfirst;
   const html = DOMPurify.sanitize(toHtml(article.body), MARKUP);
   return (
-    <article
-      className="article"
-      data-article-id={article.id}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <article className="article" data-article-id={article.id}>
+      <p className="article__standfirst">{standfirst}</p>
+      <div dangerouslySetInnerHTML={{ __html: html }} />
+    </article>
   );
 }
