@@ -28,16 +28,28 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # claude-opus-5, $/MTok. Only used for the cost column.
-IN_RATE, OUT_RATE = 5.0, 25.0
+# Pricing lives in the package, not here. There were three copies of these
+# constants and two of them were wrong — a rate copied into a tool is a rate
+# nobody updates.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from security_agent.config import MODEL_PRICING
+from security_agent.models import Usage
+
+MODEL = "claude-opus-5"
+CACHE_TTL = "1h"
 
 
 def cost_of(usage: dict) -> float:
-    return (
-        usage["input_tokens"] * IN_RATE
-        + usage["cache_write_tokens"] * IN_RATE * 1.25
-        + usage["cache_read_tokens"] * IN_RATE * 0.1
-        + usage["output_tokens"] * OUT_RATE
-    ) / 1e6
+    """What a review cost, at the rates and cache TTL the agent actually runs."""
+    tally = Usage(
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+        cache_read_tokens=usage["cache_read_tokens"],
+        cache_write_tokens=usage["cache_write_tokens"],
+    )
+    input_rate, output_rate = MODEL_PRICING[MODEL]
+    return tally.cost_usd(input_rate, output_rate, CACHE_TTL)
 
 
 def run_once(args: argparse.Namespace, index: int) -> dict:

@@ -146,7 +146,7 @@ def _meta_line(cfg: Config, outcome: ScanOutcome) -> List[str]:
             len(outcome.tool_calls), "" if len(outcome.tool_calls) == 1 else "s"),
         "{} turn{}".format(outcome.turns, "" if outcome.turns == 1 else "s"),
         outcome.model,
-        "~${:.2f}".format(usage.cost_usd(input_rate, output_rate)),
+        "~${:.2f}".format(usage.cost_usd(input_rate, output_rate, cfg.cache_ttl)),
     ]
     return ["", "_{}_".format(" · ".join(bits))]
 

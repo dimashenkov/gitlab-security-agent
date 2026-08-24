@@ -19,6 +19,22 @@ from typing import Any, Dict, List, Optional, Sequence
 # Ordered weakest-to-strongest. Comparisons go through `severity_rank` /
 # `confidence_rank` so an unrecognised value from a future schema revision sorts
 # low instead of raising.
+# Cache pricing, in multiples of the input rate. One definition, here, because
+# there were three — two of them wrong — and a constant copied into a tool is a
+# constant nobody updates when the rate changes.
+CACHE_READ_MULTIPLIER = 0.1
+CACHE_WRITE_MULTIPLIERS = {"5m": 1.25, "1h": 2.0}
+
+
+def cache_write_multiplier(cache_ttl: str) -> float:
+    """What a cache write costs, as a multiple of the input rate.
+
+    An unrecognised TTL takes the higher rate. Overstating a cost prompts a
+    question; understating one is believed.
+    """
+    return CACHE_WRITE_MULTIPLIERS.get(cache_ttl, max(CACHE_WRITE_MULTIPLIERS.values()))
+
+
 # A quoted line shorter than this is punctuation or a keyword, shared by
 # most of the file, and identifies nothing.
 MIN_ANCHOR_CHARS = 8
@@ -388,12 +404,20 @@ class Usage:
         self.cache_read_tokens += other.cache_read_tokens
         self.cache_write_tokens += other.cache_write_tokens
 
-    def cost_usd(self, input_per_mtok: float, output_per_mtok: float) -> float:
-        """Approximate spend. Cache writes bill ~1.25x input, reads ~0.1x."""
+    def cost_usd(self, input_per_mtok: float, output_per_mtok: float,
+                 cache_ttl: str = "1h") -> float:
+        """Approximate spend, at the cache rate this run actually pays.
+
+        The write multiplier depends on the cache TTL, and this took the
+        five-minute rate while the agent runs with a one-hour TTL — so every
+        cost this reported, in the merge request comment and the job log alike,
+        was low. It is a small number on a page of larger ones, which is
+        precisely why nobody checked it for two weeks.
+        """
         return (
             self.input_tokens * input_per_mtok
-            + self.cache_write_tokens * input_per_mtok * 1.25
-            + self.cache_read_tokens * input_per_mtok * 0.1
+            + self.cache_write_tokens * input_per_mtok * cache_write_multiplier(cache_ttl)
+            + self.cache_read_tokens * input_per_mtok * CACHE_READ_MULTIPLIER
             + self.output_tokens * output_per_mtok
         ) / 1_000_000
 
