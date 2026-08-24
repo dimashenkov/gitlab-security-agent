@@ -19,6 +19,10 @@ from typing import Any, Dict, List, Optional, Sequence
 # Ordered weakest-to-strongest. Comparisons go through `severity_rank` /
 # `confidence_rank` so an unrecognised value from a future schema revision sorts
 # low instead of raising.
+# A quoted line shorter than this is punctuation or a keyword, shared by
+# most of the file, and identifies nothing.
+MIN_ANCHOR_CHARS = 8
+
 SEVERITY_ORDER: Sequence[str] = ("low", "medium", "high", "critical")
 CONFIDENCE_ORDER: Sequence[str] = ("low", "medium", "high")
 
@@ -108,14 +112,54 @@ class Finding:
         Line numbers stay out: unrelated edits move code, and an accepted risk
         must survive that.
         """
-        anchor = ""
+        return self.fingerprints[0] if self.fingerprints else _digest(
+            self.category, self.file, "")
+
+    @property
+    def anchors(self) -> List[str]:
+        """Every quoted line, normalised — each one an identity for this finding.
+
+        One anchor was not enough. Anchoring on the *first* quoted line assumed
+        two runs quoting the same construct would start in the same place, and
+        measurement says they do not: across four identical runs of one case,
+        three quoted
+
+            rows, err := s.db.QueryContext(r.Context(),
+
+        and the fourth started a line later, at the `fmt.Sprintf` inside it. Same
+        weakness, same file, same verdict, different fingerprint — and an
+        accepted risk recorded from one run would have stopped matching on the
+        next, which is the exact failure that moving off the title was meant to
+        end.
+
+        So identity is the whole set. Two findings are the same when any anchor
+        is shared, which survives a run quoting one line more, one line fewer,
+        or starting anywhere inside the same block.
+        """
+        seen, out = set(), []
         for line in self.evidence.splitlines():
-            collapsed = " ".join(line.split())
-            if collapsed:
-                anchor = collapsed.lstrip("+- ")
-                break
-        material = "|".join((self.category, self.file, anchor))
-        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+            collapsed = " ".join(line.split()).lstrip("+- ")
+            # Punctuation-only lines — a lone brace or paren — are shared by
+            # half the file and would make unrelated findings look identical.
+            if len(collapsed) >= MIN_ANCHOR_CHARS and collapsed not in seen:
+                seen.add(collapsed)
+                out.append(collapsed)
+        return out
+
+    @property
+    def fingerprints(self) -> List[str]:
+        """Every value this finding could legitimately be recorded under.
+
+        The first is what gets printed and what a person copies into the ignore
+        file; the rest exist so that a suppression written against one run still
+        matches the next.
+        """
+        return [_digest(self.category, self.file, a) for a in self.anchors]
+
+
+def _digest(category: str, file: str, anchor: str) -> str:
+    return hashlib.sha256(
+        "|".join((category, file, anchor)).encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass

@@ -69,7 +69,16 @@ class Rule:
 
     def matches(self, candidate: Candidate) -> bool:
         if self.fingerprint:
-            return self.fingerprint == candidate.fingerprint
+            # Against every identity the finding could have been recorded
+            # under, not just the one it happens to print today. A finding is
+            # fingerprinted from a line of the code it quotes, and two runs do
+            # not always start the quote in the same place — measured: three
+            # runs of one case quoted a call, a fourth started a line later at
+            # the expression inside it. Matching only the printed value meant an
+            # accepted risk expired the first time the model chose differently,
+            # and the merge it had been accepted for blocked again with no
+            # explanation.
+            return self.fingerprint in candidate.finding.fingerprints
         # A path/category rule must constrain something, or it would silence the
         # entire report. `load` rejects empty rules, so reaching here means at
         # least one of the two is set.
