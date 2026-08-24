@@ -476,10 +476,16 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
             return verdict
 
         category = category_of(item["cwes"])
-        # The repository-relative path, not a basename: two files called
-        # `views.py` in different packages are different files, and scoring
-        # on the basename would credit a finding in the wrong one.
-        target = keep[0]
+        # Every file the fix touched, not the first one. A fix is not obliged
+        # to fit in one file, and recording `keep[0]` made the others count as
+        # the wrong place: Winter's CSRF fix normalises a name in
+        # `BackendController.php` and rejects the bad ones in `Controller.php`,
+        # and the manifest named the file without the check in it.
+        #
+        # Repository-relative paths, not basenames: two files called `views.py`
+        # in different packages are different files, and `Controller.php` alone
+        # also matches `BackendController.php`.
+        target = list(keep)
         manifest = [
             "case_id: {}".format(case_id),
             "language: {}".format(language),
@@ -505,7 +511,7 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
             "# Never score the two constructions together.",
             "decisive_control: the change the maintainers shipped as the fix",
             "expected_category: {}".format(category),
-            "expected_file: {}".format(target),
+            "expected_file: [{}]".format(", ".join(repr(p) for p in target)),
             "dropped_from_change: [{}]".format(
                 ", ".join(repr(p) for p in dropped[:6])),
             "summary: {!r}".format(item["summary"][:200]),

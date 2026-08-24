@@ -22,6 +22,12 @@ construction: regression
 # Never score the two constructions together.
 decisive_control: the change the maintainers shipped as the fix
 expected_category: authn-authz
-expected_file: xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java']
 dropped_from_change: ['xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-test/xwiki-platform-livedata-test-docker/src/test/it/org/xwiki/livedata/test/ui/LiveDataIT.java']
 summary: 'XWiki Platform Live Data Live Table Connector has privilege escalation from edit to script right through Live Data editing'

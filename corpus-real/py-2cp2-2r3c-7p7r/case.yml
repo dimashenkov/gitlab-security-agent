@@ -22,6 +22,12 @@ construction: regression
 # Never score the two constructions together.
 decisive_control: the change the maintainers shipped as the fix
 expected_category: injection
-expected_file: hydra/_internal/instantiate/_instantiate2.py
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['hydra/_internal/instantiate/_instantiate2.py']
 dropped_from_change: ['tests/instantiate/test_instantiate.py']
 summary: 'Hydra: hydra.utils.instantiate with untrusted config can lead to code execution'

@@ -57,6 +57,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from artifact import is_target
 from pair_corpus import build_repo, cost_of, load_cases
 
 SNAP_SUFFIX = "-snap"
@@ -97,16 +98,10 @@ class Observation:
         return self.verdict == "confirmed"
 
 
-def matches_target(finding: dict, case: dict) -> bool:
-    """Same rule as `pair_corpus.hits_target`: category and file, never prose.
-
-    The wording changes every run; grading on it would measure phrasing.
-    """
-    want_category = case.get("expected_category")
-    want_file = case.get("expected_file")
-    if want_category and finding.get("category") != want_category:
-        return False
-    return not want_file or str(finding.get("file", "")).endswith(want_file)
+# One rule, in `artifact`. This was the third copy of the same sentence, and
+# copies here have a history: the pricing constant existed three times and two
+# of them were stale for two weeks.
+matches_target = is_target
 
 
 def observe(payload: dict, case: dict) -> Observation:

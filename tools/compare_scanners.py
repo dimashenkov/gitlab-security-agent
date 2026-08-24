@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from artifact import target_paths
 from pair_corpus import build_repo, load_cases
 
 # Semgrep's own curated security rulesets. `p/security-audit` plus the
@@ -56,7 +57,7 @@ CODEQL_LANGUAGE = {"typescript": "javascript", "javascript": "javascript",
                    "python": "python", "ruby": "ruby"}
 
 
-def run_semgrep(repo: Path, target: str) -> dict:
+def run_semgrep(repo: Path, targets: list) -> dict:
     cmd = ["semgrep", "scan", "--json", "--quiet", "--no-git-ignore",
            "--metrics", "off", "--disable-version-check"]
     for config in SEMGREP_CONFIGS:
@@ -68,13 +69,13 @@ def run_semgrep(repo: Path, target: str) -> dict:
                                        or ["no output"])[-1][:120]}
     payload = json.loads(proc.stdout)
     hits = [r for r in payload.get("results", [])
-            if str(r.get("path", "")).endswith(target)]
+            if any(str(r.get("path", "")).endswith(p) for p in targets)]
     return {"ok": True, "hit": bool(hits),
             "rules": sorted({r.get("check_id", "") for r in hits}),
             "total": len(payload.get("results", []))}
 
 
-def run_codeql(repo: Path, target: str, language: str) -> dict:
+def run_codeql(repo: Path, targets: list, language: str) -> dict:
     lang = CODEQL_LANGUAGE.get(language)
     if lang is None:
         return {"ok": False, "unsupported": True,
@@ -106,7 +107,7 @@ def run_codeql(repo: Path, target: str, language: str) -> dict:
                 return uri
         return ""
 
-    hits = [r for r in results if path_of(r).endswith(target)]
+    hits = [r for r in results if any(path_of(r).endswith(p) for p in targets)]
     return {"ok": True, "hit": bool(hits),
             "rules": sorted({r.get("ruleId", "") for r in hits}),
             "total": len(results)}
@@ -149,10 +150,10 @@ def run_case(case: dict, scanner: str) -> dict:
         for member in ("safe", "unsafe"):
             repo, _, _ = build_repo(case["_dir"], member, work / member)
             if scanner == "codeql":
-                members[member] = run_codeql(repo, case["expected_file"],
+                members[member] = run_codeql(repo, target_paths(case),
                                              case.get("language", ""))
             else:
-                members[member] = run_semgrep(repo, case["expected_file"])
+                members[member] = run_semgrep(repo, target_paths(case))
 
         if not all(m["ok"] for m in members.values()):
             failed = next(m for m in members.values() if not m["ok"])

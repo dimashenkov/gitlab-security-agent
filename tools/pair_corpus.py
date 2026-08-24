@@ -51,6 +51,10 @@ import yaml
 # constants and two of them were wrong — a rate copied into a tool is a rate
 # nobody updates.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from artifact import is_target as _is_target
+from artifact import signature
 
 from security_agent.config import MODEL_PRICING
 from security_agent.models import Usage
@@ -166,22 +170,28 @@ def review(repo: Path, base: str, head: str, out: Path) -> dict:
             "payload": json.loads(payload_path.read_text())}
 
 
-def hits_target(payload: dict, case: dict) -> bool:
+def hits_target(payload: dict, case: dict):
     """Did the review report the finding this case is about?
 
-    Matched on category and file rather than on wording — the same weakness gets
+    Three answers, not two. `None` means the review never reached one — the run
+    stopped early, so its empty finding list is an absence of evidence and not
+    evidence of absence.
+
+    That distinction was missing and it cost a result. Three of the four
+    failures in the six-case harvested run had exit code 2: the review did not
+    complete. This function read `payload["findings"]` and never
+    `payload["complete"]`, so "the check did not run" was scored as "found
+    nothing" — the same confusion the product itself is careful to avoid, in the
+    tool that measures the product. A 2-of-6 built partly from runs that never
+    happened is not a recall number.
+
+    Matched on category and file rather than on wording: the same weakness gets
     described differently every run, and grading on prose would measure
     phrasing.
     """
-    want_category = case.get("expected_category")
-    want_file = case.get("expected_file")
-    for finding in payload.get("findings", []):
-        if want_category and finding.get("category") != want_category:
-            continue
-        if want_file and not finding.get("file", "").endswith(want_file):
-            continue
-        return True
-    return False
+    if not payload.get("complete", False):
+        return None
+    return any(_is_target(f, case) for f in payload.get("findings", []))
 
 
 def run_case(case: dict) -> dict:
@@ -204,6 +214,24 @@ def run_case(case: dict) -> dict:
         safe_hit = hits_target(members["safe"]["payload"], case)
         unsafe_hit = hits_target(members["unsafe"]["payload"], case)
 
+        # Kept for every case, scored or not. `signature()` already extracts
+        # exactly what a later question needs — whether the run finished, why it
+        # stopped, what the gate did — and the previous version reduced a paid
+        # run to two booleans, so answering "why did it miss" meant paying for
+        # the run again.
+        result["members"] = {
+            member: dict(
+                signature(members[member]["payload"], case),
+                seconds=members[member]["seconds"],
+                cost=cost_of(members[member]["payload"]["usage"]),
+                usage=members[member]["payload"].get("usage", {}),
+                coverage=members[member]["payload"].get("coverage_accounting", {}),
+                refuted=members[member]["payload"].get("refuted", []),
+                rejected_claims=members[member]["payload"].get("rejected_claims", []),
+            )
+            for member in ("safe", "unsafe")
+        }
+
         # What was actually reported, not just whether. A pair that fails is a
         # question — was that a real false positive, or is the case scored too
         # loosely — and answering it from booleans means paying for the run
@@ -216,7 +244,44 @@ def run_case(case: dict) -> dict:
                      payload.get("verdict", {}).get("blocking_fingerprints", []))}
                 for f in payload.get("findings", [])
             ]
+        # Four measurements, not one. `safe_false_positive` was the wrong name
+        # for what it held: a finding of the target category in the target file
+        # of the safe member. That is "the reviewer says the advisory weakness
+        # is still there", which is a claim that can be right — a maintainer's
+        # fix is not proof of absence, and one of these turned out to be a
+        # correct objection that a string denylist checked before resolution is
+        # bypassable. Calling it a false positive by construction scored a
+        # correct finding as an error.
+        #
+        # Nothing here decides whether an incidental finding is real. That needs
+        # adjudication against the advisory, which is not automatable and is
+        # recorded as unresolved rather than guessed.
+        if safe_hit is None or unsafe_hit is None:
+            # Not a failure and not a pass. Scoring it either way would put a
+            # number on a review that did not happen, and the direction it would
+            # go — FAIL — is the one that makes the product look worse than the
+            # evidence says.
+            result["incomplete"] = [
+                m for m in ("safe", "unsafe")
+                if not members[m]["payload"].get("complete", False)
+            ]
+            result["cost"] = sum(cost_of(m["payload"]["usage"]) for m in members.values())
+            result["seconds"] = max(m["seconds"] for m in members.values())
+            return result
+
         result.update({
+            "unsafe_target_recall": unsafe_hit,
+            "safe_target_persistence": safe_hit,
+            "safe_incidental": [
+                f for f in summarise(members["safe"]["payload"])
+                if not _is_target(f, case)
+            ],
+            "unsafe_incidental": [
+                f for f in summarise(members["unsafe"]["payload"])
+                if not _is_target(f, case)
+            ],
+            # Kept under the old names so nothing downstream breaks silently,
+            # but they are aliases now and the report says what they mean.
             "safe_false_positive": safe_hit,
             "unsafe_recall": unsafe_hit,
             "pair_success": (not safe_hit) and unsafe_hit,
@@ -288,12 +353,24 @@ def _stratified(done: list) -> str:
 def report(results: list) -> None:
     done = [r for r in results if "pair_success" in r]
     broken = [r for r in results if "error" in r]
+    unresolved = [r for r in results if r.get("incomplete")]
 
     print("\n" + "=" * 78)
     if broken:
         print("{} case(s) could not run:".format(len(broken)))
         for r in broken:
             print("  {:<20} {}".format(r["case_id"], r["error"][:70]))
+    if unresolved:
+        # Printed above the score, not below it. A denominator that silently
+        # drops the runs that stopped early reads as coverage it does not have.
+        print("{} case(s) did not complete and are not scored:".format(len(unresolved)))
+        for r in unresolved:
+            members = r.get("members", {})
+            print("  {:<20} {}".format(r["case_id"], ", ".join(
+                "{}: {}".format(m, members.get(m, {}).get("stop_reason") or "no reason recorded")
+                for m in r["incomplete"])))
+        print("  Their finding lists are empty because the review stopped, not "
+              "because it found nothing.")
     if not done:
         print("nothing to score")
         return
@@ -304,12 +381,26 @@ def report(results: list) -> None:
     for r in sorted(done, key=lambda r: (r["language"], r["family"], r["case_id"])):
         print("{:<22} {:<11} {:<16}{:>8}{:>10}{:>9}".format(
             r["case_id"], r["language"], r["family"],
-            "FP" if r["safe_false_positive"] else "quiet",
+            "claims" if r["safe_false_positive"] else "quiet",
             "found" if r["unsafe_recall"] else "MISS",
             "pass" if r["pair_success"] else "FAIL"))
 
+    incidental = [(r["case_id"], side, f)
+                  for r in done for side in ("safe", "unsafe")
+                  for f in r.get(side + "_incidental", [])]
+    if incidental:
+        # Reported, never scored. These are weaknesses outside what the advisory
+        # was about — some real, some not. Counting them as errors would punish
+        # a correct finding; counting them as successes would credit a guess.
+        # Neither is decidable here, so they are listed for adjudication.
+        print("\nIncidental findings — outside the advisory, unadjudicated:")
+        for case_id, side, f in incidental:
+            print("  {:<24}{:<7}{:<10}{:<22}{}".format(
+                case_id, side, f.get("severity") or "?",
+                f.get("category") or "?", (f.get("title") or "")[:44]))
+
     print("\n{:<14}{:>7}{:>16}{:>12}{:>14}".format(
-        "language", "pairs", "discrimination", "false pos", "recall"))
+        "language", "pairs", "discrimination", "still-there", "recall"))
     print("-" * 63)
     by_language = defaultdict(list)
     for r in done:

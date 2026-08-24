@@ -22,6 +22,12 @@ construction: regression
 # Never score the two constructions together.
 decisive_control: the change the maintainers shipped as the fix
 expected_category: sensitive-data-exposure
-expected_file: server/server.go
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['server/server.go', 'server/websockets/client.go']
 dropped_from_change: []
 summary: 'Mailpit: WebSocket origin check bypass via percent-encoded path (regression of CVE-2026-22689)'

@@ -22,6 +22,12 @@ construction: snapshot
 # Never score the two constructions together.
 decisive_control: the change the maintainers shipped as the fix
 expected_category: 
-expected_file: packages/core/src/lib/core/queries/resolvers.ts
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['packages/core/src/lib/core/queries/resolvers.ts']
 dropped_from_change: ['tests/api-tests/queries/limits.test.ts']
 summary: 'Keystone vulnerable to `graphql.maxTake` bypass with negative `take`'

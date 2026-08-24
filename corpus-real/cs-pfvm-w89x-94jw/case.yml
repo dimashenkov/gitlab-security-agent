@@ -22,6 +22,12 @@ construction: regression
 # Never score the two constructions together.
 decisive_control: the change the maintainers shipped as the fix
 expected_category: dos
-expected_file: src/SIPSorcery/net/TURN/TurnServer.cs
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['src/SIPSorcery/net/TURN/TurnServer.cs']
 dropped_from_change: ['test/unit/net/TURN/TurnServerUnitTest.cs']
 summary: 'SIPSorcery: Malformed UDP datagram crashes TurnServer receive loop with no restart, disabling TURN UDP relay for all clients (DoS)'
