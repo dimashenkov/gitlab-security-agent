@@ -139,9 +139,7 @@ class Finding:
         seen, out = set(), []
         for line in self.evidence.splitlines():
             collapsed = " ".join(line.split()).lstrip("+- ")
-            # Punctuation-only lines — a lone brace or paren — are shared by
-            # half the file and would make unrelated findings look identical.
-            if len(collapsed) >= MIN_ANCHOR_CHARS and collapsed not in seen:
+            if collapsed and collapsed not in seen and _distinctive(collapsed):
                 seen.add(collapsed)
                 out.append(collapsed)
         return out
@@ -155,6 +153,47 @@ class Finding:
         matches the next.
         """
         return [_digest(self.category, self.file, a) for a in self.anchors]
+
+
+# Lines that carry no identity. Length alone is not the test — `if err != nil {`
+# is fifteen characters and appears in every function of a Go file, so matching
+# on it would let an accepted risk silence an unrelated finding in the same file
+# and category. What matters is whether the line says anything specific to *this*
+# code: a name, a call, a literal.
+_BOILERPLATE = frozenset({
+    "if err != nil {", "} else {", "end", "});", "})", "}", "{", ");", ")",
+    "return", "return nil", "return err", "return nil, err", "return false",
+    "return true", "return result", "return None", "pass", "continue", "break",
+    "catch (Exception e) {", "try {", "try:", "except:", "finally {",
+    "public:", "private:", "else:", "else", "do", "begin", "rescue", "ensure",
+})
+
+
+def _distinctive(line: str) -> bool:
+    """Is this line specific enough to identify one finding?
+
+    An anchor is used to decide whether an accepted risk still applies. A line
+    shared by half the file would make that decision wrongly and silently, in
+    the direction that hides a finding — so a line has to carry a name, a call
+    or a literal, not just structure.
+    """
+    if len(line) < MIN_ANCHOR_CHARS or line in _BOILERPLATE:
+        return False
+    # Something that looks like an identifier of its own, or a literal. A line
+    # made only of keywords, punctuation and short tokens describes control
+    # flow that appears everywhere.
+    words = [w.strip("(),;:{}[]&*") for w in line.replace(".", " ").split()]
+    return any(len(w) >= 4 for w in words if w not in _KEYWORDS) or (
+        '"' in line or "'" in line)
+
+
+_KEYWORDS = frozenset({
+    "func", "def", "return", "if", "else", "elif", "for", "while", "case",
+    "switch", "try", "catch", "except", "finally", "class", "struct", "type",
+    "const", "var", "let", "public", "private", "static", "void", "int",
+    "bool", "string", "true", "false", "null", "nil", "none", "self", "this",
+    "and", "or", "not", "end", "then", "begin", "rescue", "ensure", "do",
+})
 
 
 def _digest(category: str, file: str, anchor: str) -> str:

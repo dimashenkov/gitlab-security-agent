@@ -326,6 +326,38 @@ def _why_not_gating(cfg: Config, candidate: Candidate) -> str:
     return "pre-existing, not introduced by this change"
 
 
+def _could_become_blocking(cfg: Config, candidate: Candidate) -> bool:
+    """Could any verdict this panel returns end with the merge blocked?
+
+    Sized on the outcome, not on the rating the finding arrives with. Using the
+    current severity left two more single-verifier paths to a gate decision,
+    both in exactly the places `_worth_verifying` deliberately reaches beyond
+    the threshold to cover:
+
+    * a `medium` finding under a `high` threshold got one vote, could be
+      corrected upward by that vote, and blocked on it alone;
+    * a `low` finding attributed to a deletion got one vote, could be called a
+      removed control by that vote, and blocked regardless of severity.
+
+    Both are the fault that odd panels were introduced to remove, surviving in
+    the branches that were not looked at.
+    """
+    if cfg.fail_threshold is None:
+        return False
+    if candidate.finding.category.lower() in {
+            c.lower() for c in cfg.ungated_categories}:
+        return False
+    if not candidate.in_changed_lines and not cfg.gate_pre_existing:
+        return False
+    if candidate.attributed_by == ATTRIBUTED_DELETED and cfg.gate_removed_controls:
+        # A verifier can call this a removed control, which blocks whatever the
+        # severity says.
+        return True
+    # One step of upward correction is what `_worth_verifying` allows for, so
+    # it is what the panel has to be able to survive.
+    return severity_rank(candidate.severity) >= severity_rank(cfg.fail_on) - 1
+
+
 def _votes_for(cfg: Config, candidate: Candidate) -> int:
     """How many independent verifiers this claim gets.
 
@@ -346,7 +378,7 @@ def _votes_for(cfg: Config, candidate: Candidate) -> int:
     per blocking-eligible finding — most runs have one or two.
     """
     votes = cfg.verify_votes
-    if severity_rank(candidate.severity) >= severity_rank(cfg.fail_on):
+    if _could_become_blocking(cfg, candidate):
         votes = max(votes, 3)
     if votes % 2 == 0:
         # An even panel has no majority to appeal to. Whatever tie-break is
@@ -534,14 +566,20 @@ def _decide(candidate: Candidate) -> None:
     refuted = [v for v in usable if v.verdict == VERDICT_REFUTED]
     confirmed = [v for v in usable if v.verdict == VERDICT_CONFIRMED]
 
-    is_severe = severity_rank(candidate.finding.severity) >= severity_rank("critical")
+    # The derived severity, not the model's own label. Reading `finding.severity`
+    # here quietly restored the dependence on a rated label that computing
+    # severity from facts was introduced to remove — the label was the one part
+    # that moved between identical runs.
+    is_severe = severity_rank(candidate.severity) >= severity_rank("critical")
     if is_severe and len(usable) >= 2:
-        # Unanimity required to discard a critical: one dissenting verifier
-        # downgrades it to `uncertain`, where a human still sees it, rather than
-        # removing it from the report's gating set on its own.
+        # Unanimity to *discard* a critical — that is the whole asymmetry, and
+        # it was written the other way round. Requiring unanimity to confirm
+        # meant two verifiers confirming and one hedging gave `uncertain`,
+        # which forces confidence to `low`, which is under the gate. The rule
+        # meant to make a critical hard to dismiss made it easy to ungate.
         if len(refuted) == len(usable):
             verdict = VERDICT_REFUTED
-        elif len(confirmed) == len(usable):
+        elif len(confirmed) * 2 > len(usable):
             verdict = VERDICT_CONFIRMED
         else:
             verdict = VERDICT_UNCERTAIN
@@ -608,9 +646,10 @@ def _decide(candidate: Candidate) -> None:
 def _apply_fact_corrections(candidate: Candidate, votes: List[Vote]) -> None:
     """Let verifiers correct the facts, then recompute severity from them.
 
-    A correction needs agreement from every verifier that expressed an opinion,
-    and none dissenting — the same bar as raising a rating, for the same reason:
-    a single verifier's reading should not be able to move the gate on its own.
+    A correction needs a majority of the whole panel behind it — not merely
+    agreement among those who spoke. Severity is computed from these facts, so
+    a correction is a move on the gate, and the same rule applies to it as to
+    every other move on the gate: one voice does not decide.
     """
     from .severity import derive
 
@@ -624,9 +663,15 @@ def _apply_fact_corrections(candidate: Candidate, votes: List[Vote]) -> None:
     for key, attr in (("impact", "corrected_impact"),
                       ("reachable", "corrected_reachable"),
                       ("interaction", "corrected_interaction")):
-        proposals = {getattr(v, attr) for v in votes if getattr(v, attr)}
-        if len(proposals) == 1 and len(proposals & {facts[key]}) == 0:
-            facts[key] = proposals.pop()
+        # A majority of the panel, not "everyone who spoke up". One verifier
+        # proposing a correction while the rest stay silent used to carry it —
+        # and that verifier might be the one outvoted on whether the finding
+        # was real at all. Severity is computed from these facts, so a single
+        # proposal could move the finding across the gate on its own.
+        proposed = [getattr(v, attr) for v in votes if getattr(v, attr)]
+        agreed = {value for value in proposed if proposed.count(value) * 2 > len(votes)}
+        if len(agreed) == 1 and facts[key] not in agreed:
+            facts[key] = agreed.pop()
             changed.append(key)
 
     derived, why = derive(facts["impact"], facts["reachable"],

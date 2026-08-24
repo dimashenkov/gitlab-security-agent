@@ -34,9 +34,39 @@ class TestVoteCounts:
         assert _votes_for(config, make_candidate(severity="critical")) == 3
         assert _votes_for(config, make_candidate(severity="high")) == 3
 
-    def test_lower_severities_use_the_configured_count(self, config):
+    def test_a_finding_one_step_under_the_bar_still_gets_a_panel(self, config):
+        """It can be corrected over the bar, so it can block on one vote.
+
+        This asserted `medium` gets a single verifier under a `high` threshold,
+        which was the hole: `_worth_verifying` reaches one step below the bar
+        precisely because a verdict can lift a finding over it, and a lift from
+        one voice is the single-verifier decision odd panels exist to prevent.
+        """
         config.verify_votes = 1
-        assert _votes_for(config, make_candidate(severity="medium")) == 1
+        assert _votes_for(config, make_candidate(severity="medium")) == 3
+
+    def test_a_finding_that_cannot_reach_the_bar_uses_the_configured_count(self, config):
+        # Two steps under: no verdict lifts it that far, so nothing it returns
+        # can block, so there is nothing for a panel to protect.
+        config.verify_votes = 1
+        assert _votes_for(config, make_candidate(severity="low")) == 1
+
+    def test_a_low_deletion_gets_a_panel_because_it_can_block_anyway(self, config):
+        """A removed control blocks whatever the severity says.
+
+        So a `low` finding attributed to a deletion could be called a removed
+        control by one verifier and block on that alone — severity never
+        entered into it, which is why sizing the panel on severity missed this.
+        """
+        config.verify_votes = 1
+        candidate = make_candidate(severity="low")
+        candidate.attributed_by = "deleted"
+        assert _votes_for(config, candidate) == 3
+
+    def test_no_panel_when_the_category_is_ungated(self, config):
+        config.verify_votes = 1
+        config.ungated_categories = ("injection",)
+        assert _votes_for(config, make_candidate(severity="high")) == 1
 
     def test_configured_count_wins_when_higher(self, config):
         config.verify_votes = 3
@@ -268,6 +298,89 @@ class TestOneHedgeCannotDecideTheGate:
         ]
         _decide(candidate)
         assert candidate.verdict != VERDICT_REFUTED
+
+
+class TestNoSingleVerifierPathToTheGate:
+    """Every remaining way one reply could decide a merge.
+
+    The first pass at this fixed the obvious path — an even panel plus
+    unanimity — and left three more in the branches it did not look at. All
+    three are the same mistake: a rule whose bar was set by what it read as
+    the cautious direction, without checking which way the exit code moved.
+    """
+
+    def test_a_critical_is_confirmed_by_a_majority_not_by_everyone(self, config):
+        """Unanimity was required to *confirm*, which is backwards.
+
+        The asymmetry was written to make a critical hard to dismiss. Read as
+        written, two verifiers confirming and one hedging gave `uncertain`,
+        which forces confidence to `low`, which is under the gate — so the rule
+        protecting criticals was the easiest way to ungate one.
+        """
+        candidate = make_candidate(severity="critical", confidence="high")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED), vote(VERDICT_CONFIRMED),
+            vote(VERDICT_UNCERTAIN),
+        ]
+        _decide(candidate)
+        assert candidate.verdict == VERDICT_CONFIRMED
+        assert candidate.confidence == "high"
+
+    def test_a_critical_still_needs_every_verifier_to_discard_it(self, config):
+        candidate = make_candidate(severity="critical", confidence="high")
+        candidate.votes = [
+            vote(VERDICT_REFUTED), vote(VERDICT_REFUTED), vote(VERDICT_CONFIRMED),
+        ]
+        _decide(candidate)
+        assert candidate.verdict != VERDICT_REFUTED
+
+    def test_the_critical_branch_reads_the_derived_severity(self, config):
+        """Not the model's own label, which is the part that moves between runs.
+
+        Reading `finding.severity` here restored a dependence on a rated label
+        that computing severity from facts was introduced to remove.
+        """
+        # `severity=` on the model's own finding says critical; the derived
+        # rating on the candidate says high.
+        candidate = make_candidate(severity="high", confidence="high",
+                                   severity_claimed="critical")
+        candidate.votes = [
+            vote(VERDICT_REFUTED), vote(VERDICT_REFUTED), vote(VERDICT_CONFIRMED),
+        ]
+        _decide(candidate)
+        # Majority refutes and it is not critical by the derived rating, so the
+        # critical protection does not apply.
+        assert candidate.verdict == VERDICT_REFUTED
+
+    def test_one_verifier_cannot_correct_a_fact_across_the_gate(self, config):
+        """Severity is computed from these facts, so a correction moves the gate.
+
+        A lone proposal used to carry when the others were silent — and the
+        proposer might be the verifier outvoted on whether the finding was real.
+        """
+        candidate = make_candidate(
+            confidence="high", impact="metadata_disclosure",
+            reachable_without_authentication="yes",
+            requires_user_interaction="no")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED, corrected_impact="code_execution"),
+            vote(VERDICT_CONFIRMED), vote(VERDICT_CONFIRMED),
+        ]
+        _decide(candidate)
+        assert "code_execution" not in candidate.severity_derivation
+
+    def test_a_majority_can_correct_a_fact(self, config):
+        candidate = make_candidate(
+            confidence="high", impact="metadata_disclosure",
+            reachable_without_authentication="yes",
+            requires_user_interaction="no")
+        candidate.votes = [
+            vote(VERDICT_CONFIRMED, corrected_impact="code_execution"),
+            vote(VERDICT_CONFIRMED, corrected_impact="code_execution"),
+            vote(VERDICT_CONFIRMED),
+        ]
+        _decide(candidate)
+        assert candidate.severity == "critical"
 
 
 class TestConfidenceIsDecidedByThePanel:

@@ -23,11 +23,19 @@ def make_finding(**overrides):
         "exploit_scenario": "An anonymous caller sends id=1 OR 1=1 and reads every row.",
         "recommendation": "Use a parameterised query.",
     }
+    claimed = overrides.pop("_severity_claimed", None)
     data.update(overrides)
+    if claimed is not None:
+        data["severity"] = claimed
     return Finding.from_dict(data)
 
 
 def make_candidate(**overrides):
+    # `severity_claimed=` sets the model's own label independently of the
+    # derived rating, so a test can tell which one a rule actually reads.
+    claimed = overrides.pop("severity_claimed", None)
+    if claimed is not None:
+        overrides["_severity_claimed"] = claimed
     """Build a Candidate. `severity=` pins the severity, bypassing derivation —
     most tests care about what the gate does with a rating, not how it was
     reached."""
