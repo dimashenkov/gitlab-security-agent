@@ -115,7 +115,20 @@ def check_case(case_dir: Path, vocabulary: set) -> list:
                 "expected_file names {} which no member changes; a path that "
                 "matches nothing scores every run as a miss".format(
                     ", ".join(missing)))
-        unlisted = sorted(p for p in every_changed if p not in wanted)
+        # A file byte-identical in both members cannot be the decisive control
+        # — it is the same code on both sides — so it cannot be the target and
+        # does not need listing. `go-sql-decoy-01` adds a `routes.go` that is
+        # identical in safe and unsafe: it puts the middleware genuinely on the
+        # call path, which both members need, and it is not what either member
+        # is about. Requiring it in `expected_file` would widen the target to a
+        # file where a finding would be neither expected nor wrong.
+        safe_bytes = member_bytes(case_dir, "safe")
+        unsafe_bytes = member_bytes(case_dir, "unsafe")
+        identical = {p for p in every_changed
+                     if safe_bytes.get(p) is not None
+                     and safe_bytes.get(p) == unsafe_bytes.get(p)}
+        unlisted = sorted(p for p in every_changed
+                          if p not in wanted and p not in identical)
         if unlisted:
             problems.append(
                 "the fix also touches {} which expected_file does not list; a "

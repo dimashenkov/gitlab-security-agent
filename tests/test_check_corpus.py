@@ -64,6 +64,30 @@ def test_a_file_the_fix_touches_but_the_manifest_omits_is_caught(tmp_path):
     assert any("app/forms.py" in p and "does not list" in p for p in problems), problems
 
 
+def test_a_file_identical_in_both_members_need_not_be_listed(tmp_path):
+    """It is the same code on both sides, so it cannot be the decisive control.
+
+    `go-sql-decoy-01` adds a `routes.go` that puts the middleware genuinely on
+    the call path. Both members need it and neither is about it. Requiring it
+    in `expected_file` would widen the target to a file where a finding would
+    be neither expected nor wrong.
+    """
+    case = build(tmp_path, MANIFEST,
+                 {"app/views.py": "a\n", "app/routes.py": "same\n"},
+                 {"app/views.py": "b\n", "app/routes.py": "same\n"})
+    assert check_case(case, VOCABULARY) == []
+
+
+def test_a_file_that_differs_must_still_be_listed(tmp_path):
+    """The exemption is for identical files only. One byte apart and it is a
+    place the decisive control could be hiding."""
+    case = build(tmp_path, MANIFEST,
+                 {"app/views.py": "a\n", "app/routes.py": "guarded\n"},
+                 {"app/views.py": "b\n", "app/routes.py": "unguarded\n"})
+    problems = check_case(case, VOCABULARY)
+    assert any("app/routes.py" in p for p in problems), problems
+
+
 def test_a_target_path_that_matches_nothing_is_caught(tmp_path):
     """It scores every run as a miss, silently and forever."""
     case = build(tmp_path, "expected_category: injection\n"
