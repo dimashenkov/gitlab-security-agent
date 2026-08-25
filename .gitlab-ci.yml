@@ -278,6 +278,21 @@ eval-canary:
       WHY
     - exit 2
 
+journal:
+  stage: evaluate
+  image: $PYTHON_IMAGE
+  needs: []
+  before_script:
+    - pip install --no-cache-dir -e ".[dev]"
+  script:
+    # What the reviewer did on code nobody built to be reviewed, and what a
+    # person decided about it. Free: it reads what has already been filed.
+    # An empty journal exits 2 rather than printing a clean sheet.
+    - python3 tools/journal.py report
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
 eval-feedback:
   stage: evaluate
   image: $PYTHON_IMAGE
@@ -287,17 +302,21 @@ eval-feedback:
   script:
     - |
       cat <<'WHY'
-      Feed adjudicated production findings back into the golden dataset.
+      Feed adjudicated findings from real changes back into the golden dataset.
 
-      The corpus is entirely this project's own construction, which is why it
-      can support regression claims and not recall claims: an adopter cannot
-      check the number by re-running a corpus built to agree with it. Real
-      merge requests, adjudicated blind by someone who did not write the
-      prompts, are the only thing that fixes that.
+      Half of this exists now. `tools/journal.py` files a review of a real
+      change and records a human verdict per finding, and the `journal` job
+      reports what has accumulated. What it produces is not independent
+      evidence — the same person writes the prompts, the code under review and
+      the verdicts — but it is the only evidence available that is not a case
+      built to be passed.
 
-      corpus-real/adjudications.yml is the file this would write into. It has
-      three entries, all hand-made.
+      Missing: the reviews themselves. self-review only runs on merge requests
+      (`if: $CI_MERGE_REQUEST_IID`) and this repository has no merge commits,
+      so it has never run here. Either the work starts going through merge
+      requests, or commits get reviewed retrospectively against their parents
+      at roughly $1.50-3.50 each.
 
-      Blocked on: eval-canary, and therefore on an adopter.
+      Independence needs an adopter, and therefore eval-canary.
       WHY
     - exit 2

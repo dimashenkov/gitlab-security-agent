@@ -397,10 +397,16 @@ def _footer(cfg: Config, outcome: ScanOutcome) -> str:
     when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     job = cfg.gitlab.job_url
     tail = " · [job log]({})".format(job) if job else ""
+    # "Experimental" in the footer of every report, not only in a README
+    # nobody opens. The measured evidence is a regression suite of this
+    # project's own construction; there is no production deployment and no
+    # independent adjudication behind any number here, and a report that does
+    # not say so will be read as though there were.
     return (
-        "<sub>Reviewed by an AI agent using `{}`. Findings are checked against "
-        "the real files and independently verified, but this is an assistant, "
-        "not a substitute for review. {}{}<br>"
+        "<sub>**Experimental.** Reviewed by an AI agent using `{}`. Findings "
+        "are checked against the real files and independently verified, but "
+        "this is an assistant, not a substitute for review, and a quiet result "
+        "is not evidence that the change is safe. {}{}<br>"
         "[{}]({}) v{} — by [Dimitar Shenkov]({}), MIT licensed.</sub>".format(
             outcome.model, when, tail, PROJECT_NAME, PROJECT_URL, __version__,
             AUTHOR_URL)

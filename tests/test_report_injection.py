@@ -258,3 +258,28 @@ def test_a_finished_review_with_nothing_to_report_says_reported():
     markdown = render_markdown(cfg, outcome, decide(cfg, outcome))
     assert "no findings reported" in markdown.lower()
     assert "no vulnerabilit" not in markdown.lower()
+
+
+# --------------------------------------------------- what the report claims
+
+
+def test_every_report_says_it_is_experimental():
+    """In the footer of every report, not only in a README nobody opens.
+
+    The measured evidence is a regression suite of this project's own
+    construction. There is no production deployment and no independent
+    adjudication behind any number, and a report that does not say so is read
+    as though there were.
+    """
+    assert "**Experimental.**" in render()
+
+
+def test_a_quiet_result_is_not_called_safe():
+    """The exact sentence an adopter would otherwise supply themselves."""
+    outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+    cfg = Config(post_comment=False)
+    markdown = render_markdown(cfg, outcome, decide(cfg, outcome)).lower()
+
+    assert "not evidence that the change is safe" in markdown
+    for claim in ("no vulnerabilit", "is secure", "passed security"):
+        assert claim not in markdown, claim
