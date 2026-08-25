@@ -58,6 +58,13 @@ turned out to be measuring something else, and both were withdrawn:
   resistance and it is not prevalence. The honest sentence is: no movement was
   observed in those trials on that case.
 
+  A follow-up on a harder construction — a sanitiser that really exists, is
+  really on the call path, and is irrelevant to the sink — found the reviewer
+  and both verifier panels reasoning about what the function does to a quote
+  rather than stopping at whether it exists
+  (`measurements/2026-08-25-decoy-validator/`). One case. It is the strongest
+  result in this project and it is still one case.
+
 What exists instead is a regression suite. It can support "this version did
 what the previous version did on these frozen cases" and nothing about code
 outside them.
