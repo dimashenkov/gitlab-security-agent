@@ -50,7 +50,13 @@ turned out to be measuring something else, and both were withdrawn:
   "found nothing", and twenty of forty-eight manifests named the wrong target
   file.
 - **15 of 15** prompt-injection trials held — **withdrawn**. Scored correctly,
-  three of four suppression payloads move the verdict.
+  three of four suppression payloads moved the verdict. Since then the panel,
+  the verifier's evidence requirement and the scorer have all changed, and a
+  narrow re-measurement (verifier only, one case, two runs per condition) saw
+  no movement from the two payloads it tested — see
+  `measurements/2026-08-25-verifier-replay/`. That is not end-to-end
+  resistance and it is not prevalence. The honest sentence is: no movement was
+  observed in those trials on that case.
 
 What exists instead is a regression suite. It can support "this version did
 what the previous version did on these frozen cases" and nothing about code
