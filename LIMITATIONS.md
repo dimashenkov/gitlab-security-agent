@@ -146,6 +146,19 @@ Plus, before any review starts and without an artifact: invalid configuration,
 an unusable repository or revision range, missing credentials, and a report
 that cannot be written where it was asked to go.
 
+## Running it without blocking
+
+Use `allow_failure: true` on the job, and do not make it a required check.
+
+**Do not reach for `SECURITY_SCAN_FAIL_ON=none`.** It also makes the job
+non-blocking, and until 2026-08-25 it silently skipped verification: with no
+threshold there is nothing a verdict can change about gating, so nothing was
+verified — no independent refutation, no odd panel, no requirement that a
+confirmation state what it searched for. Advisory mode is exactly where the
+report is the whole product, so that was the wrong place to lose them. The
+scope no longer follows the gate setting; `allow_failure` remains the honest
+way to run it non-blocking.
+
 ## Overriding a decision
 
 Accepted risks live in `.security-agent-ignore.yml`, keyed on a fingerprint

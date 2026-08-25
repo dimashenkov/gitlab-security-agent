@@ -294,9 +294,6 @@ def _partition(cfg: Config, candidates: List[Candidate]) -> Tuple[List[Candidate
     claims. Everything below the severity threshold is still skipped, because no
     verdict can lift it over the bar.
     """
-    if cfg.fail_threshold is None:
-        return [], list(candidates)  # nothing can block; verify nothing
-
     gating, informational = [], []
     for candidate in candidates:
         if _worth_verifying(cfg, candidate):
@@ -333,9 +330,38 @@ def _worth_verifying(cfg: Config, candidate: Candidate) -> bool:
         # "ungated" and "unverified" moved as one and no experiment could
         # separate them.
         return True
-    if severity_rank(candidate.severity) < severity_rank(cfg.fail_on) - 1:
+    if severity_rank(candidate.severity) < severity_rank(_verify_floor(cfg)) - 1:
         return False
     return candidate.in_changed_lines or cfg.gate_pre_existing
+
+
+# What a finding must reach to be worth verifying when nothing can block.
+# Verification scope has to stay decided by what a verdict changes about the
+# finding, so turning the gate off cannot turn the checking off with it.
+DEFAULT_VERIFY_FLOOR = "high"
+
+
+def _verify_floor(cfg: Config) -> str:
+    """The severity that decides verification scope, gate or no gate.
+
+    `SECURITY_SCAN_FAIL_ON=none` used to skip verification entirely — the
+    reasoning being that verification exists to decide gating, so with no gate
+    there is nothing to decide. That is wrong in the deployment this project
+    has settled on. Advisory mode is where the **report** is the whole product,
+    and an unverified finding is precisely the thing that wastes the reader's
+    time: no independent refutation, no odd panel, no requirement that a
+    confirmation say what it searched for.
+
+    It was also the obvious way to make the tool advisory. Someone who does not
+    want a blocked merge reaches for `FAIL_ON=none` and silently loses every
+    protection built for the finding rather than for the gate. The way to make
+    it advisory is `allow_failure: true` on the job.
+
+    The function below already refuses to tie verification scope to
+    `gate_removed_controls`, and says why. This is the same rule, applied to
+    the setting that was still breaking it.
+    """
+    return DEFAULT_VERIFY_FLOOR if cfg.fail_threshold is None else cfg.fail_on
 
 
 def _could_block(cfg: Config, candidate: Candidate) -> bool:

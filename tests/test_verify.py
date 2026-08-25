@@ -191,11 +191,37 @@ class TestVerificationScope:
         gating, _ = _partition(config, [candidate])
         assert gating == [candidate]
 
-    def test_nothing_is_verified_when_the_gate_is_off(self, config):
+    def test_turning_the_gate_off_does_not_turn_the_checking_off(self, config):
+        """`FAIL_ON=none` used to skip verification entirely.
+
+        The reasoning was that verification decides gating, so with no gate
+        there is nothing to decide. That is backwards for the deployment this
+        project settled on: advisory mode is where the report IS the product,
+        and an unverified finding is exactly what wastes the reader's time —
+        no independent refutation, no odd panel, no requirement that a
+        confirmation say what it searched for.
+
+        It was also the obvious way to make the tool advisory. Someone who does
+        not want a blocked merge reaches for this and silently loses every
+        protection built for the finding rather than for the gate. The way to
+        make it advisory is `allow_failure: true` on the job.
+        """
         config.fail_on = "none"
         candidate = make_candidate(severity="critical", confidence="high")
         gating, informational = _partition(config, [candidate])
-        assert gating == [] and informational == [candidate]
+        assert gating == [candidate] and informational == []
+
+    def test_with_no_gate_the_scope_floor_is_the_default_not_everything(self, config):
+        """Verifying every `low` on a large change costs more than it buys, and
+        that is true whether or not a gate exists."""
+        config.fail_on = "none"
+        low = make_candidate(severity="low", confidence="high")
+        gating, informational = _partition(config, [low])
+        assert gating == [] and informational == [low]
+
+        medium = make_candidate(severity="medium", confidence="high")
+        gating, _ = _partition(config, [medium])
+        assert gating == [medium], "one step below the default floor still counts"
 
     def test_one_step_below_the_threshold_is_still_verified(self, config):
         # Ratings can now be raised, so "below the bar" no longer means settled:

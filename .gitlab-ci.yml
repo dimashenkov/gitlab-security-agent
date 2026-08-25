@@ -96,6 +96,14 @@ self-review:
   image: $IMAGE:latest
   timeout: 1h
   interruptible: true
+  # Advisory, and this is the right way to say so. Setting FAIL_ON=none would
+  # also make it advisory and would silently narrow verification: with no
+  # threshold there is nothing a verdict can change about gating, so the
+  # verifier used to be skipped entirely and the report lost the odd panel, the
+  # independent refutation, and the requirement that a confirmation state what
+  # it searched for. The scope no longer follows the gate setting, but this is
+  # still the honest way to run it non-blocking.
+  allow_failure: true
   needs: []
   variables:
     GIT_DEPTH: 0
