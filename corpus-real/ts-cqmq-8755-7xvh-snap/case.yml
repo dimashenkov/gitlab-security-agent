@@ -21,7 +21,11 @@ construction: snapshot
 #   baseline, one fixed and one not. Direction carries no answer.
 # Never score the two constructions together.
 decisive_control: the change the maintainers shipped as the fix
-expected_category: 
+# The fix is `Math.abs(take ?? Infinity) > maxTake`: a negative `take`
+# bypasses a row limit and fetches unbounded rows. That is defensibly
+# `dos` and defensibly `other`, and picking one would be guessing which
+# word the model reaches for. Both count.
+expected_category: ['dos', 'other']
 # Every file the fix touched, not the first one. A fix is not obliged
 # to fit in one file, and naming only the first counted a finding in
 # the others as the wrong place — Winter's CSRF fix normalises a name

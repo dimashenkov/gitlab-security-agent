@@ -8,5 +8,10 @@ decisive_control: requiring a site-relative path, and rejecting the // form that
 # The safe member's second condition is the subtle half: "//evil.example" starts
 # with a slash and is a protocol-relative absolute URL. A check that stops at
 # startsWith("/") looks like a control and is not one.
-expected_category: 
+# Open redirect has no name in prompts/findings.schema.json, so the
+# agent cannot emit one. `other` is the bucket that exists for this.
+# The gap is real and belongs in the schema discussion, not papered
+# over by scoring against a word the model can never produce — that
+# mistake already cost seven cases.
+expected_category: ['other']
 expected_file: login.ts

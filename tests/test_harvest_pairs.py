@@ -23,7 +23,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
@@ -130,19 +129,29 @@ def test_every_mapped_category_is_one_the_agent_can_report():
     assert not unknown, "not in {}: {}".format(SCHEMA_NAME, sorted(unknown))
 
 
-def test_every_case_in_every_corpus_scores_against_a_real_category():
-    """The check that would have caught it in the corpus rather than the map."""
+def test_every_case_in_every_corpus_can_measure_something():
+    """One rule, in `check_corpus`, rather than a weaker copy here.
+
+    This used to allow a blank `expected_category` as "score on file alone",
+    which sounded like honesty about a weakness the vocabulary cannot name and
+    acted as a silently looser case: any finding in the file became the target.
+    Three cases were in that state. The strictness lives in `check_corpus.py`
+    now and this defers to it — a second implementation of the same sentence is
+    how the category map and the corpus disagreed in the first place.
+    """
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    from check_corpus import check_case
+
     from security_agent.vocabulary import categories
 
     valid = set(categories())
-    offenders = []
+    offenders = {}
     for manifest in sorted(Path(__file__).resolve().parents[1].glob("corpus*/*/case.yml")):
-        spec = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-        wanted = (spec.get("expected_category") or "").strip()
-        # Blank is allowed and means "score on file alone", which is the honest
-        # answer for a weakness the vocabulary has no name for.
-        if wanted and wanted not in valid:
-            offenders.append("{}: {}".format(manifest.parent.name, wanted))
+        problems = check_case(manifest.parent, valid)
+        if problems:
+            offenders[manifest.parent.name] = problems
     assert not offenders, offenders
 
 

@@ -6,6 +6,7 @@ stages:
   - test
   - build
   - review
+  - evaluate
 
 default:
   interruptible: true
@@ -113,3 +114,190 @@ self-review:
     - if: $CI_MERGE_REQUEST_LABELS =~ /skip-ai-security/
       when: never
     - if: $CI_MERGE_REQUEST_IID
+
+# ------------------------------------------------------------------ evaluate
+#
+# The evaluation pipeline, in the shape it will have and the state it is in.
+#
+# The free half runs on every push. The paid half does not: one pass over the
+# corpus is $8-15 at the measured rate, and a gate that spends that on every
+# commit is how a measurement budget disappears without producing a number.
+# Those jobs are `when: manual` and print what they will cost before they run.
+#
+# The rest are declared and inert. A stage that is missing is a stage nobody
+# argues about; a stage that is present and says why it cannot run is a
+# question with a name. None of them exit 0 — this project's whole discipline
+# is that "could not check" must never look like "checked and clean", and a
+# green placeholder is exactly that lie in CI form.
+
+corpus-check:
+  stage: evaluate
+  image: $PYTHON_IMAGE
+  needs: []
+  before_script:
+    - pip install --no-cache-dir -e ".[dev]"
+  script:
+    # Free, deterministic, and every defect it looks for was found by hand
+    # after a paid run had already been scored against it.
+    - python3 tools/check_corpus.py corpus/ corpus-real/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+corpus-adversary:
+  stage: evaluate
+  image: $PYTHON_IMAGE
+  needs: []
+  before_script:
+    - pip install --no-cache-dir -e ".[dev]"
+  script:
+    # Can the corpus be scored without reading code? "More comment lines, then
+    # more bytes" once scored 48 of 48 on the harvested corpus, because a fix
+    # commit carries the maintainer's explanation and harvesting put it on the
+    # safe side only. Nothing in the review pipeline would ever have shown it.
+    - python3 tools/corpus_adversary.py corpus/ corpus-real/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# --- paid, manual ------------------------------------------------------------
+
+eval-stability:
+  stage: evaluate
+  image: $PYTHON_IMAGE
+  needs: []
+  when: manual
+  allow_failure: true
+  timeout: 2h
+  variables:
+    CASE: go-sql-01
+    RUNS: "4"
+  before_script:
+    - pip install --no-cache-dir -e ".[dev]"
+  script:
+    # Before any threshold, not after. A success rate measured once is a sample
+    # from a distribution nobody has looked at, and this project has already
+    # set two rules from single runs and had to withdraw both.
+    - echo "About to run $RUNS reviews. At the measured median that is roughly $(python3 -c "print('%.2f' % ($RUNS * 0.75))") USD."
+    - python3 tools/stability.py corpus/ --case "$CASE" --runs "$RUNS" --json stability.json
+  artifacts:
+    when: always
+    expire_in: 90 days
+    paths: [stability.json]
+
+eval-corpus:
+  stage: evaluate
+  image: $PYTHON_IMAGE
+  needs: []
+  when: manual
+  allow_failure: true
+  timeout: 3h
+  variables:
+    CORPUS: corpus/
+  before_script:
+    - pip install --no-cache-dir -e ".[dev]"
+  script:
+    - echo "One pass over $CORPUS costs 8-15 USD at the measured rate, with a 4.4x spread per case."
+    - python3 tools/pair_corpus.py "$CORPUS" --concurrency 1 --json corpus-result.json
+  artifacts:
+    when: always
+    expire_in: 90 days
+    paths:
+      - corpus-result.json
+      # The artifacts of anything that stopped early. Deleting these is what
+      # turned a one-day diagnosis into "one of two causes, cannot tell".
+      - incomplete/
+
+# --- declared, not yet possible ----------------------------------------------
+
+eval-baseline:
+  stage: evaluate
+  image: $PYTHON_IMAGE
+  needs: []
+  when: manual
+  allow_failure: true
+  script:
+    - |
+      cat <<'WHY'
+      Compare this run against a frozen baseline and fail when it regresses.
+
+      Not possible yet, and the reason is not effort. A baseline is only
+      comparable if the corpus, the manifests, the prompt hashes, the model,
+      the settings, the scorer version and the adjudications are frozen
+      TOGETHER. Change any one and the two numbers are about different things.
+      In the last two days four of those changed at once, which is exactly why
+      the 2/6 result was withdrawn rather than improved.
+
+      Blocked on: pinning all seven into one baseline.json, and one paid run
+      to populate it.
+      WHY
+    - exit 2
+
+eval-gate:
+  stage: evaluate
+  image: $PYTHON_IMAGE
+  needs: []
+  when: manual
+  allow_failure: true
+  script:
+    - |
+      cat <<'WHY'
+      Block the merge when the evaluation regresses below baseline.
+
+      Blocked on two things, and neither is code:
+
+        1. eval-baseline, which does not exist yet.
+        2. A threshold. Setting one before run-to-run variance is measured on
+           real cases means the gate fires on noise. Stability has been
+           measured on ONE synthetic case.
+
+      There is also a cost argument against ever making this automatic on
+      push: a pass is $8-15, and an attacker-authored merge request would be
+      choosing when to spend it.
+      WHY
+    - exit 2
+
+eval-canary:
+  stage: evaluate
+  image: $PYTHON_IMAGE
+  needs: []
+  when: manual
+  allow_failure: true
+  script:
+    - |
+      cat <<'WHY'
+      Roll the new version to a subset before making it the default.
+
+      There is nothing to roll to. The product is a CI job another team adds
+      to its own .gitlab-ci.yml; there is no deployment, no staging, and no
+      consenting team. The release criteria call for a 200-merge-request
+      shadow deployment on one team as the first independent evidence, and
+      that is what belongs here when it exists.
+
+      Blocked on: an adopter.
+      WHY
+    - exit 2
+
+eval-feedback:
+  stage: evaluate
+  image: $PYTHON_IMAGE
+  needs: []
+  when: manual
+  allow_failure: true
+  script:
+    - |
+      cat <<'WHY'
+      Feed adjudicated production findings back into the golden dataset.
+
+      The corpus is entirely this project's own construction, which is why it
+      can support regression claims and not recall claims: an adopter cannot
+      check the number by re-running a corpus built to agree with it. Real
+      merge requests, adjudicated blind by someone who did not write the
+      prompts, are the only thing that fixes that.
+
+      corpus-real/adjudications.yml is the file this would write into. It has
+      three entries, all hand-made.
+
+      Blocked on: eval-canary, and therefore on an adopter.
+      WHY
+    - exit 2

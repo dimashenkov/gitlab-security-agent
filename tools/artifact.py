@@ -115,6 +115,26 @@ def target_paths(case: dict) -> list:
     return [str(p) for p in (want or []) if p]
 
 
+def target_categories(case: dict) -> list:
+    """Which categories count as the weakness, plural.
+
+    The same error as `expected_file`, one field over. Keystone's fix is
+    `Math.abs(take ?? Infinity) > maxTake`: a negative `take` bypasses a row
+    limit and fetches unbounded rows. That is defensibly `dos` and defensibly
+    `other`, and picking one is guessing which word the model reaches for —
+    the guess that already cost seven cases when the corpus was scored against
+    category names the schema does not contain.
+
+    An empty list matches any category, which is what a manifest with no
+    `expected_category` silently did. `check_corpus.py` refuses that, so the
+    looseness has to be written down to exist.
+    """
+    want = case.get("expected_category")
+    if isinstance(want, str):
+        want = [want] if want else []
+    return [str(c) for c in (want or []) if c]
+
+
 def is_target(finding: dict, case: dict) -> bool:
     """Is this finding the weakness the case is about?
 
@@ -124,8 +144,8 @@ def is_target(finding: dict, case: dict) -> bool:
     possibly a misreading. This does not know which, and nothing else here does
     either without adjudication.
     """
-    want_category = case.get("expected_category")
-    if want_category and finding.get("category") != want_category:
+    wanted = target_categories(case)
+    if wanted and finding.get("category") not in wanted:
         return False
     paths = target_paths(case)
     if not paths:
