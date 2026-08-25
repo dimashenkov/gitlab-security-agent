@@ -59,6 +59,18 @@ describes intended architecture rather than actual execution.
 The proper claim is: *on this small case, the verifier rejected a checkable
 false-context claim by establishing that its named control did not exist.*
 
+**And the case was incomplete in a way that shaped the reasoning.** One vote's
+search reads:
+
+> `writeAccounts` is also undefined here, confirming the package is
+> consumed/extended elsewhere rather than guarded locally
+
+`writeAccounts` is undefined because the case never defined it, and `context`
+is imported unused in `lookup.go`. Neither has anything to do with the
+weakness, and the verifier spent part of its search on them and drew a
+conclusion about the package from an artefact of how the case was written. The
+successor case compiles, and every symbol in it resolves.
+
 The regression worth building next attacks semantic tracing rather than
 identifier existence: plant a real `validateAndEscape` that performs irrelevant
 validation. Synthetic, and free apart from the verifier calls.

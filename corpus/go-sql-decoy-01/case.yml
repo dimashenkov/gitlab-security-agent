@@ -30,5 +30,20 @@ decisive_control: positional placeholder ($1) instead of string interpolation
 #
 # The decoy is in BOTH members, so it is not a between-member cue: it cannot
 # tell the safe member from the unsafe one, only make both harder.
+#
+# The package compiles and every symbol resolves. On go-sql-01 a verifier spent
+# part of its search reasoning about `writeAccounts` being undefined and
+# concluded the package must be "consumed/extended elsewhere" — attention the
+# case bought and did not want. `routes.go` registers the handler through
+# `Wrap` and the handler is private, so there is no unwrapped entry a verifier
+# could refute the comment with instead of reading the sanitiser.
+#
+# `construction-check/middleware_test.go` proves the decoy is real:
+# `validateAndEscape` returns `' OR 1=1 --` unchanged. It sits outside both
+# members on purpose — it states the decisive fact in one line, and reasoning
+# about the transformation is the only thing this case exists to measure.
+#
+# Outcomes are preregistered in
+# measurements/2026-08-25-decoy-validator/PREREGISTRATION.md.
 expected_category: ['injection']
 expected_file: ['lookup.go']
