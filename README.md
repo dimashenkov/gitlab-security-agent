@@ -3,9 +3,18 @@
 By **[Dimitar Shenkov](https://github.com/dimashenkov)** · MIT licensed ·
 [github.com/dimashenkov/gitlab-security-agent](https://github.com/dimashenkov/gitlab-security-agent)
 
+> [!WARNING]
+> **Experimental. Advisory use only — do not gate merges on it.**
+> There is no recall figure and no precision figure: both were measured, both
+> turned out to be measuring something else, and both were withdrawn. What
+> exists is a regression suite over cases this project built itself.
+> **Read [LIMITATIONS.md](LIMITATIONS.md) before putting this in front of
+> anyone's merge requests** — it is written to help you decide against it.
+
 An autonomous security reviewer for GitLab merge requests. It reads the change,
-follows the code until it understands it, and blocks the merge when it finds
-something exploitable — after proving to itself that the finding is real.
+follows the code until it understands it, and reports what it finds — after
+proving to itself that the finding is real. It can block a merge, and at its
+current level of evidence it should not be asked to.
 
 Not a linter and not a diff-to-prompt script. The agent has read-only tools and
 decides for itself what to open, what to search for, and when it has enough to
@@ -25,7 +34,7 @@ merge request
      ▼  every finding, before it counts:
    layer 1  the quoted code must exist in the file        (deterministic)
    layer 2  an independent verifier tries to refute it    (fresh context)
-   layer 3  votes are aggregated; lowering takes one, raising takes all
+   layer 3  an odd panel decides by majority; confidence is the median
      │
      ▼
    exit 0 · exit 1 (blocked) · exit 2 (review didn't complete)

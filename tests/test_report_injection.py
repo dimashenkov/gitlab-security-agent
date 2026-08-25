@@ -14,6 +14,7 @@ irresponsible to ship. It had been there since the report was written.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -283,3 +284,25 @@ def test_a_quiet_result_is_not_called_safe():
     assert "not evidence that the change is safe" in markdown
     for claim in ("no vulnerabilit", "is secure", "passed security"):
         assert claim not in markdown, claim
+
+
+def test_the_limitations_document_exists_and_says_what_is_unmeasured():
+    """A README that promises a limitations file, and no file, is worse than
+    neither: it reads as diligence that was done."""
+    root = Path(__file__).resolve().parents[1]
+    # Collapsed: these are sentences in a wrapped document, so a line break
+    # falls in a different place every time the paragraph is edited.
+    limitations = " ".join(
+        (root / "LIMITATIONS.md").read_text(encoding="utf-8").split())
+
+    # The three claims an adopter would otherwise have to reconstruct from
+    # commit messages.
+    assert "no recall figure and no precision figure" in limitations
+    assert "withdrawn" in limitations
+    assert "does not mean the change is safe" in limitations
+    # And the open defect, named rather than buried.
+    assert "three of four suppression payloads" in limitations.lower()
+
+    readme = " ".join((root / "README.md").read_text(encoding="utf-8").split())
+    assert "LIMITATIONS.md" in readme
+    assert "do not gate merges on it" in readme.lower()
