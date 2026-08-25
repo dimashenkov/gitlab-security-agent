@@ -470,11 +470,11 @@ def _one_vote(
         if not tool_uses:
             vote = _parse_verdict(response)
             if vote is not None:
-                return _tagged(vote, served), usage
+                return _tagged(vote, served, session), usage
             return _tagged(Vote(
                 verdict=VERDICT_UNCERTAIN, reasoning="",
                 error="the verifier did not return a parsable verdict",
-            ), served), usage
+            ), served, session), usage
 
         results = []
         for block in tool_uses:
@@ -498,17 +498,22 @@ def _one_vote(
     return _tagged(Vote(
         verdict=VERDICT_UNCERTAIN, reasoning="",
         error="the verifier ran out of turns before reaching a verdict",
-    ), served), usage
+    ), served, session), usage
 
 
-def _tagged(vote: Vote, served: List[str]) -> Vote:
+def _tagged(vote: Vote, served: List[str], session: Optional[Session] = None) -> Vote:
     """Carry the models that answered back across the thread boundary.
 
     Attached to the vote rather than returned separately because the votes are
     what survive the worker pool; a fourth return value would have to be
-    threaded through every call site for one field.
+    threaded through every call site for one field. The files the verifier
+    opened ride along for the same reason, and they answer a question the
+    verdict alone cannot: a payload in a file that was never read did not fail,
+    it was never tried.
     """
     vote.served_models = list(dict.fromkeys(m for m in served if m))
+    if session is not None:
+        vote.files_read = list(session.files_examined)
     return vote
 
 

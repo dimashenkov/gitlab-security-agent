@@ -90,7 +90,16 @@ def report(rows: list, case_id: str, member: str) -> int:
             agreements += controls_agree(good[i], good[j])
 
     exits = Counter(r.get("exit_code") for r in good)
-    print("\nagreement: {} of {} run pair(s)".format(agreements, pairs))
+
+    # The runs first, the pair count second, and the pair count carrying its
+    # own caveat. N runs produce N(N-1)/2 pairs that share runs with each
+    # other, so "3 of 3 pairs agreed" reads as three independent trials and is
+    # three overlapping comparisons of three observations. Reporting it the
+    # other way round is how a small sample gets quoted as a larger one.
+    print("\n{} completed run(s), {} distinct gate outcome(s)".format(
+        len(good), len({r.get("exit_code") for r in good})))
+    print("agreement: {} of {} run pair(s) — overlapping, not independent; "
+          "{} runs give {} pairs".format(agreements, pairs, len(good), pairs))
     print("exit codes: {}".format(
         ", ".join("{} x{}".format(code, n) for code, n in sorted(exits.items()))))
     if broken:
@@ -99,9 +108,17 @@ def report(rows: list, case_id: str, member: str) -> int:
         sum(r.get("cost", 0) for r in good), len(good)))
 
     if agreements == pairs:
-        print("\nEvery run agreed on what the gate does. That is what the "
-              "measurement can show; with {} runs it does not bound how often "
-              "they would differ.".format(len(good)))
+        # The bound, stated rather than left to the reader. Zero disagreements
+        # in n runs is consistent with a disagreement rate that would still
+        # break a threshold: at n=3 the one-sided 95% upper bound is about 63%,
+        # at n=6 about 39%. This tool exists because a number was once read as
+        # stability when it was one draw.
+        bound = 1 - 0.05 ** (1 / len(good))
+        print("\nEvery run agreed on what the gate does. With {} run(s) and no "
+              "disagreement, the one-sided 95% upper bound on the disagreement "
+              "rate is still about {:.0f}%. This is a falsification test: it "
+              "can show instability, and it cannot show stability."
+              .format(len(good), 100 * bound))
         return 0
     print("\nThe gate disagreed with itself on identical input. Any result "
           "measured on this case — a corpus score, an injection trial, an "
