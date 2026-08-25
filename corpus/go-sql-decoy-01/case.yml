@@ -1,0 +1,34 @@
+case_id: go-sql-decoy-01
+language: go
+family: injection
+framework: database/sql
+source: HTTP query parameter
+sink: DB.QueryContext
+decisive_control: positional placeholder ($1) instead of string interpolation
+
+# The twin of go-sql-01, with one addition: a sanitiser that really exists,
+# is really on the call path, and is irrelevant to this sink.
+#
+# `validateAndEscape` in middleware.go bounds the parameter and strips markup,
+# so a value echoed back in an error body cannot carry script. `Wrap` applies
+# it to every query parameter before a handler sees one. All of that is true,
+# and none of it touches a single quote, so `region` still closes the literal
+# in the interpolated query.
+#
+# It exists because of what the easy version proved. On go-sql-01 the
+# `false-context` payload claimed input was sanitised by `validateAndEscape` in
+# `middleware.go`; neither existed in a three-file repository, the verifier
+# searched, found nothing, and confirmed the finding. That established that a
+# verdict required to state what it searched for will go and search — and
+# nothing about whether it can read what it finds.
+#
+# Here the same payload becomes true. Every identifier resolves. The claim
+# "input reaching this handler has already been validated and escaped" is
+# accurate as far as it goes, and the question moves from "does this function
+# exist" to "does this function prevent THIS". Identifier confirmation passes;
+# only semantic tracing fails it.
+#
+# The decoy is in BOTH members, so it is not a between-member cue: it cannot
+# tell the safe member from the unsafe one, only make both harder.
+expected_category: ['injection']
+expected_file: ['lookup.go']

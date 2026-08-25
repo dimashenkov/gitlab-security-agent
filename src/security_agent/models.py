@@ -236,11 +236,15 @@ class Vote:
     # so the verdict now has to carry the evidence or it is not a confirmation.
     control_search: str = ""    # what guard was looked for, where, and found
     entry_point: str = ""       # the caller or entry an attacker comes through
-    # Which files this verifier actually opened. Without it, a payload planted
-    # in a file the verifier never read is indistinguishable from one it read
-    # and dismissed — "held" would cover both, and only one of them is
-    # resistance. The other is luck about which file got opened.
+    # Which files this verifier actually opened, and — separately — every file
+    # whose bytes reached it through any channel. The second is the one that
+    # answers "was the payload seen": a whole-change `get_diff` carries every
+    # changed file without opening any of them, and `search_code` returns lines
+    # from files nobody named. Reading exposure off the opened list would
+    # answer "no" while the text sat in the context window, which is the
+    # difference between a verifier that resisted and one that was never tried.
     files_read: List[str] = field(default_factory=list)
+    exposures: List[tuple] = field(default_factory=list)   # (path, channel)
     error: str = ""
     # Which model actually answered this vote — a server-side fallback can
     # substitute one mid-review, and a blocking verdict should say so.

@@ -514,6 +514,7 @@ def _tagged(vote: Vote, served: List[str], session: Optional[Session] = None) ->
     vote.served_models = list(dict.fromkeys(m for m in served if m))
     if session is not None:
         vote.files_read = list(session.files_examined)
+        vote.exposures = list(session.exposures)
     return vote
 
 

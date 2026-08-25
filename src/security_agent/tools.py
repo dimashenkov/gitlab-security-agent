@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List
@@ -48,6 +49,8 @@ class Session:
     rejected: List[RejectedClaim] = field(default_factory=list)
     tool_calls: List[ToolCallRecord] = field(default_factory=list)
     files_examined: List[str] = field(default_factory=list)
+    # (path, channel) for every file whose bytes reached the model.
+    exposures: List[tuple] = field(default_factory=list)
     duplicates_dropped: int = 0
     turn: int = 0
     metrics: StageMetrics = field(default_factory=StageMetrics)
@@ -56,6 +59,23 @@ class Session:
     def note_file(self, path: str) -> None:
         if path and path not in self.files_examined:
             self.files_examined.append(path)
+
+    def note_exposure(self, path: str, channel: str) -> None:
+        """Record that this file's bytes reached the model, and how.
+
+        Distinct from `files_examined`, which is what the agent chose to
+        *open*. A whole-change `get_diff` puts every changed file's contents in
+        the conversation without any of them being opened, and `search_code`
+        returns matching lines from files nobody asked for by name. Reading
+        "was the payload seen" off `files_examined` would answer no while the
+        text sat in the context window — which is the difference between a
+        verifier that resisted and one that was never tried.
+        """
+        if not path:
+            return
+        key = (path, channel)
+        if key not in self.exposures:
+            self.exposures.append(key)
 
     def attempt(self, key: str) -> int:
         self._attempts[key] = self._attempts.get(key, 0) + 1
@@ -321,6 +341,10 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
         trimmed = True
     if path:
         session.note_file(ws.repo_path(path))
+    # Every file the body actually carries. A whole-change diff names none of
+    # them in the arguments and contains all of them.
+    for touched in _paths_in_diff(body):
+        session.note_exposure(touched, "get_diff")
     note = (
         "\n\n[Diff trimmed at 120000 characters. Request individual files with "
         "`path` to see the rest.]" if trimmed else ""
@@ -346,6 +370,7 @@ def _handle_read_file(ws: Workspace, session: Session, args: Dict[str, Any]) -> 
     end = _as_int(args.get("end_line"), 0)
     body, trimmed = ws.read_file(path, start_line=start, end_line=end)
     session.note_file(ws.repo_path(path))
+    session.note_exposure(ws.repo_path(path), "read_file")
     if trimmed:
         body += (
             "\n\n[Output trimmed. Re-read with a narrower start_line/end_line "
@@ -363,6 +388,10 @@ def _handle_search_code(ws: Workspace, session: Session, args: Dict[str, Any]) -
         case_sensitive=bool(args.get("case_sensitive", False)),
         context_lines=_as_int(args.get("context_lines"), 0),
     )
+    # The files the matches came from. Nobody asked for these by name, and
+    # their lines are now in the conversation.
+    for touched in _paths_in_search(body):
+        session.note_exposure(touched, "search_code")
     return ToolResult(body, "search {!r}: {} match(es)".format(pattern, count))
 
 
@@ -517,6 +546,22 @@ HANDLERS: Dict[str, Handler] = {
     "git_log": _handle_git_log,
     REPORT_FINDING: _handle_report_finding,
 }
+
+
+_DIFF_PATH = re.compile(r"^\+\+\+ b/(.+)$", re.M)
+
+
+def _paths_in_diff(body: str) -> List[str]:
+    """The files a unified diff actually carries content for."""
+    return [line for line in _DIFF_PATH.findall(body or "") if line != "/dev/null"]
+
+
+_SEARCH_PATH = re.compile(r"^([^\s:][^:]*):\d+:", re.M)
+
+
+def _paths_in_search(body: str) -> List[str]:
+    """The files a search result quoted lines from."""
+    return list(dict.fromkeys(_SEARCH_PATH.findall(body or "")))
 
 
 def dispatch(ws: Workspace, session: Session, name: str, args: Dict[str, Any]) -> ToolResult:
