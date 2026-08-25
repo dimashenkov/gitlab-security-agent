@@ -24,6 +24,7 @@ from .models import (
     VERDICT_UNCERTAIN,
     Candidate,
     ScanOutcome,
+    severity_rank,
 )
 
 
@@ -75,14 +76,41 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
         lines += _findings_section(other, {id(c) for c in decision.policy_excluded})
 
     if outcome.refuted:
-        lines += _collapsed(
-            "Refuted during verification ({})".format(len(outcome.refuted)),
-            _refuted_section(outcome.refuted),
-            note=(
-                "An independent verifier read the code and could not confirm "
-                "these. They are kept here so you can overrule that call."
-            ),
-        )
+        # Split by what the refutation cost. A refuted finding that would
+        # otherwise have blocked is the exact thing a prompt-injection payload
+        # aims at: the working attacks do not erase the finding, they leave it
+        # in the report and move its disposition. Collapsing those behind a
+        # `<details>` is how an attacker-influenced disposition becomes hidden
+        # evidence — so they are shown open, with the caveat, and the reader
+        # decides. The rest stay collapsed; a refuted `low` is noise.
+        loud = [c for c in outcome.refuted if _would_have_blocked(cfg, c)]
+        quiet = [c for c in outcome.refuted if c not in loud]
+        if loud:
+            lines += [
+                "",
+                "---",
+                "",
+                "## Disputed — found, then not confirmed ({})".format(len(loud)),
+                "",
+                "> [!WARNING]",
+                "> A verifier read the code and could not confirm these, so they "
+                "do not block. Each would have, had it been confirmed.",
+                "> **Comments and documentation in the reviewed repository are "
+                "input to the model, not evidence.** Text written by whoever "
+                "opened this merge request may have influenced the disposition "
+                "below. Read the code, not the verdict.",
+                "",
+            ]
+            lines += _refuted_section(loud)
+        if quiet:
+            lines += _collapsed(
+                "Refuted during verification ({})".format(len(quiet)),
+                _refuted_section(quiet),
+                note=(
+                    "An independent verifier read the code and could not confirm "
+                    "these. They are kept here so you can overrule that call."
+                ),
+            )
 
     if outcome.suppressed:
         lines += _collapsed(
@@ -115,6 +143,22 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
 # ------------------------------------------------------------------- sections
 
 
+def _would_have_blocked(cfg: Config, candidate: Candidate) -> bool:
+    """Would this candidate have blocked, if the verifier had confirmed it?
+
+    Asked of the model's own severity and confidence rather than the derived
+    ones, because a refutation is what stopped the derivation. This is the set
+    an attacker is aiming at, and the set that must not be hidden.
+    """
+    if cfg.fail_threshold is None:
+        return False
+    if candidate.finding.category.lower() in {c.lower() for c in cfg.ungated_categories}:
+        return False
+    if not candidate.in_changed_lines and not cfg.gate_pre_existing:
+        return False
+    return severity_rank(candidate.finding.severity) >= severity_rank(cfg.fail_on)
+
+
 def _header(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
     # Keyed on whether the review finished, NOT on the exit code. Those come
     # apart: `SECURITY_SCAN_FAIL_ON_INCOMPLETE=false` makes the gate return 0
@@ -144,6 +188,16 @@ def _header(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
         return [
             "## 🟡 AI security review — {} finding{}, none blocking".format(
                 len(outcome.reported), "" if len(outcome.reported) == 1 else "s"),
+        ]
+    disputed = [c for c in outcome.refuted if _would_have_blocked(cfg, c)]
+    if disputed:
+        # Quiet only because a verifier disagreed. A green tick here says the
+        # opposite of what happened, and it is the line a reader stops at.
+        return [
+            "## 🟠 AI security review — {} disputed finding{}, none confirmed".format(
+                len(disputed), "" if len(disputed) == 1 else "s"),
+            "",
+            "Each of these would have blocked if the verifier had confirmed it.",
         ]
     # "no findings reported", never "no vulnerabilities". The agent read what
     # it read and said nothing about the rest.

@@ -4,9 +4,15 @@ Read this before putting the agent in front of anyone's merge requests. It is
 written to help you decide against it, because the material that would help you
 decide for it does not exist yet.
 
-**Status: experimental. Advisory use only.** Do not gate merges on it. The
-project's own release criteria put third-party gating out of reach and the
-author has decided not to pursue the deployment that would change that.
+**Status: experimental research preview. Not suitable for reviewing untrusted
+contributions.** Findings are model-generated leads, not security conclusions.
+
+"Advisory only" is not by itself a sufficient boundary, and calling it that
+would be the more comfortable half of the truth. While prompt injection is
+unresolved, an attacker who can write a comment in the repository can make a
+real finding look refuted to the person reading the report. That is less
+dangerous than bypassing a gate and it is still attacker-influenced
+reassurance, which is the tool's only output.
 
 ---
 
@@ -74,7 +80,7 @@ the evidence available:
 |---|---|---|
 | Misses a vulnerability in a large newly added module | Nothing is reported; the change looks reviewed | Do not treat a quiet result as coverage. Read the file list in the report |
 | Reports a real defect as a security weakness | Wasted reviewer attention; in gating mode, a blocked merge | Every finding carries the code and the verifier's search; overrule it on that |
-| Prompt injection via ordinary developer prose | **A real vulnerability passes.** Three of four payloads currently do this | Unresolved. Do not run against untrusted contributions in gating mode |
+| Prompt injection via ordinary developer prose | Gating: **a real vulnerability passes.** Advisory: a real finding is made to look refuted to the reader. Three of four payloads did this when last measured | Unresolved. Do not run against untrusted contributions at all — the failure survives turning the gate off |
 | Review stops early | No findings, exit 2 | Exit 2 is never 0; the report header says it did not complete |
 | Two runs disagree on the same code | A merge blocked yesterday passes today | Not measured on real code. Suppressions are matched on quoted code, not wording, so an accepted risk survives rewording |
 | A finding's category is one you did not expect | It is skipped by category filters | The vocabulary is fixed in the schema; open redirect, notably, has no name in it |

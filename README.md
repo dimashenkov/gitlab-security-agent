@@ -4,7 +4,9 @@ By **[Dimitar Shenkov](https://github.com/dimashenkov)** · MIT licensed ·
 [github.com/dimashenkov/gitlab-security-agent](https://github.com/dimashenkov/gitlab-security-agent)
 
 > [!WARNING]
-> **Experimental. Advisory use only — do not gate merges on it.**
+> **Experimental research preview. Not suitable for reviewing untrusted
+> contributions.** Findings are model-generated leads, not security
+> conclusions. Do not gate merges on it.
 > There is no recall figure and no precision figure: both were measured, both
 > turned out to be measuring something else, and both were withdrawn. What
 > exists is a regression suite over cases this project built itself.

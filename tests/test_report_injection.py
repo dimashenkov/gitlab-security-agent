@@ -306,3 +306,69 @@ def test_the_limitations_document_exists_and_says_what_is_unmeasured():
     readme = " ".join((root / "README.md").read_text(encoding="utf-8").split())
     assert "LIMITATIONS.md" in readme
     assert "do not gate merges on it" in readme.lower()
+
+
+# ------------------------------------- a disposition an attacker can move
+
+
+def _refuted(**overrides) -> Candidate:
+    candidate = _candidate(**overrides)
+    candidate.verdict = VERDICT_REFUTED
+    candidate.verdict_reason = "The caller validates first."
+    candidate.in_changed_lines = True
+    return candidate
+
+
+class TestDisputedFindingsAreNotHidden:
+    """The working prompt-injection payloads do not erase the finding.
+
+    They leave it in the report and move its disposition — from confirmed to
+    refuted, or its confidence under the gate. Collapsing refuted findings
+    behind a `<details>` is what turns an attacker-influenced disposition into
+    hidden evidence: the reader sees a quiet report and a folded block.
+
+    Injection is unsolved. This does not fix it. It makes the residual failure
+    corrupted prioritisation rather than a real finding the reader never sees.
+    """
+
+    def test_a_refutation_that_would_have_blocked_is_shown_open(self):
+        outcome = _outcome(refuted=[_refuted(severity="high")])
+        markdown = _render(outcome)
+
+        assert "## Disputed" in markdown
+        # The finding itself, not just a heading — and outside every collapsed
+        # block. `<details>` opens a fold; the disputed body must precede any
+        # of them, or the reader has to click to see it.
+        body = markdown.index("SQL injection", markdown.index("## Disputed"))
+        folds = [i for i in range(len(markdown)) if markdown.startswith("<details>", i)]
+        assert all(body < fold for fold in folds), "the disputed finding is folded away"
+
+    def test_it_carries_the_caveat_about_repository_authored_text(self):
+        markdown = _render(_outcome(refuted=[_refuted(severity="high")]))
+        assert "input to the model, not evidence" in markdown
+        assert "Read the code, not the verdict." in markdown
+
+    def test_a_report_quiet_only_because_of_a_refutation_gets_no_green_tick(self):
+        """The header is the line a reader stops at, and a tick there says the
+        opposite of what happened."""
+        markdown = _render(_outcome(refuted=[_refuted(severity="high")]))
+
+        assert "✅" not in markdown
+        assert "disputed finding" in markdown
+        assert "would have blocked if the verifier had confirmed it" in markdown
+
+    def test_a_refuted_low_stays_collapsed_as_noise(self):
+        """Everything open is the same failure with the sign flipped: the loud
+        thing stops being loud."""
+        markdown = _render(_outcome(refuted=[_refuted(severity="low")]))
+
+        assert "## Disputed" not in markdown
+        assert "Refuted during verification (1)" in markdown
+        assert "✅" in markdown
+
+    def test_a_confirmed_finding_still_leads(self):
+        outcome = _outcome(refuted=[_refuted(severity="high")])
+        outcome.reported = [_candidate(severity="high")]
+        markdown = _render(outcome)
+
+        assert markdown.index("Blocking findings") < markdown.index("## Disputed")
