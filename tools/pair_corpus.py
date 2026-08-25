@@ -63,6 +63,16 @@ from security_agent.models import Usage
 MODEL = "claude-opus-5"
 CACHE_TTL = "1h"
 
+# Bumped whenever a change here alters what a number means, so two results can
+# be compared only when they were produced by the same rules. The history so
+# far, and why the field exists:
+#   1  the original: pair_success = safe quiet AND unsafe found
+#   2  a finding in the safe member split out of "false positive" into
+#      `safe_target_persistence` plus unadjudicated incidentals
+#   3  `hits_target` returns a third state; an incomplete run is unresolved,
+#      not a miss; `expected_file` and `expected_category` became lists
+SCORER_VERSION = 3
+
 
 def cost_of(usage: dict) -> float:
     """What a review cost, at the rates and cache TTL the agent actually runs."""

@@ -216,22 +216,19 @@ eval-baseline:
   needs: []
   when: manual
   allow_failure: true
+  before_script:
+    - pip install --no-cache-dir -e ".[dev]"
   script:
-    - |
-      cat <<'WHY'
-      Compare this run against a frozen baseline and fail when it regresses.
-
-      Not possible yet, and the reason is not effort. A baseline is only
-      comparable if the corpus, the manifests, the prompt hashes, the model,
-      the settings, the scorer version and the adjudications are frozen
-      TOGETHER. Change any one and the two numbers are about different things.
-      In the last two days four of those changed at once, which is exactly why
-      the 2/6 result was withdrawn rather than improved.
-
-      Blocked on: pinning all seven into one baseline.json, and one paid run
-      to populate it.
-      WHY
-    - exit 2
+    # Compares a fresh corpus result against the frozen one, and REFUSES when
+    # the corpus, prompts, model, settings, scorer version, exclusions or
+    # adjudications have moved since the freeze. A delta across a changed
+    # prompt is not a change in the reviewer and reads exactly like one.
+    #
+    # The mechanism exists; baseline.json does not, because populating it takes
+    # a paid corpus run. Until then this exits 2 with that sentence, which is
+    # the honest state and not a passing check.
+    - test -f baseline.json || { echo "no baseline.json — run eval-corpus, then tools/baseline.py freeze"; exit 2; }
+    - python3 tools/baseline.py compare corpus-result.json --baseline baseline.json
 
 eval-gate:
   stage: evaluate
