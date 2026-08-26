@@ -73,13 +73,30 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     if mode == "diff":
         changed = workspace.changed_files()
         if not changed:
-            log.info("no reviewable files changed in this merge request — nothing to do")
-            return EXIT_OK
+            # Not a bare return. That left no artifact and, worse, left the
+            # previous run's note on the merge request still claiming its
+            # verdict — so a change that removed the vulnerable file kept the
+            # comment that found it. An empty diff is a real result and gets a
+            # real artifact.
+            log.info("no reviewable files changed — writing an empty result")
+            return _nothing_to_review(cfg, args, mode, base, head)
         log.info("reviewing %d changed file(s) in %s..%s",
                  len(changed), _abbrev(base), _abbrev(head))
     else:
         log.info("reviewing %d tracked file(s) at %s",
                  len(workspace.tracked_files()), _abbrev(head))
+
+    # Before anything is read by the model: can this change rewrite the rules
+    # it is about to be reviewed under?
+    from .config import prompt_dir_risk
+
+    risk = prompt_dir_risk(cfg.resolved_prompt_dir(), root,
+                           [path for path, _ in workspace.changed_files()])
+    if risk and risk.startswith("REFUSE"):
+        log.error("%s", risk[len("REFUSE: "):])
+        return EXIT_ERROR
+    if risk:
+        log.warning("%s", risk)
 
     if args.reuse:
         reused = _reuse(cfg, args, root, mode, base, head)
@@ -186,6 +203,44 @@ def _folded(name: str, title: str):
     finally:
         sys.stdout.write(terminal.section(name, "", False, int(time.time())) + "\n")
         sys.stdout.flush()
+
+
+def _nothing_to_review(cfg: Config, args: argparse.Namespace, mode: str,
+                       base: str, head: str) -> int:
+    """A completed review of a change with nothing reviewable in it.
+
+    Complete, because it is: every changed file was excluded by configuration,
+    and that is an answer rather than a failure. It gets an artifact and a
+    posted note for the same reason every other run does — so that the absence
+    of a comment always means something went wrong, and the presence of one
+    always describes this run rather than the last.
+    """
+    from .agent import _provenance
+    from .gate import decide
+    from .models import ScanOutcome
+    from .report import ReportError, render_markdown, write_artifacts
+
+    outcome = ScanOutcome(mode=mode, model=cfg.model)
+    outcome.provenance = _provenance(cfg)
+    outcome.summary = (
+        "Every file in this change is excluded by configuration, so there was "
+        "nothing to review. This is not a statement about the code."
+    )
+    decision = decide(cfg, outcome)
+    try:
+        paths = write_artifacts(cfg, outcome, decision)
+    except ReportError as exc:
+        log.error("%s", exc)
+        return EXIT_ERROR
+
+    from . import terminal
+
+    print(terminal.render(outcome, decision, report_path=paths["markdown"]))
+    if cfg.post_comment and not args.no_comment:
+        from .forge import publish
+
+        publish(cfg.gitlab, render_markdown(cfg, outcome, decision))
+    return decision.exit_code
 
 
 def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,

@@ -203,6 +203,62 @@ class ForgeContext:
 GitLabContext = ForgeContext
 
 
+def _inside(path: Path, root: Path) -> bool:
+    """Is `path` at or under `root`? Both must already be resolved.
+
+    Compared on parts rather than string prefixes: `/repo-backup` starts with
+    `/repo` and is a different directory.
+    """
+    return path == root or root in path.parents
+
+
+def prompt_dir_risk(prompt_dir: Path, repo_root: Path,
+                    changed: Sequence[str]) -> Optional[str]:
+    """Can the change under review rewrite the rules used to review it?
+
+    The documented guarantee — prompts never come from the repository under
+    review — was written three times and enforced nowhere. Anthropic's action
+    ships the same hole as a feature: its filtering instructions are read from
+    a path inside the checkout, so on a `pull_request` build the author of the
+    change supplies the rules used to filter findings about it.
+
+    A blanket refusal was the first attempt and it was wrong. Running from a
+    source checkout of the agent's own repository puts the prompts inside the
+    reviewed tree by construction, and that is the author's normal workflow,
+    not an attack. What matters is narrower and exactly checkable: **is a
+    prompt file part of this change?**
+
+    Returns None when there is nothing to say, a warning string when the
+    prompts sit inside the tree but the change does not touch them, and a
+    string beginning with "REFUSE" when it does.
+    """
+    prompt_dir, repo_root = prompt_dir.resolve(), repo_root.resolve()
+    if not _inside(prompt_dir, repo_root):
+        return None
+
+    try:
+        relative = prompt_dir.relative_to(repo_root)
+    except ValueError:                      # pragma: no cover - guarded above
+        return None
+    prefix = str(relative).rstrip("/") + "/"
+    touched = sorted(path for path in changed if path.startswith(prefix))
+
+    if touched:
+        return (
+            "REFUSE: this change edits {}, and those files are the prompts this "
+            "review would run under — the change would be judged by rules it "
+            "wrote. Point SECURITY_SCAN_PROMPT_DIR at the agent's own prompts, "
+            "outside the checkout, or review this change with a trusted "
+            "build.".format(", ".join(touched))
+        )
+    return (
+        "the prompts are being read from {}, inside the repository under "
+        "review. Nothing in this change touches them, so this review is sound "
+        "— but a change that did would be judged by its own rules.".format(
+            prompt_dir)
+    )
+
+
 def _github_event() -> Dict[str, Any]:
     """The event payload, or an empty one.
 
@@ -413,6 +469,18 @@ class Config:
         content as instructions. Loading it from the working directory would
         hand that control to whoever opened the merge request, so the search
         covers only the operator's own setting and the agent's installation.
+
+        That rule was written here three times and enforced nowhere: the check
+        was only that two files exist. Anthropic's action ships the same hole as
+        a feature — its false-positive instructions are read from a path inside
+        the checkout, so on a `pull_request` build the author of the change
+        supplies the rules used to filter findings about it. Criticising that
+        while relying on documentation for the same guarantee was not a
+        position worth keeping.
+
+        `repo_root` is the repository under review. Passing it turns the rule
+        into a check; omitting it keeps the old behaviour for callers that have
+        no repository in hand, such as `--version`.
         """
         candidates = []
         if self.prompt_dir:
