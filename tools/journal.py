@@ -35,7 +35,25 @@ from pathlib import Path
 import yaml
 
 JOURNAL = Path("journal")
-VERDICTS = ("real", "not_real", "unclear", "unadjudicated")
+
+# The trial's vocabulary, not a truth vocabulary. "Is this finding real" turned
+# out to be the wrong question for deciding whether to keep running the tool: a
+# finding can be perfectly real and still worth nothing, because the author had
+# already seen it before the agent said anything. The question that decides is
+# whether it showed him something he had missed and changed what he did.
+VERDICTS = (
+    "novel_actionable",     # he had missed it, and changed code because of it
+    "already_known",        # real, and in his pre-review note
+    "real_non_actionable",  # real, and nothing was done or needed doing
+    "not_real",
+    "unclear",
+    "unadjudicated",
+)
+
+# The only verdict that argues for keeping the tool. Everything else is neutral
+# or a cost. Ten wrong findings dismissed in a minute each establish low
+# irritation, not value, and a count of findings establishes nothing at all.
+VALUABLE = ("novel_actionable",)
 
 
 def entry_dir(root: Path, ref: str) -> Path:
@@ -62,14 +80,17 @@ def summarise(finding: dict, blocking: set) -> dict:
         "line": finding.get("line", 0),
         "title": finding.get("title", ""),
         "blocked_the_merge": finding.get("fingerprint") in blocking,
-        # The only field a person fills in. It stays `unadjudicated` until
-        # someone reads the code, and nothing here will quietly decide it.
+        # The fields a person fills in. They stay empty until someone reads the
+        # code, and nothing here will quietly decide them.
         "verdict": "unadjudicated",
+        # How long adjudicating this one took. The tool has to beat the
+        # attention it costs, and attention is the part nobody bills for.
+        "minutes": 0,
         "note": "",
     }
 
 
-def add(artifact: Path, ref: str, root: Path) -> int:
+def add(artifact: Path, ref: str, root: Path, noticed: str = "") -> int:
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     destination = entry_dir(root, ref)
     if (destination / "verdict.yml").exists():
@@ -84,6 +105,14 @@ def add(artifact: Path, ref: str, root: Path) -> int:
     revision = payload.get("revision", {})
     stub = {
         "ref": ref,
+        # Written BEFORE the agent's output is read. If the report is read
+        # first, a useful finding can no longer be told apart from something
+        # the author would have noticed anyway, and the trial answers a
+        # different question than the one it was set up for.
+        "noticed_before_running": noticed,
+        # A security issue the human found that the agent did not. Without a
+        # place to write it, the trial counts hits and never misses.
+        "missed_by_the_agent": "",
         # Kept because a finding is a claim about code at a moment, and the
         # verdict below is a claim about the finding.
         "reviewed_base": revision.get("base_sha", ""),
@@ -116,7 +145,11 @@ def report(root: Path) -> int:
     incomplete = [e for e in entries if not e.get("complete")]
     findings = [f for e in entries for f in (e.get("findings") or [])]
     tally = Counter(f.get("verdict", "unadjudicated") for f in findings)
-    judged = tally["real"] + tally["not_real"]
+    judged = sum(tally[name] for name in VERDICTS
+                 if name not in ("unadjudicated", "unclear"))
+    valuable = sum(tally[name] for name in VALUABLE)
+    minutes = sum(int(f.get("minutes") or 0) for f in findings)
+    misses = [e for e in entries if (e.get("missed_by_the_agent") or "").strip()]
 
     print("\n{} review(s) filed, {} finding(s).".format(len(entries), len(findings)))
     if incomplete:
@@ -126,31 +159,55 @@ def report(root: Path) -> int:
               "nothing: {}".format(
                   len(incomplete), ", ".join(e["ref"] for e in incomplete)))
 
-    print("\n{:<16}{:>8}".format("verdict", "count"))
-    print("-" * 24)
+    print("\n{:<22}{:>8}".format("verdict", "count"))
+    print("-" * 30)
     for name in VERDICTS:
-        print("{:<16}{:>8}".format(name, tally[name]))
+        print("{:<22}{:>8}".format(name, tally[name]))
+
+    if misses:
+        # The column that stops this being a scoreboard of hits. A tool that
+        # never contradicts you and never finds what you found yourself has
+        # told you nothing.
+        print("\n{} review(s) where a person found a security issue the agent "
+              "did not: {}".format(len(misses), ", ".join(e["ref"] for e in misses)))
 
     if not judged:
-        print("\nNothing has been adjudicated, so there is no rate to report. "
-              "Every finding above is a claim nobody has checked.")
+        print("\nNothing has been adjudicated, so there is nothing to decide "
+              "on. Every finding above is a claim nobody has checked.")
         return 0
 
-    print("\nOf the {} finding(s) a person has judged, {} were real "
-          "({:.0f}%).".format(judged, tally["real"], 100 * tally["real"] / judged))
+    print("\nOf the {} finding(s) a person has judged, {} showed something "
+          "that had been missed and changed the code ({:.0f}%).".format(
+              judged, valuable, 100 * valuable / judged))
+    for name in ("already_known", "real_non_actionable", "not_real"):
+        if tally[name]:
+            print("  {} were {}".format(tally[name], name.replace("_", " ")))
+    if minutes:
+        print("Adjudication cost {} minute(s) across those findings."
+              .format(minutes))
     if tally["unadjudicated"]:
-        print("{} finding(s) are not yet judged and are excluded from that "
-              "figure — not counted as wrong. The two are different "
-              "statements.".format(tally["unadjudicated"]))
+        print("{} finding(s) are not yet judged and are excluded — not counted "
+              "as wrong. The two are different statements."
+              .format(tally["unadjudicated"]))
     if tally["unclear"]:
         print("{} were left `unclear`, which is a real answer and stays out of "
-              "the rate.".format(tally["unclear"]))
+              "the count.".format(tally["unclear"]))
 
     blocked = [f for f in findings if f.get("blocked_the_merge")]
     if blocked:
         wrong = sum(1 for f in blocked if f.get("verdict") == "not_real")
         print("\n{} finding(s) actually blocked a merge; {} of those were "
               "judged not real.".format(len(blocked), wrong))
+
+    # The decision, spelled out, because the counts above do not make it and a
+    # reader looking for a reason to keep a tool will find one in any table.
+    print("\nKeep it if at least one of those {} was something that would "
+          "otherwise have shipped. Turn it off if none was, if wrong findings "
+          "keep costing real attention, or if you catch yourself reading a "
+          "quiet report as reassurance.".format(valuable))
+    if len(entries) < 10:
+        print("{} of 10 eligible changes so far — too few to decide on."
+              .format(len(entries)))
 
     print("\nThis is not independent evidence: the same person wrote the "
           "prompts, the code under review, and the verdicts above.")
@@ -166,6 +223,11 @@ def main() -> int:
     adder.add_argument("artifact")
     adder.add_argument("--ref", required=True,
                        help="what was reviewed — a commit sha or MR id")
+    adder.add_argument("--noticed", default="",
+                       help="what YOU spotted before reading the report. Write "
+                            "it before you open the report, or a useful finding "
+                            "cannot be told apart from one you would have found "
+                            "anyway.")
 
     sub.add_parser("report", help="what has been filed and judged")
 
@@ -178,7 +240,7 @@ def main() -> int:
             print("no such artifact: {}".format(artifact), file=sys.stderr)
             return 2
         root.mkdir(parents=True, exist_ok=True)
-        return add(artifact, args.ref, root)
+        return add(artifact, args.ref, root, args.noticed)
     if not root.is_dir():
         print("no journal at {} — file something with `add` first".format(root),
               file=sys.stderr)

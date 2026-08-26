@@ -146,6 +146,43 @@ Plus, before any review starts and without an artifact: invalid configuration,
 an unusable repository or revision range, missing credentials, and a report
 that cannot be written where it was asked to go.
 
+## If you are the author, using it on your own code
+
+The tier the project has actually settled on. Most of what blocks third-party
+use is about evidence someone else would need; the conditions that matter for
+the author are different and shorter:
+
+- **Advisory and never a required check.** `allow_failure: true`, or
+  `tools/review.sh`, which runs locally with `--no-comment` and no GitLab token.
+- **Read your own diff first**, and write down what you noticed, before you open
+  the report. Read it the other way round and a useful finding cannot be told
+  apart from one you would have found anyway.
+- **Selectively, not on every commit.** It earns its cost where security
+  reasoning crosses files: new request handlers, authorisation, query and
+  command and template construction, path handling, deserialisation, CI and
+  secret handling, dependency integration, large generated changes. Not
+  refactors, tests, formatting or documentation.
+- **A spend limit on the provider account.** The ceilings here are turns, time
+  and tokens; none of them is dollars, and cost is only known after a response
+  completes.
+- **Only repositories whose contents you are willing to send.** There is no
+  positive allowlist — exclusions are patterns, so assume any file may be read.
+- **The injection caveat still applies, narrowed.** A single author removes the
+  obvious attacker, but repository prose also arrives through vendored code,
+  generated files, accepted patches and upstream examples. The defensible
+  condition is that you treat review-relevant prose as non-hostile, or accept
+  that third-party prose may influence the report.
+
+**The decision procedure**, so the trial can end rather than drift: ten eligible
+changes or one month, whichever is later. Keep it if at least one finding showed
+you something that would otherwise have shipped, or if its call-chain evidence
+saves more time than adjudicating it costs. Turn it off if none did, if wrong
+findings keep costing real attention, or if you catch yourself reading a quiet
+report as reassurance. Ten wrong findings dismissed in a minute each establish
+low irritation, not value.
+
+`tools/journal.py report` prints that decision with the counts beside it.
+
 ## Running it without blocking
 
 Use `allow_failure: true` on the job, and do not make it a required check.

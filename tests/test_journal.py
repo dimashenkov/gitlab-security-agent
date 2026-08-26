@@ -91,7 +91,7 @@ def test_refiling_does_not_overwrite_a_verdict_already_given(tmp_path):
         "real", "not_real"]
 
 
-def test_nothing_judged_means_no_rate(tmp_path, capsys):
+def test_nothing_judged_means_nothing_to_decide_on(tmp_path, capsys):
     """The failure mode this file exists for: an unjudged finding is not a
     wrong one, and a tool that averages them says the reviewer is 0% correct."""
     root = tmp_path / "journal"
@@ -99,30 +99,84 @@ def test_nothing_judged_means_no_rate(tmp_path, capsys):
 
     report(root)
     out = capsys.readouterr().out
-    assert "no rate to report" in out
+    assert "nothing to decide on" in out
     assert "%" not in out
 
 
 def test_unjudged_findings_stay_out_of_the_rate(tmp_path, capsys):
     root = tmp_path / "journal"
     add(artifact(tmp_path), "abc1234", root)
-    judge(root, "abc1234", "real")          # the second stays unadjudicated
+    judge(root, "abc1234", "novel_actionable")   # the second stays unadjudicated
 
     report(root)
     out = capsys.readouterr().out
-    assert "1 finding(s) a person has judged, 1 were real (100%)" in out
+    assert "1 finding(s) a person has judged, 1 showed something" in out
     assert "not counted as wrong" in out
 
 
-def test_unclear_is_a_real_answer_and_stays_out_of_the_rate(tmp_path, capsys):
+def test_unclear_is_a_real_answer_and_stays_out_of_the_count(tmp_path, capsys):
     root = tmp_path / "journal"
     add(artifact(tmp_path), "abc1234", root)
-    judge(root, "abc1234", "real", "unclear")
+    judge(root, "abc1234", "novel_actionable", "unclear")
 
     report(root)
     out = capsys.readouterr().out
-    assert "1 finding(s) a person has judged, 1 were real (100%)" in out
+    assert "1 finding(s) a person has judged, 1 showed something" in out
     assert "left `unclear`" in out
+
+
+def test_a_real_finding_the_author_already_knew_is_not_value(tmp_path, capsys):
+    """The change that makes this vocabulary worth having.
+
+    "Is it real" was the wrong question for deciding whether to keep the tool.
+    A finding can be perfectly real and worth nothing, because the author had
+    it in his pre-review note before the agent said anything.
+    """
+    root = tmp_path / "journal"
+    add(artifact(tmp_path), "abc1234", root)
+    judge(root, "abc1234", "already_known", "real_non_actionable")
+
+    report(root)
+    out = capsys.readouterr().out
+    assert "2 finding(s) a person has judged, 0 showed something" in out
+    assert "1 were already known" in out
+
+
+def test_what_the_agent_missed_is_reported(tmp_path, capsys):
+    """Without it the journal is a scoreboard of hits. A tool that never finds
+    what you found yourself has told you nothing."""
+    root = tmp_path / "journal"
+    add(artifact(tmp_path), "abc1234", root)
+    data = verdicts_of(root, "abc1234")
+    data["missed_by_the_agent"] = "the token comparison in auth.py is not constant-time"
+    (root / "abc1234" / "verdict.yml").write_text(yaml.safe_dump(data, sort_keys=False))
+
+    report(root)
+    assert "found a security issue the agent did not" in capsys.readouterr().out
+
+
+def test_what_you_noticed_first_is_recorded_at_filing_time(tmp_path):
+    """Read the report first and a useful finding can no longer be told apart
+    from one you would have found anyway. The field exists so the ordering is
+    visible afterwards."""
+    root = tmp_path / "journal"
+    add(artifact(tmp_path), "abc1234", root, "the region parameter is interpolated")
+
+    assert verdicts_of(root, "abc1234")["noticed_before_running"] == (
+        "the region parameter is interpolated")
+
+
+def test_the_decision_is_spelled_out_not_left_to_the_table(tmp_path, capsys):
+    """A reader looking for a reason to keep a tool will find one in any table."""
+    root = tmp_path / "journal"
+    add(artifact(tmp_path), "abc1234", root)
+    judge(root, "abc1234", "not_real", "not_real")
+
+    report(root)
+    out = capsys.readouterr().out
+    assert "Keep it if at least one of those 0" in out
+    assert "Turn it off if none was" in out
+    assert "1 of 10 eligible changes so far" in out
 
 
 def test_an_incomplete_review_is_named_above_the_numbers(tmp_path, capsys):
@@ -142,7 +196,7 @@ def test_a_block_that_was_wrong_is_reported_separately(tmp_path, capsys):
     about first."""
     root = tmp_path / "journal"
     add(artifact(tmp_path), "abc1234", root)
-    judge(root, "abc1234", "not_real", "real")
+    judge(root, "abc1234", "not_real", "novel_actionable")
 
     report(root)
     out = capsys.readouterr().out
@@ -154,7 +208,7 @@ def test_the_report_says_it_is_not_independent_evidence(tmp_path, capsys):
     that does not carry that sentence will be quoted without it."""
     root = tmp_path / "journal"
     add(artifact(tmp_path), "abc1234", root)
-    judge(root, "abc1234", "real", "real")
+    judge(root, "abc1234", "novel_actionable", "already_known")
 
     report(root)
     assert "not independent evidence" in capsys.readouterr().out
