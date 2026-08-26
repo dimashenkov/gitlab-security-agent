@@ -271,3 +271,62 @@ def test_section_markers_carry_the_name_on_both_ends():
     assert "section_end:1090:review" in end
     assert "[collapsed=true]" in start
     assert "Reviewing the change" in start
+
+
+class TestHostileTextCannotDriveTheTerminal:
+    """The job log is the other place attacker-authored text is rendered.
+
+    The Markdown report has escaped hostile content since the fence bug. The
+    terminal renderer had not: a finding's title and its quoted code are
+    written by whoever opened the merge request, and a raw escape sequence in
+    one of them is acted on by the terminal reading the CI log.
+    """
+
+    def test_an_osc_hyperlink_is_stripped(self):
+        from security_agent.terminal import _visible
+
+        hostile = "\033]8;;http://evil.example\007click\033]8;;\007"
+        assert _visible(hostile) == "click"
+
+    def test_a_carriage_return_cannot_rewrite_a_printed_line(self):
+        """It is how a title overwrites the verdict that was already drawn."""
+        from security_agent.terminal import _visible
+
+        assert _visible("finding\rPASSED") == "findingPASSED"
+
+    def test_ordinary_colour_codes_are_still_stripped(self):
+        from security_agent.terminal import _visible
+
+        assert _visible("\033[1;31mblocked\033[0m") == "blocked"
+
+
+class TestWidthIsCellsNotCodePoints:
+    """`len()` counted code points, so a CJK title or an emoji reported one
+    cell where the terminal drew two and every border after it landed short."""
+
+    def test_a_wide_character_counts_as_two(self):
+        from security_agent.terminal import _width
+
+        assert _width("ab") == 2
+        assert _width("日本") == 4
+        assert _width("🔴") == 2
+
+    def test_escapes_do_not_count(self):
+        from security_agent.terminal import _width
+
+        assert _width("\033[31mred\033[0m") == 3
+
+    def test_combining_marks_occupy_nothing(self):
+        from security_agent.terminal import _width
+
+        assert _width("e\u0301") == 1
+
+    def test_a_wide_title_does_not_push_the_box_open(self):
+        """The property the pad computation exists for, asserted end to end."""
+        from security_agent.gate import Decision
+        from security_agent.terminal import WIDTH, _visible
+
+        outcome = make_outcome()
+        text = terminal.render(outcome, Decision(exit_code=0, reason="nothing"))
+        for line in _visible(text).splitlines():
+            assert len(line) <= WIDTH + 2, repr(line)

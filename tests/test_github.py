@@ -20,13 +20,20 @@ from security_agent.report import COMMENT_MARKER
 
 
 class FakeResponse:
-    def __init__(self, status=200, payload=None, text=""):
+    def __init__(self, status=200, payload=None, text="", headers=None,
+                 body_is_json=True):
         self.status_code = status
         self._payload = payload if payload is not None else {}
         self.text = text
+        self.headers = headers or {}
         self.content = b"x" if payload is not None or text else b""
+        # A 200 whose body is not JSON is a real thing a proxy or an error page
+        # produces, and `json()` raising is how it arrives.
+        self._body_is_json = body_is_json
 
     def json(self):
+        if not self._body_is_json:
+            raise ValueError("no JSON object could be decoded")
         return self._payload
 
 
@@ -115,6 +122,68 @@ def test_each_refusal_says_what_to_fix(status, expected):
     with pytest.raises(GitHubError) as caught:
         GitHubClient(ctx(), session).post_or_update_note("body")
     assert expected in str(caught.value)
+
+
+@pytest.mark.parametrize("headers,text", [
+    ({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1787600000"}, ""),
+    ({"Retry-After": "60"}, ""),
+    ({}, "You have exceeded a secondary rate limit"),
+])
+def test_a_403_that_is_a_quota_problem_does_not_ask_for_permissions(headers, text):
+    """GitHub answers 403 for two unrelated things.
+
+    This test previously locked in the wrong advice: it asserted the
+    permissions message for every 403, so a rate-limited run told the operator
+    to widen a token's scope — sending them to fix the wrong problem, and to
+    grant something they did not need.
+    """
+    session = FakeSession([FakeResponse(status=403, headers=headers, text=text)])
+    with pytest.raises(GitHubError) as caught:
+        GitHubClient(ctx(), session).post_or_update_note("body")
+
+    message = str(caught.value)
+    assert "rate limiting" in message
+    assert "permissions" not in message
+    assert "Nothing needs to be granted" in message
+
+
+def test_a_403_with_no_quota_signal_is_still_a_permission_problem():
+    session = FakeSession([FakeResponse(status=403, text="Resource not accessible")])
+    with pytest.raises(GitHubError) as caught:
+        GitHubClient(ctx(), session).post_or_update_note("body")
+    assert "pull-requests: write" in str(caught.value)
+
+
+def test_a_marker_on_the_second_page_is_still_found():
+    """The pagination loop was written and never exercised. A second comment
+    per run is exactly what this client exists to prevent."""
+    first = [{"id": n, "body": "chatter"} for n in range(100)]
+    second = [{"id": 500, "body": COMMENT_MARKER + "\nold"}]
+    session = FakeSession([FakeResponse(payload=first),
+                           FakeResponse(payload=second),
+                           FakeResponse(payload={"id": 500})])
+
+    assert GitHubClient(ctx(), session).post_or_update_note("new") == (
+        "updated comment 500")
+    assert [call[0] for call in session.calls] == ["GET", "GET", "PATCH"]
+
+
+def test_a_short_page_ends_the_search_rather_than_paging_forever():
+    session = FakeSession([FakeResponse(payload=[{"id": 1, "body": "x"}]),
+                           FakeResponse(payload={"id": 9})])
+    GitHubClient(ctx(), session).post_or_update_note("body")
+
+    assert [call[0] for call in session.calls] == ["GET", "POST"]
+
+
+def test_a_body_that_is_not_json_is_an_error_not_a_crash():
+    """A proxy or an error page returns 200 with HTML. `json()` raising is how
+    that arrives, and it must become a diagnosed failure to post — never an
+    exception escaping into the exit code."""
+    session = FakeSession([FakeResponse(payload=[], text="<html>", body_is_json=False)])
+    with pytest.raises(GitHubError) as caught:
+        GitHubClient(ctx(), session).post_or_update_note("body")
+    assert "non-JSON" in str(caught.value)
 
 
 def test_a_failure_to_post_is_swallowed_not_raised(monkeypatch):

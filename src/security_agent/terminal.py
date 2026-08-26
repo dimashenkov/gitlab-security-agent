@@ -144,7 +144,10 @@ def _finding(
         flag = s("not gated — category excluded", "35")
     else:
         flag = s("advisory", "2")
-    pad = max(1, WIDTH - len(heading) - len(_visible(flag)) - 1)
+    # Cells, not code points. A CJK title or an emoji in a finding counts one
+    # per character with `len()` and draws two, so every border after it landed
+    # a cell short — and the title is attacker-authored.
+    pad = max(1, WIDTH - _width(heading) - _width(flag) - 1)
 
     lines = [
         "",
@@ -315,15 +318,74 @@ def _wrap(text: str, indent: int) -> str:
 
 
 def _visible(text: str) -> str:
-    """Length of a styled string as it appears, ignoring escape sequences."""
+    """A styled string with its escape sequences removed.
+
+    Also strips escapes the agent never emits but a *finding* might: titles and
+    quoted code are attacker-authored, and a raw `\\033]8;;http://…\\007` in one
+    of them would be written straight to a CI log where the terminal acts on
+    it. The Markdown report has been escaping hostile content since the fence
+    bug; the terminal renderer had not.
+    """
     out, i = [], 0
     while i < len(text):
         if text[i] == "\033":
-            i = text.find("m", i) + 1 or len(text)
+            # CSI (`\033[…m`) and OSC (`\033]…` up to BEL or ST) both start
+            # here. Consume to the terminator, or to the end if there is none.
+            nxt = text[i + 1] if i + 1 < len(text) else ""
+            if nxt == "]":
+                # OSC runs to BEL or to ST (`ESC \`). Both terminators are
+                # optional in hostile input, so an absent one ends the string.
+                # `find` returning -1 must not be arithmetic'd into a small
+                # positive index: that walks `i` backwards and loops forever,
+                # which is how this first behaved.
+                bell = text.find("\007", i)
+                st = text.find("\033\\", i)
+                ends = [bell + 1 for _ in (1,) if bell != -1]
+                ends += [st + 2 for _ in (1,) if st != -1]
+                end = min(ends) if ends else len(text)
+            else:
+                marker = text.find("m", i)
+                end = marker + 1 if marker != -1 else len(text)
+            # Never stand still, whatever the input claims.
+            i = max(end, i + 1)
+            continue
+        if text[i] in "\r\b\007":
+            # A carriage return can rewrite a line that has already been
+            # printed, which is how a finding's title overwrites the verdict.
+            i += 1
             continue
         out.append(text[i])
         i += 1
     return "".join(out)
+
+
+# Ranges that occupy two terminal cells. Not a full Unicode width table — the
+# East Asian blocks and the emoji planes are what actually appear in a title or
+# a line of quoted code, and counting code points made every one of them push
+# the box border a cell to the right.
+_WIDE = (
+    (0x1100, 0x115F), (0x2E80, 0x303E), (0x3041, 0x33FF),
+    (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xA000, 0xA4CF),
+    (0xAC00, 0xD7A3), (0xF900, 0xFAFF), (0xFE30, 0xFE6F),
+    (0xFF00, 0xFF60), (0xFFE0, 0xFFE6),
+    (0x1F300, 0x1F64F), (0x1F900, 0x1F9FF), (0x20000, 0x3FFFD),
+)
+
+
+def _width(text: str) -> int:
+    """How many cells a string occupies once its escapes are gone.
+
+    `len()` counts code points, so a CJK title or an emoji severity marker
+    reported one cell where the terminal drew two, and every box border after
+    it landed short.
+    """
+    total = 0
+    for char in _visible(text):
+        point = ord(char)
+        if 0x0300 <= point <= 0x036F:        # combining marks occupy nothing
+            continue
+        total += 2 if any(lo <= point <= hi for lo, hi in _WIDE) else 1
+    return total
 
 
 def section(name: str, title: str, start: bool, when: int) -> str:

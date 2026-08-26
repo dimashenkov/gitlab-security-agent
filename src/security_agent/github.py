@@ -104,12 +104,12 @@ class GitHubClient:
                 "or pass GITHUB_TOKEN through explicitly — it is not in the "
                 "environment unless the workflow puts it there."
             )
-        if response.status_code == 403:
-            raise GitHubError(
-                "GitHub denied the request (403). The workflow needs "
-                "`permissions: pull-requests: write`, and the automatic token "
-                "cannot comment on a pull request from a fork."
-            )
+        if response.status_code in (403, 429):
+            # GitHub answers 403 for two unrelated things, and telling someone
+            # to widen a token's permissions when they are simply out of quota
+            # sends them to fix the wrong problem — and to grant a scope they
+            # did not need.
+            raise GitHubError(_denied(response))
         if response.status_code == 404:
             raise GitHubError(
                 "Pull request #{} not found in {} (404). A private repository "
@@ -159,6 +159,49 @@ def publish(ctx: ForgeContext, body: str) -> Optional[str]:
     except GitHubError as exc:
         log.error("could not post the pull request comment: %s", exc)
         return None
+
+
+def _denied(response: Any) -> str:
+    """Tell a 403 that is a quota problem from a 403 that is a permission one.
+
+    Read from the headers rather than the body: `X-RateLimit-Remaining: 0` is
+    the documented signal, `Retry-After` covers the secondary limits, and both
+    survive a message GitHub may reword. The body is only consulted as a
+    fallback, and only for phrases GitHub uses for this and nothing else.
+    """
+    headers = getattr(response, "headers", None) or {}
+
+    def header(name: str) -> str:
+        try:
+            return str(headers.get(name, "") or "")
+        except AttributeError:                       # a plain dict-like fake
+            return ""
+
+    remaining = header("X-RateLimit-Remaining")
+    retry_after = header("Retry-After")
+    body = (getattr(response, "text", "") or "").lower()
+    throttled = (
+        remaining == "0"
+        or bool(retry_after)
+        or "rate limit" in body
+        or "secondary rate limit" in body
+        or "abuse detection" in body
+    )
+
+    if throttled:
+        reset = header("X-RateLimit-Reset")
+        when = " Retry after {}s.".format(retry_after) if retry_after else (
+            " The limit resets at {} (unix time).".format(reset) if reset else "")
+        return (
+            "GitHub is rate limiting this token ({}), not refusing it.{} "
+            "Nothing needs to be granted — the comment was not posted and the "
+            "review is unaffected.".format(response.status_code, when)
+        )
+    return (
+        "GitHub denied the request ({}). The workflow needs "
+        "`permissions: pull-requests: write`, and the automatic token cannot "
+        "comment on a pull request from a fork.".format(response.status_code)
+    )
 
 
 def _clip(body: str) -> str:
