@@ -54,7 +54,7 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     from . import terminal
     from .agent import SecurityAgent
     from .briefing import build as build_briefing
-    from .gitlab import publish
+    from .forge import publish
     from .report import ReportError, render_markdown, write_artifacts
     from .suppress import SuppressionError
     from .suppress import apply as apply_suppressions

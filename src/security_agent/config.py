@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from .models import CONFIDENCE_ORDER, SEVERITY_ORDER
 
@@ -70,9 +71,20 @@ def _env_list(name: str) -> List[str]:
 
 
 @dataclass
-class GitLabContext:
-    """The slice of GitLab's predefined variables the agent actually uses."""
+class ForgeContext:
+    """What the agent needs to know about the change it is reviewing.
 
+    One shape for both forges. The field names are GitLab's because they were
+    first and renaming them would ripple through the briefing, the gate, the
+    report and the tests without buying anything — `mr_iid` holds a pull
+    request number on GitHub and means the same thing.
+
+    `kind` decides where a comment goes. It is also the honest answer to "which
+    forge is this": absent both, it is `none`, and the agent still reviews and
+    still writes its artifact, it just has nowhere to post.
+    """
+
+    kind: str = "gitlab"
     api_url: str = ""
     project_id: str = ""
     project_path: str = ""
@@ -99,8 +111,67 @@ class GitLabContext:
         return bool(self.token and self.project_id and self.mr_iid and self.api_url)
 
     @classmethod
-    def from_env(cls) -> "GitLabContext":
+    def from_env(cls) -> "ForgeContext":
+        """Whichever forge this is running on, or neither.
+
+        GitHub is checked first because a GitHub Actions runner sets `CI` and a
+        handful of generic variables too, and a GitLab-shaped read of those
+        produces a context that looks half-populated instead of empty — which
+        is worse than no context at all, because it fails at posting rather
+        than at detection.
+        """
+        if _env("GITHUB_ACTIONS") or _env("GITHUB_REPOSITORY"):
+            return cls.from_github_env()
+        return cls.from_gitlab_env()
+
+    @classmethod
+    def from_github_env(cls) -> "ForgeContext":
+        """GitHub Actions. Most of it is in the event payload, not the env.
+
+        `GITHUB_REF` gives `refs/pull/N/merge` on a pull request, but nothing
+        in the environment carries the title, the labels, or the base sha — so
+        the event payload is read when it is there, and its absence degrades to
+        a review without a comment rather than to a crash.
+        """
+        event = _github_event()
+        pull = event.get("pull_request") or {}
+        repository = event.get("repository") or {}
+        server = _env("GITHUB_SERVER_URL", "https://github.com")
+        slug = _env("GITHUB_REPOSITORY")
+        number = str(pull.get("number") or "")
+        if not number:
+            ref = _env("GITHUB_REF")            # refs/pull/12/merge
+            parts = ref.split("/")
+            if len(parts) > 2 and parts[1] == "pull":
+                number = parts[2]
         return cls(
+            kind="github",
+            api_url=_env("GITHUB_API_URL", "https://api.github.com"),
+            project_id=slug,
+            project_path=slug,
+            # A workflow must pass it in: `GITHUB_TOKEN` is not exported to the
+            # environment by default, and the automatic token cannot comment on
+            # a pull request from a fork.
+            token=_env("SECURITY_SCAN_GITHUB_TOKEN") or _env("GITHUB_TOKEN"),
+            mr_iid=number,
+            mr_title=str(pull.get("title") or ""),
+            mr_description=str(pull.get("body") or ""),
+            mr_labels=[str(label.get("name", "")) for label in pull.get("labels") or []],
+            source_branch=_env("GITHUB_HEAD_REF"),
+            target_branch=_env("GITHUB_BASE_REF"),
+            diff_base_sha=str((pull.get("base") or {}).get("sha") or ""),
+            source_branch_sha=str((pull.get("head") or {}).get("sha") or _env("GITHUB_SHA")),
+            default_branch=str(repository.get("default_branch") or "main"),
+            pipeline_source=_env("GITHUB_EVENT_NAME"),
+            job_url="{}/{}/actions/runs/{}".format(
+                server, slug, _env("GITHUB_RUN_ID")) if slug else "",
+            commit_sha=_env("GITHUB_SHA"),
+        )
+
+    @classmethod
+    def from_gitlab_env(cls) -> "ForgeContext":
+        return cls(
+            kind="gitlab",
             api_url=_env("CI_API_V4_URL"),
             project_id=_env("CI_PROJECT_ID"),
             project_path=_env("CI_PROJECT_PATH"),
@@ -125,6 +196,30 @@ class GitLabContext:
             job_url=_env("CI_JOB_URL"),
             commit_sha=_env("CI_COMMIT_SHA"),
         )
+
+
+# The old name, kept because it appears in tests and in anything anyone wrote
+# against this before there were two forges.
+GitLabContext = ForgeContext
+
+
+def _github_event() -> Dict[str, Any]:
+    """The event payload, or an empty one.
+
+    Unreadable or malformed is not an error worth failing a review over: the
+    consequence is a review that cannot post its comment, and that has always
+    been survivable. A crash here would turn a missing file into a failed
+    security check, which is the inversion this project exists to avoid.
+    """
+    path = _env("GITHUB_EVENT_PATH")
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 @dataclass

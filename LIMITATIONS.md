@@ -223,8 +223,15 @@ to produce a block you disagree with.
 
 ## Not supported
 
-Cross-project `include:` (unproven) · GitHub Actions · Amazon Bedrock · Google
-Vertex AI · any provider other than the Anthropic first-party API.
+Cross-project `include:` (unproven) · Amazon Bedrock · Google Vertex AI · any
+provider other than the Anthropic first-party API.
+
+**GitHub Actions is supported and has never run.** The adapter posts one
+comment per pull request and edits it in place, the same contract as GitLab,
+and it is covered by tests rather than by a real workflow. Two things a first
+run will meet: `GITHUB_TOKEN` is not in the environment unless the workflow
+passes it, and a pull request from a fork gets a read-only token, so the
+comment is skipped and the artifact is still written.
 
 ## Upgrades
 

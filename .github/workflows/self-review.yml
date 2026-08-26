@@ -1,0 +1,60 @@
+# This repository's own agent, reviewing this repository's own pull requests.
+#
+# The GitLab job has done this since the beginning and never once ran, because
+# every commit here goes straight to `main` and its rule needs a merge request.
+# The code lives on GitHub, so this is where dogfooding can actually happen.
+#
+# Advisory, and non-blocking by construction rather than by configuration. Do
+# not make it a required check and do not set SECURITY_SCAN_FAIL_ON=none to
+# make it advisory — that switch also narrows verification, and advisory mode
+# is exactly where the report is the whole product.
+
+name: Security review (this repository's agent)
+
+permissions:
+  pull-requests: write   # one comment, edited in place on every push
+  contents: read
+
+on:
+  pull_request:
+  workflow_dispatch:     # to review a branch without opening a pull request
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # Never fails the check. The exit code still distinguishes 0, 1 and 2 in
+    # the log and the artifact; it just does not gate anything.
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # The agent diffs base..head and needs both, not just the tip.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install --no-cache-dir -e .
+
+      - name: Review the change
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Not inherited: GITHUB_TOKEN is not in the environment unless a
+          # workflow puts it there. A pull request from a fork gets a read-only
+          # token, so the comment is skipped and the artifact is still written.
+          SECURITY_SCAN_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SECURITY_SCAN_OUTPUT_DIR: .security-scan
+          # The ordinary threshold, kept so verification runs. `continue-on-error`
+          # above is what makes this advisory.
+          SECURITY_SCAN_FAIL_ON: high
+        run: gitlab-security-agent
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-review
+          path: .security-scan/
+          retention-days: 30
