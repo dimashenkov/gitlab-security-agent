@@ -8,10 +8,14 @@ decisive_control: requiring a site-relative path, and rejecting the // form that
 # The safe member's second condition is the subtle half: "//evil.example" starts
 # with a slash and is a protocol-relative absolute URL. A check that stops at
 # startsWith("/") looks like a control and is not one.
-# Open redirect has no name in prompts/findings.schema.json, so the
-# agent cannot emit one. `other` is the bucket that exists for this.
-# The gap is real and belongs in the schema discussion, not papered
-# over by scoring against a word the model can never produce — that
-# mistake already cost seven cases.
-expected_category: ['other']
+# `other` is kept alongside because the schema gained `open-redirect` on
+# 2026-08-26 and nothing has yet measured which word the model reaches for.
+# Dropping `other` would be asserting an answer this case exists to observe.
+#
+# The category was added because a vocabulary is the interface a gating policy
+# is written in: `SECURITY_SCAN_UNGATED_CATEGORIES` could not express "do not
+# gate on open redirects" while the only name for one was `other`, which also
+# covers everything else. The gap was real independently of this case — `ssrf`,
+# `xss` and `csrf` were all there and their obvious peer was not.
+expected_category: ['open-redirect', 'other']
 expected_file: login.ts

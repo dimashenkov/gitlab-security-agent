@@ -67,6 +67,7 @@
               "deserialization",
               "xss",
               "csrf",
+              "open-redirect",
               "sensitive-data-exposure",
               "dos",
               "race-condition",

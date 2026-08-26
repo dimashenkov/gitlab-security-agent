@@ -119,6 +119,7 @@ CWE_CATEGORY = {
     "CWE-284": "authn-authz", "CWE-269": "authn-authz", "CWE-566": "authn-authz",
     "CWE-798": "secrets", "CWE-259": "secrets",
     "CWE-352": "csrf",
+    "CWE-601": "open-redirect",
     "CWE-200": "sensitive-data-exposure", "CWE-532": "sensitive-data-exposure",
     "CWE-327": "crypto", "CWE-328": "crypto", "CWE-916": "crypto",
     "CWE-330": "crypto", "CWE-338": "crypto", "CWE-208": "crypto",
