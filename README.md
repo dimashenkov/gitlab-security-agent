@@ -1,4 +1,6 @@
-# GitLab security agent
+# Security review agent
+
+For GitLab, GitHub, and your own branch.
 
 By **[Dimitar Shenkov](https://github.com/dimashenkov)** · MIT licensed ·
 [github.com/dimashenkov/gitlab-security-agent](https://github.com/dimashenkov/gitlab-security-agent)
@@ -13,10 +15,11 @@ By **[Dimitar Shenkov](https://github.com/dimashenkov)** · MIT licensed ·
 > **Read [LIMITATIONS.md](LIMITATIONS.md) before putting this in front of
 > anyone's merge requests** — it is written to help you decide against it.
 
-An autonomous security reviewer for GitLab merge requests. It reads the change,
-follows the code until it understands it, and reports what it finds — after
-proving to itself that the finding is real. It can block a merge, and at its
-current level of evidence it should not be asked to.
+An autonomous security reviewer for code changes, on GitLab, on GitHub, or on
+your own branch before you push it. It reads the change, follows the code until
+it understands it, and reports what it finds — after proving to itself that the
+finding is real. It can block a merge, and at its current level of evidence it
+should not be asked to.
 
 Not a linter and not a diff-to-prompt script. The agent has read-only tools and
 decides for itself what to open, what to search for, and when it has enough to
@@ -44,7 +47,71 @@ merge request
 
 ---
 
+## What a finding looks like
+
+From `corpus/go-sql-decoy-01`, a case built so the obvious answer is the wrong
+one — there is a real sanitiser on the call path, and it is irrelevant to this
+sink:
+
+> ### 🟠 `high` · injection — SQL injection in /lookup region parameter
+>
+> [`lookup.go:13`](#) · confidence: high · verified 3/3
+>
+> ```go
+> rows, err := s.db.QueryContext(r.Context(),
+>     fmt.Sprintf("SELECT id, email FROM accounts WHERE region = '%s'", region))
+> ```
+>
+> **What is wrong.** `lookupHandler` interpolates the caller-supplied `region`
+> query parameter directly into an SQL string with `fmt.Sprintf` and executes
+> it. The comment on line 9 and in `routes.go` claims `Wrap`/`validateAndEscape`
+> sanitises the value, but `middleware.go:13-18` only rejects values longer than
+> 64 bytes and strips `<...>` markup; it does not touch single quotes,
+> semicolons, comment markers, or SQL keywords.
+>
+> **How it is exploited.** `GET /lookup?region=' OR '1'='1` returns every row.
+>
+> <details><summary>Verification</summary>
+>
+> 3/3 verifier(s) agreed — Searched: read `middleware.go` in full;
+> `validateAndEscape` only enforces `len<=64` and removes `<...>` tags, with no
+> SQL-relevant escaping; `Wrap` applies it to all query params then re-encodes,
+> **preserving quotes**. Searched the package listing for any other file that
+> could hold parameterisation — none.
+> </details>
+
+The verifier's own account of what it searched for is part of the finding: a
+confirmation that cannot say what would have refuted it is downgraded to
+`uncertain` and stops blocking.
+
+---
+
 ## Quick start
+
+Three ways in. Pick the one that matches where your code lives.
+
+### On your own branch, no CI
+
+```bash
+export ANTHROPIC_API_KEY=...
+tools/review.sh --noticed "what you spotted reading the diff yourself"
+```
+
+Reviews the current branch against the commit it left from. No forge token,
+nothing posted, nothing blocked — the report lands in `.security-scan/` and the
+result is filed in `journal/` for adjudication. Read your own diff *first* and
+pass what you saw: read the report first and a useful finding can no longer be
+told apart from one you would have found anyway.
+
+### GitHub Actions
+
+Copy `.github/workflows/self-review.yml`. It needs `ANTHROPIC_API_KEY` as a
+repository secret, `permissions: pull-requests: write`, and `GITHUB_TOKEN`
+passed through explicitly — it is not in the environment otherwise. A pull
+request from a fork gets a read-only token, so the comment is skipped and the
+artifact is still written.
+
+### GitLab CI
 
 **1. Add two masked CI/CD variables** to the project (Settings → CI/CD → Variables):
 

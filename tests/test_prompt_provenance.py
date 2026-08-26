@@ -170,3 +170,38 @@ def test_the_repository_conventions_instruction_carries_its_caveat(system_prompt
     deviation from a pattern that is not a security control is not a finding."""
     lowered = system_prompt.lower()
     assert "deviation is a lead, not proof" in lowered
+
+
+# ------------------------------------------------------- what the README says
+
+
+def test_the_readme_offers_every_way_in():
+    """It described GitLab CI only, for a fortnight after GitHub support
+    landed and a day after the local runner did. A reader whose code is on
+    GitHub reached the quick start and found variables they cannot set."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    quick = readme[readme.index("## Quick start"):]
+
+    assert "tools/review.sh" in quick, "the local path is the shortest one"
+    assert "self-review.yml" in quick or "GitHub Actions" in quick
+    assert "gitlab-ci.yml" in quick or "GitLab CI" in quick
+
+
+def test_the_readme_shows_a_finding():
+    """The one thing that tells a reader what they would actually get. Nobody
+    installs a security tool to find out what its output looks like."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "What a finding looks like" in readme
+    # And the example carries the verifier's search, which is the part that
+    # separates a verdict from an opinion.
+    assert "Searched" in readme
+
+
+def test_the_readme_does_not_promise_a_number_that_was_withdrawn():
+    """Both the recall and the precision figures were withdrawn. A README that
+    quotes one is the way a withdrawn number comes back."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "no recall figure and no precision figure" in readme
+    assert "LIMITATIONS.md" in readme
