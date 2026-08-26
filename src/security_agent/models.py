@@ -327,17 +327,15 @@ class Candidate:
         if not self.severity:
             # Derived from the facts the model reported, not from the label it
             # proposed — that label was the one thing that moved between runs.
-            from .severity import derive
+            #
+            # Through `panel` rather than straight to the table, because the
+            # document loader has to reconstruct exactly this starting point to
+            # check a recorded disposition against the rule that produced it. A
+            # second copy of these four lines is a second answer to "what was
+            # this rated before anyone verified it".
+            from .panel import initial_rating
 
-            derived, why = derive(
-                self.finding.impact,
-                self.finding.reachable_without_authentication,
-                self.finding.requires_user_interaction,
-                self.finding.category,
-            )
-            self.severity = derived or self.finding.severity
-            self.severity_derivation = why if derived else (
-                "not derived ({}); using the reviewer's own rating".format(why))
+            self.severity, self.severity_derivation = initial_rating(self.finding)
         if not self.confidence:
             self.confidence = self.finding.confidence
 

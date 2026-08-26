@@ -41,10 +41,17 @@ def make_candidate(**overrides):
     reached."""
     candidate_fields = {}
     for key in ("in_changed_lines", "evidence_located_line", "verdict",
-                "verdict_reason", "votes", "severity", "confidence",
+                "verdict_reason", "votes", "severity",
                 "attributed_by", "removes_control"):
         if key in overrides:
             candidate_fields[key] = overrides.pop(key)
+    # `confidence=` sets it on both, because they are not independent: the
+    # candidate's confidence starts as the finding's, and the panel reads the
+    # finding's. A fixture that pinned one and left the other was a state no run
+    # can produce, and three tests were asserting against it — which is how a
+    # bound that accepted an impossible document went unnoticed.
+    if "confidence" in overrides:
+        candidate_fields["confidence"] = overrides["confidence"]
     return Candidate(finding=make_finding(**overrides), **candidate_fields)
 
 

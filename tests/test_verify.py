@@ -353,7 +353,16 @@ class TestNoSingleVerifierPathToTheGate:
         assert candidate.confidence == "high"
 
     def test_a_critical_still_needs_every_verifier_to_discard_it(self, config):
-        candidate = make_candidate(severity="critical", confidence="high")
+        """The facts derive the rating, rather than the rating being pinned.
+
+        `severity="critical"` on the candidate used to be enough, because the
+        panel read whatever state it was handed. It derives its own now, so a
+        test that pinned a rating the facts do not support was asserting about
+        a candidate no run produces — and a fixture in an impossible state is
+        how an impossible document went unnoticed for a day.
+        """
+        candidate = make_candidate(impact="code_execution", confidence="high")
+        assert candidate.severity == "critical"
         candidate.votes = [
             vote(VERDICT_REFUTED), vote(VERDICT_REFUTED), vote(VERDICT_CONFIRMED),
         ]

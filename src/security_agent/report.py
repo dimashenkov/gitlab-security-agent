@@ -27,6 +27,7 @@ from .models import (
     ScanOutcome,
     severity_rank,
 )
+from .rendering import code_span, plain
 
 
 # Lets GitLab find and update the agent's own note instead of adding a new one
@@ -567,24 +568,12 @@ def _fenced(code: str, language: str) -> List[str]:
     return [fence + language, code, fence]
 
 
-def _plain(text: str) -> str:
-    """Model-written prose, rendered as text rather than as Markdown.
-
-    The model is summarising attacker-authored code, so its output can carry
-    text the attacker chose. Escaping the characters that start a block —
-    rather than stripping them — keeps the sentence readable while ensuring it
-    renders as one paragraph and not as a heading, a list, a table, a fence, or
-    an HTML tag.
-    """
-    text = " ".join((text or "").split())
-    # Only the inline constructs. Headings, lists, tables and fences all need
-    # the start of a line, and this text is collapsed to one line that always
-    # follows other content — so escaping `#`, `|`, `*` and `_` would buy no
-    # safety and would turn every `get_user` into `get\\_user`, which is worse
-    # to read and breaks anything grepping the report.
-    for character in ("\\", "`", "<", ">", "[", "]"):
-        text = text.replace(character, "\\" + character)
-    return text
+# The two escaping rules live in `rendering` because the crash trace needs
+# them too, and a second implementation of a containment rule is a second
+# thing to get right. Bound to local names so the call sites below read the
+# same as they did when the functions were defined here.
+_plain = plain
+_code_span = code_span
 
 
 def _located(cfg: Config, path: str, line: int) -> str:
@@ -597,29 +586,6 @@ def _located(cfg: Config, path: str, line: int) -> str:
     # link text; the URL itself is built from the path and is only ever
     # emitted when the forge context supplied a commit.
     return "[{}]({})".format(label, url) if url else label
-
-
-def _code_span(text: str) -> str:
-    """A path or identifier rendered inline, that cannot end its own span.
-
-    `_plain` is wrong here: inside a code span a backslash is a literal
-    backslash, not an escape, so escaping would both fail to contain the text
-    and put visible slashes in the path. CommonMark ends a span only on a
-    backtick run at least as long as the opening one, so the delimiter is made
-    one longer than the longest run inside — the same rule as `_fenced`. A
-    span whose content begins or ends with a backtick needs one space of
-    padding, which the reader does not see.
-    """
-    text = " ".join((text or "").split())
-    longest = 0
-    run = 0
-    for character in text:
-        run = run + 1 if character == "`" else 0
-        longest = max(longest, run)
-    if not longest:
-        return "`{}`".format(text)
-    ticks = "`" * (longest + 1)
-    return "{} {} {}".format(ticks, text, ticks)
 
 
 def _fence_language(path: str) -> str:

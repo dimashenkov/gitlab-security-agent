@@ -34,6 +34,7 @@ from .models import (
     confidence_rank,
     severity_rank,
 )
+from .panel import decide
 from .tools import Session, dispatch, verifier_tool_definitions
 from .transport import TransportFailure, stream_message
 from .workspace import Workspace, WorkspaceError
@@ -689,7 +690,17 @@ def _vote_from_payload(data: Any) -> Optional[Vote]:
 
 
 def _decide(candidate: Candidate) -> None:
-    """Turn the votes into a verdict and apply any agreed downgrades."""
+    """Apply the panel's decision to the candidate.
+
+    The decision itself is `panel.decide`, which computes it from the finding
+    and the votes and touches nothing. Applying it and computing it are split
+    because the session document loader has to ask the same question about a
+    disposition somebody else recorded, and it has no candidate to write into.
+    Two answers to that question is the defect this split closes: the loader
+    used to bound severity and confidence instead of recomputing them, and a
+    stored `low` confidence that no panel would have produced sat inside the
+    bound — under the gate.
+    """
     usable = [v for v in candidate.votes if not v.error]
     if not usable:
         candidate.verdict = VERDICT_CONFIRMED
@@ -700,161 +711,20 @@ def _decide(candidate: Candidate) -> None:
         )
         return
 
-    refuted = [v for v in usable if v.verdict == VERDICT_REFUTED]
-    confirmed = [v for v in usable if v.verdict == VERDICT_CONFIRMED]
-
-    # The derived severity, not the model's own label. Reading `finding.severity`
-    # here quietly restored the dependence on a rated label that computing
-    # severity from facts was introduced to remove — the label was the one part
-    # that moved between identical runs.
-    is_severe = severity_rank(candidate.severity) >= severity_rank("critical")
-    if is_severe and len(usable) >= 2:
-        # Unanimity to *discard* a critical — that is the whole asymmetry, and
-        # it was written the other way round. Requiring unanimity to confirm
-        # meant two verifiers confirming and one hedging gave `uncertain`,
-        # which forces confidence to `low`, which is under the gate. The rule
-        # meant to make a critical hard to dismiss made it easy to ungate.
-        if len(refuted) == len(usable):
-            verdict = VERDICT_REFUTED
-        elif len(confirmed) * 2 > len(usable):
-            verdict = VERDICT_CONFIRMED
-        else:
-            verdict = VERDICT_UNCERTAIN
-    elif len(refuted) * 2 > len(usable):
-        verdict = VERDICT_REFUTED
-    elif len(confirmed) * 2 > len(usable):
-        # A majority, not unanimity. Requiring every verifier to agree made a
-        # single hedge decide the gate: `uncertain` forces confidence to `low`,
-        # `low` is under the threshold, and the merge went through with the
-        # finding sitting in the report saying nothing had been settled.
-        #
-        # The asymmetry this replaces was written to protect findings — "it is
-        # cheaper to be wrong toward a visible finding than an invisible one" —
-        # and in gate terms it did the opposite, because a finding that does not
-        # block is the invisible one. Unanimity is kept where it belongs, below,
-        # for discarding a critical.
-        verdict = VERDICT_CONFIRMED
-    else:
-        verdict = VERDICT_UNCERTAIN
-
-    candidate.verdict = verdict
-    candidate.verdict_reason = _reason(usable, verdict)
-
-    # Unanimity, like every other upward move here. One verifier calling it a
-    # removed control is not enough to gate a merge on.
-    candidate.removes_control = (
-        verdict != VERDICT_REFUTED
-        and bool(usable)
-        and all(v.removes_control == "yes" for v in usable)
-    )
-
-    if verdict == VERDICT_REFUTED:
-        return
-
-    # Severity is no longer a thing anyone votes on. It is computed from three
-    # facts about the finding, so a verifier that disagrees corrects a fact and
-    # the number follows — the label was the one part that moved between runs,
-    # and taking opinions on it directly is what made it move.
-    _apply_fact_corrections(candidate, usable)
-
-    if verdict == VERDICT_UNCERTAIN:
-        # An unresolved chain is exactly what `low` confidence means, and it
-        # keeps the finding visible without letting it block the merge.
-        candidate.confidence = "low"
-    elif verdict == VERDICT_CONFIRMED:
-        # Confidence moves in both directions, because it means something
-        # different from severity: it records how much of the chain was actually
-        # seen, not how bad the outcome would be. A verifier that read the
-        # callers and closed a link the agent could only guess at knows more
-        # about that than the agent did.
-        #
-        # This exists because the alternative was worse. When only downgrades
-        # were allowed, an agent that hedged at `low` on a real `pickle.loads`
-        # buried the finding permanently — nothing downstream could ever undo a
-        # cautious first impression.
-        candidate.confidence = _agreed_confidence(usable, candidate.confidence)
-    else:
-        for vote in usable:
-            if (0 <= confidence_rank(vote.corrected_confidence)
-                    < confidence_rank(candidate.confidence)):
-                candidate.confidence = vote.corrected_confidence
-
-
-def _apply_fact_corrections(candidate: Candidate, votes: List[Vote]) -> None:
-    """Let verifiers correct the facts, then recompute severity from them.
-
-    A correction needs a majority of the whole panel behind it — not merely
-    agreement among those who spoke. Severity is computed from these facts, so
-    a correction is a move on the gate, and the same rule applies to it as to
-    every other move on the gate: one voice does not decide.
-    """
-    from .severity import derive
-
-    finding = candidate.finding
-    facts = {
-        "impact": finding.impact,
-        "reachable": finding.reachable_without_authentication,
-        "interaction": finding.requires_user_interaction,
-    }
-    changed = []
-    for key, attr in (("impact", "corrected_impact"),
-                      ("reachable", "corrected_reachable"),
-                      ("interaction", "corrected_interaction")):
-        # A majority of the panel, not "everyone who spoke up". One verifier
-        # proposing a correction while the rest stay silent used to carry it —
-        # and that verifier might be the one outvoted on whether the finding
-        # was real at all. Severity is computed from these facts, so a single
-        # proposal could move the finding across the gate on its own.
-        proposed = [getattr(v, attr) for v in votes if getattr(v, attr)]
-        agreed = {value for value in proposed if proposed.count(value) * 2 > len(votes)}
-        if len(agreed) == 1 and facts[key] not in agreed:
-            facts[key] = agreed.pop()
-            changed.append(key)
-
-    derived, why = derive(facts["impact"], facts["reachable"],
-                          facts["interaction"], finding.category)
-    if derived:
-        candidate.severity = derived
-        candidate.severity_derivation = why + (
-            "; verifiers corrected {}".format(", ".join(changed)) if changed else "")
-
-
-def _agree(votes: List[Vote], claimed: str, rank, field) -> str:
-    proposals = [field(v) for v in votes if field(v)]
-    if not proposals:
-        return claimed
-    if len(proposals) < len(votes):
-        # Someone did not express an opinion, so nothing can be raised; a
-        # proposal below the claim still lowers it.
-        lowered = [p for p in proposals if rank(p) < rank(claimed)]
-        return min(lowered, key=rank) if lowered else claimed
-    return min(proposals, key=rank)
-
-
-def _agreed_confidence(votes: List[Vote], claimed: str) -> str:
-    """What the panel, as a panel, thinks was actually seen.
-
-    The **median** of the confirming verifiers, with silence counted as
-    agreement with the claim. Two things changed here and both had the same
-    cause.
-
-    It used to take the minimum, and to take it over *every* usable vote rather
-    than the confirming ones its own docstring named. So a verifier in the
-    minority — outvoted on whether the finding was even real — still set the
-    confidence for the whole panel by proposing `low`. Since `low` is under the
-    gate, that one reply decided whether the merge was blocked, which is the
-    single-verifier veto the majority rule above was written to remove.
-
-    The old asymmetry was justified as erring toward a visible finding. In gate
-    terms it did the opposite: a finding that does not block is the invisible
-    one. A median errs toward what most of the panel saw, in both directions,
-    and one outlier moves nothing.
-    """
-    confirming = [v for v in votes if v.verdict == VERDICT_CONFIRMED]
-    if not confirming:
-        return claimed
-    proposals = [v.corrected_confidence or claimed for v in confirming]
-    return sorted(proposals, key=confidence_rank)[len(proposals) // 2]
+    # The finding and the votes, and nothing about the candidate's current
+    # state. `decide` establishes its own starting rating, so calling this twice
+    # gives the same answer both times rather than reading the first answer as
+    # the second one's starting point.
+    decided = decide(candidate.finding, candidate.votes)
+    candidate.verdict = decided.verdict
+    # Prose about the decision rather than part of it, so it stays here: a
+    # finding that was never verified carries a reason its caller wrote, and
+    # the loader cannot recompute either one.
+    candidate.verdict_reason = _reason(usable, decided.verdict)
+    candidate.removes_control = decided.removes_control
+    candidate.severity = decided.severity
+    candidate.severity_derivation = decided.severity_derivation
+    candidate.confidence = decided.confidence
 
 
 def _reason(votes: List[Vote], verdict: str) -> str:
