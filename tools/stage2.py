@@ -166,6 +166,34 @@ def probe_canonical(args) -> Result:
     return result
 
 
+def _protocol(args, tool: str, prompt: str, test: str, subject: str) -> Result:
+    """A completion protocol is three things, and any one alone is decoration.
+
+    The tool must exist, the prompt must ask for it — severity was once derived
+    from an `impact` value the prompt never mentioned, and a tool the model is
+    not told to use is a tool it will not use — and the loop must act on it.
+    """
+    if tool not in _source("tools.py"):
+        return Result(TODO, "no {}".format(tool))
+    if tool not in (ROOT / "prompts" / prompt).read_text(encoding="utf-8"):
+        return Result(PARTIAL, "{} exists, {} never asks for it".format(
+            tool, prompt))
+    path = TESTS / test
+    if not path.exists():
+        return Result(PARTIAL, "{} exists and is untested".format(tool))
+    return _from_tests([path], args.tests, subject)
+
+
+def probe_finish_review(args) -> Result:
+    return _protocol(args, "finish_review", "system.md",
+                     "test_finish_review.py", "the review's sign-off")
+
+
+def probe_submit_verdict(args) -> Result:
+    return _protocol(args, "submit_verdict", "verifier.md",
+                     "test_submit_verdict.py", "the verifier's vote")
+
+
 def probe_runner(args) -> Result:
     text = _source("runner_claude_code.py") or _source("runners.py")
     if "ClaudeCodeRunner" not in text:
@@ -307,6 +335,8 @@ def probe_spend(args) -> Result:
 CHECKS = [
     Check("1", "budget", "tests green", probe_budget),
     Check("2", "canonical split", "no telemetry compared", probe_canonical),
+    Check("3a", "finish_review", "tool, prompt, loop", probe_finish_review),
+    Check("3b", "submit_verdict", "tool, prompt, loop", probe_submit_verdict),
     Check("3", "ClaudeCodeRunner", "matches on a fixed diff", probe_runner),
     Check("4", "tool confinement", "2/2", probe_confinement),
     Check("5", "conformance", "13/13", probe_conformance),
