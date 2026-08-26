@@ -38,14 +38,6 @@ TESTS = ROOT / "tests"
 
 DONE, PARTIAL, TODO, BROKEN = "done", "partial", "todo", "broken"
 
-# The fields that must never appear inside `canonical_result`. Provider
-# telemetry is legitimately allowed to differ between runners; a comparison
-# that includes it compares the provider rather than the decision.
-TELEMETRY_FIELDS = (
-    "provider", "session_id", "duration_ms", "input_tokens", "output_tokens",
-    "cost_usd", "num_turns", "cache_read_input_tokens", "served_model",
-)
-
 # Stage 2, point 5. Named here so the count is not a guess: a scenario is
 # covered when a test mentions its marker.
 CONFORMANCE_SCENARIOS = {
@@ -157,19 +149,21 @@ def probe_budget(args) -> Result:
 
 
 def probe_canonical(args) -> Result:
-    text = _source("models.py") + _source("identity.py") + _source("report.py")
-    if "canonical_result" not in text:
-        return Result(TODO, "no canonical_result anywhere")
-    # The split only means something if telemetry stayed out of it. Read the
-    # canonical section and look for fields that are allowed to differ.
-    leaked = []
-    for match in re.finditer(r"canonical_result[^\n]*\n((?:[ \t]+[^\n]*\n)+)", text):
-        block = match.group(1)
-        leaked += [f for f in TELEMETRY_FIELDS if f in block]
-    if leaked:
-        return Result(BROKEN, "telemetry inside canonical_result: {}".format(
-            ", ".join(sorted(set(leaked)))))
-    return Result(DONE, "canonical_result present, no telemetry fields in it")
+    """The split is only worth anything if it is exercised against a real
+    artifact, so this runs the test rather than reading the source. A partition
+    that agrees with a hand-written dict proves nothing about the JSON a runner
+    actually writes."""
+    text = _source("canonical.py")
+    if "TELEMETRY_PATHS" not in text or "def split" not in text:
+        return Result(TODO, "no canonical/telemetry split")
+    declared = len(re.findall(r'^\s+"[a-z_.\[\]]+",\s*$', text, re.M))
+    path = TESTS / "test_canonical.py"
+    if not path.exists():
+        return Result(PARTIAL, "{} paths declared, no test".format(declared))
+    result = _from_tests([path], args.tests, "the canonical split")
+    if result.state == DONE:
+        result.detail = "{} telemetry paths — {}".format(declared, result.detail)
+    return result
 
 
 def probe_runner(args) -> Result:
@@ -201,10 +195,17 @@ def probe_confinement(args) -> Result:
 
 
 def probe_conformance(args) -> Result:
-    files = _tests_mentioning("conformance") or list(
-        TESTS.glob("test_runner_conformance.py"))
+    """Named file only, never a grep for the word.
+
+    The first version searched every test for "conformance" and reported 0/13
+    as `partial` the moment an unrelated file mentioned it in a docstring — a
+    tracker inventing progress that does not exist, which is the failure this
+    whole project is about. A probe that can be satisfied by prose is not a
+    measurement."""
+    path = TESTS / "test_runner_conformance.py"
+    files = [path] if path.exists() else []
     if not files:
-        return Result(TODO, "0/13 — no conformance test")
+        return Result(TODO, "0/13 — no test_runner_conformance.py")
     text = "".join(p.read_text(encoding="utf-8") for p in files)
     covered = [k for k in CONFORMANCE_SCENARIOS if k in text]
     if len(covered) < len(CONFORMANCE_SCENARIOS):
@@ -226,7 +227,9 @@ def probe_no_fallback(args) -> Result:
     if "auto" in re.findall(r'"(auto)"', text):
         return Result(BROKEN, "an `auto` provider exists — money decided for "
                               "the operator")
-    return _from_tests(_tests_mentioning("fallback"), args.tests,
+    # Both needles, for the reason in `probe_conformance`: "fallback" alone
+    # matches any test that uses the word in passing.
+    return _from_tests(_tests_mentioning("fallback", "claude-cli"), args.tests,
                        "the no-fallback rule")
 
 
@@ -303,7 +306,7 @@ def probe_spend(args) -> Result:
 
 CHECKS = [
     Check("1", "budget", "tests green", probe_budget),
-    Check("2", "canonical split", "0 telemetry fields", probe_canonical),
+    Check("2", "canonical split", "no telemetry compared", probe_canonical),
     Check("3", "ClaudeCodeRunner", "matches on a fixed diff", probe_runner),
     Check("4", "tool confinement", "2/2", probe_confinement),
     Check("5", "conformance", "13/13", probe_conformance),
