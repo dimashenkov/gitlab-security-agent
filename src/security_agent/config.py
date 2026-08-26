@@ -338,6 +338,16 @@ class Config:
     mode: str = "auto"  # auto | diff | repo
     diff_context_lines: int = 12
     excludes: Sequence[str] = DEFAULT_EXCLUDES
+    # Which of the changed files this run is answerable for. Empty means all of
+    # them, which is the only sensible default for a gate.
+    #
+    # It narrows what must be **reviewed**, never what may be **read**. The
+    # whole design rests on following code out of the hunk — the validation
+    # that makes a change safe and the caller that makes it exploitable live
+    # elsewhere — so a scope that also fenced the reading tools would turn every
+    # unreachable control into a false positive. Scope is a statement about
+    # which findings this run is responsible for, not about what exists.
+    scope: Sequence[str] = ()
 
     # --- verification (layer 2/3 of the hallucination check) ---
     verify: bool = True

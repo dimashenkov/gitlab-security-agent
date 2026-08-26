@@ -8,7 +8,12 @@
 #
 #     tools/review.sh                      # current branch against main
 #     tools/review.sh --base v1.2.0
+#     tools/review.sh --path src/security_agent   # only what changed there
 #     tools/review.sh --noticed "the region param goes into a query unescaped"
+#
+# --path narrows what the review is answerable for, not what it may read: the
+# agent still follows callers anywhere in the repository, because that is the
+# only way a finding gets checked. A scoped run says so in its report.
 #
 # Advisory by construction: --no-comment, no GitLab token, nothing blocks. The
 # exit code is the agent's, and 2 still means the review did not finish.
@@ -23,12 +28,14 @@ set -euo pipefail
 BASE=""
 NOTICED=""
 OUT=".security-scan"
+PATHS=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --base)    BASE="$2"; shift 2 ;;
         --noticed) NOTICED="$2"; shift 2 ;;
         --output)  OUT="$2"; shift 2 ;;
+        --path)    PATHS+=(--path "$2"); shift 2 ;;
         -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -64,6 +71,7 @@ echo "reviewing ${BASE:0:12}..${short}  ($(git rev-list --count "$BASE..HEAD") c
 set +e
 PYTHONPATH=src python3 -m security_agent \
     --repo "$root" --mode diff --base "$BASE" --head "$head" \
+    ${PATHS[@]+"${PATHS[@]}"} \
     --no-comment --output-dir "$OUT"
 code=$?
 set -e

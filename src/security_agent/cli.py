@@ -65,13 +65,21 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         return EXIT_OK
 
     root = Path(args.repo or ".").resolve()
-    mode = args.mode or cfg.resolve_mode()
+    # `--changed-only` is a diff review with a name a person would reach for.
+    # An explicit `--mode` still wins, so the two cannot disagree silently.
+    mode = args.mode or ("diff" if args.changed_only else cfg.resolve_mode())
 
     base, head = _resolve_range(cfg, root, mode, args)
-    workspace = Workspace(root=root, excludes=cfg.excludes, diff_base=base, diff_head=head)
+    workspace = Workspace(root=root, excludes=cfg.excludes, diff_base=base,
+                          diff_head=head, scope=cfg.scope)
 
     if mode == "diff":
         changed = workspace.changed_files()
+        if cfg.scope:
+            skipped = workspace.out_of_scope(
+                [path for path, _ in workspace.all_changed_files()])
+            log.info("scope %s: reviewing %d of %d changed file(s)",
+                     ", ".join(cfg.scope), len(changed), len(changed) + len(skipped))
         if not changed:
             # Not a bare return. That left no artifact and, worse, left the
             # previous run's note on the merge request still claiming its
@@ -340,7 +348,19 @@ def _resolve_range(
     if probe.rev_exists(gl.diff_base_sha):
         return gl.diff_base_sha, head
 
-    for candidate in ("origin/" + gl.default_branch, gl.default_branch):
+    # `origin/HEAD` first: it is what the remote says its default branch is,
+    # which beats guessing at a name. A clone whose default is `master`, or a
+    # fork whose default was renamed, resolves correctly here and would fall
+    # through to a wrong branch — or to no base at all — on the guesses below.
+    candidates = []
+    origin_head = probe.git(
+        "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD",
+        check=False).strip()
+    if origin_head:
+        candidates.append(origin_head)
+    candidates += ["origin/" + gl.default_branch, gl.default_branch]
+
+    for candidate in candidates:
         if probe.rev_exists(candidate):
             merge_base = probe.git("merge-base", candidate, head, check=False).strip()
             if merge_base:
@@ -383,6 +403,8 @@ def _build_config(args: argparse.Namespace) -> Config:
         cfg.min_confidence = args.min_confidence
     if args.max_turns:
         cfg.max_turns = args.max_turns
+    if args.path:
+        cfg.scope = tuple(args.path)
     if args.output_dir:
         cfg.output_dir = Path(args.output_dir)
     if args.prompt_dir:
@@ -437,6 +459,17 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
                         help="Override the automatic diff/repo choice.")
     parser.add_argument("--base", metavar="REV", help="Diff base revision.")
     parser.add_argument("--head", metavar="REV", help="Diff head revision.")
+    parser.add_argument(
+        "--changed-only", action="store_true",
+        help="Review this branch against the commit it left from. Resolves the "
+             "base as the merge base with the default branch — not its tip, "
+             "which would pull in everyone else's work.")
+    parser.add_argument(
+        "--path", metavar="PATH", action="append", default=[],
+        help="Only be answerable for changed files under this path or matching "
+             "this glob. Repeatable. Narrows what is reviewed, never what the "
+             "agent may read — it still follows callers anywhere in the "
+             "repository, which is the only way a finding gets checked.")
     parser.add_argument("--model", help="Model id (default: claude-opus-5).")
     parser.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"))
     parser.add_argument("--fail-on", choices=("critical", "high", "medium", "low", "none"),

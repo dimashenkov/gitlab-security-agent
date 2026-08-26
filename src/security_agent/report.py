@@ -60,6 +60,7 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
     if not outcome.complete:
         lines += _incomplete_warning(outcome)
 
+    lines += _scope_note(cfg, outcome)
     lines += _sign_off(outcome)
 
     blocking_ids = {id(c) for c in decision.blocking}
@@ -232,6 +233,36 @@ def _incomplete_warning(outcome: ScanOutcome) -> List[str]:
         "> **Coverage is partial:** {}{}. Anything not listed below was not "
         "necessarily checked.".format(explanation, detail),
     ]
+
+
+def _scope_note(cfg: Config, outcome: ScanOutcome) -> List[str]:
+    """Say that this run was asked to look at less than the change.
+
+    "No findings" from a scoped review and "no findings" from a full one are
+    the same sentence and opposite statements, and the scoped one is the one
+    that gets pasted into a merge request. A warning rather than a footnote:
+    the reader has to see it before the verdict, not after.
+    """
+    if not cfg.scope:
+        return []
+
+    skipped = outcome.coverage.out_of_scope
+    lines = [
+        "",
+        "> [!WARNING]",
+        "> **Scoped review:** only changed files matching {} were reviewed."
+        .format(", ".join(_code_span(pattern) for pattern in cfg.scope)),
+    ]
+    if skipped:
+        shown = [_code_span(path) for path in skipped[:8]]
+        more = "" if len(skipped) <= 8 else " and {} more".format(len(skipped) - 8)
+        lines.append(
+            "> {} other changed file(s) were not reviewed: {}{}."
+            .format(len(skipped), ", ".join(shown), more))
+    lines.append(
+        "> This is not a review of the change. Anything outside that scope was "
+        "not looked at, whatever this report concludes.")
+    return lines
 
 
 def _sign_off(outcome: ScanOutcome) -> List[str]:
@@ -676,6 +707,10 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
             "verify": cfg.verify,
             "verify_votes": cfg.verify_votes,
             "effort": cfg.effort,
+            # An empty list means the whole change. Recorded either way, because
+            # "no findings" from a scoped run and "no findings" from a full one
+            # are the same sentence and opposite statements.
+            "scope": list(cfg.scope),
         },
     }
 

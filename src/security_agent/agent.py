@@ -177,6 +177,9 @@ class SecurityAgent:
         outcome.revision = self._revision(mode)
         if diff_available:
             outcome.coverage.changed = [path for path, _ in self.ws.changed_files()]
+            if getattr(self.ws, "scope", ()):
+                outcome.coverage.out_of_scope = self.ws.out_of_scope(
+                    [path for path, _ in self.ws.all_changed_files()])
         deadline = time.monotonic() + self.cfg.max_runtime_seconds
         # Raised once, and kept raised. A review that needed the room on one
         # turn will very likely need it again, and paying for a truncated

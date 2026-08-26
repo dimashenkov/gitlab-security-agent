@@ -64,6 +64,11 @@ def review_identity(cfg: Any, revision: Any, provenance: Any) -> Dict[str, Any]:
             # What the model was allowed to see. Changing the exclusions
             # changes the review without changing a line of code.
             "excludes": sorted(getattr(cfg, "excludes", ()) or ()),
+            # What the run was answerable for. Without this a review of one
+            # file and a review of the whole change share an identity, so the
+            # narrow one gets reused as the answer to the broad question — and
+            # a reused artifact is indistinguishable from a review that ran.
+            "scope": sorted(getattr(cfg, "scope", ()) or ()),
         },
     }
 

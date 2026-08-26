@@ -264,14 +264,19 @@ def probe_no_fallback(args) -> Result:
 def probe_scope(args) -> Result:
     text = _source("cli.py") + (ROOT / "tools" / "review.sh").read_text(
         encoding="utf-8")
-    present = [flag for flag in ("--changed-only", "--file", "--path")
-               if flag in text]
+    # Two flags, not the three the plan first named. `--path` takes an exact
+    # path as readily as a glob, so a separate `--file` would have been a
+    # second spelling of one idea. Adding a flag to satisfy a checklist is how
+    # a measure stops measuring.
+    present = [flag for flag in ("--changed-only", "--path") if flag in text]
     if not present:
         return Result(TODO, "no scope control")
-    if len(present) < 3:
-        return Result(PARTIAL, "{}/3 — have {}".format(
-            len(present), ", ".join(present)))
-    return Result(DONE, "3/3 — timing comes from a real run, see the journal")
+    if len(present) < 2:
+        return Result(PARTIAL, "1/2 — have {}".format(present[0]))
+    path = TESTS / "test_scope.py"
+    if not path.exists():
+        return Result(PARTIAL, "2/2 flags, no test")
+    return _from_tests([path], args.tests, "scope control")
 
 
 def probe_use(args) -> Result:
@@ -341,7 +346,7 @@ CHECKS = [
     Check("4", "tool confinement", "2/2", probe_confinement),
     Check("5", "conformance", "13/13", probe_conformance),
     Check("6", "no silent fallback", "exit 2, 0 API calls", probe_no_fallback),
-    Check("7", "scope control", "3 flags, < 5 min", probe_scope),
+    Check("7", "scope control", "2 flags, tested", probe_scope),
     Check("8", "real use", "20 reviews, 0 unjudged", probe_use),
     Check("9", "fixes", "judged = fixed + recorded", probe_fixes),
     Check("—", "whole suite", "green", probe_suite),

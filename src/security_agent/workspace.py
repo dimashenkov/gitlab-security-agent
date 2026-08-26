@@ -47,11 +47,15 @@ class Workspace:
         excludes: Sequence[str] = (),
         diff_base: str = "",
         diff_head: str = "HEAD",
+        scope: Sequence[str] = (),
     ) -> None:
         self.root = root.resolve()
         if not (self.root / ".git").exists():
             raise WorkspaceError("{} is not a git repository".format(self.root))
         self.excludes = tuple(excludes)
+        # Narrows the change under review. Never narrows what can be read — see
+        # `Config.scope`, and `changed_line_map`, which deliberately ignores it.
+        self.scope = tuple(s for s in scope if s and s.strip())
         self.diff_base = diff_base
         self.diff_head = diff_head
         self._tracked: Optional[List[str]] = None
@@ -127,6 +131,37 @@ class Workspace:
                 return True
         return False
 
+    def in_scope(self, path: str) -> bool:
+        """Is this changed file one the run is answerable for?
+
+        An empty scope means every changed file, which is the only safe default
+        for a gate. A pattern matches as a glob, and a bare directory name
+        matches everything under it — `--path src/auth` is what a person means
+        when they say "just look at the auth code", and requiring them to write
+        `src/auth/*` for that would be a trap rather than a feature.
+        """
+        if not self.scope:
+            return True
+        candidates = (path, "/" + path)
+        for raw in self.scope:
+            pattern = raw.strip().strip("/")
+            if not pattern:
+                continue
+            if any(fnmatch.fnmatch(c, pattern) for c in candidates):
+                return True
+            if path == pattern or path.startswith(pattern + "/"):
+                return True
+        return False
+
+    def out_of_scope(self, paths: Sequence[str]) -> List[str]:
+        """Changed files this run is not answerable for. For the report.
+
+        A scoped review that reports "no findings" without saying what it did
+        not look at is the same sentence as a full review that found nothing,
+        and they mean opposite things.
+        """
+        return [p for p in paths if not self.in_scope(p)]
+
     # ------------------------------------------------------------------ git
 
     def git(self, *args: str, check: bool = True) -> str:
@@ -185,9 +220,21 @@ class Workspace:
         )
         out: List[Tuple[str, str]] = []
         for path, code in _parse_name_status(raw):
-            if not self.is_excluded(path):
+            if not self.is_excluded(path) and self.in_scope(path):
                 out.append((path, _STATUS_NAMES.get(code, code)))
         return out
+
+    def all_changed_files(self) -> List[Tuple[str, str]]:
+        """Every changed file, scope ignored. What the report needs to be honest.
+
+        `changed_files` is what the reviewer works from; this is what says how
+        much of the change that was.
+        """
+        saved, self.scope = self.scope, ()
+        try:
+            return self.changed_files()
+        finally:
+            self.scope = saved
 
     def diff(self, path: str = "", context_lines: int = 12) -> str:
         if not self.diff_base:
@@ -202,6 +249,16 @@ class Workspace:
         ]
         if path:
             args += ["--", self.repo_path(path)]
+        elif self.scope:
+            # The resolved file list rather than the patterns themselves. A git
+            # pathspec has its own magic prefixes and its own glob rules, and a
+            # scope that meant one thing to `in_scope` and another to git would
+            # put a file in the diff that the coverage accounting says was never
+            # in the change.
+            in_scope = [p for p, _ in self.changed_files()]
+            if not in_scope:
+                return ""
+            args += ["--", *(self.repo_path(p) for p in in_scope)]
         return self.git(*args, check=False)
 
     def changed_line_map(self):
@@ -209,6 +266,13 @@ class Workspace:
 
         Used to tell a weakness this change introduced from one that was already
         there. Empty outside a merge request, where the distinction is moot.
+
+        **Scope is deliberately ignored here.** This map answers "did the change
+        touch this line", which is a fact about the change and not about what
+        this run was asked to look at. Narrowing it would make a finding in an
+        out-of-scope file look pre-existing, and pre-existing findings are gated
+        more softly — so a scope flag, whose whole purpose is to look at less,
+        would quietly make the gate more permissive about what it did look at.
         """
         if self._changed_lines is None:
             from .evidence import changed_lines  # local import: avoids a cycle

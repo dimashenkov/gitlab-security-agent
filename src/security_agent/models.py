@@ -636,6 +636,10 @@ class Coverage:
     changed: List[str] = field(default_factory=list)
     examined: List[str] = field(default_factory=list)
     excluded: List[str] = field(default_factory=list)
+    # Changed files a `--path` scope left out. Distinct from `excluded`, which
+    # is policy applied to every run; this is one operator asking for less on
+    # one run, and a reader needs to know which of the two happened.
+    out_of_scope: List[str] = field(default_factory=list)
 
     @property
     def unopened(self) -> List[str]:
@@ -652,6 +656,7 @@ class Coverage:
             "changed": self.changed,
             "examined": sorted(self.examined),
             "excluded": self.excluded,
+            "out_of_scope": self.out_of_scope,
             "unopened": self.unopened,
             "complete": self.complete,
         }
