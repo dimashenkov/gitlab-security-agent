@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 from . import AUTHOR_URL, PROJECT_NAME, PROJECT_URL, __version__
 from .config import Config
 from .gate import Decision
+from .identity import review_identity
 from .models import (
     SEVERITY_EMOJI,
     STOP_EXPLANATIONS,
@@ -599,6 +600,10 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
         # Which commits were read. A finding is a claim about code at a
         # moment, and an artifact recording only `HEAD` cannot say which.
         "revision": outcome.revision.to_dict(),
+        # What would have to match for another run to be the same review — the
+        # key for reusing this artifact instead of paying for it again, and the
+        # same one `baseline.py` refuses a comparison across.
+        "identity": review_identity(cfg, outcome.revision, outcome.provenance),
         "provenance": outcome.provenance.to_dict(),
         "coverage_accounting": outcome.coverage.to_dict(),
         "stage_metrics": outcome.metrics.to_dict(),

@@ -81,6 +81,11 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         log.info("reviewing %d tracked file(s) at %s",
                  len(workspace.tracked_files()), _abbrev(head))
 
+    if args.reuse:
+        reused = _reuse(cfg, args, root, mode, base, head)
+        if reused is not None:
+            return reused
+
     try:
         rules, warnings = load_rules(root / cfg.ignore_file)
     except SuppressionError as exc:
@@ -181,6 +186,61 @@ def _folded(name: str, title: str):
     finally:
         sys.stdout.write(terminal.section(name, "", False, int(time.time())) + "\n")
         sys.stdout.flush()
+
+
+def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,
+           base: str, head: str):
+    """Return the earlier run's exit code, or None to go and pay for one.
+
+    Reuse is keyed on the whole identity — both revisions, the prompts, the
+    schema, the requested model, and every gate setting — not on the pull
+    request. A new commit is new code, and Anthropic's action reuses per pull
+    request, which is why its own tracker carries a report of the cache
+    skipping new commits.
+
+    An incomplete artifact is never reused. It is not a cheaper result, it is
+    an absent one, and treating it as an answer is the confusion that turned
+    three reviews which never ran into a recall figure.
+    """
+    import json
+
+    from .agent import _provenance
+    from .identity import reusable, review_identity
+    from .models import Provenance, Revision
+
+    artifact = Path(cfg.output_dir) / "findings.json"
+    if not artifact.is_file():
+        return None
+    try:
+        previous = json.loads(artifact.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+    probe = Workspace(root=root, excludes=cfg.excludes, diff_base=base, diff_head=head)
+
+    def resolve(rev: str) -> str:
+        return probe.git("rev-parse", rev, check=False).strip() if rev else ""
+
+    current = review_identity(
+        cfg,
+        Revision(mode=mode, base=base, head=head,
+                 base_sha=resolve(base), head_sha=resolve(head)),
+        Provenance(**{k: v for k, v in (previous.get("provenance") or {}).items()
+                      if k in Provenance.__dataclass_fields__}),
+    )
+    # The prompts and schema are hashed from disk at run time, so the recorded
+    # provenance is only a valid stand-in when the files have not moved since.
+    current.update({k: v for k, v in _provenance(cfg).to_dict().items()
+                    if k in current})
+
+    if not reusable(previous, current):
+        return None
+
+    verdict = previous.get("verdict") or {}
+    log.info("reusing the review of %s..%s — same code, prompts, model and "
+             "settings as the artifact already in %s. Pass --no-reuse to pay "
+             "for a replicate.", _abbrev(base), _abbrev(head), cfg.output_dir)
+    return int(verdict.get("exit_code", EXIT_OK))
 
 
 def _skip_requested(cfg: Config, args: argparse.Namespace) -> bool:
@@ -336,6 +396,12 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("--no-comment", action="store_true",
                         help="Do not post to the merge request.")
     parser.add_argument("--output-dir", metavar="PATH", help="Where to write the report.")
+    parser.add_argument("--reuse", action="store_true",
+                        help="Exit with the earlier artifact's verdict when the "
+                             "code, prompts, schema, model and gate settings all "
+                             "match it. A pipeline re-run costs nothing; a new "
+                             "commit still pays. An incomplete artifact is never "
+                             "reused — it is an absent result, not a cheap one.")
     parser.add_argument("--prompt-dir", metavar="PATH",
                         help="The agent's prompt directory. Never point this inside "
                              "the repository under review.")
