@@ -34,7 +34,7 @@ from .models import (
     confidence_rank,
     severity_rank,
 )
-from .tools import Session, dispatch, read_only_tool_definitions
+from .tools import Session, dispatch, verifier_tool_definitions
 from .transport import TransportFailure, stream_message
 from .workspace import Workspace, WorkspaceError
 
@@ -184,7 +184,8 @@ def verify_candidates(
         return usage
 
     system = _system_blocks(cfg)
-    tools = read_only_tool_definitions(diff_available=bool(ws.diff_base))
+    tools = verifier_tool_definitions(VERDICT_SCHEMA,
+                                      diff_available=bool(ws.diff_base))
 
     to_verify = candidates[: cfg.verify_max_findings]
     if len(candidates) > len(to_verify):
@@ -515,6 +516,20 @@ def _one_vote(
             results.append(entry)
             log.debug("    %s: %s", getattr(block, "name", "?"), result.summary)
 
+        if session.verdict is not None:
+            # Submitted as an argument rather than left in the final message.
+            # The vote and the statement that this verifier is finished are the
+            # same act, which is the only version of "done" a provider running
+            # its own loop can also produce.
+            vote = _vote_from_payload(session.verdict)
+            if vote is not None:
+                vote.channel = "submit_verdict"
+                return _tagged(vote, served, session), usage
+            return _tagged(Vote(
+                verdict=VERDICT_UNCERTAIN, reasoning="",
+                error="the verifier submitted a verdict that could not be read",
+            ), served, session), usage
+
         if cached_block is not None:
             cached_block.pop("cache_control", None)
         results[-1]["cache_control"] = {"type": "ephemeral"}
@@ -636,6 +651,20 @@ def _parse_verdict(response: Any) -> Optional[Vote]:
             data = json.loads(text[start : end + 1])
         except json.JSONDecodeError:
             return None
+    vote = _vote_from_payload(data)
+    if vote is not None:
+        vote.channel = "final_message"
+    return vote
+
+
+def _vote_from_payload(data: Any) -> Optional[Vote]:
+    """One verdict payload to one `Vote`, whichever channel carried it.
+
+    Both routes end here on purpose. A schema-constrained final message and a
+    `submit_verdict` argument are two transports for the same object, and two
+    conversions would be two definitions of what a verdict means — with the
+    less-used one drifting quietly until a runner disagreed with itself.
+    """
     if not isinstance(data, dict) or "verdict" not in data:
         return None
     verdict = str(data.get("verdict", "")).strip()

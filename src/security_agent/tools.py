@@ -19,7 +19,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from . import generated
 from .evidence import (
@@ -57,6 +57,18 @@ FINISH_REVIEW = "finish_review"
 # that one honest sentence passes.
 MIN_SUMMARY_CHARS = 40
 
+# The verifier's counterpart to `finish_review`: submitting the one vote it is
+# allowed to cast is also how it says it is done.
+#
+# On the Messages API path the verdict already arrives reliably — a
+# schema-constrained final message is a guarantee, not a hope. A provider that
+# owns its loop offers no such guarantee, and "the verifier stopped" would
+# otherwise be indistinguishable from "the verifier voted". Both channels are
+# accepted and the vote records which one it came through, because a verdict
+# that arrived as loose prose and one that arrived as a validated argument are
+# not equally trustworthy and the artifact should not pretend otherwise.
+SUBMIT_VERDICT = "submit_verdict"
+
 # How many times one claim may fail the citation check before it is dropped for
 # good. One retry is a typo in a path or a quote reconstructed from memory; a
 # second failure on the same claim means the code is not there.
@@ -81,6 +93,10 @@ class Session:
     finished: bool = False
     final_summary: str = ""
     unresolved: List[str] = field(default_factory=list)
+    # Set only by `submit_verdict`, and only in a verifier's session. One
+    # session, one candidate, one vote — a second submission is refused rather
+    # than allowed to overwrite the first.
+    verdict: Optional[Dict[str, Any]] = None
     _attempts: Dict[str, int] = field(default_factory=dict)
 
     def note_file(self, path: str) -> None:
@@ -371,6 +387,32 @@ def read_only_tool_definitions(diff_available: bool) -> List[Dict[str, Any]]:
     ]
 
 
+def verifier_tool_definitions(
+    verdict_schema: Dict[str, Any], diff_available: bool
+) -> List[Dict[str, Any]]:
+    """The read-only set plus the one way a verifier may answer.
+
+    The schema is passed in rather than defined here because it belongs to the
+    verification layer, and duplicating it would put two definitions of a
+    verdict in the codebase — the shape of drift this project has already been
+    bitten by twice.
+    """
+    return [*read_only_tool_definitions(diff_available), {
+        "name": SUBMIT_VERDICT,
+        "description": (
+            "Submit your verdict on the one finding you were given. Call this "
+            "exactly once, when you have finished checking — it is both your "
+            "answer and your statement that you are done. A verifier that "
+            "stops without calling it has not voted, and a claim with no vote "
+            "behind it is not verified.\n\n"
+            "You may not submit twice. If you are unsure, that is what "
+            "`uncertain` is for: a steady 'I could not establish this' is "
+            "worth more than a guess that differs between readings."
+        ),
+        "input_schema": verdict_schema,
+    }]
+
+
 # `tool_definitions` needs a finding schema to build the reporting tool, which
 # the verifier list then discards. This placeholder keeps the caller from having
 # to load the real schema just to throw the result away.
@@ -558,6 +600,36 @@ def _handle_finish_review(ws: Workspace, session: Session, args: Dict[str, Any])
     )
 
 
+def _handle_submit_verdict(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
+    """Record the verifier's one vote. Shape only — the meaning is checked above.
+
+    Deliberately shallow: whether a confirmation names what it searched for,
+    and what the panel does with three votes, are decisions for the
+    verification layer. Duplicating any of that here would put two definitions
+    of a valid verdict in the codebase, and the one in this file would be the
+    one nobody remembered to update.
+    """
+    verdict = str(args.get("verdict") or "").strip()
+    if not verdict:
+        return ToolResult(
+            "No verdict recorded: `verdict` is required.",
+            "verdict missing", is_error=True)
+
+    if session.verdict is not None:
+        # One session, one candidate, one vote. A second call is refused rather
+        # than allowed to overwrite: a later answer is not a better one, and
+        # letting it through would let a truncated retry replace a real verdict.
+        return ToolResult(
+            "You have already submitted a verdict on this finding and may not "
+            "submit another. Stop here.",
+            "submit_verdict (repeat, refused)", is_error=True)
+
+    session.verdict = dict(args)
+    return ToolResult(
+        "Verdict recorded. Stop now — no further tool calls are needed.",
+        "submit_verdict: {}".format(verdict))
+
+
 def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
     """Record a finding — after checking that the code it cites is really there.
 
@@ -699,6 +771,7 @@ HANDLERS: Dict[str, Handler] = {
     "git_log": _handle_git_log,
     REPORT_FINDING: _handle_report_finding,
     FINISH_REVIEW: _handle_finish_review,
+    SUBMIT_VERDICT: _handle_submit_verdict,
 }
 
 

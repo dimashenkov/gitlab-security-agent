@@ -87,7 +87,11 @@ Raising confidence matters more than it sounds. A reviewer who hedges at `low` o
 
 ## Output
 
-When you have finished investigating, return only the JSON object required by the schema. `reasoning` is read by a human deciding whether to trust your verdict — give the specific reason with file and line references, in two to four sentences. "Looks fine" is not a reason. Name the control you found, the caller you traced, or the link you could not close.
+When you have finished investigating, answer by calling `submit_verdict` with the fields the schema requires. Call it exactly once: it is both your answer and your statement that you have finished. A verifier that stops without calling it has not voted, and a claim with no vote behind it is not verified. You may not submit twice — if you are unsure, that is what `uncertain` is for.
+
+If `submit_verdict` is not available to you, return only the JSON object required by the schema instead.
+
+`reasoning` is read by a human deciding whether to trust your verdict — give the specific reason with file and line references, in two to four sentences. "Looks fine" is not a reason. Name the control you found, the caller you traced, or the link you could not close.
 
 **`control_search` is what makes a `confirmed` a verdict rather than an opinion, and it is checked.** State what you looked for that would have refuted the finding, where you looked, and what you found — including "searched X and Y, no such check exists". A confirmation that cannot say this is downgraded to `uncertain`, and so is one that answers "checked" or "n/a". If you did not search, say so and answer `uncertain`; that is a real answer and a consistent one beats a confident guess.
 

@@ -275,6 +275,13 @@ class Vote:
     files_read: List[str] = field(default_factory=list)
     exposures: List[tuple] = field(default_factory=list)   # (path, channel)
     error: str = ""
+    # How the verdict arrived: `submit_verdict` (an argument the verifier
+    # deliberately submitted) or `final_message` (a schema-constrained reply).
+    # Both are valid and they are not equally strong — the first is also the
+    # verifier saying it is finished, where the second is inferred from the
+    # conversation ending. Recorded so the artifact does not have to pretend
+    # they are the same event.
+    channel: str = ""
     # Which model actually answered this vote — a server-side fallback can
     # substitute one mid-review, and a blocking verdict should say so.
     served_models: List[str] = field(default_factory=list)

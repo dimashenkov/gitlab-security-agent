@@ -545,7 +545,8 @@ class TestConcurrentVerification:
 
         monkeypatch.setattr(verify, "_one_vote", fake_vote)
         monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
-        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+        monkeypatch.setattr(verify, "verifier_tool_definitions",
+                            lambda schema, diff_available: [])
 
         candidate = make_candidate(severity="high")
         verify.verify_candidates(config, _StubWorkspace(), object(), [candidate])
@@ -570,7 +571,8 @@ class TestConcurrentVerification:
 
         monkeypatch.setattr(verify, "_one_vote", fake_vote)
         monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
-        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+        monkeypatch.setattr(verify, "verifier_tool_definitions",
+                            lambda schema, diff_available: [])
 
         verify.verify_candidates(config, _StubWorkspace(), object(), self._candidates(4))
         assert peak[0] > 1, "verification ran sequentially"
@@ -593,7 +595,8 @@ class TestConcurrentVerification:
 
         monkeypatch.setattr(verify, "_one_vote", fake_vote)
         monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
-        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+        monkeypatch.setattr(verify, "verifier_tool_definitions",
+                            lambda schema, diff_available: [])
 
         verify.verify_candidates(config, _StubWorkspace(), object(), self._candidates(4))
         assert peak[0] <= 2
@@ -608,7 +611,8 @@ class TestConcurrentVerification:
 
         monkeypatch.setattr(verify, "_one_vote", fake_vote)
         monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
-        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+        monkeypatch.setattr(verify, "verifier_tool_definitions",
+                            lambda schema, diff_available: [])
 
         candidate = make_candidate(severity="high")
         verify.verify_candidates(config, _StubWorkspace(), object(), [candidate])
@@ -628,7 +632,8 @@ class TestConcurrentVerification:
 
         monkeypatch.setattr(verify, "_one_vote", fake_vote)
         monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
-        monkeypatch.setattr(verify, "read_only_tool_definitions", lambda diff_available: [])
+        monkeypatch.setattr(verify, "verifier_tool_definitions",
+                            lambda schema, diff_available: [])
 
         usage = verify.verify_candidates(config, _StubWorkspace(), object(), self._candidates(3))
         assert usage.requests == 9  # 3 findings x 3 votes each at high severity
