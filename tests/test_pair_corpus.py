@@ -276,3 +276,64 @@ def test_stop_detail_survives_into_the_signature():
     row = signature({"complete": False, "stop_reason": "context_exhausted",
                      "stop_detail": "API error 400: prompt is too long"}, {})
     assert row["stop_detail"] == "API error 400: prompt is too long"
+
+
+# ------------------------------- sentinels that meant the opposite thing
+
+
+def test_a_filename_with_a_pipe_does_not_fake_a_disagreement():
+    """The stability tool reporting instability it introduced itself.
+
+    Blocking findings were stored as `category|file|anchor` and split back
+    apart. A filename containing `|` shifted every field, so two identical runs
+    compared as different — and the whole point of that comparison is to tell a
+    moved verdict from a noisy one.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "tools"))
+    from artifact import controls_agree, signature
+
+    payload = {
+        "complete": True,
+        "verdict": {"exit_code": 1, "blocking_fingerprints": ["fp1"]},
+        "findings": [{
+            "fingerprint": "fp1", "category": "injection",
+            "file": "app/we|rd.py",
+            "evidence": "db.execute(query_string_here)",
+        }],
+    }
+    row = signature(payload, {})
+    assert controls_agree(row, signature(payload, {})), row["blocking"]
+
+
+def test_an_old_pipe_joined_artifact_still_compares():
+    """Artifacts written before the change must not read as disagreeing with
+    ones written after it."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "tools"))
+    from artifact import controls_agree
+
+    old = {"exit_code": 1, "blocking": ["injection|app/views.py|x = 1"], "target": None}
+    new = {"exit_code": 1, "blocking": [["injection", "app/views.py", "x = 1"]],
+           "target": None}
+    assert controls_agree(old, new)
+
+
+def test_a_null_verification_is_not_a_crash():
+    """`get("verification", {})` only defaults when the key is *absent*. A
+    present null raised — and `ablation.py` read the same field the safe way,
+    so two readers of one artifact disagreed about what null means."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "tools"))
+    from artifact import target_disposition
+
+    payload = {"verdict": {"blocking_fingerprints": []},
+               "findings": [{"category": "injection", "file": "app/views.py",
+                             "fingerprint": "fp", "verification": None}]}
+    assert target_disposition(payload, {"expected_category": "injection"})["verdict"] == ""

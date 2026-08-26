@@ -170,7 +170,11 @@ def target_disposition(payload: dict, case: dict):
             "fingerprint": finding.get("fingerprint", ""),
             "severity": finding.get("severity", ""),
             "confidence": finding.get("confidence", ""),
-            "verdict": finding.get("verification", {}).get("verdict", ""),
+            # `or {}`, not a default argument: the default only fires when the
+            # key is absent, and a present `"verification": null` raised
+            # instead. `ablation.py` reads the same field the safe way, so two
+            # readers of one artifact disagreed about what null means.
+            "verdict": (finding.get("verification") or {}).get("verdict", ""),
             "blocking": finding.get("fingerprint") in blocking,
         }
     return None
@@ -196,7 +200,11 @@ def signature(payload: dict, case: dict) -> dict:
         "exit_code": verdict.get("exit_code"),
         "blocked": bool(verdict.get("blocked")),
         "target": target_disposition(payload, case),
-        "blocking": sorted("{}|{}|{}".format(*i) for i in blocking_identities(payload)),
+        # A list of triples rather than `|`-joined strings. A filename
+        # containing `|` shifted every field on the way back out, so two
+        # identical runs read as disagreeing — the stability tool reporting
+        # instability it had introduced itself.
+        "blocking": sorted(list(i) for i in blocking_identities(payload)),
         "reported": len(payload.get("findings", [])),
         "model": payload.get("model", ""),
         "provenance": payload.get("provenance", {}),
@@ -216,7 +224,13 @@ def controls_agree(first: dict, second: dict) -> bool:
     # anchors. Two runs quoting different lines of one construct did the same
     # thing, and calling that a disagreement made a stable gate look unstable.
     def where(row):
-        return {tuple(str(k).split("|")[:2]) for k in row.get("blocking", [])}
+        out = set()
+        for key in row.get("blocking", []):
+            # Tolerates the old `|`-joined form so an artifact written before
+            # this change still compares. New ones are lists.
+            parts = list(key) if isinstance(key, (list, tuple)) else str(key).split("|")
+            out.add(tuple(parts[:2]))
+        return out
 
     if where(first) != where(second):
         return False

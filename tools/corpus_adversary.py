@@ -175,7 +175,11 @@ def worst(scores: dict, min_fires: int = 6, within_only: bool = True) -> tuple:
     ranked = [
         (name, row["correct"] / row["fired"], row)
         for name, row in scores.items()
-        if row["fired"] >= min_fires and name in considered
+        # `> 0`, not `>= min_fires` alone: `--min-fires 0` made
+        # `0 >= 0` true for a rule that never fired, and the
+        # accuracy below divided by it.
+        if row["fired"] > 0 and row["fired"] >= min_fires
+        and name in considered
     ]
     if not ranked:
         return ("", 0.0, {})

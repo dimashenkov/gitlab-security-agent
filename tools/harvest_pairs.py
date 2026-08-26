@@ -179,18 +179,20 @@ def advisories(ecosystem: str, limit: int, cwe: str = "", severity: str = "") ->
     one of them gives a pair where the unsafe member is still partly fixed —
     a case whose ground truth is wrong in a way nothing downstream would notice.
     """
-    query = ["/advisories", "--paginate", "--jq", "."]
     params = ["ecosystem={}".format(ecosystem), "type=reviewed", "per_page=100"]
     if severity:
         params.append("severity={}".format(severity))
     url = "/advisories?" + "&".join(params)
 
-    proc = subprocess.run(("gh", "api", url, "--jq",
+    # `--paginate` was built into a list that was then deleted before the call,
+    # so every harvest read one page of a hundred and `--limit 400` quietly
+    # meant "up to a hundred". The number asked for and the number searched
+    # were different, and nothing said so.
+    proc = subprocess.run(("gh", "api", "--paginate", url, "--jq",
                            ".[] | {ghsa: .ghsa_id, cve: .cve_id, summary: .summary, "
                            "severity: .severity, cwes: [.cwes[].cwe_id], "
                            "refs: [.references[]? | select(test(\"/commit/\"))]}"),
                           capture_output=True, text=True, check=False)
-    del query
     if proc.returncode != 0:
         raise SystemExit("gh api failed: " + proc.stderr.strip()[:300])
 
@@ -446,8 +448,26 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
             return verdict
 
         stat = git(repo, "diff", "--numstat", parent, item["sha"], "--", *keep, env=env)
-        churn = sum(int(n) for line in stat.splitlines()
-                    for n in line.split()[:2] if n.isdigit())
+        # `--numstat` writes `-\t-\tpath` for a binary file, and `.isdigit()`
+        # rejected the dash — so a commit rewriting a forty-megabyte binary
+        # scored as a zero-line change and sailed under the limit. The guard
+        # was the bug: "cannot be counted" arrived as "nothing changed", which
+        # is the same confusion as an incomplete run arriving as a clean one.
+        churn, binary = 0, []
+        for line in stat.splitlines():
+            fields = line.split("\t")
+            if len(fields) < 3:
+                continue
+            added, removed, path = fields[0], fields[1], fields[2]
+            if added == "-" or removed == "-":
+                binary.append(path)
+                continue
+            churn += int(added or 0) + int(removed or 0)
+        if binary:
+            verdict["skipped"] = (
+                "the fix touches binary file(s) whose size cannot be counted: "
+                "{}".format(", ".join(binary[:3])))
+            return verdict
         if churn > max_lines:
             verdict["skipped"] = "{} lines changed, over the {} limit".format(
                 churn, max_lines)
@@ -542,7 +562,9 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
             "expected_file: [{}]".format(", ".join(repr(p) for p in target)),
             "dropped_from_change: [{}]".format(
                 ", ".join(repr(p) for p in dropped[:6])),
-            "summary: {!r}".format(item["summary"][:200]),
+            # A null summary is a real advisory shape, and the sibling field
+            # two lines up already guarded for it.
+            "summary: {!r}".format((item.get("summary") or "")[:200]),
         ]
         (case_dir / "case.yml").write_text("\n".join(manifest) + "\n", encoding="utf-8")
 

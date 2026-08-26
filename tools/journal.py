@@ -148,6 +148,16 @@ def add(artifact: Path, ref: str, root: Path, noticed: str = "") -> int:
     return 0
 
 
+def _minutes(value) -> int:
+    """Whatever a person typed, as a number of minutes, or zero."""
+    if isinstance(value, bool):        # `true` is not a duration
+        return 0
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def report(root: Path) -> int:
     entries = load_entries(root)
     if not entries:
@@ -160,7 +170,10 @@ def report(root: Path) -> int:
     judged = sum(tally[name] for name in VERDICTS
                  if name not in ("unadjudicated", "unclear"))
     valuable = sum(tally[name] for name in VALUABLE)
-    minutes = sum(int(f.get("minutes") or 0) for f in findings)
+    # `verdict.yml` is edited by hand, so `minutes` arrives as `7.9`, `true`,
+    # or `"12m"`. A crash here would lose a month of adjudication to a typo;
+    # an unreadable value is dropped and the rest still counts.
+    minutes = sum(_minutes(f.get("minutes")) for f in findings)
     misses = [e for e in entries if (e.get("missed_by_the_agent") or "").strip()]
 
     print("\n{} review(s) filed, {} finding(s).".format(len(entries), len(findings)))

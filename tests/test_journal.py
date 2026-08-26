@@ -22,7 +22,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from journal import add, report
+from journal import _minutes, add, report
 
 ARTIFACT = {
     "model": "claude-opus-5",
@@ -219,3 +219,15 @@ def test_an_empty_journal_is_not_a_clean_result(tmp_path, capsys):
     root.mkdir()
     assert report(root) == 2
     assert "nothing filed" in capsys.readouterr().out
+
+
+def test_a_hand_typed_duration_never_loses_a_months_adjudication(tmp_path, capsys):
+    """`verdict.yml` is edited by hand, so `minutes` arrives as `7.9`, `true`,
+    or `"12m"`. A crash here would throw away a month of work over a typo."""
+    assert _minutes(7) == 7
+    assert _minutes(7.9) == 7
+    assert _minutes("12") == 12
+    assert _minutes("12m") == 0          # unreadable, dropped
+    assert _minutes(True) == 0           # `true` is not a duration
+    assert _minutes(None) == 0
+    assert _minutes(-5) == 0
