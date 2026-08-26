@@ -238,6 +238,33 @@ def fetch_commit(repo_slug: str, sha: str, work: Path) -> Path:
 REGRESSION = "regression"
 SNAPSHOT = "snapshot"
 
+# The third construction, considered and not built — recorded here so it is a
+# decision rather than an oversight.
+#
+# Each of the two above gives something away. `regression` is focused on the
+# decisive lines and its unsafe member always *deletes*, so the direction of
+# the diff predicts the answer. `snapshot` has both members add, so direction
+# carries nothing — and the diff becomes a whole new module, which is finding a
+# needle rather than judging a control.
+#
+# A construction with neither: the baseline holds the decisive function as a
+# compiling stub (`panic("not implemented")` and its equivalents), and both
+# members replace it — one with the fixed implementation, one with the
+# vulnerable one. Additive on both sides, and one function wide.
+#
+# Not built for two reasons, and the second is the real one:
+#
+#   1. It needs function-boundary detection and stub synthesis for eight
+#      languages, roughly the size of `strip_comments.py`.
+#   2. It would not fit the harvested cases anyway. Twenty of forty-eight real
+#      fixes touch more than one file, and a stub of five functions across
+#      three files is not a diff anyone would open.
+#
+# What it would buy is a better regression suite. What the project actually
+# lacks is evidence from changes nobody built to be reviewed, and no
+# construction can supply that. See LIMITATIONS.md.
+FOCUSED_ADDITION_NOT_BUILT = True
+
 MAX_CONTEXT_FILES = 25
 MAX_CONTEXT_BYTES = 400_000
 

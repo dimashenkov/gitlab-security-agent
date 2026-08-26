@@ -37,6 +37,38 @@ Everything measured was measured on cases this project constructed or harvested
 itself. An adopter cannot check the numbers by re-running the corpus, because
 agreeing with the author is what the corpus was built to do.
 
+## A cue in how the cases are built, measured and left in
+
+Every case is a pair — the same code with and without a security control — and
+the agent is shown one member and asked to judge it. How the pair is presented
+turns out to matter as much as what is in it. There are two constructions and
+each gives something away:
+
+**regression.** The safe member adds the control; the unsafe member removes it.
+Focused on exactly the decisive lines, and exactly the change worth catching —
+but the unsafe member *always deletes something*, so the direction of the diff
+predicts the answer. A tool with a rule about removed controls scores well here
+without recognising anything.
+
+**snapshot.** Both members add an implementation to a shared baseline, one
+fixed and one not. Direction carries no answer — and the diff is now a whole
+newly added module, which is a different task: finding a needle rather than
+judging a control. The 2-of-6 harvested result measured this, and everything
+said about the agent before it measured the other.
+
+The construction that would have neither — a baseline holding the decisive
+function as a compiling stub, with both members replacing it, so both are
+additive *and* the diff is one function — **is not built**. It needs
+function-boundary detection and stub synthesis for eight languages, and it
+would still not fit the harvested cases, where 20 of 48 fixes touch more than
+one file.
+
+`tools/corpus_adversary.py` measures what the remaining cues are worth. As of
+2026-08-26 no within-member cue fires often enough to judge; between members,
+"the bigger one is safe" scores 85%. That second number does not reach the
+reviewer — each review is shown one member with no reference to the other — but
+it is reported rather than dismissed.
+
 ## What the numbers are, and are not
 
 There is no recall figure and no precision figure. Both were measured, both
