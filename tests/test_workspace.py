@@ -261,3 +261,64 @@ class TestTreePathsAreCheckedLexically:
         # real blob is the revision's answer, given later and separately.
         ws = Workspace(root=git_repo, excludes=())
         assert ws.repo_path("does/not/exist.py") == "does/not/exist.py"
+
+
+class TestInputsNobodyHadTried:
+    """Three shapes the audit found untested, each with a dead handler."""
+
+    def test_a_binary_file_is_refused_with_a_reason(self, git_repo):
+        """`workspace.py` raises "not UTF-8 text (binary file)" and no test
+        had ever reached that line."""
+        import subprocess
+
+        env = {"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.com",
+               "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+        (git_repo / "logo.bin").write_bytes(bytes(range(256)) * 8)
+        subprocess.run(("git", "-C", str(git_repo), "add", "-A"),
+                       check=True, capture_output=True, env=env)
+        subprocess.run(("git", "-C", str(git_repo), "commit", "-qm", "binary"),
+                       check=True, capture_output=True, env=env)
+
+        ws = Workspace(root=git_repo, excludes=())
+        with pytest.raises(WorkspaceError) as caught:
+            ws.read_file("logo.bin")
+        assert "binary" in str(caught.value).lower()
+
+    def test_a_git_timeout_becomes_a_named_failure_not_a_crash(self, git_repo, monkeypatch):
+        """All three `TimeoutExpired` handlers were dead code to the suite. A
+        crash here would exit 1 — "the code has blocking findings" — for a
+        timeout."""
+        import subprocess
+
+        def slow(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd="git", timeout=1)
+
+        monkeypatch.setattr(subprocess, "run", slow)
+        ws = Workspace(root=git_repo, excludes=())
+        with pytest.raises(WorkspaceError) as caught:
+            ws.git("status")
+        assert "timed out" in str(caught.value)
+
+    def test_a_search_stops_at_the_ceiling_and_says_so(self, git_repo):
+        """The streaming path exists so a huge result cannot be collected into
+        memory whole — an OOM is a SIGKILL, and a killed process cannot report
+        that the review did not complete."""
+        import subprocess
+
+        env = {"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.com",
+               "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+        (git_repo / "big.txt").write_text("needle here\n" * 40_000)
+        subprocess.run(("git", "-C", str(git_repo), "add", "-A"),
+                       check=True, capture_output=True, env=env)
+        subprocess.run(("git", "-C", str(git_repo), "commit", "-qm", "big"),
+                       check=True, capture_output=True, env=env)
+
+        ws = Workspace(root=git_repo, excludes=())
+        body, count = ws.search(pattern="needle", max_results=5)
+
+        assert "at least" in body, body[:200]
+        assert "there are more" in body
+        # And it did not read forty thousand lines to say so.
+        assert count < 40_000

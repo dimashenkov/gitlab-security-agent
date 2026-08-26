@@ -66,7 +66,7 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
 
     if blocking:
         lines += ["", "---", "", "## Blocking findings", ""]
-        lines += _findings_section(blocking)
+        lines += _findings_section(cfg, blocking)
 
     if other:
         title = "## Other findings" if blocking else "## Findings"
@@ -74,7 +74,7 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
         if blocking:
             lines.append("_These do not block the merge._")
             lines.append("")
-        lines += _findings_section(other, {id(c) for c in decision.policy_excluded})
+        lines += _findings_section(cfg, other, {id(c) for c in decision.policy_excluded})
 
     if outcome.refuted:
         # Split by what the refutation cost. A refuted finding that would
@@ -102,11 +102,11 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
                 "below. Read the code, not the verdict.",
                 "",
             ]
-            lines += _refuted_section(loud)
+            lines += _refuted_section(cfg, loud)
         if quiet:
             lines += _collapsed(
                 "Refuted during verification ({})".format(len(quiet)),
-                _refuted_section(quiet),
+                _refuted_section(cfg, quiet),
                 note=(
                     "An independent verifier read the code and could not confirm "
                     "these. They are kept here so you can overrule that call."
@@ -233,16 +233,18 @@ def _incomplete_warning(outcome: ScanOutcome) -> List[str]:
 
 
 def _findings_section(
-    candidates: Sequence[Candidate], excluded_ids: Optional[Set[int]] = None
+    cfg: Config, candidates: Sequence[Candidate],
+    excluded_ids: Optional[Set[int]] = None
 ) -> List[str]:
     excluded_ids = excluded_ids or set()
     lines: List[str] = []
     for candidate in sorted(candidates, key=lambda c: c.sort_key):
-        lines += _finding(candidate, id(candidate) in excluded_ids)
+        lines += _finding(cfg, candidate, id(candidate) in excluded_ids)
     return lines
 
 
-def _finding(candidate: Candidate, excluded_by_policy: bool = False) -> List[str]:
+def _finding(cfg: Config, candidate: Candidate,
+             excluded_by_policy: bool = False) -> List[str]:
     finding = candidate.finding
     emoji = SEVERITY_EMOJI.get(candidate.severity, "⚪")
 
@@ -266,8 +268,7 @@ def _finding(candidate: Candidate, excluded_by_policy: bool = False) -> List[str
             _plain(finding.title)),
         "",
         "{} · {}".format(
-            _code_span("{}:{}".format(finding.file, candidate.line)),
-            " · ".join(tags)),
+            _located(cfg, finding.file, candidate.line), " · ".join(tags)),
         "",
         *_fenced(finding.evidence.strip(), _fence_language(finding.file)),
         "",
@@ -301,7 +302,7 @@ def _finding(candidate: Candidate, excluded_by_policy: bool = False) -> List[str
     return lines
 
 
-def _refuted_section(candidates: Sequence[Candidate]) -> List[str]:
+def _refuted_section(cfg: Config, candidates: Sequence[Candidate]) -> List[str]:
     lines: List[str] = []
     for candidate in sorted(candidates, key=lambda c: c.sort_key):
         lines += [
@@ -521,6 +522,18 @@ def _plain(text: str) -> str:
     for character in ("\\", "`", "<", ">", "[", "]"):
         text = text.replace(character, "\\" + character)
     return text
+
+
+def _located(cfg: Config, path: str, line: int) -> str:
+    """`path:line` as a code span, linked to the commit when one is known."""
+    from .config import blob_url
+
+    label = _code_span("{}:{}".format(path, line))
+    url = blob_url(cfg.gitlab, path, line)
+    # The label keeps its span, so a hostile path is still inert inside the
+    # link text; the URL itself is built from the path and is only ever
+    # emitted when the forge context supplied a commit.
+    return "[{}]({})".format(label, url) if url else label
 
 
 def _code_span(text: str) -> str:

@@ -146,3 +146,27 @@ def test_the_category_vocabulary_has_one_source():
     is how the corpus came to score against names the agent cannot emit."""
     assert "open-redirect" in categories()
     assert len(set(categories())) == len(categories())
+
+
+def test_the_reviewer_is_told_to_read_a_control_not_name_it(system_prompt):
+    """Measured true once, on `go-sql-decoy-01`: a real sanitiser on the call
+    path that strips markup and never touches a quote. This is here to keep it
+    true rather than to make it so."""
+    lowered = system_prompt.lower()
+    assert "neutralises" in lowered or "neutralizes" in lowered
+    assert "read it" in lowered
+
+
+def test_local_network_access_is_not_a_reason_to_drop_a_finding(system_prompt):
+    """The one instruction taken from upstream that pushes toward *more*
+    findings. The measured failure mode here is missing things."""
+    lowered = system_prompt.lower()
+    assert "local-network" in lowered or "local network" in lowered
+    assert "trust boundary" in lowered
+
+
+def test_the_repository_conventions_instruction_carries_its_caveat(system_prompt):
+    """Without the second half, convention-following becomes cargo cult: a
+    deviation from a pattern that is not a security control is not a finding."""
+    lowered = system_prompt.lower()
+    assert "deviation is a lead, not proof" in lowered

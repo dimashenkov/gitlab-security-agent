@@ -892,18 +892,38 @@ def _brief(cfg: Config, ws: Workspace, candidate: Candidate, vote_index: int) ->
 
     try:
         file_text = ws.raw_text(finding.file)
-        window, start, stop = excerpt(file_text, candidate.line, radius=60)
-        parts += [
-            "## Starting context",
-            "",
-            "`{}` lines {}-{} (read more of it, and other files, with the tools):".format(
-                finding.file, start, stop),
-            "",
-            "```",
-            window,
-            "```",
-            "",
-        ]
+        # The whole file when it is small. A sixty-line window is an arbitrary
+        # boundary, and the control that decides a finding is routinely on the
+        # other side of it — the verifier then spends a turn on `read_file` to
+        # fetch what could have arrived for less. Anthropic's filter pastes the
+        # whole file unconditionally; the cap is what makes it safe to copy,
+        # since an unbounded prompt is how one claim eats the response budget.
+        if len(file_text) <= cfg.verifier_context_chars:
+            parts += [
+                "## Starting context",
+                "",
+                "`{}`, in full ({} characters). Other files are still yours to "
+                "read with the tools.".format(finding.file, len(file_text)),
+                "",
+                "```",
+                file_text,
+                "```",
+                "",
+            ]
+        else:
+            window, start, stop = excerpt(file_text, candidate.line, radius=60)
+            parts += [
+                "## Starting context",
+                "",
+                "`{}` lines {}-{} of a {}-character file (read more of it, and "
+                "other files, with the tools):".format(
+                    finding.file, start, stop, len(file_text)),
+                "",
+                "```",
+                window,
+                "```",
+                "",
+            ]
     except WorkspaceError as exc:
         parts += ["## Starting context", "", "Could not load the file: {}".format(exc), ""]
 

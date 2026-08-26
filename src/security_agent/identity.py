@@ -57,6 +57,10 @@ def review_identity(cfg: Any, revision: Any, provenance: Any) -> Dict[str, Any]:
             "verify": bool(getattr(cfg, "verify", True)),
             "verify_votes": getattr(cfg, "verify_votes", 0),
             "effort": getattr(cfg, "effort", ""),
+            # What the verifier was shown to start from. A run that
+            # saw whole files is not comparable with one that saw a
+            # window around each finding.
+            "verifier_context_chars": getattr(cfg, "verifier_context_chars", 0),
             # What the model was allowed to see. Changing the exclusions
             # changes the review without changing a line of code.
             "excludes": sorted(getattr(cfg, "excludes", ()) or ()),

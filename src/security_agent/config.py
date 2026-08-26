@@ -203,6 +203,44 @@ class ForgeContext:
 GitLabContext = ForgeContext
 
 
+def blob_url(ctx: ForgeContext, path: str, line: int) -> str:
+    """A link to the exact line, at the exact commit, or "".
+
+    Most of what an inline review comment buys, without any of the machinery.
+    Anthropic's action anchors findings to diff positions and their own code
+    says "in production you'd want more sophisticated line mapping"; a finding
+    without a resolvable line silently becomes line 1, and one in the hundred
+    and first changed file is dropped with a log line claiming it is not in the
+    diff. A permalink needs none of that and cannot be wrong in those ways.
+
+    Pinned to the reviewed commit, never to a branch: a link to `main` points
+    at whatever `main` says next week, which is the same mistake as an artifact
+    that records only `HEAD`. No commit, no link — a 404 in a security report
+    costs more trust than a plain path.
+    """
+    sha = ctx.source_branch_sha or ctx.commit_sha
+    if not (sha and path and ctx.project_path):
+        return ""
+    anchor = "#L{}".format(line) if line else ""
+    if ctx.kind == "github":
+        server = (ctx.api_url or "").replace("//api.", "//").rstrip("/")
+        if server.endswith("/api/v3"):
+            server = server[: -len("/api/v3")]
+        return "{}/{}/blob/{}/{}{}".format(
+            server or "https://github.com", ctx.project_path, sha, path, anchor)
+    if ctx.kind == "gitlab":
+        # `CI_API_V4_URL` is the only project URL the agent is given, and the
+        # web root is it without the API suffix.
+        server = (ctx.api_url or "").rstrip("/")
+        if server.endswith("/api/v4"):
+            server = server[: -len("/api/v4")]
+        if not server:
+            return ""
+        return "{}/{}/-/blob/{}/{}{}".format(
+            server, ctx.project_path, sha, path, anchor)
+    return ""
+
+
 def _inside(path: Path, root: Path) -> bool:
     """Is `path` at or under `root`? Both must already be resolved.
 
@@ -307,6 +345,13 @@ class Config:
     verify_model: str = ""  # falls back to `model`
     verify_effort: str = "high"
     verify_max_findings: int = 40
+    # Below this, the verifier's opening brief carries the whole file
+    # rather than a window around the finding. A sixty-line window is an
+    # arbitrary boundary and the control that decides a finding is
+    # routinely on the other side of it. Deliberately conservative: this
+    # is the opening prompt, where one large claim would otherwise eat
+    # the response budget for the whole panel.
+    verifier_context_chars: int = 20_000
     # Verifier calls are independent, so they run concurrently. The ceiling
     # keeps a run with many findings from opening dozens of connections at once
     # and hitting rate limits — the wall-clock win is already most of the way
@@ -363,6 +408,8 @@ class Config:
             verify_votes=_env_int("SECURITY_SCAN_VERIFY_VOTES", 1),
             verify_model=_env("SECURITY_SCAN_VERIFY_MODEL"),
             verify_effort=_env("SECURITY_SCAN_VERIFY_EFFORT", "high"),
+            verifier_context_chars=_env_int(
+                "SECURITY_SCAN_VERIFIER_CONTEXT", 20_000),
             verify_max_findings=_env_int("SECURITY_SCAN_VERIFY_MAX", 40),
             verify_concurrency=_env_int("SECURITY_SCAN_VERIFY_CONCURRENCY", 4),
             fail_on=_env("SECURITY_SCAN_FAIL_ON", "high"),

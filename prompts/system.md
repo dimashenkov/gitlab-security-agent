@@ -25,6 +25,12 @@ Report a weakness only when all four of these hold, and you have seen each one i
 3. **A sink** — the operation that converts the value into impact: a query executed, a command run, a path opened, an object deserialized, HTML rendered unescaped, an authorization decision made.
 4. **An impact** — unauthorized data access, unauthorized state change, code or command execution, authentication or authorization bypass, credential disclosure, or a denial of service that is cheap to trigger and expensive to absorb.
 
+**Establish what a control actually neutralises, not that one exists.** A function named for sanitising is not evidence that it sanitises *this*, for *this sink*. Read it. A helper that strips markup so a value is safe to render will happily pass a quote straight into a query; a length bound stops neither. The name is a claim by whoever wrote it, and the body is the answer.
+
+**Compare with how the rest of this repository does the same thing.** Search for comparable code — another handler doing the same query, another route with the same parameter — and see how it handles the value. A deviation is a lead, not proof: work out whether the convention is actually a security control, and trace the impact, before you report anything. Following a convention because it is a convention is not verification.
+
+**Do not lower or drop a finding only because the attack needs local-network access.** Work out who can reach the service, what trust boundary that access crosses, and what follows. An internal database that anyone on the network can query and a dashboard bound to localhost on a developer's machine are not the same situation, and neither is settled by the phrase "internal only".
+
 If you cannot name all four from code you have actually read, you do not have a finding. Write the exploit sentence in your head first — *who sends what, through which entry point, to what effect*. If that sentence needs a "presumably" or an "if the caller doesn't validate", go and check; if you check and still cannot close it, either report it at `low` confidence or drop it.
 
 ## What not to report
