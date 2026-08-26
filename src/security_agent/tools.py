@@ -36,6 +36,27 @@ log = logging.getLogger(__name__)
 
 REPORT_FINDING = "report_finding"
 
+# The review says it is over. Not the process exiting, not the model falling
+# silent — a deliberate call.
+#
+# With the Messages API "the model stopped asking for tools" is a real signal:
+# `end_turn` is the model choosing to stop. A provider that owns its own loop
+# gives no such signal — its process exits zero whether the review finished or
+# the harness gave up, and this project's one unbreakable rule is that those two
+# must never render the same. So completion becomes something the reviewer
+# states, in the same channel as everything else it states, and both runners
+# read the same statement.
+#
+# It also fixes something on the API path. The final summary used to be
+# whatever text happened to be in the last response, which is presentation:
+# a sentence written to be read, arriving through a channel with no schema and
+# no minimum. Through here it is an argument, and it is journalled as submitted.
+FINISH_REVIEW = "finish_review"
+
+# Below this a summary is a sign-off, not a summary. Chosen to be short enough
+# that one honest sentence passes.
+MIN_SUMMARY_CHARS = 40
+
 # How many times one claim may fail the citation check before it is dropped for
 # good. One retry is a typo in a path or a quote reconstructed from memory; a
 # second failure on the same claim means the code is not there.
@@ -55,6 +76,11 @@ class Session:
     duplicates_dropped: int = 0
     turn: int = 0
     metrics: StageMetrics = field(default_factory=StageMetrics)
+    # Set only by `finish_review`. The one place a runner-independent answer to
+    # "did this review end, or was it ended" is written down.
+    finished: bool = False
+    final_summary: str = ""
+    unresolved: List[str] = field(default_factory=list)
     _attempts: Dict[str, int] = field(default_factory=dict)
 
     def note_file(self, path: str) -> None:
@@ -282,19 +308,66 @@ def tool_definitions(finding_schema: Dict[str, Any], diff_available: bool) -> Li
         "input_schema": finding_schema,
     })
 
+    tools.append({
+        "name": FINISH_REVIEW,
+        "description": (
+            "End the review. Call this exactly once, when you have finished "
+            "looking — after every finding is reported, or after concluding "
+            "there is nothing to report. This is the only way to say the "
+            "review is complete: a review that stops without it is recorded as "
+            "having been cut short, because from the outside 'finished' and "
+            "'was interrupted' look identical.\n\n"
+            "Do not call it to bail out of something you have not checked. If "
+            "you ran out of room or could not settle a question, still call it "
+            "— and say so in `unresolved`. A named gap is useful; a silent one "
+            "is the failure this tool exists to prevent."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": (
+                        "What you reviewed and what you concluded, in the "
+                        "reviewer's own words. This is what a person reads "
+                        "first. State what you looked at, not only what you "
+                        "found — 'no findings' after reading three files and "
+                        "'no findings' after reading thirty are different "
+                        "statements."
+                    ),
+                },
+                "unresolved": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Questions you could not settle, one per entry. A "
+                        "control you could not locate, a caller you could not "
+                        "trace, a file you could not read. Leave empty only if "
+                        "there genuinely are none — 'I could not tell' is a "
+                        "real answer here and a better one than a guess."
+                    ),
+                },
+            },
+            "required": ["summary"],
+        },
+    })
+
     return tools
 
 
 def read_only_tool_definitions(diff_available: bool) -> List[Dict[str, Any]]:
-    """The investigation tools without `report_finding`.
+    """The investigation tools without `report_finding` or `finish_review`.
 
     Used by the verifier, which must be able to check a claim as thoroughly as
     the agent that made it, but has no business creating findings of its own —
-    its only output is a verdict on the one claim it was given.
+    its only output is a verdict on the one claim it was given. It has no
+    review to end either: its answer is a JSON verdict, and giving it a way to
+    declare a review complete would let one vote on one claim close the review
+    that produced the claim.
     """
     return [
         tool for tool in tool_definitions(_MINIMAL_FINDING_SCHEMA, diff_available)
-        if tool["name"] != REPORT_FINDING
+        if tool["name"] not in (REPORT_FINDING, FINISH_REVIEW)
     ]
 
 
@@ -439,6 +512,52 @@ def _handle_git_log(ws: Workspace, session: Session, args: Dict[str, Any]) -> To
     return ToolResult(body or "(no commits)", "git log {}".format(path or "."))
 
 
+def _handle_finish_review(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
+    """Record that the reviewer says it is done, and what it concluded.
+
+    Rejections here are returned rather than raised, like every other tool, so
+    a reviewer that signs off with two words gets told and can answer properly.
+    The one thing this must never do is refuse in a way that leaves the review
+    running with no way to end it — so a second call is accepted quietly rather
+    than treated as an error.
+    """
+    summary = str(args.get("summary") or "").strip()
+    if len(summary) < MIN_SUMMARY_CHARS:
+        return ToolResult(
+            "The review is not recorded as finished: `summary` is {} characters "
+            "and must be at least {}. Say what you examined and what you "
+            "concluded — a person reads this before anything else.".format(
+                len(summary), MIN_SUMMARY_CHARS),
+            "summary too short",
+            is_error=True,
+        )
+
+    raw = args.get("unresolved") or []
+    if isinstance(raw, str):
+        # One string where a list was asked for. Wrapping it keeps a real
+        # answer rather than discarding it on a shape complaint.
+        raw = [raw]
+    unresolved = [str(item).strip() for item in raw if str(item).strip()]
+
+    if session.finished:
+        # Already signed off. Keep the first sign-off: a second one arriving
+        # after more work is not more authoritative, and letting a later call
+        # overwrite the summary would let a truncated retry blank it.
+        return ToolResult(
+            "The review is already recorded as finished. Stop here.",
+            "finish_review (repeat, ignored)",
+        )
+
+    session.finished = True
+    session.final_summary = summary
+    session.unresolved = unresolved
+    return ToolResult(
+        "Review recorded as finished. Stop now — no further tool calls are "
+        "needed.",
+        "finish_review: {} unresolved".format(len(unresolved)),
+    )
+
+
 def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
     """Record a finding — after checking that the code it cites is really there.
 
@@ -579,6 +698,7 @@ HANDLERS: Dict[str, Handler] = {
     "search_code": _handle_search_code,
     "git_log": _handle_git_log,
     REPORT_FINDING: _handle_report_finding,
+    FINISH_REVIEW: _handle_finish_review,
 }
 
 

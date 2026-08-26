@@ -60,6 +60,8 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
     if not outcome.complete:
         lines += _incomplete_warning(outcome)
 
+    lines += _sign_off(outcome)
+
     blocking_ids = {id(c) for c in decision.blocking}
     blocking = decision.blocking
     other = [c for c in outcome.reported if id(c) not in blocking_ids]
@@ -230,6 +232,36 @@ def _incomplete_warning(outcome: ScanOutcome) -> List[str]:
         "> **Coverage is partial:** {}{}. Anything not listed below was not "
         "necessarily checked.".format(explanation, detail),
     ]
+
+
+def _sign_off(outcome: ScanOutcome) -> List[str]:
+    """What the reviewer could not settle, and whether it signed off at all.
+
+    Both halves say the same thing from opposite ends: a review is not only
+    what it found. A gap the reviewer names is worth more to the reader than
+    the finding above it, and a review that never said it was done is a review
+    whose silence has not been accounted for.
+    """
+    lines: List[str] = []
+
+    if outcome.unresolved:
+        lines += ["", "**Not settled by this review:**", ""]
+        # Model-written prose about attacker-authored code — escaped, like
+        # every other sentence the model contributes to this document.
+        lines += ["- {}".format(_plain(item)) for item in outcome.unresolved]
+        lines.append("")
+
+    if outcome.complete and not outcome.finished_explicitly:
+        lines += [
+            "",
+            "> [!NOTE]",
+            "> The reviewer stopped without signing off. The run reached the "
+            "end of its loop, so this is not a failure — but nothing states "
+            "that the review was finished rather than abandoned, and the "
+            "summary above is whatever it happened to say last.",
+        ]
+
+    return lines
 
 
 def _findings_section(
@@ -577,6 +609,12 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
         "mode": outcome.mode,
         "model": outcome.model,
         "complete": outcome.complete,
+        # Two different questions. `complete` is whether the run reached the end
+        # of its loop; this is whether the reviewer said it was done. A provider
+        # that owns its loop can satisfy the first without the second, which is
+        # exactly the case this product must not render as a clean review.
+        "finished_explicitly": outcome.finished_explicitly,
+        "unresolved": list(outcome.unresolved),
         "stop_reason": outcome.stop_reason,
         "stop_detail": outcome.stop_detail,
         "verdict": {

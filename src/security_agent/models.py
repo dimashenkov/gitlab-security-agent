@@ -750,6 +750,21 @@ class ScanOutcome:
     coverage: Coverage = field(default_factory=Coverage)
     metrics: StageMetrics = field(default_factory=StageMetrics)
 
+    # Did the reviewer say it was done, or did it merely stop? With the
+    # Messages API those are close: `end_turn` is the model choosing to stop. A
+    # provider that runs its own loop offers no such distinction — its process
+    # exits zero either way — so completion becomes something the reviewer
+    # states through `finish_review`, and both runners read the same statement.
+    #
+    # Recorded rather than gated, for now. Making it a failure today would fail
+    # runs that are fine; the point is to have the rate from real reviews
+    # before tightening it.
+    finished_explicitly: bool = False
+    # Questions the reviewer could not settle, in its own words. "I could not
+    # tell" is a real answer and this is where it goes; without somewhere to
+    # put it, a gap becomes silence.
+    unresolved: List[str] = field(default_factory=list)
+
     @property
     def complete(self) -> bool:
         return self.stop_reason == STOP_COMPLETED

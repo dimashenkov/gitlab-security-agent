@@ -291,9 +291,26 @@ class SecurityAgent:
             self._move_cache_breakpoint(results)
             messages.append({"role": "user", "content": results})
 
+            if self.session.finished:
+                # The reviewer said so itself, which is the only statement both
+                # runners can read the same way. Everything else — the process
+                # exiting, the model falling silent — is inference about a
+                # provider's loop.
+                summary = self.session.final_summary
+                stop_reason = STOP_COMPLETED
+                break
+
         outcome.stop_reason = stop_reason
         outcome.stop_detail = stop_detail
         outcome.summary = summary.strip()
+        # Recorded, not gated. A review that ends on `end_turn` without calling
+        # `finish_review` still completed as far as the Messages API is
+        # concerned — the model chose to stop — so turning this into a failure
+        # today would fail runs that are fine. It is written down so the rate
+        # can be read off twenty real reviews instead of guessed at, and
+        # tightened when there is a number.
+        outcome.finished_explicitly = self.session.finished
+        outcome.unresolved = list(self.session.unresolved)
         outcome.turns = self.session.turn
         outcome.tool_calls = list(self.session.tool_calls)
         outcome.files_examined = list(self.session.files_examined)
