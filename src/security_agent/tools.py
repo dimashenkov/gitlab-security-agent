@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
+from . import generated
 from .evidence import (
     EvidenceProblem,
     attribution,
@@ -319,10 +320,43 @@ def _handle_list_changed_files(ws: Workspace, session: Session, args: Dict[str, 
             "(the change may be limited to excluded paths such as lockfiles).",
             "no changed files",
         )
-    body = "\n".join("{} ({})".format(path, kind) for path, kind in changed)
+    # Generated files are labelled here rather than removed. A diff carrying
+    # ten thousand lines of regenerated protobuf pushes the hand-written code
+    # out of the reviewer's attention and costs input tokens for it — but
+    # generated CI configuration decides what runs and as whom, a compromised
+    # generator produces real vulnerabilities in real output, and an attacker
+    # can type the banner into a file they wrote themselves. So the path stays
+    # visible with its reason, and the file stays readable.
+    lines = []
+    labelled = 0
+    for path, kind in changed:
+        # The raw blob, not `read_file`: that one returns line-numbered text
+        # for the model to cite, and a numbered line does not start with `//`,
+        # so every anchored banner pattern would silently miss. The anchors are
+        # load-bearing — they are what stops a marker in a string literal from
+        # reclassifying hand-written code.
+        try:
+            head = ws.blob_text(path)
+        except WorkspaceError:
+            head = ""
+        reason = generated.classify(path, head)
+        if reason:
+            labelled += 1
+            lines.append("{} ({}) — generated: {}. Look at {} instead, unless "
+                         "the output itself carries the weakness."
+                         .format(path, kind, reason, generated.source_of(path)))
+        else:
+            lines.append("{} ({})".format(path, kind))
+
+    note = ""
+    if labelled:
+        note = ("\n\n{} of these are generated. They are still readable, and "
+                "worth opening when the generator or its input also changed — "
+                "output that moved with no identifiable source input is the "
+                "interesting case.".format(labelled))
     return ToolResult(
-        "{} changed file(s):\n{}".format(len(changed), body),
-        "{} changed file(s)".format(len(changed)),
+        "{} changed file(s):\n{}{}".format(len(changed), "\n".join(lines), note),
+        "{} changed file(s), {} generated".format(len(changed), labelled),
     )
 
 
