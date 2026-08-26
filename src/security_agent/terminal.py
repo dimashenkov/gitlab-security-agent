@@ -134,7 +134,10 @@ def _finding(
     colour = _SEVERITY_COLOUR.get(candidate.severity, "37")
 
     marker = "▲" if blocks else "•"
-    heading = "{} {}  {}".format(marker, candidate.severity.upper(), finding.category)
+    # `category` and `severity` are model strings and are not validated
+    # anywhere on this path, so they reach the log exactly as written.
+    heading = "{} {}  {}".format(
+        marker, _visible(candidate.severity).upper(), _visible(finding.category))
     if blocks:
         flag = s("BLOCKS THE MERGE", "1;31")
     elif excluded_by_policy:
@@ -152,7 +155,7 @@ def _finding(
     lines = [
         "",
         " " + s(heading, colour) + " " * pad + flag,
-        INDENT + s("{}:{}".format(finding.file, candidate.line), "1"),
+        INDENT + s("{}:{}".format(_visible(finding.file), candidate.line), "1"),
         "",
         _wrap(finding.title, len(INDENT)),
         "",
@@ -184,7 +187,12 @@ def _evidence(s: Style, evidence: str, colour: str) -> List[str]:
     # Trim blank lines, not leading whitespace: `.strip()` would take the first
     # line's indentation and leave every other line's, so the common margin
     # computed below would be zero and the block would render as a staircase.
-    body = [ln.rstrip() for ln in evidence.expandtabs(4).splitlines()]
+    # Escapes out first, and per line so a stripped sequence cannot merge two.
+    # The quoted code is copied from a file the contributor wrote; `\033[2J`
+    # in it clears the screen of anyone tailing the job log, taking the verdict
+    # banner with it.
+    body = [_visible(ln).rstrip()
+            for ln in evidence.expandtabs(4).splitlines()]
     while body and not body[0].strip():
         body.pop(0)
     while body and not body[-1].strip():
@@ -313,7 +321,7 @@ def _footer(
 def _wrap(text: str, indent: int) -> str:
     pad = " " * indent
     return textwrap.fill(
-        " ".join((text or "").split()),
+        " ".join(_visible(text or "").split()),
         width=WIDTH, initial_indent=pad, subsequent_indent=pad) or pad
 
 
@@ -343,9 +351,25 @@ def _visible(text: str) -> str:
                 ends = [bell + 1 for _ in (1,) if bell != -1]
                 ends += [st + 2 for _ in (1,) if st != -1]
                 end = min(ends) if ends else len(text)
+            elif nxt == "[":
+                # CSI: `ESC [`, parameter bytes 0x30-0x3F, intermediate bytes
+                # 0x20-0x2F, then any final byte 0x40-0x7E. Looking only for
+                # `m` was enough for the colours this file emits and wrong for
+                # everything else: `ESC [ 2 J` clears the screen and ends in
+                # `J`, so the search ran off the end and swallowed the text
+                # after it. Stripping the payload as well as the escape hides
+                # the attack instead of defusing it.
+                end = i + 2
+                while end < len(text) and 0x30 <= ord(text[end]) <= 0x3F:
+                    end += 1
+                while end < len(text) and 0x20 <= ord(text[end]) <= 0x2F:
+                    end += 1
+                if end < len(text) and 0x40 <= ord(text[end]) <= 0x7E:
+                    end += 1
             else:
-                marker = text.find("m", i)
-                end = marker + 1 if marker != -1 else len(text)
+                # A two-character escape: `ESC c` resets the terminal, `ESC 7`
+                # saves the cursor. Drop both bytes and no more.
+                end = i + 2
             # Never stand still, whatever the input claims.
             i = max(end, i + 1)
             continue

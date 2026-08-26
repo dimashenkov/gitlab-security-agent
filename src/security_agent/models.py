@@ -55,18 +55,47 @@ VERDICT_UNCERTAIN = "uncertain"
 VERDICT_REFUTED = "refuted"
 
 
+def _normalise(value: str) -> str:
+    """Case and whitespace only. `"High"` and `"high"` are the same word.
+
+    The schema constrains these server-side, and `_parse_verdict` has a
+    hand-rolled fallback for exactly the case where that constraint did not
+    hold — so a value arriving with a capital letter is a real path, and it
+    used to become rank -1.
+    """
+    return (value or "").strip().lower()
+
+
 def severity_rank(severity: str) -> int:
+    """Position in the order, or -1 for a value nobody recognises.
+
+    The -1 is safe for *sorting* — an unknown value goes to one end and stays
+    there. It was read as a *threshold* comparison in the gate, where `-1 <
+    anything` meant an unrecognised severity was quietly treated as less severe
+    than `low` and stopped blocking. One sentinel, two callers, opposite safe
+    directions. The gate now asks `recognised()` first.
+    """
     try:
-        return SEVERITY_ORDER.index(severity)
+        return SEVERITY_ORDER.index(_normalise(severity))
     except ValueError:
         return -1
 
 
 def confidence_rank(confidence: str) -> int:
     try:
-        return CONFIDENCE_ORDER.index(confidence)
+        return CONFIDENCE_ORDER.index(_normalise(confidence))
     except ValueError:
         return -1
+
+
+def recognised(value: str, order: Sequence[str]) -> bool:
+    """Is this a word the project knows?
+
+    Separate from the rank so a caller has to decide what an unknown value
+    means rather than inheriting -1's arithmetic. For the gate it means "this
+    cannot be the reason a finding does not block".
+    """
+    return _normalise(value) in order
 
 
 @dataclass(frozen=True)

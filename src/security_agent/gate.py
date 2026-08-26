@@ -12,10 +12,13 @@ from typing import List
 
 from .config import Config
 from .models import (
+    CONFIDENCE_ORDER,
+    SEVERITY_ORDER,
     STOP_EXPLANATIONS,
     Candidate,
     ScanOutcome,
     confidence_rank,
+    recognised,
     severity_rank,
 )
 
@@ -86,9 +89,18 @@ def blocking_findings(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
             blocking.append(candidate)
             continue
 
-        if severity_rank(candidate.severity) < minimum_severity:
+        # A value nobody recognises is not a value below the threshold. Both
+        # ranks return -1 for an unknown word, and `-1 < minimum` was letting a
+        # `confidence` of "High" — one capital letter — carry a `critical`
+        # finding past the gate: rendered as CRITICAL in the report, absent
+        # from `blocking_fingerprints`, exit 0. `recognised()` is asked first,
+        # so an unparseable rating fails toward blocking and says so, rather
+        # than silently passing.
+        if recognised(candidate.severity, SEVERITY_ORDER) and (
+                severity_rank(candidate.severity) < minimum_severity):
             continue
-        if confidence_rank(candidate.confidence) < minimum_confidence:
+        if recognised(candidate.confidence, CONFIDENCE_ORDER) and (
+                confidence_rank(candidate.confidence) < minimum_confidence):
             continue
         blocking.append(candidate)
     return blocking

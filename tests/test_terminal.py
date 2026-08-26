@@ -276,6 +276,13 @@ def test_section_markers_carry_the_name_on_both_ends():
 class TestHostileTextCannotDriveTheTerminal:
     """The job log is the other place attacker-authored text is rendered.
 
+    THE FIRST VERSION OF THIS CLASS TESTED THE WRONG THING. Every test called
+    `_visible` directly, and `_visible` was reachable only from the width
+    calculation — the rendered lines used the raw strings. Three green tests
+    named for a property the product did not have, which is the project's own
+    rule about testing the chain rather than the link, broken in the test
+    written to enforce it. The tests below go through `render()`.
+
     The Markdown report has escaped hostile content since the fence bug. The
     terminal renderer had not: a finding's title and its quoted code are
     written by whoever opened the merge request, and a raw escape sequence in
@@ -330,3 +337,60 @@ class TestWidthIsCellsNotCodePoints:
         text = terminal.render(outcome, Decision(exit_code=0, reason="nothing"))
         for line in _visible(text).splitlines():
             assert len(line) <= WIDTH + 2, repr(line)
+
+
+class TestHostileTextThroughRender:
+    """Through the whole renderer, because the last version was not."""
+
+    def _rendered(self, **overrides) -> str:
+        from security_agent.gate import Decision
+        from security_agent.models import Candidate, Finding
+
+        fields = dict(
+            title="SQL injection", category="injection", severity="high",
+            confidence="high", file="app/views.py", line=14,
+            impact="broad_data_access", reachable_without_authentication="yes",
+            requires_user_interaction="no", evidence="db.execute(q)",
+            description="User input reaches the query.",
+            exploit_scenario="Anyone reads every row.",
+            recommendation="Parameterise it.")
+        fields.update(overrides)
+        outcome = make_outcome()
+        outcome.reported = [Candidate(finding=Finding.from_dict(fields))]
+        return terminal.render(outcome, Decision(exit_code=1, reason="blocked"))
+
+    def test_a_title_cannot_clear_the_screen(self):
+        """`\033[2J\033[H` erases the banner above it and leaves whatever the
+        attacker wrote where the verdict was."""
+        assert "\033[2J" not in self._rendered(title="\033[2J\033[HALL CLEAR")
+        assert "ALL CLEAR" in self._rendered(title="\033[2J\033[HALL CLEAR")
+
+    def test_a_title_cannot_become_a_hyperlink(self):
+        hostile = "\033]8;;http://evil.example\007Approve\033]8;;\007"
+        rendered = self._rendered(title=hostile)
+        assert "\033]8" not in rendered
+        assert "evil.example" not in rendered
+
+    def test_quoted_code_cannot_drive_the_terminal(self):
+        """It is copied verbatim from a file the contributor wrote."""
+        rendered = self._rendered(evidence="x = 1\n\033[2J\033[Hall clear")
+        assert "\033[2J" not in rendered
+
+    def test_a_category_cannot_either(self):
+        """Never validated on this path — `vocabulary.is_category` is applied
+        to operator configuration and not to a finding."""
+        assert "\033[2J" not in self._rendered(category="\033[2Jinjection")
+
+    def test_a_recommendation_cannot_either(self):
+        assert "\033[2J" not in self._rendered(
+            recommendation="\033[2J\033[HPIPELINE PASSED")
+
+    def test_a_path_cannot_either(self):
+        assert "\033[2J" not in self._rendered(file="\033[2Japp/views.py")
+
+    def test_the_ordinary_text_still_arrives(self):
+        """A renderer that dropped the content would pass every test above."""
+        rendered = self._rendered()
+        assert "SQL injection" in rendered
+        assert "app/views.py" in rendered
+        assert "db.execute(q)" in rendered

@@ -185,3 +185,47 @@ class TestTheVerdictNamesTheRuleThatApplied:
         reason = decide(config, outcome_with(*candidates)).reason
         assert "removes an existing security control" in reason
         assert "at or above the high threshold" in reason
+
+
+class TestAnUnknownRatingCannotUnGateAFinding:
+    """One capital letter used to carry a critical finding past the gate.
+
+    `severity_rank` and `confidence_rank` return -1 for a word nobody
+    recognises. That is right for sorting — an unknown value goes to one end
+    and stays there — and it was read as a threshold: `-1 < minimum` meant an
+    unrecognised rating was quietly treated as *less* severe than `low`, so it
+    never blocked. The report still rendered it as CRITICAL and the pipeline
+    still exited 0.
+
+    Neither field is derived or validated on that path. `Finding.from_dict`
+    takes `str(data["confidence"])`, and the schema's enum is enforced by the
+    API — except on the hand-rolled fallback in `_parse_verdict`, which exists
+    precisely for when it was not.
+    """
+
+    def _blocks(self, cfg, **overrides) -> bool:
+        from security_agent.gate import blocking_findings
+
+        candidate = make_candidate(**overrides)
+        outcome = ScanOutcome(mode="diff", model="m")
+        outcome.reported = [candidate]
+        return bool(blocking_findings(cfg, outcome))
+
+    def test_a_capital_letter_is_the_same_word(self, config):
+        """`High` and `high` are one rating written two ways."""
+        assert self._blocks(config, severity="critical", confidence="High")
+        assert self._blocks(config, severity="Critical", confidence="high")
+
+    def test_surrounding_whitespace_is_the_same_word(self, config):
+        assert self._blocks(config, severity="critical", confidence=" high ")
+
+    def test_a_rating_nobody_recognises_does_not_silently_pass(self, config):
+        """It fails toward blocking. An unparseable rating is a statement that
+        the rating could not be read — never that it was low."""
+        assert self._blocks(config, severity="critical", confidence="pretty sure")
+        assert self._blocks(config, severity="devastating", confidence="high")
+
+    def test_a_recognised_rating_below_the_bar_still_does_not_block(self, config):
+        """The fix must not turn the threshold off."""
+        assert not self._blocks(config, severity="low", confidence="high")
+        assert not self._blocks(config, severity="critical", confidence="low")
