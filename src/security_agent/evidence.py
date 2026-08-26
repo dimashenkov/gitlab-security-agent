@@ -51,6 +51,11 @@ def _strip_diff_markers(lines: Sequence[str]) -> List[str]:
 # and silently attaches the finding to the first occurrence, taking the location
 # and the change attribution with it.
 MIN_EVIDENCE_CHARS = 24
+# And a maximum, because there was not one. Far more than a quotation
+# needs — the report renders eight lines — and small enough that the
+# window walk below stays bounded whatever the model sends.
+MAX_EVIDENCE_LINES = 200
+MAX_EVIDENCE_CHARS = 16_000
 
 
 class EvidenceProblem(Exception):
@@ -83,6 +88,26 @@ def locate_evidence(file_text: str, evidence: str, claimed_line: int = 0) -> int
             "the quoted code is too short to identify one place in the file "
             "({} characters). Quote the whole statement, or a couple of lines "
             "around it.".format(sum(len(line) for line in wanted)))
+
+    # There was a minimum and no maximum. The matcher below walks every window
+    # of the file for every candidate, so a quote of a few thousand lines
+    # against a large file takes tens of seconds *per call* — and the run's
+    # deadline is only checked between turns, so a turn issuing twenty of them
+    # runs a quarter of an hour past the limit before anything notices.
+    #
+    # Rejected here rather than optimised: a bounded quadratic is easier to
+    # reason about than an unbounded clever matcher, and the report shows eight
+    # lines of evidence anyway. Anything approaching this size is a claim about
+    # a file, not a quote of a statement.
+    if len(wanted) > MAX_EVIDENCE_LINES or sum(
+            len(line) for line in wanted) > MAX_EVIDENCE_CHARS:
+        raise EvidenceProblem(
+            "the quoted code is too long ({} lines, {} characters). Quote the "
+            "statement the weakness is in and a couple of lines around it — "
+            "at most {} lines. A quote this size cannot identify one place in "
+            "the file, which is what the quote is for.".format(
+                len(wanted), sum(len(line) for line in wanted),
+                MAX_EVIDENCE_LINES))
 
     haystack = [normalize(line) for line in file_text.splitlines()]
     if not haystack:

@@ -18,6 +18,7 @@ from __future__ import annotations
 import fnmatch
 import logging
 import subprocess
+import time
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
@@ -33,6 +34,9 @@ class WorkspaceError(Exception):
 # it saw everything.
 MAX_READ_BYTES = 300_000
 MAX_OUTPUT_CHARS = 60_000
+# A hard stop on how many matches are read at all, independent of how
+# many are shown. The pattern is chosen by the model.
+MAX_SEARCH_HITS = 20_000
 GIT_TIMEOUT_SECONDS = 120
 
 
@@ -382,30 +386,15 @@ class Workspace:
         if path_glob:
             args += ["--", ":(glob)" + path_glob.lstrip("/")]
 
-        try:
-            proc = subprocess.run(
-                ("git", "--no-pager", "-C", str(self.root), *args),
-                capture_output=True,
-                check=False,
-                text=True,
-                errors="replace",
-                timeout=GIT_TIMEOUT_SECONDS,
-                env=_git_env(),
-            )
-        except subprocess.TimeoutExpired:
-            raise WorkspaceError(
-                "search for {!r} timed out; use a more specific pattern".format(pattern)
-            ) from None
-        # git grep exits 1 for "no matches", which is a valid answer, not a failure.
-        if proc.returncode not in (0, 1):
-            raise WorkspaceError(
-                "search failed: {}".format(proc.stderr.strip() or "invalid pattern")
-            )
-
-        hits = [
-            line for line in proc.stdout.splitlines()
-            if line and not self.is_excluded(line.split(":", 1)[0])
-        ]
+        # Read as it arrives and stop at the ceiling, rather than collecting
+        # everything and trimming afterwards. `capture_output=True` buffers the
+        # whole of stdout first, and the size of that is chosen by the pattern
+        # — which the model picks, and which repository prose can push toward
+        # something broad. A result large enough to exhaust memory ends in a
+        # SIGKILL, and a killed process cannot write "the review did not
+        # complete": it is the one failure that defeats the exit-2 contract,
+        # because `except Exception` never runs.
+        hits, truncated = self._grep_stream(args)
         total = len(hits)
         if total == 0:
             return "no matches for {!r}".format(pattern), 0
@@ -415,11 +404,72 @@ class Workspace:
         if len(body) > MAX_OUTPUT_CHARS:
             body = body[:MAX_OUTPUT_CHARS].rsplit("\n", 1)[0] + "\n… output trimmed"
         note = ""
-        if total > len(shown):
+        if truncated:
+            # "At least", never a total. Counting the rest means reading the
+            # rest, which is the thing being avoided — and a fabricated total
+            # is worse than an honest floor.
+            note = ("\n… stopped after {} match(es); there are more. Narrow the "
+                    "pattern or set path_glob.".format(total))
+        elif total > len(shown):
             note = "\n… {} more match(es) not shown; narrow the pattern or set path_glob".format(
                 total - len(shown)
             )
-        return "{} match(es) for {!r}:\n{}{}".format(total, pattern, body, note), total
+        head = "at least {}".format(total) if truncated else str(total)
+        return "{} match(es) for {!r}:\n{}{}".format(head, pattern, body, note), total
+
+    def _grep_stream(self, args):
+        """Run `git grep` and stop reading at the ceiling.
+
+        Returns (kept lines, whether more were left unread). Excluded paths are
+        filtered as the lines arrive, so an excluded directory cannot fill the
+        budget with output that would have been discarded anyway.
+        """
+        deadline = time.monotonic() + GIT_TIMEOUT_SECONDS
+        proc = subprocess.Popen(
+            ("git", "--no-pager", "-C", str(self.root), *args),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, errors="replace", env=_git_env(),
+        )
+        hits, size, truncated = [], 0, False
+        try:
+            for raw in proc.stdout:
+                if time.monotonic() > deadline:
+                    truncated = True
+                    break
+                line = raw.rstrip("\n")
+                if not line or self.is_excluded(line.split(":", 1)[0]):
+                    continue
+                hits.append(line)
+                size += len(line) + 1
+                # Twice the rendered ceiling: enough that `max_results` and the
+                # character trim still have something to choose from, bounded
+                # enough that the process cannot be killed for holding it.
+                if size > MAX_OUTPUT_CHARS * 2 or len(hits) > MAX_SEARCH_HITS:
+                    truncated = True
+                    break
+        finally:
+            if truncated:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            # stderr is read after stdout is done with, and capped for the same
+            # reason: an error message is not a channel worth trusting either.
+            stderr = (proc.stderr.read(4_000) if proc.stderr else "") or ""
+            proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+            code = proc.wait()
+
+        if truncated:
+            return hits, True
+        # git grep exits 1 for "no matches", which is a valid answer.
+        if code not in (0, 1):
+            raise WorkspaceError(
+                "search failed: {}".format(stderr.strip() or "invalid pattern"))
+        return hits, False
 
 
 def _abbrev(rev: str) -> str:
