@@ -1,0 +1,179 @@
+# Rulings about the world, proposed and not in force.
+#
+# Anthropic's action carries seventeen of these in its false-positive filter,
+# and they are the most valuable thing in that repository — institutional
+# knowledge from watching thousands of real findings, which no corpus produces.
+# Their delivery is bad (regex over the model's own prose) and their content is
+# not: "environment variables are trusted", "UUIDs are unguessable", "logging
+# URLs is safe, logging request headers is not".
+#
+# Taking them wholesale would silently spend recall to buy presumed precision.
+# Starting empty would preserve epistemic purity and learn nothing for months.
+# So they are here as `proposed`: nothing in the product reads this file, no
+# finding is suppressed by it, and the author tags applicability by hand while
+# adjudicating real findings in `journal/`.
+#
+# After a month of real use:
+#   * a precedent that never matched was irrelevant to this workflow;
+#   * one that matched a finding adjudicated `novel_actionable` is dangerous;
+#   * one that repeatedly matched `not_real` findings is a candidate for
+#     scoped adoption.
+#
+# `status`: proposed | adopted | rejected | scoped | retired
+#
+# Several are threat-model dependent and are marked so. Environment variables
+# are attacker-controlled in CI, in container orchestration, and across
+# subprocess boundaries. A UUID being unguessable does not establish
+# authorisation — it can leak through logs, referrers and tenant-boundary
+# mistakes. Open redirect matters in OAuth flows and allowlist bypasses.
+#
+# Source: anthropics/claude-code-security-review, MIT licensed, from
+# `claudecode/claude_api_client.py` and `.claude/commands/security-review.md`.
+# Paraphrased rather than copied; the upstream copyright notice applies to its
+# own text, not to these restatements.
+
+adjudicated_by: hand, in journal/*/verdict.yml
+in_force: false
+
+precedents:
+
+  - id: env-vars-trusted
+    status: proposed
+    proposition: >-
+      Environment variables and CLI flags are trusted values. An attack that
+      requires controlling one is not a finding.
+    threat_model_dependent: true
+    caveat: >-
+      False wherever the environment is not the operator's: CI runners taking
+      values from a pipeline definition a contributor can edit, container
+      orchestration, and any subprocess boundary where one component sets the
+      environment of another.
+
+  - id: uuids-unguessable
+    status: proposed
+    proposition: >-
+      UUIDs can be assumed unguessable. A weakness that requires guessing one
+      is not exploitable.
+    threat_model_dependent: true
+    caveat: >-
+      Unguessable is not unknown. UUIDs leak through logs, Referer headers,
+      error pages and shared links, and a UUID is not an authorisation check.
+
+  - id: client-side-authz
+    status: proposed
+    proposition: >-
+      Missing authentication or authorisation checks in client-side JavaScript
+      or TypeScript are not vulnerabilities. The backend is responsible.
+    caveat: >-
+      True about the check. Client code can still leak a token, construct a
+      privileged request, or render data the backend already over-served.
+
+  - id: logging-urls-vs-headers
+    status: proposed
+    proposition: >-
+      Logging a URL is assumed safe. Logging request headers is assumed
+      dangerous, because they usually carry credentials.
+
+  - id: ssrf-path-only
+    status: proposed
+    proposition: >-
+      An SSRF finding requires control of the host or the scheme. Control of
+      only the path is not SSRF.
+    caveat: >-
+      Path control still reaches internal endpoints on a host the service
+      already talks to, which is a different finding rather than none.
+
+  - id: traversal-in-url-path
+    status: proposed
+    proposition: >-
+      `../` in an HTTP request path is URL normalisation, not filesystem path
+      traversal. The file-read class needs the value to reach a filesystem API.
+
+  - id: log-spoofing
+    status: proposed
+    proposition: >-
+      Unsanitised input reaching a log is not a vulnerability on its own.
+
+  - id: redos
+    status: proposed
+    proposition: >-
+      Regular-expression denial of service is not reported.
+    threat_model_dependent: true
+    caveat: >-
+      An unauthenticated endpoint whose regex is exponential in a
+      caller-supplied string is a real outage, cheap to trigger.
+
+  - id: memory-safety-in-safe-languages
+    status: proposed
+    proposition: >-
+      Buffer overflows, use-after-free and out-of-bounds access are not
+      findings in memory-safe languages.
+    caveat: >-
+      Except through `unsafe`, FFI, and native extensions — which is where they
+      actually occur in those languages.
+
+  - id: outdated-dependencies
+    status: proposed
+    proposition: >-
+      An outdated third-party library is not a finding for this reviewer. It is
+      handled by dependency scanning.
+
+  - id: notebooks-and-shell-scripts
+    status: proposed
+    proposition: >-
+      A finding in a notebook or a shell script needs a specific attack path
+      naming who supplies the input, not the observation that the language is
+      dangerous.
+
+  - id: hardening-is-not-a-vulnerability
+    status: proposed
+    proposition: >-
+      Code is not expected to implement every security best practice, only to
+      avoid obvious vulnerabilities. A missing hardening measure is not a
+      finding.
+    note: >-
+      The upstream product's whole thesis in one line, and the one this project
+      most needs. Our failure mode has been reporting a real defect as a
+      security weakness; this is the sentence that separates the two.
+
+  - id: crash-is-not-a-vulnerability
+    status: proposed
+    proposition: >-
+      Code that crashes but grants nothing is a bug, not a vulnerability.
+
+  # --- Not suppressive. These make the reviewer look harder, not less. ---
+
+  - id: local-network-is-not-a-discount
+    status: proposed
+    direction: raises
+    proposition: >-
+      Do not refute or lower a finding solely because exploitation requires
+      local-network access. Establish who can reach the service, what trust
+      boundary that crosses, and what impact follows.
+    note: >-
+      The only upstream ruling that pushes toward more findings rather than
+      fewer, and the one this project should be most willing to adopt: the
+      measured failure mode here is missing things.
+
+  - id: compare-with-repository-conventions
+    status: proposed
+    direction: investigative
+    proposition: >-
+      Search how comparable code in this repository handles the same
+      operation. A deviation is a lead, not proof — determine whether the
+      convention is a security control and trace the impact before reporting.
+    note: >-
+      Their Phase 1. We tell the reviewer to check framework defaults and never
+      to check the repository's own. The second sentence is load-bearing:
+      without it, convention-following becomes cargo-cult verification.
+
+  - id: establish-what-a-validator-neutralises
+    status: proposed
+    direction: investigative
+    proposition: >-
+      When a control is claimed to sanitise a value, establish what it actually
+      neutralises for the sink in question — not that it exists.
+    note: >-
+      Already measured, on `go-sql-decoy-01`: a real sanitiser on the call path
+      that strips markup and never touches a quote. Both panels traced it. This
+      is here to keep it true rather than to make it so.

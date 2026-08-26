@@ -86,6 +86,18 @@ def summarise(finding: dict, blocking: set) -> dict:
         # How long adjudicating this one took. The tool has to beat the
         # attention it costs, and attention is the part nobody bills for.
         "minutes": 0,
+        # Which rulings in `precedents.yml` apply to this finding, tagged by
+        # hand. Nothing suppresses on them — they are proposed, and this is how
+        # the month decides which are worth adopting. A precedent that matches
+        # a `novel_actionable` finding is dangerous; one that repeatedly
+        # matches `not_real` is a candidate.
+        #
+        # Tagged by a person because the facts they turn on are not in any
+        # field: whether an SSRF controls only the path, whether an environment
+        # variable crosses a trust boundary, whether a race is reachable.
+        # Another model classifier would cost money and add a second
+        # stochastic decision to a measurement built to remove one.
+        "applicable_precedents": [],
         "note": "",
     }
 
@@ -192,6 +204,29 @@ def report(root: Path) -> int:
     if tally["unclear"]:
         print("{} were left `unclear`, which is a real answer and stays out of "
               "the count.".format(tally["unclear"]))
+
+    # What the proposed rulings would have done, had any been in force. This is
+    # the whole reason they are `proposed` rather than adopted: a precedent that
+    # would have eaten a finding the author called real is not a precision
+    # improvement, it is a miss with a justification attached.
+    tagged = Counter(name for f in findings
+                     for name in (f.get("applicable_precedents") or []))
+    if tagged:
+        print("\nProposed precedents, and what they would have suppressed:")
+        print("{:<40}{:>8}{:>12}".format("precedent", "matched", "on real"))
+        print("-" * 60)
+        for name, count in tagged.most_common():
+            dangerous = sum(
+                1 for f in findings
+                if name in (f.get("applicable_precedents") or [])
+                and f.get("verdict") in VALUABLE)
+            print("{:<40}{:>8}{:>12}".format(name, count, dangerous))
+        harmful = [n for n in tagged if any(
+            n in (f.get("applicable_precedents") or []) and f.get("verdict") in VALUABLE
+            for f in findings)]
+        if harmful:
+            print("Do not adopt {} — it matched a finding you judged worth "
+                  "acting on.".format(", ".join(harmful)))
 
     blocked = [f for f in findings if f.get("blocked_the_merge")]
     if blocked:
