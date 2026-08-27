@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Names this codebase defines, documents, and never reads anywhere else.
+
+`Profile.conclusive` was written on the first day of stage 2 with a docstring
+saying a profile carrying it must never be able to conclude a review. Nothing
+outside `budget.py` ever read it. So `--profile probe` — six turns, no
+verifiers, sized to stop early and documented as never conclusive — could call
+`finish_review`, end `completed`, and exit 0. A flag that states a guarantee and
+is read by nobody is worse than one that never claimed anything, because the
+comment above it does the reassuring that the code is not doing.
+
+It was found by a person opening the file, after nine review rounds had passed
+over it. Those rounds could not have found it: they were given prose about what
+the code did — *"`verifiers` is votes per candidate and is odd on purpose"* —
+and reasoned from the sentence rather than from the file. A reviewer told what a
+flag means will believe it. `grep` will not.
+
+So this is that grep, kept.
+
+    tools/unenforced.py                 # every suspicious name
+    tools/unenforced.py --strict        # exit 1 if any are unexplained
+
+**Dataclass fields only.** The first version also listed module constants and
+returned a hundred and twenty-seven names, nearly all of them right: a threshold
+applied ten lines below where it is declared *is* enforced, and "read only in its
+own module" says nothing about it. A check whose output is mostly noise is a
+check nobody runs twice, and this one is meant to be run before every audit.
+
+A field is different. A field on a shared dataclass exists to be honoured by
+other code — that is what putting it on the object is for — so one that nothing
+outside its module reads is a policy the system was told about and does not
+apply. That is exactly `conclusive`.
+
+A name read only inside its own module is not automatically wrong. Plenty are
+internal by design. What is wrong is a name whose *docstring makes a promise
+about the system* and whose only reader is the file it lives in — and telling
+those apart needs a person, which is why the unexplained ones are listed rather
+than failed by default.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import re
+from pathlib import Path
+from typing import Dict, List, Set, Tuple
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src" / "security_agent"
+
+# Names that are read only in their own module and are meant to be. Each entry
+# is a claim that somebody looked, so an unexplained name is a name nobody has.
+EXPLAINED: Dict[str, str] = {
+    "PROVIDER": "the runner's own identity string, written into the artifact",
+    "SERVER_NAME": "the MCP server's name, sent in the handshake",
+    "PROTOCOL_VERSION": "answered on `initialize`, compared against nothing",
+    "DEFAULT_PROFILE": "the name a caller passes when it has no preference",
+    "MAX_ARGS": "bounds one journal record, read where it is applied",
+    "MAX_ARG_CHARS": "the same",
+    "MAX_EXCERPT_CHARS": "the same",
+    "MAX_TEXT_CHARS": "the same",
+    "ABSENT": "re-exported sentinel; the tests are its readers",
+}
+
+
+def _defined(path: Path) -> List[Tuple[str, int, str]]:
+    """(name, line, kind) for every dataclass field and module constant."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return []
+
+    found: List[Tuple[str, int, str]] = []
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                    name = item.target.id
+                    if not name.startswith("_"):
+                        found.append(("{}.{}".format(node.name, name),
+                                      item.lineno, "field"))
+    return found
+
+
+def _readers(name: str, home: Path, files: List[Path]) -> Set[str]:
+    """Which other files mention this name at all."""
+    bare = name.split(".")[-1]
+    pattern = re.compile(r"\b{}\b".format(re.escape(bare)))
+    seen = set()
+    for path in files:
+        if path == home:
+            continue
+        try:
+            if pattern.search(path.read_text(encoding="utf-8")):
+                seen.add(str(path.relative_to(ROOT)))
+        except OSError:
+            continue
+    return seen
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--strict", action="store_true",
+                        help="Exit 1 when an unexplained name is found.")
+    parser.add_argument("--include-tests", action="store_true",
+                        help="Count a mention in the tests as a reader. Off by "
+                             "default: a field only the tests read is a field "
+                             "the product does not act on, which is exactly "
+                             "the shape being looked for.")
+    args = parser.parse_args()
+
+    sources = sorted(SRC.glob("*.py"))
+    elsewhere = list(sources)
+    if args.include_tests:
+        elsewhere += sorted((ROOT / "tests").glob("*.py"))
+    elsewhere += sorted((ROOT / "tools").glob("*.py"))
+
+    rows = []
+    for path in sources:
+        for name, line, kind in _defined(path):
+            if name.split(".")[-1] in EXPLAINED:
+                continue
+            if not _readers(name, path, elsewhere):
+                rows.append((str(path.relative_to(ROOT)), line, name, kind))
+
+    if not rows:
+        print("Every declared name is read somewhere outside the file that "
+              "declares it.")
+        return 0
+
+    print("Declared here and read nowhere else:\n")
+    width = max(len(r[2]) for r in rows)
+    for where, line, name, kind in rows:
+        print("  {:<{w}}  {:<9}  {}:{}".format(name, kind, where, line, w=width))
+    print("\n{} name(s). Each is either internal by design — add it to "
+          "EXPLAINED with the reason — or a promise the code is not "
+          "keeping.".format(len(rows)))
+    return 1 if args.strict else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

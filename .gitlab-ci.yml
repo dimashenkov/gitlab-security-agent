@@ -217,7 +217,12 @@ eval-corpus:
     - pip install --no-cache-dir -e ".[dev]"
   script:
     - echo "One pass over $CORPUS costs 8-15 USD at the measured rate, with a 4.4x spread per case."
-    - python3 tools/pair_corpus.py "$CORPUS" --concurrency 1 --json corpus-result.json
+    # `--provider` became required an hour before this line was found missing:
+    # omitting it used to select the paid path silently, and this job is the
+    # one place where the paid path is the right answer. Named, so the job
+    # says which account it charges.
+    - python3 tools/pair_corpus.py "$CORPUS" --provider anthropic-api
+      --concurrency 1 --json corpus-result.json
   artifacts:
     when: always
     expire_in: 90 days

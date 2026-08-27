@@ -15,6 +15,7 @@ from .models import (
     CONFIDENCE_ORDER,
     SEVERITY_ORDER,
     STOP_EXPLANATIONS,
+    STOP_INCONCLUSIVE,
     Candidate,
     ScanOutcome,
     confidence_rank,
@@ -114,12 +115,36 @@ def policy_excluded(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
     return [c for c in outcome.reported if c.finding.category.lower() in ungated]
 
 
+# Endings `fail_on_incomplete` may not override. One entry, and the reason it is
+# a set rather than an `if` is that the next one will be added by somebody who
+# finds this line rather than by somebody who remembers the rule.
+NEVER_FORGIVEN = frozenset({STOP_INCONCLUSIVE})
+
+
 def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
     """The pipeline verdict for this run."""
     # An incomplete review has no opinion worth acting on. Reporting "no
     # blocking findings" after the agent ran out of turns would be the single
     # most damaging thing this tool could do, because it looks exactly like a
     # pass.
+    # Some endings are not the operator's to forgive.
+    #
+    # `SECURITY_SCAN_FAIL_ON_INCOMPLETE=false` exists so a team can let a
+    # truncated review through while they tune the limits — a policy choice
+    # about *their* risk. `probe` is not that. It is six turns and no verifiers,
+    # sized to stop early, and it says of itself that it cannot conclude. A flag
+    # meaning "accept partial reviews" turning that into exit 0 would let a
+    # profile documented as never conclusive hand out clean passes.
+    if outcome.stop_reason in NEVER_FORGIVEN:
+        return Decision(
+            exit_code=EXIT_ERROR,
+            reason=(
+                "{}. No setting makes this a pass: it is a property of the "
+                "profile, not a policy about partial reviews.".format(
+                    STOP_EXPLANATIONS.get(outcome.stop_reason,
+                                          "the review could not conclude"))),
+        )
+
     if not outcome.complete and cfg.fail_on_incomplete:
         explanation = STOP_EXPLANATIONS.get(outcome.stop_reason, "the review did not complete")
         detail = " ({})".format(outcome.stop_detail) if outcome.stop_detail else ""

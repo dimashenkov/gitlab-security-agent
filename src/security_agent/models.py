@@ -490,6 +490,16 @@ STOP_TURN_LIMIT = "turn_limit"
 STOP_TIME_LIMIT = "time_limit"
 STOP_BUDGET = "budget_exhausted"
 STOP_REFUSAL = "refusal"
+# The profile cannot conclude, whatever the review did.
+#
+# `probe` is six turns and no verifiers, sized to run on every save, and its
+# whole point is that it stops early most of the time. `Profile.conclusive` said
+# so from the day it was written — and said it to nobody: the flag was read
+# nowhere outside `budget.py`, so a probe that called `finish_review` ended
+# `completed` and the gate returned 0. A profile that documents itself as never
+# conclusive, and can exit "checked and clean", is worse than one that never
+# claimed it.
+STOP_INCONCLUSIVE = "profile_cannot_conclude"
 # Three reasons that were one. `error` used to hold everything from "the
 # conversation outgrew the context window" to "the network was down", and a
 # review that stopped early could not be diagnosed from its own artifact —
@@ -511,6 +521,10 @@ STOP_EXPLANATIONS = {
     STOP_TIME_LIMIT: "the agent hit its time limit before finishing the review",
     STOP_BUDGET: "the agent exhausted its token budget before finishing the review",
     STOP_REFUSAL: "the model declined to continue the review",
+    STOP_INCONCLUSIVE: (
+        "this profile cannot conclude a review — what it found are leads, and "
+        "what it did not find means nothing"
+    ),
     STOP_CONTEXT: (
         "the conversation outgrew the model's context window — the review read "
         "more than it could hold"

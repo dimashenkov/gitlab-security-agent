@@ -65,6 +65,7 @@ from .models import (
     STOP_BUDGET,
     STOP_COMPLETED,
     STOP_ERROR,
+    STOP_INCONCLUSIVE,
     STOP_TIME_LIMIT,
     STOP_TRANSPORT,
     Revision,
@@ -475,6 +476,18 @@ class ClaudeCodeRunner:
                 "the review never called `finish_review`, so nothing states "
                 "that it finished rather than stopped. On this runner that is "
                 "the only signal there is: the process exits zero either way.")
+
+        if not self.budget.profile.conclusive:
+            # The last thing checked, and it overrides everything above it. The
+            # review may have run perfectly, signed off and found nothing — and
+            # this profile is still not allowed to say so, because it was sized
+            # to stop early and usually does. `conclusive` was a flag nothing
+            # read; it is a stop reason now, so the gate cannot miss it.
+            return session, STOP_INCONCLUSIVE, (
+                "the `{}` profile is not allowed to conclude a review. It ran "
+                "to the end and what it reports are leads; run a profile that "
+                "can conclude before treating this as an answer."
+                .format(self.budget.profile.name))
 
         return session, STOP_COMPLETED, ""
 

@@ -6,6 +6,7 @@ indistinguishable from "we checked and it's fine".
 """
 
 from conftest import make_candidate
+from security_agent.config import Config, GitLabContext
 from security_agent.gate import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, blocking_findings, decide
 from security_agent.models import (
     STOP_COMPLETED,
@@ -229,3 +230,50 @@ class TestAnUnknownRatingCannotUnGateAFinding:
         """The fix must not turn the threshold off."""
         assert not self._blocks(config, severity="low", confidence="high")
         assert not self._blocks(config, severity="critical", confidence="low")
+
+
+class TestSomeEndingsAreNotTheOperatorsToForgive:
+    """`fail_on_incomplete=false` is a policy about partial reviews. It is not
+    permission for a profile to conclude when it says it cannot.
+
+    `probe` is six turns and no verifiers, sized to run on every save, and
+    `Profile.conclusive` has said `False` about it since the day it was written
+    — to nobody. The flag was read nowhere outside `budget.py`, so a probe that
+    signed off ended `completed` and exited 0. Making it a stop reason was half
+    the fix; the other half is that a setting meaning "accept partial reviews"
+    must not turn it back into a pass.
+
+    Found by the author reading the file, after nine review rounds had passed
+    over it.
+    """
+
+    def test_a_profile_that_cannot_conclude_never_exits_zero(self):
+        from security_agent.models import STOP_INCONCLUSIVE
+
+        outcome = outcome_with(stop_reason=STOP_INCONCLUSIVE)
+
+        for forgiving in (True, False):
+            cfg = Config(gitlab=GitLabContext(), fail_on_incomplete=forgiving)
+            decision = decide(cfg, outcome)
+
+            assert decision.exit_code == EXIT_ERROR, (
+                "fail_on_incomplete={} let a non-conclusive profile "
+                "pass".format(forgiving))
+            assert "property of the profile" in decision.reason
+
+    def test_an_ordinary_truncation_is_still_the_operators_call(self):
+        """The flag keeps working for what it is for. A rule that swallowed
+        every incomplete ending would take away a real choice about a team's own
+        risk, and would be removed for it."""
+        from security_agent.models import STOP_TURN_LIMIT
+
+        cfg = Config(gitlab=GitLabContext(), fail_on_incomplete=False)
+
+        assert decide(cfg, outcome_with(
+            stop_reason=STOP_TURN_LIMIT)).exit_code != EXIT_ERROR
+
+    def test_the_set_is_not_empty(self):
+        """A refactor that emptied it would leave every test above passing."""
+        from security_agent.gate import NEVER_FORGIVEN
+
+        assert NEVER_FORGIVEN
