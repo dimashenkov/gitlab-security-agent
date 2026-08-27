@@ -165,13 +165,30 @@ class Workspace:
     # ------------------------------------------------------------------ git
 
     def git(self, *args: str, check: bool = True) -> str:
+        """Run git and return its output, with the two streams decoded differently.
+
+        **stdout with `surrogateescape`.** A file name is a sequence of bytes on
+        Linux and need not be UTF-8. Decoding with `errors="replace"` turned any
+        such byte into `U+FFFD` here, *before* either path parser saw it — so
+        the two views of one change, one reading the NUL form and one parsing a
+        textual diff, could not agree on a key however carefully each was
+        written. `surrogateescape` is reversible: the bytes survive, both sides
+        decode them the same way, and a path that is not text is still an
+        identity.
+
+        This was found by a code review of the fix for the *previous* version of
+        the same failure, which was a git setting. The setting was necessary and
+        was two layers away from sufficient.
+
+        **stderr with `replace`.** It is a message for a person, never a key, and
+        a hostile file name inside an error must not be able to make the
+        reporting of that error fail.
+        """
         try:
             proc = subprocess.run(
                 ("git", "--no-pager", "-C", str(self.root), "--no-optional-locks", *args),
                 capture_output=True,
                 check=False,
-                text=True,
-                errors="replace",
                 timeout=GIT_TIMEOUT_SECONDS,
                 env=_git_env(),
             )
@@ -179,9 +196,11 @@ class Workspace:
             raise WorkspaceError("git {} timed out".format(" ".join(args))) from None
         if check and proc.returncode != 0:
             raise WorkspaceError(
-                "git {} failed: {}".format(" ".join(args), proc.stderr.strip() or "no output")
+                "git {} failed: {}".format(
+                    " ".join(args),
+                    proc.stderr.decode("utf-8", "replace").strip() or "no output")
             )
-        return proc.stdout
+        return proc.stdout.decode("utf-8", "surrogateescape")
 
     def rev_exists(self, rev: str) -> bool:
         if not rev:
@@ -235,18 +254,43 @@ class Workspace:
         exclusion decide whether that guard fires would hand the exclusion the
         power to switch the guard off.
 
-        Deleted paths count. Removing the file that carried a suppression is an
-        edit to it, and the guard's question is "did this change touch the rules
-        it is judged by".
+        Deleted paths count, and so does a rename in either direction. Removing
+        the rules, or moving them somewhere the review will not read them, is an
+        edit to the rules. `-M` is deliberately **not** passed for that reason:
+        with rename detection on, `_parse_name_status` reports only the new path
+        of a rename, so a change that renamed the suppression file away read as
+        having left it alone.
+
+        Three failures found by this agent reviewing this function, on the first
+        real run of the CLI runner. This one, the `check=False` below, and the
+        case comparison — all three fail *open* on a security control, which is
+        the direction that does not announce itself.
         """
         if not self.diff_base:
             return False
         wanted = self.repo_path(relative)
+        # `check=True`, unlike the first version. A non-zero git exit returned
+        # an empty string, `any()` over nothing is False, and the guard reported
+        # "the change did not touch its own suppression file" — a fail-open on
+        # the one control that stops a merge request approving itself, arriving
+        # silently. Its sibling `changed_files` has always raised here. If git
+        # cannot answer, the run fails with exit 2 rather than guessing.
         raw = self.git(
-            "diff", "--no-color", "--no-ext-diff", "-M", "--name-status", "-z",
-            self.diff_base, self.diff_head, check=False,
+            "diff", "--no-color", "--no-ext-diff", "--no-renames",
+            "--name-status", "-z", self.diff_base, self.diff_head,
         )
-        return any(path == wanted for path, _ in _parse_name_status(raw))
+        paths = [path for path, _ in _parse_name_status(raw)]
+        if any(path == wanted for path in paths):
+            return True
+
+        # A last comparison, folded, for a case-insensitive filesystem. macOS
+        # and Windows runners open `.Security-Agent-Ignore.yml` when asked for
+        # `.security-agent-ignore.yml`, so the rules would load and the guard
+        # would miss. Deliberately only in this direction: a fold that decided
+        # two genuinely different files were the same would over-fire the
+        # guard, which costs an argument, while under-firing costs the gate.
+        folded = wanted.lower()
+        return any(path.lower() == folded for path in paths)
 
     def all_changed_files(self) -> List[Tuple[str, str]]:
         """Every changed file, scope ignored. What the report needs to be honest.

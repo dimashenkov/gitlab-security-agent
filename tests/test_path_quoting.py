@@ -37,7 +37,15 @@ from security_agent.workspace import Workspace
 
 # Latin-1 supplement, a different Latin script, Cyrillic, and CJK — each one
 # only needs a byte above 0x7f to trigger the quoting.
-AWKWARD = ("café.py", "naïve.go", "плащане.py", "決済.rb")
+AWKWARD = (
+    # Bytes above 0x7f — the case `core.quotePath=false` covers.
+    "café.py", "naïve.go", "плащане.py", "決済.rb",
+    # And the case it does not. Git's documentation: double-quote, backslash
+    # and control characters are escaped *regardless of the setting*. All three
+    # are legal in a path on Linux, and each one was still arriving quoted
+    # after the first fix — found by this agent reviewing that fix.
+    "report\\v2.py", 'quote".py', "tab\there.py",
+)
 
 
 @pytest.fixture
@@ -126,3 +134,120 @@ def test_the_setting_is_pinned_in_the_environment_we_build(repo):
     assert pairs["core.quotePath"] == "false"
     # And the entry that was already there is still counted.
     assert pairs["safe.directory"] == "*"
+
+
+# ------------------------------------------------- the half a setting cannot fix
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('"b/src/caf\\303\\251.py"', "b/src/café.py"),
+    ('"b/src/report\\\\v2.py"', "b/src/report\\v2.py"),
+    ('"b/src/quote\\".py"', 'b/src/quote".py'),
+    ('"b/src/tab\\there.py"', "b/src/tab\there.py"),
+    ("b/src/plain.py", "b/src/plain.py"),          # unquoted, untouched
+])
+def test_a_quoted_path_is_decoded(raw, expected):
+    """Octal bytes and the three escapes git always emits, whatever the config.
+
+    The decoder is what makes the fix complete. `core.quotePath=false` closed
+    one third of the hole and read as though it had closed all of it, which is
+    the more dangerous of the two states.
+    """
+    from security_agent.evidence import unquote_path
+
+    assert unquote_path(raw) == expected
+
+
+@pytest.mark.parametrize("malformed", [
+    '"b/src/trailing\\"',        # a backslash with nothing after it
+    '"b/src/bad\\9.py"',         # not an escape git emits, not octal
+    '"b/src/short\\7"',          # an octal run cut off
+])
+def test_a_malformed_quoted_path_is_returned_as_it_arrived(malformed):
+    """Never repaired by guessing. A reconstructed path is a path the change
+    may not contain, and this map decides whether a finding blocks."""
+    from security_agent.evidence import unquote_path
+
+    assert unquote_path(malformed) == malformed
+
+
+def test_a_path_that_is_not_utf8_survives_as_a_key():
+    """A byte sequence that is not UTF-8 is still a real path. Mangling it into
+    replacement characters would produce a key matching nothing — which is the
+    failure the decoder exists to end, arriving by another route."""
+    from security_agent.evidence import unquote_path
+
+    decoded = unquote_path('"b/src/\\377.py"')
+
+    assert decoded.startswith("b/src/")
+    assert decoded.endswith(".py")
+    assert not decoded.startswith('"')
+
+
+# --------------------------------------- the boundary the decoder sits behind
+
+
+def test_git_output_is_decoded_reversibly():
+    """`errors="replace"` destroyed the bytes before either parser saw them.
+
+    A file name is a sequence of bytes on Linux and need not be UTF-8. Decoding
+    git's stdout with `replace` turned any such byte into `U+FFFD` at the
+    subprocess boundary, so the two views of one change could not agree on a
+    key however carefully each was written — and the decoder added one layer
+    up was working on characters that had already been thrown away.
+
+    Asserted on the source rather than through a file, because the filesystem
+    this runs on may refuse to hold such a name at all. The chain test below
+    does it properly where it can.
+    """
+    import inspect
+
+    from security_agent.workspace import Workspace
+
+    body = inspect.getsource(Workspace.git)
+
+    assert 'decode("utf-8", "surrogateescape")' in body, \
+        "stdout must decode reversibly, or a non-UTF-8 path stops being a key"
+    assert 'decode("utf-8", "replace")' in body, \
+        "stderr is a message for a person; a hostile name must not break it"
+
+
+def test_a_name_that_is_not_utf8_keys_both_views_the_same(tmp_path):
+    """The chain, where the filesystem allows it.
+
+    Skipped rather than silently weakened on a filesystem that enforces UTF-8
+    — macOS and Windows both do. A test that cannot run where it is run, and
+    says nothing about that, is how this project has twice shipped a control
+    with a green test above it.
+    """
+    import os
+    import subprocess as sp
+
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    hostile = os.fsdecode(b"src/bad\xff.py")
+    try:
+        (root / hostile).write_bytes(b"VALUE = 1\n")
+    except OSError as exc:
+        pytest.skip("this filesystem refuses a non-UTF-8 name: {}".format(exc))
+
+    def git(*args):
+        sp.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    sp.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "T")
+    (root / "src" / "plain.py").write_text("VALUE = 1\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    base = sp.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                  capture_output=True, text=True, check=True).stdout.strip()
+    (root / hostile).write_bytes(b'VALUE = db.execute("SELECT " + x)\n')
+    (root / "src" / "plain.py").write_text('VALUE = db.execute("SELECT " + x)\n')
+    git("add", "-A")
+    git("commit", "-qm", "change")
+
+    ws = Workspace(root=root, diff_base=base, diff_head="HEAD")
+
+    assert sorted(p for p, _ in ws.changed_files()) == \
+        sorted(ws.changed_line_map().files())

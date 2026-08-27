@@ -203,6 +203,66 @@ class ChangedLines:
         return any(self.added.values()) or any(self.removed_at.values())
 
 
+# The escapes git uses inside a quoted path. Anything else after a backslash is
+# an octal byte.
+_C_ESCAPES = {
+    "a": 0x07, "b": 0x08, "f": 0x0C, "n": 0x0A, "r": 0x0D, "t": 0x09,
+    "v": 0x0B, "\\": 0x5C, '"': 0x22,
+}
+
+
+def unquote_path(path: str) -> str:
+    """Undo git's C-style quoting of a path, if it is quoted at all.
+
+    `core.quotePath=false` is pinned in the git environment and it is not
+    enough on its own: it stops git quoting bytes above 0x7f, and git's own
+    documentation says double-quote, backslash and control characters are
+    escaped *regardless of the setting*. So `src/report\\v2.py` — a legal name
+    on Linux — still arrives as `"b/src/report\\\\v2.py"`, and a path nothing
+    can look up is a finding the gate treats as pre-existing.
+
+    Found by this agent reviewing its own fix for the byte-above-0x7f case, on
+    the first real run of the CLI runner. The fix it proposed is this one:
+    decode the path rather than trusting a configuration knob to make it
+    unnecessary.
+
+    A malformed quoted string is returned as it arrived. Guessing at a repair
+    would invent a path, and a path that fails to match is the safe direction
+    here only because the caller treats an unmatched file as unattributed —
+    which is why the decoding has to be right rather than best-effort.
+    """
+    if len(path) < 2 or not path.startswith('"') or not path.endswith('"'):
+        return path
+
+    body = path[1:-1]
+    out = bytearray()
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char != "\\":
+            out += char.encode("utf-8")
+            index += 1
+            continue
+        index += 1
+        if index >= len(body):
+            return path                      # trailing backslash: malformed
+        marker = body[index]
+        if marker in _C_ESCAPES:
+            out.append(_C_ESCAPES[marker])
+            index += 1
+            continue
+        octal = body[index:index + 3]
+        if len(octal) != 3 or any(digit not in "01234567" for digit in octal):
+            return path                      # not an escape git would emit
+        out.append(int(octal, 8))
+        index += 3
+
+    # `surrogateescape` rather than `replace`: a byte sequence that is not
+    # UTF-8 is still a real path, and mangling it into `?` would produce a key
+    # that matches nothing — the failure this whole function exists to end.
+    return out.decode("utf-8", errors="surrogateescape")
+
+
 def changed_lines(diff_text: str) -> ChangedLines:
     """Split a unified diff into the lines a change is answerable for.
 
@@ -221,7 +281,7 @@ def changed_lines(diff_text: str) -> ChangedLines:
 
     for line in diff_text.splitlines():
         if line.startswith("+++ "):
-            path = line[4:].strip()
+            path = unquote_path(line[4:].strip())
             if path.startswith("b/"):
                 path = path[2:]
             current = None if path == "/dev/null" else path

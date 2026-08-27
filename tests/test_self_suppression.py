@@ -202,3 +202,57 @@ def test_the_gate_is_told_the_suppression_is_self_added(repo, tmp_path):
     assert touched is True
     assert kept == [candidate]
     assert suppressed == []
+
+
+# ------------------- three fail-open paths the agent found in its own fix
+
+
+def test_renaming_the_file_away_counts_as_touching_it(repo):
+    """`-M` reports only the *new* path of a rename, so a change that moved the
+    suppression file somewhere the review would not read it was reported as
+    having left it alone. Rename detection is off here for that reason."""
+    root, _base, git = repo
+    (root / IGNORE).write_text(BLANKET)
+    git("add", "-A")
+    git("commit", "-qm", "accept a risk")
+    second = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    git("mv", IGNORE, "somewhere-else.yml")
+    git("commit", "-qm", "move the rules out of the way")
+
+    later = Workspace(root=root, diff_base=second, diff_head="HEAD")
+    assert later.change_touches(IGNORE) is True
+
+
+def test_a_case_folded_name_still_fires_the_guard(repo):
+    """On a case-insensitive filesystem `load_rules` opens
+    `.Security-Agent-Ignore.yml` when asked for the lower-case name, so the
+    rules apply while a byte-for-byte comparison misses and the guard does
+    not fire. Folded in this direction only: over-firing costs an argument,
+    under-firing costs the gate."""
+    root, _base, git = repo
+    (root / ".Security-Agent-Ignore.yml").write_text(BLANKET)
+    git("add", "-A")
+    git("commit", "-qm", "the same file, differently cased")
+
+    assert _ws(repo).change_touches(IGNORE) is True
+
+
+def test_a_git_failure_is_raised_rather_than_read_as_untouched(repo, monkeypatch):
+    """The fail-open this replaces. `check=False` turned a git error into an
+    empty string, `any()` over nothing into `False`, and `False` into "the
+    change did not touch its own suppression file" — silently, on the one
+    control that stops a merge request approving itself."""
+    from security_agent.workspace import WorkspaceError
+
+    ws = _ws(repo)
+
+    def refuse(*_args, **kwargs):
+        if kwargs.get("check", True):
+            raise WorkspaceError("git exploded")
+        return ""
+
+    monkeypatch.setattr(ws, "git", refuse)
+
+    with pytest.raises(WorkspaceError):
+        ws.change_touches(IGNORE)
