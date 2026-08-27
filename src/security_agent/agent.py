@@ -318,6 +318,7 @@ class SecurityAgent:
         outcome.tool_calls = list(self.session.tool_calls)
         outcome.files_examined = list(self.session.files_examined)
         outcome.coverage.examined = list(self.session.files_examined)
+        outcome.coverage.diff_truncated = self.ws.diff_truncated
         outcome.metrics = self.session.metrics
         outcome.rejected_claims = list(self.session.rejected)
         outcome.duplicates_dropped = self.session.duplicates_dropped

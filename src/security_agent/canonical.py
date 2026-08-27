@@ -67,6 +67,12 @@ TELEMETRY_PATHS: Tuple[str, ...] = (
     # "did this run finish" is the decision this project exists to protect.
     # The sentence explaining *how* it failed is provider prose.
     "stop_detail",
+    # The crash trace, and only the runner that can be killed mid-review ever
+    # produces one. It is diagnostics by construction — `crash_journal` refuses
+    # to carry the fields a finding is made of — so it decides nothing, and
+    # comparing it would compare which provider died rather than what either
+    # concluded.
+    "trace_markdown",
 )
 
 _MISSING = object()

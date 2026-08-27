@@ -338,3 +338,94 @@ class TestInputsNobodyHadTried:
         assert "there are more" in body
         # And it did not read forty thousand lines to say so.
         assert count < 40_000
+
+
+class TestTheDiffIsBounded:
+    """The one failure that defeats the exit-2 contract.
+
+    `subprocess.run(capture_output=True)` reads the whole pipe before
+    returning, and the size of a diff is chosen by whoever opened the merge
+    request. An out-of-memory kill is a SIGKILL: `main`'s `except` never runs,
+    no artifact is written, no comment is posted, and a previous run's green
+    note stays on the merge request describing code that is no longer there.
+
+    `search()` was hardened against exactly this and `diff()` was not — the
+    reasoning was written down one function away and did not travel.
+    """
+
+    def _repo(self, tmp_path, blob):
+        import subprocess as sp
+
+        root = tmp_path / "repo"
+        root.mkdir()
+        sp.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+        for key, value in (("user.email", "t@e.com"), ("user.name", "T")):
+            sp.run(["git", "-C", str(root), "config", key, value], check=True,
+                   capture_output=True)
+        (root / "small.txt").write_text("one\n")
+        sp.run(["git", "-C", str(root), "add", "-A"], check=True, capture_output=True)
+        sp.run(["git", "-C", str(root), "commit", "-qm", "base"], check=True,
+               capture_output=True)
+        base = sp.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                      capture_output=True, text=True, check=True).stdout.strip()
+        (root / "big.txt").write_text(blob)
+        sp.run(["git", "-C", str(root), "add", "-A"], check=True, capture_output=True)
+        sp.run(["git", "-C", str(root), "commit", "-qm", "a large addition"],
+               check=True, capture_output=True)
+        return Workspace(root=root, diff_base=base, diff_head="HEAD")
+
+    def test_a_large_diff_is_cut_off_and_says_so(self, tmp_path, monkeypatch):
+        """Cut off, not merely trimmed after the fact — the ceiling is on what
+        is ever resident, which is a different question from what the model is
+        shown, with a different consequence."""
+        monkeypatch.setattr(Workspace, "MAX_DIFF_BYTES", 50_000)
+        ws = self._repo(tmp_path, "a line that repeats\n" * 40_000)
+
+        body = ws.diff()
+
+        # Bounded by the ceiling plus at most one read, not by the ceiling
+        # exactly. Reading is chunked, so the check happens after a chunk has
+        # arrived — stating the guarantee as "at most the ceiling" would be a
+        # promise the code does not make and a test that fails on a chunk-size
+        # change for no reason.
+        assert len(body.encode("utf-8")) < 50_000 + 70_000
+        assert len(body.encode("utf-8")) < len("a line that repeats\n") * 40_000
+        assert "was cut off" in body
+        assert "has not been fully reviewed" in body
+
+    def test_an_ordinary_diff_is_returned_whole(self, tmp_path):
+        """A ceiling that trimmed the ordinary case would make every review
+        look truncated, and a warning on every run is a warning nobody reads."""
+        ws = self._repo(tmp_path, "two\nthree\n")
+
+        body = ws.diff()
+
+        assert "big.txt" in body
+        assert "was cut off" not in body
+
+    def test_the_ceiling_is_derived_from_what_the_consumer_asks_for(self):
+        """Not chosen for feeling roomy.
+
+        The first version was eight megabytes, which is memory-safe and is
+        unexplained work: `get_diff` trims to 120,000 characters before the
+        model sees anything, so everything read past that has no review value.
+        The ceiling is that number with room for worst-case multi-byte
+        encoding, the diff's own headers, and one read of overshoot — and a
+        genuine change that exceeds it is reported as a partial review, not as
+        an abnormal change.
+        """
+        from security_agent.tools import MAX_DIFF_CHARS
+
+        assert Workspace.MAX_DIFF_BYTES >= MAX_DIFF_CHARS * 4
+        assert Workspace.MAX_DIFF_BYTES < MAX_DIFF_CHARS * 20
+
+    def test_truncation_is_recorded_and_not_only_said(self, tmp_path, monkeypatch):
+        """A sentence in the model's context is guidance, and an attacker can
+        write the same sentence into a file. The flag is the accounting, and it
+        is what the report and the artifact rely on."""
+        monkeypatch.setattr(Workspace, "MAX_DIFF_BYTES", 50_000)
+        ws = self._repo(tmp_path, "a line that repeats\n" * 40_000)
+
+        assert ws.diff_truncated is False
+        ws.diff()
+        assert ws.diff_truncated is True

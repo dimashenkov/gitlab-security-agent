@@ -384,7 +384,12 @@ class ClaudeCodeVerifier:
             # Whatever the CLI said about itself, this session never reached
             # its end. The crash journal is then the whole story, and it is
             # diagnostics — how far it got — never a verdict.
-            return _failed(runner._crash_detail(handoff, result))
+            # Joined here, deliberately. A `Vote.error` is one string and is
+            # only ever read by a person through the report's own escaping, so
+            # the two halves can travel together — unlike `stop_detail`, where
+            # the report has to know which kind of string it is holding.
+            sentence, trace = runner._crash_detail(handoff, result)
+            return _failed(sentence + ("\n\n" + trace if trace else ""))
 
         try:
             session = read_session(

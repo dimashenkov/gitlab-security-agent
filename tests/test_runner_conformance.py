@@ -859,9 +859,12 @@ class TestKilledInTool:
         # Nothing was handed over, so nothing may be claimed.
         assert cli.artifact["findings"] == []
         assert cli.artifact["coverage"]["files_examined"] == []
+        # The sentence and the trace are separate fields now: one is provider
+        # prose the report escapes, the other a document this project rendered.
         detail = cli.artifact["stop_detail"]
-        assert "This is not a result" in detail
-        assert "search_code" in detail
+        assert "time limit" in detail
+        assert "This is not a result" in cli.artifact["trace_markdown"]
+        assert "search_code" in cli.artifact["trace_markdown"]
 
     def test_killed_in_tool_leaves_the_call_unfinished_in_the_journal(
             self, cfg, workspace, revision, tmp_path, haystack):
@@ -873,11 +876,14 @@ class TestKilledInTool:
                       script(call(*READ), call_then_kill("search_code", SLOW_SEARCH),
                              HANG),
                       profile=KILL_PROFILE)
+        # The sentence and the trace are separate fields now: one is provider
+        # prose the report escapes, the other a document this project rendered.
         detail = cli.artifact["stop_detail"]
+        assert "time limit" in detail
 
-        assert "2 tool calls started" in detail
-        assert "1 outcome unknown" in detail
-        assert "started, outcome unknown" in detail
+        assert "2 tool calls started" in cli.artifact["trace_markdown"]
+        assert "1 outcome unknown" in cli.artifact["trace_markdown"]
+        assert "started, outcome unknown" in cli.artifact["trace_markdown"]
 
 
 class TestToolBudget:

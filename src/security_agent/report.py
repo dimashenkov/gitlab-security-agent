@@ -10,6 +10,7 @@ own sections, for the same reason.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set
@@ -27,7 +28,7 @@ from .models import (
     ScanOutcome,
     severity_rank,
 )
-from .rendering import code_span, plain
+from .rendering import Rendered, code_span, plain
 
 
 # Lets GitLab find and update the agent's own note instead of adding a new one
@@ -35,6 +36,8 @@ from .rendering import code_span, plain
 class ReportError(Exception):
     """The report cannot be written where it was asked to go."""
 
+
+log = logging.getLogger(__name__)
 
 COMMENT_MARKER = "<!-- ai-security-scan -->"
 
@@ -56,11 +59,22 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
     lines += _meta_line(cfg, outcome)
 
     if outcome.summary:
-        lines += ["", "> " + outcome.summary.replace("\n", "\n> "), ""]
+        # Escaped like every other sentence the model contributes. This was the
+        # sixth of six report sections to interpolate model text raw, and the
+        # only one left after the other five were fixed — it sits directly under
+        # the verdict line, so a summary carrying `</blockquote>` and a heading
+        # of its own renders a second, attacker-chosen banner inside the comment
+        # the security agent posts under its name.
+        #
+        # `plain` collapses to one line, which is right here: its documented
+        # precondition is never to be placed at the start of a line, and a
+        # blockquote continuation is exactly that.
+        lines += ["", "> " + plain(outcome.summary), ""]
 
     if not outcome.complete:
         lines += _incomplete_warning(outcome)
 
+    lines += _truncated_diff_note(outcome)
     lines += _scope_note(cfg, outcome)
     lines += _sign_off(outcome)
 
@@ -175,11 +189,17 @@ def _header(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
         return [
             "## ⚠️ AI security review did not complete",
             "",
-            decision.reason or STOP_EXPLANATIONS.get(
+            # Escaped: `decide` builds this sentence around `stop_detail`, and
+            # on the CLI runner that carries the tail of the child's standard
+            # error — file names, git's messages about them, tool summaries.
+            # A test written for the warning further down found it here, three
+            # lines under the banner a reader trusts most.
+            plain(decision.reason) if decision.reason else STOP_EXPLANATIONS.get(
                 outcome.stop_reason, "the review did not finish"),
         ]
     if decision.exit_code == 2:
-        return ["## ⚠️ AI security review did not complete", "", decision.reason]
+        return ["## ⚠️ AI security review did not complete", "",
+                plain(decision.reason)]
     if decision.blocking:
         worst = SEVERITY_EMOJI.get(decision.blocking[0].severity, "🔴")
         return [
@@ -227,12 +247,63 @@ def _meta_line(cfg: Config, outcome: ScanOutcome) -> List[str]:
 
 def _incomplete_warning(outcome: ScanOutcome) -> List[str]:
     explanation = STOP_EXPLANATIONS.get(outcome.stop_reason, "the review did not complete")
-    detail = " — {}".format(outcome.stop_detail) if outcome.stop_detail else ""
+    lines = [
+        "",
+        "> [!WARNING]",
+        "> **Coverage is partial:** {}. Anything not listed below was not "
+        "necessarily checked.".format(explanation),
+    ]
+    if outcome.stop_detail:
+        # Always escaped, never conditionally. On the CLI runner this string can
+        # carry the tail of the child's standard error — file names, git's
+        # messages about them, tool summaries — and all of that comes from the
+        # repository under review.
+        lines.append("> {}".format(plain(outcome.stop_detail)))
+    if outcome.trace_markdown:
+        # The one channel in this document that emits a string without escaping
+        # it, so it accepts only a string this project rendered. `Rendered` is a
+        # marker type carrying provenance, which a `str` does not — and the
+        # first version of this branch decided the same question by counting
+        # newlines, which any attacker-authored string can satisfy.
+        #
+        # Anything else is escaped rather than refused. Refusing would lose the
+        # diagnostics of a run that already failed, which is when a person needs
+        # them most; escaping keeps them and makes them inert.
+        if isinstance(outcome.trace_markdown, Rendered):
+            lines += ["", outcome.trace_markdown]
+        else:
+            log.warning("a crash trace arrived as a plain string and was "
+                        "escaped rather than rendered")
+            # Prefixed, not bare. `plain` deliberately does not escape `#`,
+            # `|` or `-`, and its docstring states the precondition that pays
+            # for that: never at the start of a line. Emitting the result at
+            # column zero is what makes a collapsed `## heading` a heading
+            # again — the escaper doing its job while the caller undoes it.
+            lines += ["", "> " + plain(outcome.trace_markdown)]
+    return lines
+
+
+def _truncated_diff_note(outcome: ScanOutcome) -> List[str]:
+    """The change was larger than the reviewer could be shown.
+
+    A warning rather than a footnote, and above the verdict rather than under
+    it. A reviewer that signed off having seen the first part of a diff has
+    reviewed the first part of a change, and nothing else in this document says
+    so — the notice appended to the diff itself is read by the model, not by the
+    person deciding whether to merge.
+
+    This is not a statement that the change is abnormal. Genuine changes exceed
+    the ceiling; what it says is that the review was partial.
+    """
+    if not outcome.coverage.diff_truncated:
+        return []
     return [
         "",
         "> [!WARNING]",
-        "> **Coverage is partial:** {}{}. Anything not listed below was not "
-        "necessarily checked.".format(explanation, detail),
+        "> **The change was too large to show in full.** The reviewer was given "
+        "the first part of the diff and no more, so anything after that point "
+        "was not examined through it. Narrow the review with `--path`, or split "
+        "the change, for a complete reading.",
     ]
 
 
@@ -614,6 +685,7 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
         "unresolved": list(outcome.unresolved),
         "stop_reason": outcome.stop_reason,
         "stop_detail": outcome.stop_detail,
+        "trace_markdown": outcome.trace_markdown,
         "verdict": {
             "exit_code": decision.exit_code,
             "blocked": decision.blocked,

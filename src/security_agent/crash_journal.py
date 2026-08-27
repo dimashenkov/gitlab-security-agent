@@ -46,6 +46,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
+from .rendering import Rendered
 from .rendering import code_span as _code_span
 from .rendering import plain as _plain
 
@@ -667,7 +668,7 @@ def _float(value: Any) -> float:
 # ------------------------------------------------------------- the rendering
 
 
-def render_trace(trace: PartialTrace) -> str:
+def render_trace(trace: PartialTrace) -> Rendered:
     """The trace as Markdown, written so it cannot be read as a verdict.
 
     Every model-written string on this page — a title, a search pattern, a
@@ -711,7 +712,7 @@ def render_trace(trace: PartialTrace) -> str:
     lines += _trace_rejections(trace)
     lines += _trace_sign_off(trace)
     lines += _trace_unreadable(trace)
-    return "\n".join(lines).rstrip() + "\n"
+    return Rendered("\n".join(lines).rstrip() + "\n")
 
 
 def _trace_meta(trace: PartialTrace) -> List[str]:

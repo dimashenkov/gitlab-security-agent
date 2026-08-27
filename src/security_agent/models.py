@@ -638,6 +638,11 @@ class Coverage:
     # is policy applied to every run; this is one operator asking for less on
     # one run, and a reader needs to know which of the two happened.
     out_of_scope: List[str] = field(default_factory=list)
+    # The whole-change diff was cut off at its ceiling, so the reviewer saw the
+    # first part of it and no more. Structural, not prose: the notice appended
+    # to the diff is what the *model* reads, and an attacker can write the same
+    # sentence into a file. This is what the artifact and the gate can rely on.
+    diff_truncated: bool = False
 
     @property
     def unopened(self) -> List[str]:
@@ -655,6 +660,7 @@ class Coverage:
             "examined": sorted(self.examined),
             "excluded": self.excluded,
             "out_of_scope": self.out_of_scope,
+            "diff_truncated": self.diff_truncated,
             "unopened": self.unopened,
             "complete": self.complete,
         }
@@ -770,6 +776,15 @@ class ScanOutcome:
     # runs that are fine; the point is to have the rate from real reviews
     # before tightening it.
     finished_explicitly: bool = False
+    # A Markdown document this project rendered itself, for the one case where
+    # a run left nothing else: the crash trace. Separate from `stop_detail`,
+    # which is a sentence and is always escaped, because the report needs to
+    # know which of the two it is holding — and deciding that by counting
+    # newlines is a check satisfied by a shape rather than by the thing.
+    #
+    # Everything inside it has already been through `rendering`, at the point
+    # each string was placed. Nothing else may ever be assigned here.
+    trace_markdown: str = ""
     # Questions the reviewer could not settle, in its own words. "I could not
     # tell" is a real answer and this is where it goes; without somewhere to
     # put it, a gap becomes silence.

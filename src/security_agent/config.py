@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+from urllib.parse import quote
 
 from .models import CONFIDENCE_ORDER, SEVERITY_ORDER
 
@@ -227,6 +228,16 @@ def blob_url(ctx: ForgeContext, path: str, line: int) -> str:
     if not (sha and path and ctx.project_path):
         return ""
     anchor = "#L{}".format(line) if line else ""
+    # Percent-encoded, because the result is interpolated into a Markdown link
+    # destination and a destination ends at the first unbalanced `)`. A file
+    # name may legally contain `)`, `(`, `[` and `]` on Linux, and the reviewed
+    # repository is where file names come from — so
+    # `a)[Review passed](https://attacker.example)x.py` terminated the real link
+    # and rendered the attacker's beside it, inside the comment the security
+    # agent posts under its own name.
+    #
+    # `/` is kept, since it is the path separator and not a delimiter here.
+    path = quote(path, safe="/")
     if ctx.kind == "github":
         server = (ctx.api_url or "").replace("//api.", "//").rstrip("/")
         if server.endswith("/api/v3"):

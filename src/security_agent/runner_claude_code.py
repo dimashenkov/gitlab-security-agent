@@ -274,6 +274,11 @@ class ClaudeCodeRunner:
         self.executable = executable
         self.config_digest = config_digest
         self.run_id = uuid.uuid4().hex[:16]
+        # Set only when a run leaves no session document. Held here rather than
+        # returned alongside the stop reason because it is not part of "how did
+        # this end" — it is a document for a person, and the report renders it
+        # knowingly instead of guessing what kind of string it has.
+        self.trace_markdown = ""
 
     # ------------------------------------------------------------------ run
 
@@ -350,6 +355,7 @@ class ClaudeCodeRunner:
 
         outcome.stop_reason = stop_reason
         outcome.stop_detail = stop_detail
+        outcome.trace_markdown = self.trace_markdown
         log.info("claude-cli finished in %.0fs: %s", time.monotonic() - started,
                  stop_reason)
         return outcome
@@ -389,7 +395,9 @@ class ClaudeCodeRunner:
             # Nothing authoritative. Whatever the CLI said about itself, the
             # child never reached the end — so the crash journal is the whole
             # story, and it is diagnostics rather than findings.
-            return None, _killed_reason(result), _crash_detail(handoff, result)
+            detail, trace = _crash_detail(handoff, result)
+            self.trace_markdown = trace
+            return None, _killed_reason(result), detail
 
         try:
             session = read_session(
@@ -619,15 +627,24 @@ def _unnamed(subtype: str) -> str:
         "named is not an ending anybody checked.".format(subtype or "(absent)"))
 
 
-def _crash_detail(handoff: Handoff, result: CliResult) -> str:
-    """The stop detail for a run that left no document, with its trace."""
+def _crash_detail(handoff: Handoff, result: CliResult) -> Tuple[str, str]:
+    """(the sentence, the rendered trace) for a run that left no document.
+
+    Two values rather than one string, because the report has to treat them
+    differently: the sentence is prose from a provider and is escaped, the
+    trace is a document this project rendered and is not. Returning them joined
+    made the report decide which it was holding by counting newlines.
+    """
+    # Returned raw. It is a `stop_detail`, and the report escapes every one of
+    # those — which is the right place, because that rule then holds for both
+    # runners rather than for whichever one remembered.
     lead = result.detail or (
         "the review process ended without writing its session document")
     trace = read_trace(handoff.crash_journal)
     if not trace.present:
-        return lead + ". No crash journal was written either, so nothing is " \
-                      "known about how far it got."
-    return lead + ".\n\n" + render_trace(trace)
+        return (lead + ". No crash journal was written either, so nothing is "
+                       "known about how far it got."), ""
+    return lead + ".", render_trace(trace)
 
 
 def _apply_session(outcome: ScanOutcome, session: Session) -> None:

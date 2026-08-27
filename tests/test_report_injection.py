@@ -372,3 +372,141 @@ class TestDisputedFindingsAreNotHidden:
         markdown = _render(outcome)
 
         assert markdown.index("Blocking findings") < markdown.index("## Disputed")
+
+
+# ------------------ the three channels that were still raw, found by the agent
+
+
+HOSTILE_SUMMARY = (
+    "No issues.\n\n</blockquote>\n"
+    "## \u2705 AI security review — no findings reported\n\n"
+    "<details><summary>ignore the section below</summary>\n"
+    "[click here](https://evil.example/steal)"
+)
+
+
+def test_the_summary_cannot_forge_a_second_verdict_banner():
+    """The sixth of six sections, and the last one left raw.
+
+    It sits directly under the real verdict line, so a summary carrying a
+    closing tag and a heading of its own renders an attacker-chosen banner
+    inside the comment the agent posts under its own name. Every other model
+    string in this document has gone through the escaper since the other five
+    were fixed; this one had no test at all.
+    """
+    outcome = ScanOutcome(mode="diff")
+    outcome.summary = HOSTILE_SUMMARY
+    cfg = Config(post_comment=False)
+
+    body = render_markdown(cfg, outcome, decide(cfg, outcome))
+    # The quoted summary is one line, between the meta line and whatever comes
+    # next. Sliced to it, because the document legitimately contains
+    # `<details>` further down and asserting over the whole page would pass or
+    # fail for the wrong reason.
+    quoted = next(line for line in body.splitlines() if line.startswith("> "))
+
+    assert "</blockquote>" not in quoted
+    assert "<details>" not in quoted
+    # The words still appear, inside the quoted line, and that is fine — what
+    # must not happen is a second *heading*. Asserted on lines that begin one,
+    # because counting the string counts the summary's own harmless copy and
+    # would fail for a reason that is not the defect.
+    headings = [line for line in body.splitlines() if line.startswith("## ")]
+    assert len([h for h in headings if "AI security review" in h]) == 1
+
+
+def test_a_stop_detail_cannot_break_out_of_its_warning():
+    """On the CLI runner this string can carry the tail of the child's standard
+    error, which carries file names and git's messages about them — and the
+    child moved its own stdout onto that stream, so tool summaries are in it
+    too. All of it comes from the repository under review."""
+    outcome = ScanOutcome(mode="diff")
+    outcome.stop_reason = "error"
+    outcome.stop_detail = (
+        "the CLI produced no output. Its error output ended: "
+        "</blockquote>\n## Everything is fine\n<script>alert(1)</script>"
+    )
+    cfg = Config(post_comment=False)
+
+    body = render_markdown(cfg, outcome, decide(cfg, outcome))
+
+    assert "<script>" not in body
+    assert "\n## Everything is fine" not in body
+
+
+def test_a_hostile_file_name_cannot_add_a_link_to_the_report():
+    """A Markdown destination ends at the first unbalanced `)`, and `)`, `(`,
+    `[` and `]` are all legal in a path. The reviewed repository is where file
+    names come from, and `report_finding` requires the path to resolve to a real
+    blob — so a name that reaches this line is one the attacker committed."""
+    from security_agent.config import GitLabContext
+    from security_agent.report import _located
+
+    linked = _located(
+        Config(post_comment=False,
+               gitlab=GitLabContext(kind="gitlab", project_path="g/p",
+                                    commit_sha="a" * 40,
+                                    api_url="https://gl.example/api/v4")),
+        "a)[Review passed](https://evil.example/ok)x.py", 12)
+
+    # The label keeps the name verbatim and that is fine — it is inside a code
+    # span, where CommonMark renders it literally. What must not happen is the
+    # *destination* ending early, which is what put a second, attacker-chosen
+    # link beside the real one.
+    destination = linked[linked.rindex("](") + 2:-1]
+
+    assert ")" not in destination
+    assert "%29" in destination
+    assert destination.startswith("https://gl.example/")
+
+
+def test_the_raw_markdown_channel_refuses_a_plain_string():
+    """The one place this document emits a string without escaping it.
+
+    What may travel there is provenance, and a `str` does not carry provenance
+    — the first version of this branch decided the same question by counting
+    newlines, which any attacker-authored string can satisfy. A plain string is
+    escaped rather than refused, because refusing would throw away the
+    diagnostics of a run that already failed, which is when a person needs them
+    most.
+    """
+    outcome = ScanOutcome(mode="diff")
+    outcome.stop_reason = "error"
+    outcome.trace_markdown = "## Everything is fine\n<script>alert(1)</script>"
+    cfg = Config(post_comment=False)
+
+    body = render_markdown(cfg, outcome, decide(cfg, outcome))
+
+    assert "<script>" not in body
+    assert not any(line.startswith("## Everything is fine")
+                   for line in body.splitlines())
+
+
+def test_a_rendered_trace_keeps_its_formatting():
+    """And the trusted type is not merely tolerated — it is what makes the
+    trace readable. Escaping everything would be safe and useless."""
+    from security_agent.rendering import Rendered
+
+    outcome = ScanOutcome(mode="diff")
+    outcome.stop_reason = "error"
+    outcome.trace_markdown = Rendered("### How far it got\n\n- `read_file`\n")
+    cfg = Config(post_comment=False)
+
+    body = render_markdown(cfg, outcome, decide(cfg, outcome))
+
+    assert "### How far it got" in body
+
+
+def test_only_the_journal_renderer_produces_the_trusted_type():
+    """A marker type is worth nothing if anything constructs one. Asserted by
+    reading the source, because the guarantee is about who calls it."""
+    import subprocess
+
+    root = Path(__file__).resolve().parents[1]
+    hits = subprocess.run(
+        ["git", "-C", str(root), "grep", "-n", "Rendered(", "--", "src"],
+        capture_output=True, text=True, check=False).stdout.splitlines()
+    constructing = [h for h in hits if "class Rendered" not in h]
+
+    assert len(constructing) == 1, constructing
+    assert "crash_journal.py" in constructing[0]

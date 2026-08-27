@@ -387,9 +387,14 @@ class TestCompletionNeedsBothHalves:
             runner.CliResult(killed=True, stop=STOP_TIME_LIMIT, detail="stopped"),
             REVISION)
 
-        assert "read_file" in detail
-        assert "not a result" in detail
-        assert "outcome unknown" in detail
+        # The sentence and the trace travel separately now: one is provider
+        # prose the report escapes, the other is a document this project
+        # rendered. Deciding which is which by counting newlines was a check
+        # satisfied by a shape rather than by the thing.
+        assert "stopped" in detail
+        assert "read_file" in subject.trace_markdown
+        assert "not a result" in subject.trace_markdown
+        assert "outcome unknown" in subject.trace_markdown
 
 
 # ------------------------------------------------------ refusing to fall back

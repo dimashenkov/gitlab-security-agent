@@ -57,6 +57,11 @@ FINISH_REVIEW = "finish_review"
 # that one honest sentence passes.
 MIN_SUMMARY_CHARS = 40
 
+# What `get_diff` shows the model. Named because `Workspace.MAX_DIFF_BYTES` is
+# derived from it: the read ceiling exists to stop a hostile change exhausting
+# memory, and its right size is "enough to produce this, and no more".
+MAX_DIFF_CHARS = 120_000
+
 # The verifier's counterpart to `finish_review`: submitting the one vote it is
 # allowed to cast is also how it says it is done.
 #
@@ -485,8 +490,8 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
             "empty diff",
         )
     trimmed = False
-    if len(body) > 120_000:
-        body = body[:120_000]
+    if len(body) > MAX_DIFF_CHARS:
+        body = body[:MAX_DIFF_CHARS]
         trimmed = True
     if path:
         session.note_file(ws.repo_path(path))

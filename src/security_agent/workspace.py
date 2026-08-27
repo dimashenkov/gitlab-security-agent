@@ -59,6 +59,12 @@ class Workspace:
         self.diff_base = diff_base
         self.diff_head = diff_head
         self._tracked: Optional[List[str]] = None
+        # Set when a diff was cut off at the ceiling. Recorded rather than only
+        # said in prose: a sentence in the model's context is guidance, and an
+        # attacker can write the same sentence. This is the accounting, and it
+        # reaches the artifact so a report cannot claim coverage the run did not
+        # have.
+        self.diff_truncated = False
         self._changed_lines: Optional[dict] = None
 
     # ---------------------------------------------------------------- paths
@@ -327,7 +333,85 @@ class Workspace:
             if not in_scope:
                 return ""
             args += ["--", *(self.repo_path(p) for p in in_scope)]
-        return self.git(*args, check=False)
+        return self._bounded(args)
+
+    # How much of a diff is read before the pipe is closed.
+    #
+    # Derived from what the only consumer asks for, not chosen for feeling
+    # roomy. `get_diff` trims to 120,000 characters before the model sees
+    # anything, so reading megabytes past that is work with no review value.
+    # This is that ceiling with room for the worst case of multi-byte encoding,
+    # the diff's own headers, and one read of overshoot.
+    #
+    # A genuine change can exceed it, and when one does the run says the diff
+    # was partial rather than implying the change was abnormal.
+    MAX_DIFF_BYTES = 512 * 1024
+
+    def _bounded(self, args: List[str]) -> str:
+        """Read git's output up to a ceiling, then stop reading.
+
+        `subprocess.run(capture_output=True)` reads the whole pipe into memory
+        before returning, and the size of a diff is chosen by whoever opened the
+        merge request. Four repetitive files of half a gigabyte each compress to
+        almost nothing in the repository and expand to about two gigabytes here:
+        an out-of-memory kill on a shared runner, comfortably inside the git
+        timeout.
+
+        That is the one failure that defeats the exit-2 contract. A SIGKILL is
+        not an exception — `main`'s `except` never runs, no artifact is written,
+        no comment is posted, and the previous run's green note stays on the
+        merge request describing code that is no longer there.
+
+        `search()` was hardened against exactly this and `diff()` was not, which
+        is the whole finding: the reasoning was written down one function away
+        and did not travel.
+        """
+        deadline = time.monotonic() + GIT_TIMEOUT_SECONDS
+        try:
+            proc = subprocess.Popen(
+                ("git", "--no-pager", "-C", str(self.root),
+                 "--no-optional-locks", *args),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env=_git_env(),
+            )
+        except OSError as exc:
+            raise WorkspaceError("git {} failed: {}".format(
+                " ".join(args), exc)) from None
+
+        chunks: List[bytes] = []
+        size = 0
+        truncated = False
+        try:
+            while True:
+                if time.monotonic() > deadline:
+                    truncated = True
+                    break
+                chunk = proc.stdout.read(65_536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+                if size >= self.MAX_DIFF_BYTES:
+                    truncated = True
+                    break
+        finally:
+            # Killed rather than drained: draining is what an unbounded read
+            # does, and the point of stopping was not to hold the rest.
+            if truncated:
+                proc.kill()
+            proc.stdout.close()
+            proc.wait()
+
+        body = b"".join(chunks).decode("utf-8", "surrogateescape")
+        if truncated:
+            self.diff_truncated = True
+            # Said in the output the model reads, because a diff that stops
+            # halfway through a file looks exactly like a file that ends there.
+            body = body.rsplit("\n", 1)[0] + (
+                "\n… this diff was cut off at {} bytes. What follows it was not "
+                "read, and a change this large has not been fully reviewed."
+                .format(self.MAX_DIFF_BYTES))
+        return body
 
     def changed_line_map(self):
         """Lines this change is answerable for, per file, computed once.

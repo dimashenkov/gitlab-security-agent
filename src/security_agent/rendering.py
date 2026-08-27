@@ -65,3 +65,20 @@ def code_span(text: str) -> str:
         return "`{}`".format(text)
     ticks = "`" * (longest + 1)
     return "{} {} {}".format(ticks, text, ticks)
+
+
+class Rendered(str):
+    """Markdown this project produced, whose every part was escaped as it was placed.
+
+    A marker type, and the reason it is a type rather than a comment: the report
+    has one channel that emits a string without escaping it, and the difference
+    between what may travel there and what may not is provenance, which a `str`
+    does not carry. The first version decided it by counting newlines — a check
+    any attacker-authored string can satisfy, and the third check in two days to
+    be satisfied by a shape instead of by the thing.
+
+    Only `crash_journal.render_trace` constructs one. Anything else reaching the
+    raw channel is a plain `str` and is refused there.
+    """
+
+    __slots__ = ()
