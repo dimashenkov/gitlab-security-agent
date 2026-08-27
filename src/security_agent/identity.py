@@ -27,11 +27,19 @@ import json
 from typing import Any, Dict
 
 
-def review_identity(cfg: Any, revision: Any, provenance: Any) -> Dict[str, Any]:
+def review_identity(cfg: Any, revision: Any, provenance: Any,
+                    suppressions: str = "") -> Dict[str, Any]:
     """Everything that has to be equal for two reviews to be the same one.
 
     A field left out is a field that can change without anyone being told,
     which is how a stale result gets reused for code it never saw.
+
+    `suppressions` is a digest of the accepted-risk rules in force. It is a
+    parameter rather than read from `cfg` because the rules live in a file
+    that is parsed elsewhere, and because the caller has to have parsed them
+    *before* deciding to reuse — an artifact produced before a risk was
+    accepted still lists the findings that entry silences, and one produced
+    before an entry expired still hides what it used to.
     """
     return {
         # What was read. Both, not just head: the same commit reviewed against
@@ -61,9 +69,30 @@ def review_identity(cfg: Any, revision: Any, provenance: Any) -> Dict[str, Any]:
             # saw whole files is not comparable with one that saw a
             # window around each finding.
             "verifier_context_chars": getattr(cfg, "verifier_context_chars", 0),
+            # The accepted risks in force. An artifact produced before a risk
+            # was accepted still lists the findings that entry silences, and
+            # one produced before an entry expired still hides what it used to.
+            # Empty when the caller has none to declare, which keeps every
+            # artifact written before this existed readable.
+            "suppressions": suppressions,
             # What the model was allowed to see. Changing the exclusions
             # changes the review without changing a line of code.
             "excludes": sorted(getattr(cfg, "excludes", ()) or ()),
+            # Settings that were missing, each of which changes what the gate
+            # decides or what the reviewer was shown. The docstring above has
+            # claimed since it was written that a field left out is a field
+            # that can change without anyone being told; these were the fields
+            # left out.
+            #
+            # `fail_on_incomplete` decides the exit code of a truncated run.
+            # `verify_max_findings` decides which findings are verified at all.
+            # The verifier's model and effort decide the verdicts. The diff
+            # ceiling decides how much of the change the reviewer saw.
+            "fail_on_incomplete": bool(getattr(cfg, "fail_on_incomplete", True)),
+            "verify_max_findings": getattr(cfg, "verify_max_findings", 0),
+            "verify_model": getattr(cfg, "verify_model", ""),
+            "verify_effort": getattr(cfg, "verify_effort", ""),
+            "diff_ceiling_bytes": getattr(cfg, "diff_ceiling_bytes", 0),
             # What the run was answerable for. Without this a review of one
             # file and a review of the whole change share an identity, so the
             # narrow one gets reused as the answer to the broad question — and

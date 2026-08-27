@@ -114,11 +114,6 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         log.info("reviewing %d tracked file(s) at %s",
                  len(workspace.tracked_files()), _abbrev(head))
 
-    if args.reuse:
-        reused = _reuse(cfg, args, root, mode, base, head)
-        if reused is not None:
-            return reused
-
     try:
         rules, warnings = load_rules(root / cfg.ignore_file)
     except SuppressionError as exc:
@@ -128,6 +123,17 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         log.warning("%s", warning)
     if rules:
         log.info("%d active suppression rule(s) from %s", len(rules), cfg.ignore_file)
+
+    # Reuse is decided *after* the rules are read, and the rules are part of
+    # what makes a stored result the answer to this question. Decided before,
+    # an artifact produced when a risk had not yet been accepted was handed
+    # back listing findings that entry now silences — and one produced before
+    # an entry expired kept hiding what it no longer covers.
+    if args.reuse:
+        reused = _reuse(cfg, args, root, mode, base, head,
+                        suppressions=_suppression_digest(rules))
+        if reused is not None:
+            return reused
 
     if cfg.provider == PROVIDER_API and not _has_credentials():
         log.error(
@@ -215,6 +221,9 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         log.warning(
             "%s is edited by this change, so its entries do not apply here — "
             "they take effect from the next change onward", cfg.ignore_file)
+    # Recorded before the gate reads anything, because it is part of what makes
+    # this run's answer this run's answer.
+    outcome.suppressions_digest = _suppression_digest(rules)
     kept, suppressed = apply_suppressions(candidates, rules, self_added=ignore_touched)
     outcome.suppressed = suppressed
     outcome.refuted = [c for c in kept if c.verdict == VERDICT_REFUTED]
@@ -305,7 +314,7 @@ def _nothing_to_review(cfg: Config, args: argparse.Namespace, mode: str,
 
 
 def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,
-           base: str, head: str):
+           base: str, head: str, suppressions: str = ""):
     """Return the earlier run's exit code, or None to go and pay for one.
 
     Reuse is keyed on the whole identity — both revisions, the prompts, the
@@ -343,6 +352,7 @@ def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,
                  base_sha=resolve(base), head_sha=resolve(head)),
         Provenance(**{k: v for k, v in (previous.get("provenance") or {}).items()
                       if k in Provenance.__dataclass_fields__}),
+        suppressions=suppressions,
     )
     # The prompts and schema are hashed from disk at run time, so the recorded
     # provenance is only a valid stand-in when the files have not moved since.
@@ -501,6 +511,39 @@ def _revision_for(mode: str, base: str, head: str, workspace):
             "code it read cannot be archived, compared or reused.".format(head))
     return Revision(mode=mode, base=base, head=head,
                     base_sha=resolve(base), head_sha=head_sha)
+
+
+def _suppression_digest(rules) -> str:
+    """A stable key for the accepted risks in force.
+
+    Over what each rule matches on **and its reason**, not over the file. Order
+    and formatting are not policy, so a reordered list or a reindented entry is
+    the same policy and must not refuse a reuse.
+
+    The reason is in, and my first argument for leaving it out was wrong twice.
+    It said an edit there would "teach the reader to pass `--force`" — which
+    conflates two workflows: `--force` belongs to the baseline comparison and
+    reuse is controlled by `--no-reuse`. And the reason is the only field a
+    person reads when deciding whether an accepted risk still makes sense, so a
+    review reused across a rewritten one is reused across a changed
+    justification. Rewriting a reason is rare and deliberate; one fresh review
+    is the right price for it.
+    """
+    import hashlib
+    import json
+
+    shape = sorted(
+        (getattr(rule, "fingerprint", "") or "",
+         getattr(rule, "path", "") or "",
+         getattr(rule, "category", "") or "",
+         str(getattr(rule, "expires", "") or ""),
+         " ".join(str(getattr(rule, "reason", "") or "").split()))
+        for rule in rules or ()
+    )
+    if not shape:
+        return ""
+    return hashlib.sha256(
+        json.dumps(shape, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
 def _cli_provider_problem(cfg: Config) -> str:

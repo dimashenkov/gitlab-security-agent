@@ -829,6 +829,11 @@ class ScanOutcome:
     # Everything inside it has already been through `rendering`, at the point
     # each string was placed. Nothing else may ever be assigned here.
     trace_markdown: str = ""
+    # A digest of the accepted risks in force when this ran. Part of the
+    # review's identity, so it has to be written into the artifact as well as
+    # computed for the comparison — recorded on one side only, no artifact
+    # would ever match and reuse would silently never happen.
+    suppressions_digest: str = ""
     # Questions the reviewer could not settle, in its own words. "I could not
     # tell" is a real answer and this is where it goes; without somewhere to
     # put it, a gap becomes silence.

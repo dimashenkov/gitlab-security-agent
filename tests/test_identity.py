@@ -134,3 +134,87 @@ def test_the_served_model_is_not_part_of_the_key():
     assert "models_served" not in str(identity())
     served = identity(prov={"models_served": ["claude-sonnet-5"]})
     assert digest(served) == digest(identity())
+
+
+# ------------------- the policy that decides which findings are even reported
+
+
+def test_accepting_a_risk_changes_the_review():
+    """An artifact produced before an entry was added still lists the findings
+    that entry silences, and one produced before an entry expired still hides
+    what it no longer covers. Reusing either answers a question nobody asked.
+
+    Reuse was also *decided* before the rules were read, so the comparison had
+    nothing to compare even once this field existed.
+    """
+    before = review_identity(Config(), revision(), provenance(), "")
+    after = review_identity(Config(), revision(), provenance(), "abc123")
+
+    assert digest(before) != digest(after)
+    assert not reusable({"complete": True, "identity": before}, after)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("fail_on_incomplete", False),
+    ("verify_max_findings", 5),
+    ("verify_model", "claude-haiku-4-5"),
+    ("verify_effort", "low"),
+    ("diff_ceiling_bytes", 1024),
+])
+def test_a_setting_that_changes_the_answer_changes_the_identity(field, value):
+    """Each of these was absent while the docstring said a field left out is a
+    field that can change without anyone being told. One decides the exit code
+    of a truncated run, one decides which findings are verified at all, two
+    decide the verdicts, and one decides how much of the change was seen."""
+    base = review_identity(Config(), revision(), provenance())
+    changed = review_identity(Config(**{field: value}), revision(), provenance())
+
+    assert digest(base) != digest(changed), field
+
+
+def test_the_artifact_records_what_the_comparison_reads():
+    """Recorded on one side only, no artifact would ever match, and reuse would
+    silently never happen — a cost regression that looks like nothing."""
+    from security_agent.gate import decide
+    from security_agent.models import ScanOutcome
+    from security_agent.report import build_json
+
+    cfg = Config(post_comment=False)
+    outcome = ScanOutcome(mode="diff")
+    outcome.suppressions_digest = "abc123"
+
+    stored = build_json(cfg, outcome, decide(cfg, outcome))["identity"]
+
+    assert stored["settings"]["suppressions"] == "abc123"
+
+
+def test_a_rewritten_reason_is_a_different_policy():
+    """The reason is the only field a person reads when deciding whether an
+    accepted risk still makes sense, so a review reused across a rewritten one
+    is reused across a changed justification.
+
+    Left out at first, on an argument that turned out to conflate two
+    workflows: reuse is controlled by `--no-reuse`, and `--force` belongs to
+    the baseline comparison.
+    """
+    from security_agent.cli import _suppression_digest
+    from security_agent.suppress import Rule
+
+    original = [Rule(fingerprint="ab12", reason="tracked in SEC-4412")]
+    reworded = [Rule(fingerprint="ab12", reason="accepted by the platform team")]
+
+    assert _suppression_digest(original) != _suppression_digest(reworded)
+
+
+def test_reformatting_the_file_is_not_a_different_policy():
+    """A digest that moved for whitespace or order would refuse every reuse,
+    which is how a control gets switched off for being noisy."""
+    from security_agent.cli import _suppression_digest
+    from security_agent.suppress import Rule
+
+    one = [Rule(fingerprint="ab12", reason="tracked  in   SEC-4412"),
+           Rule(path="vendor/*", reason="third party")]
+    other = [Rule(path="vendor/*", reason="third party"),
+             Rule(fingerprint="ab12", reason="tracked in SEC-4412")]
+
+    assert _suppression_digest(one) == _suppression_digest(other)

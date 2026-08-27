@@ -182,11 +182,21 @@ def compare(result_path: Path, corpus: Path, baseline_path: Path,
               "attributable to the reviewer.\n".format(", ".join(moved)))
 
     before, after = baseline.get("outcomes", {}), outcomes_of(results)
-    regressed, fixed, unresolved, missing = [], [], [], []
+    regressed, fixed, unresolved, errored, missing = [], [], [], [], []
     for case_id, was in sorted(before.items()):
         now = after.get(case_id)
         if now is None:
             missing.append(case_id)
+        elif now["outcome"] == "error":
+            # This branch did not exist. `outcomes_of` has written `error`
+            # since it was added, and the state machine below knew only
+            # `unresolved` — so a case whose run blew up matched nothing, fell
+            # past every arm, and the comparison printed "No regression against
+            # the frozen suite" and exited 0.
+            #
+            # That is the product's own failure inside the tool that measures
+            # it: a check that did not run, reported as a check that passed.
+            errored.append(case_id)
         elif now["outcome"] == "unresolved":
             unresolved.append(case_id)
         elif was["outcome"] == "pass" and now["outcome"] == "fail":
@@ -198,21 +208,26 @@ def compare(result_path: Path, corpus: Path, baseline_path: Path,
     print("{} case(s) in the baseline, {} in this run.".format(len(before), len(after)))
     for label, cases in (("regressed", regressed), ("fixed", fixed),
                          ("no longer completes", unresolved),
+                         ("errored", errored),
                          ("absent from this run", missing),
                          ("new since the baseline", added)):
         if cases:
             print("  {:<24}{}".format(label + ":", ", ".join(cases)))
 
-    if unresolved:
+    if unresolved or errored:
         # Deliberately not a regression. A case that stopped early did not
         # fail; treating the two the same is the confusion that made a 2-of-6
         # out of three reviews that never ran.
-        print("\nA case that no longer completes is not a case that regressed. "
-              "It is a case with no result, and it needs the artifact read "
-              "before it means anything.")
+        #
+        # Named apart, though, because they need different next actions: a case
+        # that stopped early wants its artifact read, and one that errored
+        # wants the error read. Folding them into one word would answer both
+        # with the same shrug.
+        print("\nA case with no result is not a case that regressed. It needs "
+              "the artifact read before it means anything.")
     if regressed:
         return 1
-    if unresolved or missing:
+    if unresolved or errored or missing:
         return 2
     print("\nNo regression against the frozen suite.")
     return 0

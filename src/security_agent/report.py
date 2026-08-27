@@ -724,7 +724,8 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
         # What would have to match for another run to be the same review — the
         # key for reusing this artifact instead of paying for it again, and the
         # same one `baseline.py` refuses a comparison across.
-        "identity": review_identity(cfg, outcome.revision, outcome.provenance),
+        "identity": review_identity(cfg, outcome.revision, outcome.provenance,
+                                    outcome.suppressions_digest),
         "provenance": outcome.provenance.to_dict(),
         "coverage_accounting": outcome.coverage.to_dict(),
         "stage_metrics": outcome.metrics.to_dict(),

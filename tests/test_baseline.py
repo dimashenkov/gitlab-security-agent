@@ -210,3 +210,28 @@ def test_outcomes_keep_the_two_halves_of_a_pair_apart(tmp_path):
     outcomes = outcomes_of([row("one", passed=False)])
     assert outcomes["one"]["unsafe_target_recall"] is False
     assert outcomes["one"]["safe_target_persistence"] is False
+
+
+
+
+def test_an_errored_case_is_never_no_regression(tmp_path, corpus, capsys):
+    """The state machine knew `unresolved` and not `error`, so a case whose run
+    blew up matched no branch, fell past every arm, and the comparison printed
+    "No regression against the frozen suite" and exited 0.
+
+    That is this product's own failure inside the tool that measures it: a
+    check that did not run, reported as a check that passed. Found by an audit
+    that was told to read the code rather than my description of it.
+    """
+    baseline = tmp_path / "b.json"
+    freeze(write(tmp_path, "before.json", [row("one")]), corpus, baseline)
+
+    after = [row("one")]
+    after[0]["error"] = "the review process died"
+    code = compare(write(tmp_path, "after.json", after), corpus, baseline,
+                   force=False)
+    printed = capsys.readouterr().out
+
+    assert code == 2
+    assert "No regression" not in printed
+    assert "errored" in printed
