@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-27T14:53:22+00:00",
+  "summary": "",
+  "mode": "diff",
+  "model": "claude-opus-5",
+  "complete": false,
+  "finished_explicitly": false,
+  "unresolved": [],
+  "stop_reason": "error",
+  "stop_detail": "the review process ended without writing its session document.",
+  "trace_markdown": "## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_reviewer mode · e0144905f0b5..27bbc3751be5 · 13 tool calls started · 13 finished · 0 findings claimed · last record 2026-08-27 14:52:59 UTC_\n\n### How far it got\n\n- • `list_changed_files` — 1 changed file(s), 0 generated (+5.2s)\n- • `get_diff` — diff for all files (3828 chars) (+6.7s)\n- • `read_file` path=`xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java` — read xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java (+10.6s)\n- • `search_code` context_lines=`8` path_glob=`**/XWikiDocument.java` pattern=`public void setAuthor\\(|public void setAuthorReference\\(|public void setContentAuthorReference\\(` — search 'public void setAuthor\\\\\\\\(|public void setAuthorReference\\\\\\\\(|public void setContentAuthorReference\\\\\\\\(': 0 match(es) (+19.7s)\n- • `search_code` context_lines=`3` max_results=`60` pattern=`checkSavingDocument` — search 'checkSavingDocument': 7 match(es) (+20.2s)\n- • `search_code` max_results=`10` pattern=`class XWikiDocument` — search 'class XWikiDocument': 0 match(es) (+24.4s)\n- • `list_directory` depth=`2` path=`xwiki-platform-core/xwiki-platform-livedata` — listed xwiki-platform-core/xwiki-platform-livedata (+24.6s)\n- • `list_directory` depth=`6` path=`` — listed . (+26.6s)\n- • `list_directory` depth=`6` path=`xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java` — listed xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java (+29.0s)\n- • `read_file` path=`xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/LiveTableLiveDataEntryStore.java` — read xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/LiveTableLiveDataEntryStore.java (+55.3s)\n- • `search_code` max_results=`40` pattern=`setAuthor|setContentAuthor|getAuthors\\(\\)` — search 'setAuthor|setContentAuthor|getAuthors\\\\\\\\(\\\\\\\\)': 1 match(es) (+93.6s)\n- • `search_code` max_results=`40` pattern=`modelBridge\\.|new ModelBridge` — search 'modelBridge\\\\\\\\.|new ModelBridge': 4 match(es) (+93.6s)\n- • `finish_review` summary=`` ## What the change does One file changed: `ModelBridge.java` in `xwiki-platform-livedata-livetable`. This class is the write path behind the LiveData \"livetable\" source — `LiveTableLiveDataEntryStore… `` unresolved=`` ['The checkout contains only `xwiki-platform-livedata-livetable/src/main/java` (14 files) — XWiki core is absent. I could not read `com.xpn.xwiki.XWiki.checkSavingDocument(...)`, so I verified only t… `` — finish_review: 5 unresolved (+122.4s)\n\n### The reviewer had signed off\n\nThe reviewer recorded that it was finished, and the process was killed afterwards — while verifying, while writing its report, or somewhere else this journal cannot see. The run still did not complete.\n\n> ## What the change does One file changed: \\`ModelBridge.java\\` in \\`xwiki-platform-livedata-livetable\\`. This class is the write path behind the LiveData \"livetable\" source — \\`LiveTableLiveDataEntryStore.update()\\` (single property) and \\`.save()\\` (whole entry) both funnel into \\`ModelBridge.update()/upda…\n\n**It had not settled:**\n\n- The checkout contains only \\`xwiki-platform-livedata-livetable/src/main/java\\` (14 files) — XWiki core is absent. I could not read \\`com.xpn.xwiki.XWiki.checkSavingDocument(...)\\`, so I verified only that it is called, in the right order, with arguments consistent with the subsequent \\`saveDocument\\`. Wh…\n- I could not read \\`XWikiDocument.setAuthor(UserReference)\\` (core not in checkout), so I could not determine whether it sets the *content* author or only the metadata/effective author. This matters: \\`updateDocument\\` lets a caller with only EDIT rewrite \\`doc.content\\`, and if the content author is left…\n- \\`updateDocument\\` accepts \\`doc.enforceRequiredRights\\` and lets an EDIT-only caller flip it (\\`document.setEnforceRequiredRights(Boolean.parseBoolean(String.valueOf(value)))\\`, line 340). Turning enforcement off on a document containing scripts could lift the restriction on those scripts. This is pre-e…\n- \\`htmlConverter.fromHTML((String) v, (String) properties.get(syntaxKey))\\` (line 221) converts attacker-supplied HTML plus an attacker-chosen syntax id into wiki syntax. The \\`HTMLConverter\\` implementation is outside this checkout, so I could not check whether an arbitrary \\`_syntax\\` value or crafted H…\n- No test sources are present in the checkout (only \\`src/main/java\\`), so I could not use unit tests to pin down the intended semantics of the new \\`setAuthor\\`/\\`checkSavingDocument\\` pair.\n",
+  "verdict": {
+    "exit_code": 2,
+    "blocked": true,
+    "reason": "Review incomplete — the review ended with an error (the review process ended without writing its session document.). The result cannot be treated as a pass. Set SECURITY_SCAN_FAIL_ON_INCOMPLETE=false to allow partial reviews through.",
+    "blocking_fingerprints": [],
+    "not_gated_on": []
+  },
+  "counts": {
+    "reported": 0,
+    "blocking": 0,
+    "refuted": 0,
+    "suppressed": 0,
+    "rejected_claims": 0,
+    "by_severity": {
+      "low": 0,
+      "medium": 0,
+      "high": 0,
+      "critical": 0
+    }
+  },
+  "findings": [],
+  "refuted": [],
+  "suppressed": [],
+  "rejected_claims": [],
+  "coverage": {
+    "files_examined": [],
+    "turns": 0,
+    "tool_calls": []
+  },
+  "usage": {
+    "requests": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "revision": {
+    "mode": "diff",
+    "base": "e0144905f0b52f79a25af0448593a7ca9d9008e5",
+    "head": "27bbc3751be522bb000a087744c1286e5dff71f7",
+    "base_sha": "e0144905f0b52f79a25af0448593a7ca9d9008e5",
+    "head_sha": "27bbc3751be522bb000a087744c1286e5dff71f7"
+  },
+  "identity": {
+    "base_sha": "e0144905f0b52f79a25af0448593a7ca9d9008e5",
+    "head_sha": "27bbc3751be522bb000a087744c1286e5dff71f7",
+    "mode": "diff",
+    "agent_version": "0.1.0",
+    "model_requested": "claude-opus-5",
+    "system_prompt_sha": "80bc0b562cced7a2",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "settings": {
+      "fail_on": "high",
+      "min_confidence": "medium",
+      "gate_pre_existing": false,
+      "gate_removed_controls": true,
+      "ungated_categories": [],
+      "verify": true,
+      "verify_votes": 1,
+      "effort": "high",
+      "verifier_context_chars": 20000,
+      "excludes": [
+        "*.eot",
+        "*.gif",
+        "*.ico",
+        "*.jpeg",
+        "*.jpg",
+        "*.lock",
+        "*.map",
+        "*.min.css",
+        "*.min.js",
+        "*.mo",
+        "*.pb.go",
+        "*.pdf",
+        "*.png",
+        "*.pyc",
+        "*.snap",
+        "*.svg",
+        "*.ttf",
+        "*.woff",
+        "*.woff2",
+        "*/.terraform/*",
+        "*/__snapshots__/*",
+        "*/build/*",
+        "*/dist/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+        "*_pb2.py",
+        "Cargo.lock",
+        "Gemfile.lock",
+        "composer.lock",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "yarn.lock"
+      ],
+      "scope": []
+    }
+  },
+  "provenance": {
+    "model_requested": "claude-opus-5",
+    "models_served": [
+      "claude-opus-5"
+    ],
+    "model_substituted": false,
+    "system_prompt_sha": "80bc0b562cced7a2",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "agent_version": "0.1.0"
+  },
+  "coverage_accounting": {
+    "changed": [],
+    "examined": [],
+    "excluded": [],
+    "out_of_scope": [],
+    "diff_truncated": false,
+    "unopened": [],
+    "complete": true
+  },
+  "stage_metrics": {
+    "citations": {
+      "accepted": 0,
+      "rejected_unknown_path": 0,
+      "rejected_not_found": 0,
+      "rejected_ambiguous": 0,
+      "rejected_too_short": 0,
+      "lines_corrected": 0
+    },
+    "verification": {
+      "verified": 0,
+      "skipped": 0,
+      "failed": 0,
+      "verdicts_changed": 0
+    }
+  },
+  "turns_detail": [],
+  "settings": {
+    "fail_on": "high",
+    "min_confidence": "medium",
+    "gate_pre_existing": false,
+    "gate_removed_controls": true,
+    "ungated_categories": [],
+    "verify": true,
+    "verify_votes": 1,
+    "effort": "high",
+    "scope": []
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-27T14:54:02+00:00",
+  "summary": "",
+  "mode": "diff",
+  "model": "claude-opus-5",
+  "complete": false,
+  "finished_explicitly": false,
+  "unresolved": [],
+  "stop_reason": "error",
+  "stop_detail": "the review process ended without writing its session document.",
+  "trace_markdown": "## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_reviewer mode · 98b81db1f6d2..8ecfaf294fb0 · 16 tool calls started · 16 finished · 1 finding claimed · last record 2026-08-27 14:53:41 UTC_\n\n### How far it got\n\n- • `list_changed_files` — 1 changed file(s), 0 generated (+5.1s)\n- • `get_diff` — diff for all files (1731 chars) (+6.6s)\n- • `read_file` path=`openapi3filter/validation_error_encoder.go` — read openapi3filter/validation_error_encoder.go (+9.4s)\n- • `search_code` context_lines=`4` max_results=`60` path_glob=`openapi3filter/*.go` pattern=`RequestError\\{` — search 'RequestError\\\\\\\\{': 158 match(es) (+14.4s)\n- • `search_code` context_lines=`6` path_glob=`openapi3filter/*.go` pattern=`func \\(e \\*ParseError\\) RootCause|Cause .*error|type ParseError struct` — search 'func \\\\\\\\(e \\\\\\\\*ParseError\\\\\\\\) RootCause|Cause .*error|type ParseError struct': 31 match(es) (+15.0s)\n- • `search_code` context_lines=`6` max_results=`40` path_glob=`openapi3filter/*.go` pattern=`RequestError\\{Input: input, RequestBody|RequestBody: requestBody` — search 'RequestError\\\\\\\\{Input: input, RequestBody|RequestBody: requestBody': 80 match(es) (+18.3s)\n- • `read_file` end_line=`400` path=`openapi3filter/validate_request.go` start_line=`316` — read openapi3filter/validate_request.go (+20.8s)\n- • `search_code` context_lines=`6` max_results=`60` path_glob=`openapi3filter/req_resp_decoder.go` pattern=`Cause:` — search 'Cause: ': 163 match(es) (+27.8s)\n- • `search_code` context_lines=`2` path_glob=`openapi3filter/req_resp_decoder.go` pattern=`func (urlencodedBodyDecoder|multipartBodyDecoder|decodeBody|jsonBodyDecoder|plainBodyDecoder)` — search 'func (urlencodedBodyDecoder|multipartBodyDecoder|decodeBody|jsonBodyDecoder|plainBodyDecoder)': 29 match(es) (+32.6s)\n- • `search_code` context_lines=`3` max_results=`60` path_glob=`openapi3filter/req_resp_decoder.go` pattern=`handlePropParseError|parseValue\\(|makeObject` — search 'handlePropParseError|parseValue\\\\\\\\(|makeObject': 92 match(es) (+33.6s)\n- • `read_file` end_line=`1480` path=`openapi3filter/req_resp_decoder.go` start_line=`1379` — read openapi3filter/req_resp_decoder.go (+36.2s)\n- • `read_file` end_line=`1600` path=`openapi3filter/req_resp_decoder.go` start_line=`1480` — read openapi3filter/req_resp_decoder.go (+39.4s)\n- • `read_file` end_line=`60` path=`openapi3filter/req_resp_decoder.go` start_line=`24` — read openapi3filter/req_resp_decoder.go (+50.4s)\n- • `search_code` context_lines=`3` max_results=`40` pattern=`ConvertErrors|ValidationErrorEncoder` — search 'ConvertErrors|ValidationErrorEncoder': 17 match(es) (+50.7s)\n- • `report_finding` category=`dos` confidence=`high` description=`` This diff deletes the `e.Parameter != nil` guard that previously protected the `e.Parameter.In` access on line 120 (and `e.Parameter.Name`/`e.Parameter.In` on line 124). `RequestError.Parameter` is n… `` evidence=`if rootErr, ok := innerErr.Cause.(*ParseError); ok && rootErr.Kind == KindInvalidFormat && e.Parameter.In == \"query\" {` exploit_scenario=`` An unauthenticated attacker sends a POST with `Content-Type: multipart/form-data` to any route whose request-body schema declares an object with an integer-typed property — e.g. a part named `count` … `` file=`openapi3filter/validation_error_encoder.go` impact=`denial_of_service` line=`120` reachable_without_authentication=`yes` recommendation=`Restore the nil guard that was removed: if rootErr, ok := innerErr.Cause.(*ParseError); ok && rootErr.Kind == KindInvalidFormat && e.Parameter != nil && e.Parameter.In == \"query\" { Order matters: the…` requires_user_interaction=`no` severity=`high` — recorded high dos at openapi3filter/validation_error_encoder.go:119 (+79.2s)\n- • `finish_review` summary=`` The change touches one file, `openapi3filter/validation_error_encoder.go`, and makes two edits inside `convertParseError`: it removes the `e.Parameter != nil` guard from the query-parameter branch, a… `` unresolved=`` [\"Whether a panic here crashes the process depends on the consuming server's recovery middleware, which lives outside this repository. `net/http`'s per-connection recover would downgrade it to an abo… `` — finish_review: 2 unresolved (+96.3s)\n\n### Claims recorded before the run was killed\n\n_Each of these passed the check that the code it quotes exists, and nothing further. None was verified, none was rated, and none of them gates anything — a killed run reports no findings._\n\n- Removed nil check on e.Parameter causes panic on malformed request body — `openapi3filter/validation_error_encoder.go:119` · claimed low\n\n### The reviewer had signed off\n\nThe reviewer recorded that it was finished, and the process was killed afterwards — while verifying, while writing its report, or somewhere else this journal cannot see. The run still did not complete.\n\n> The change touches one file, \\`openapi3filter/validation_error_encoder.go\\`, and makes two edits inside \\`convertParseError\\`: it removes the \\`e.Parameter != nil\\` guard from the query-parameter branch, and it removes the \\`if title == \"\" { title = innerErr.Error() }\\` fallback from the branch below it. I…\n\n**It had not settled:**\n\n- Whether a panic here crashes the process depends on the consuming server's recovery middleware, which lives outside this repository. \\`net/http\\`'s per-connection recover would downgrade it to an aborted request; a router without recovery, or a custom listener, would not. I rated impact as denial_of_…\n- I confirmed the multipart path produces the nested \\`KindInvalidFormat\\` ParseError required to reach line 119, but did not exhaustively enumerate the other body decoders (\\`JSONBodyDecoder\\`, \\`FileBodyDecoder\\`, custom decoders registered by consumers) for additional producers of the same shape. One co…\n",
+  "verdict": {
+    "exit_code": 2,
+    "blocked": true,
+    "reason": "Review incomplete — the review ended with an error (the review process ended without writing its session document.). The result cannot be treated as a pass. Set SECURITY_SCAN_FAIL_ON_INCOMPLETE=false to allow partial reviews through.",
+    "blocking_fingerprints": [],
+    "not_gated_on": []
+  },
+  "counts": {
+    "reported": 0,
+    "blocking": 0,
+    "refuted": 0,
+    "suppressed": 0,
+    "rejected_claims": 0,
+    "by_severity": {
+      "low": 0,
+      "medium": 0,
+      "high": 0,
+      "critical": 0
+    }
+  },
+  "findings": [],
+  "refuted": [],
+  "suppressed": [],
+  "rejected_claims": [],
+  "coverage": {
+    "files_examined": [],
+    "turns": 0,
+    "tool_calls": []
+  },
+  "usage": {
+    "requests": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "revision": {
+    "mode": "diff",
+    "base": "98b81db1f6d277b32ecf3da6c2157d29df662d92",
+    "head": "8ecfaf294fb0c893d212c329e9278e0170b5e7ee",
+    "base_sha": "98b81db1f6d277b32ecf3da6c2157d29df662d92",
+    "head_sha": "8ecfaf294fb0c893d212c329e9278e0170b5e7ee"
+  },
+  "identity": {
+    "base_sha": "98b81db1f6d277b32ecf3da6c2157d29df662d92",
+    "head_sha": "8ecfaf294fb0c893d212c329e9278e0170b5e7ee",
+    "mode": "diff",
+    "agent_version": "0.1.0",
+    "model_requested": "claude-opus-5",
+    "system_prompt_sha": "80bc0b562cced7a2",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "settings": {
+      "fail_on": "high",
+      "min_confidence": "medium",
+      "gate_pre_existing": false,
+      "gate_removed_controls": true,
+      "ungated_categories": [],
+      "verify": true,
+      "verify_votes": 1,
+      "effort": "high",
+      "verifier_context_chars": 20000,
+      "excludes": [
+        "*.eot",
+        "*.gif",
+        "*.ico",
+        "*.jpeg",
+        "*.jpg",
+        "*.lock",
+        "*.map",
+        "*.min.css",
+        "*.min.js",
+        "*.mo",
+        "*.pb.go",
+        "*.pdf",
+        "*.png",
+        "*.pyc",
+        "*.snap",
+        "*.svg",
+        "*.ttf",
+        "*.woff",
+        "*.woff2",
+        "*/.terraform/*",
+        "*/__snapshots__/*",
+        "*/build/*",
+        "*/dist/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+        "*_pb2.py",
+        "Cargo.lock",
+        "Gemfile.lock",
+        "composer.lock",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "yarn.lock"
+      ],
+      "scope": []
+    }
+  },
+  "provenance": {
+    "model_requested": "claude-opus-5",
+    "models_served": [
+      "claude-opus-5"
+    ],
+    "model_substituted": false,
+    "system_prompt_sha": "80bc0b562cced7a2",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "agent_version": "0.1.0"
+  },
+  "coverage_accounting": {
+    "changed": [],
+    "examined": [],
+    "excluded": [],
+    "out_of_scope": [],
+    "diff_truncated": false,
+    "unopened": [],
+    "complete": true
+  },
+  "stage_metrics": {
+    "citations": {
+      "accepted": 0,
+      "rejected_unknown_path": 0,
+      "rejected_not_found": 0,
+      "rejected_ambiguous": 0,
+      "rejected_too_short": 0,
+      "lines_corrected": 0
+    },
+    "verification": {
+      "verified": 0,
+      "skipped": 0,
+      "failed": 0,
+      "verdicts_changed": 0
+    }
+  },
+  "turns_detail": [],
+  "settings": {
+    "fail_on": "high",
+    "min_confidence": "medium",
+    "gate_pre_existing": false,
+    "gate_removed_controls": true,
+    "ungated_categories": [],
+    "verify": true,
+    "verify_votes": 1,
+    "effort": "high",
+    "scope": []
+  }
+}

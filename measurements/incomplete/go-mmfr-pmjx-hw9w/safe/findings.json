@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-27T14:52:04+00:00",
+  "summary": "",
+  "mode": "diff",
+  "model": "claude-opus-5",
+  "complete": false,
+  "finished_explicitly": false,
+  "unresolved": [],
+  "stop_reason": "error",
+  "stop_detail": "the review process ended without writing its session document.",
+  "trace_markdown": "## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_reviewer mode · 7fee45b07def..72643530b1a3 · 8 tool calls started · 8 finished · 0 findings claimed · last record 2026-08-27 14:51:44 UTC_\n\n### How far it got\n\n- • `list_changed_files` — 1 changed file(s), 0 generated (+5.8s)\n- • `get_diff` — diff for all files (1731 chars) (+7.4s)\n- • `read_file` path=`openapi3filter/validation_error_encoder.go` — read openapi3filter/validation_error_encoder.go (+11.9s)\n- • `search_code` context_lines=`10` pattern=`func \\(e \\*ParseError\\) Error\\(\\)` — search 'func \\\\\\\\(e \\\\\\\\*ParseError\\\\\\\\) Error\\\\\\\\(\\\\\\\\)': 21 match(es) (+11.9s)\n- • `read_file` end_line=`130` path=`openapi3filter/req_resp_decoder.go` start_line=`20` — read openapi3filter/req_resp_decoder.go (+16.7s)\n- • `search_code` context_lines=`3` path_glob=`openapi3filter/validation_error.go` pattern=`Title|Detail` — search 'Title|Detail': 23 match(es) (+26.2s)\n- • `search_code` max_results=`40` pattern=`ValidationErrorEncoder|ConvertErrors` — search 'ValidationErrorEncoder|ConvertErrors': 4 match(es) (+26.4s)\n- • `finish_review` summary=`` The change touches one file, `openapi3filter/validation_error_encoder.go` (kin-openapi), in `convertParseError`: 1. Adds a missing `e.Parameter != nil` guard before dereferencing `e.Parameter.In == \"… `` unresolved=`` ['`ValidationError` is consumed by a caller-supplied `ErrorEncoder` that lives outside this repository, so I cannot confirm how downstream users render `Title`. If a consumer interpolates it into HTM… `` — finish_review: 2 unresolved (+47.6s)\n\n### The reviewer had signed off\n\nThe reviewer recorded that it was finished, and the process was killed afterwards — while verifying, while writing its report, or somewhere else this journal cannot see. The run still did not complete.\n\n> The change touches one file, \\`openapi3filter/validation_error_encoder.go\\` (kin-openapi), in \\`convertParseError\\`: 1. Adds a missing \\`e.Parameter != nil\\` guard before dereferencing \\`e.Parameter.In == \"query\"\\` on line 120. This is a defensive fix, not a regression: previously, a \\`*RequestError\\` carryi…\n\n**It had not settled:**\n\n- \\`ValidationError\\` is consumed by a caller-supplied \\`ErrorEncoder\\` that lives outside this repository, so I cannot confirm how downstream users render \\`Title\\`. If a consumer interpolates it into HTML rather than JSON, the newly non-empty title (which reflects attacker-supplied parameter/body values)…\n- \\`convertSchemaError\\` line 169 dereferences \\`innerErr.Schema.Enum\\` with no nil check on \\`Schema\\`. It is untouched by this diff and I did not trace whether \\`openapi3\\` can ever produce a \\`SchemaError\\` with \\`SchemaField == \"enum\"\\` and a nil \\`Schema\\`, so I did not report it.\n",
+  "verdict": {
+    "exit_code": 2,
+    "blocked": true,
+    "reason": "Review incomplete — the review ended with an error (the review process ended without writing its session document.). The result cannot be treated as a pass. Set SECURITY_SCAN_FAIL_ON_INCOMPLETE=false to allow partial reviews through.",
+    "blocking_fingerprints": [],
+    "not_gated_on": []
+  },
+  "counts": {
+    "reported": 0,
+    "blocking": 0,
+    "refuted": 0,
+    "suppressed": 0,
+    "rejected_claims": 0,
+    "by_severity": {
+      "low": 0,
+      "medium": 0,
+      "high": 0,
+      "critical": 0
+    }
+  },
+  "findings": [],
+  "refuted": [],
+  "suppressed": [],
+  "rejected_claims": [],
+  "coverage": {
+    "files_examined": [],
+    "turns": 0,
+    "tool_calls": []
+  },
+  "usage": {
+    "requests": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "revision": {
+    "mode": "diff",
+    "base": "7fee45b07defd2a25165c829e2d5f3163aa640a8",
+    "head": "72643530b1a321b26c1e07fd1ecea1be7a96e536",
+    "base_sha": "7fee45b07defd2a25165c829e2d5f3163aa640a8",
+    "head_sha": "72643530b1a321b26c1e07fd1ecea1be7a96e536"
+  },
+  "identity": {
+    "base_sha": "7fee45b07defd2a25165c829e2d5f3163aa640a8",
+    "head_sha": "72643530b1a321b26c1e07fd1ecea1be7a96e536",
+    "mode": "diff",
+    "agent_version": "0.1.0",
+    "model_requested": "claude-opus-5",
+    "system_prompt_sha": "80bc0b562cced7a2",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "settings": {
+      "fail_on": "high",
+      "min_confidence": "medium",
+      "gate_pre_existing": false,
+      "gate_removed_controls": true,
+      "ungated_categories": [],
+      "verify": true,
+      "verify_votes": 1,
+      "effort": "high",
+      "verifier_context_chars": 20000,
+      "excludes": [
+        "*.eot",
+        "*.gif",
+        "*.ico",
+        "*.jpeg",
+        "*.jpg",
+        "*.lock",
+        "*.map",
+        "*.min.css",
+        "*.min.js",
+        "*.mo",
+        "*.pb.go",
+        "*.pdf",
+        "*.png",
+        "*.pyc",
+        "*.snap",
+        "*.svg",
+        "*.ttf",
+        "*.woff",
+        "*.woff2",
+        "*/.terraform/*",
+        "*/__snapshots__/*",
+        "*/build/*",
+        "*/dist/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+        "*_pb2.py",
+        "Cargo.lock",
+        "Gemfile.lock",
+        "composer.lock",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "yarn.lock"
+      ],
+      "scope": []
+    }
+  },
+  "provenance": {
+    "model_requested": "claude-opus-5",
+    "models_served": [
+      "claude-opus-5"
+    ],
+    "model_substituted": false,
+    "system_prompt_sha": "80bc0b562cced7a2",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "agent_version": "0.1.0"
+  },
+  "coverage_accounting": {
+    "changed": [],
+    "examined": [],
+    "excluded": [],
+    "out_of_scope": [],
+    "diff_truncated": false,
+    "unopened": [],
+    "complete": true
+  },
+  "stage_metrics": {
+    "citations": {
+      "accepted": 0,
+      "rejected_unknown_path": 0,
+      "rejected_not_found": 0,
+      "rejected_ambiguous": 0,
+      "rejected_too_short": 0,
+      "lines_corrected": 0
+    },
+    "verification": {
+      "verified": 0,
+      "skipped": 0,
+      "failed": 0,
+      "verdicts_changed": 0
+    }
+  },
+  "turns_detail": [],
+  "settings": {
+    "fail_on": "high",
+    "min_confidence": "medium",
+    "gate_pre_existing": false,
+    "gate_removed_controls": true,
+    "ungated_categories": [],
+    "verify": true,
+    "verify_votes": 1,
+    "effort": "high",
+    "scope": []
+  }
+}

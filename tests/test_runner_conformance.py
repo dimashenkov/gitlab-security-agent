@@ -858,7 +858,12 @@ class TestKilledInTool:
         assert cli.artifact["stop_reason"] == STOP_TIME_LIMIT
         # Nothing was handed over, so nothing may be claimed.
         assert cli.artifact["findings"] == []
-        assert cli.artifact["coverage"]["files_examined"] == []
+        # What it managed to open *is* reported now. The child hands the session
+        # over after every state change rather than at exit, because the exit it
+        # was waiting for does not arrive — the CLI takes its MCP servers down
+        # with it. So a killed run says how far it got instead of nothing at
+        # all, and `complete` is what stops it being read as a result.
+        assert cli.artifact["coverage"]["files_examined"] == ["app/views.py"]
         # The sentence and the trace are separate fields now: one is provider
         # prose the report escapes, the other a document this project rendered.
         detail = cli.artifact["stop_detail"]

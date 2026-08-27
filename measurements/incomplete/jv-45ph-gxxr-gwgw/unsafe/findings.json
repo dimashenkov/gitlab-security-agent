@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-27T14:56:09+00:00",
+  "summary": "",
+  "mode": "diff",
+  "model": "claude-opus-5",
+  "complete": false,
+  "finished_explicitly": false,
+  "unresolved": [],
+  "stop_reason": "error",
+  "stop_detail": "the review process ended without writing its session document.",
+  "trace_markdown": "## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_reviewer mode · 000a21fd4659..52e70b367ec9 · 13 tool calls started · 13 finished · 1 finding claimed · last record 2026-08-27 14:55:47 UTC_\n\n### How far it got\n\n- • `list_changed_files` — 1 changed file(s), 0 generated (+5.5s)\n- • `get_diff` — diff for all files (3828 chars) (+7.7s)\n- • `read_file` path=`xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java` — read xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java (+15.9s)\n- • `search_code` max_results=`60` pattern=`checkSavingDocument` — search 'checkSavingDocument': 0 match(es) (+27.1s)\n- • `search_code` max_results=`30` pattern=`void setAuthorReference|public void setAuthor\\(` — search 'void setAuthorReference|public void setAuthor\\\\\\\\(': 0 match(es) (+27.1s)\n- • `search_code` max_results=`60` pattern=`saveDocument` — search 'saveDocument': 4 match(es) (+30.2s)\n- • `list_directory` path=`.` — listed . (+30.2s)\n- • `list_directory` path=`xwiki-platform-core/xwiki-platform-livedata` — listed xwiki-platform-core/xwiki-platform-livedata (+33.2s)\n- • `search_code` max_results=`60` path_glob=`**/*.java` pattern=`ModelBridge|update\\(` — search 'ModelBridge|update\\\\\\\\(': 10 match(es) (+33.5s)\n- • `read_file` end_line=`260` path=`xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/LiveTableLiveDataEntryStore.java` start_line=`140` — read xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/LiveTableLiveDataEntryStore.java (+37.2s)\n- • `git_log` max_count=`10` path=`xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java` — git log xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java (+101.5s)\n- • `report_finding` category=`authn-authz` confidence=`medium` description=`` `saveDocument()` previously called `xcontext.getWiki().checkSavingDocument(documentUserReference, document, comment, true, xcontext)` immediately before `saveDocument(...)`. This diff deletes that ca… `` evidence=`document.setAuthorReference(xcontext.getUserReference()); xcontext.getWiki().saveDocument(document, \"LiveData update.\", true, xcontext);` exploit_scenario=`` A user who holds only EDIT right on a wiki page (no SCRIPT, no PROGRAMMING) issues a LiveData inline-edit request against that page — the REST/entry-store path that lands in `LiveTableLiveDataEntrySt… `` file=`xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java` impact=`code_execution` line=`271` reachable_without_authentication=`no` recommendation=`Restore the pre-save check, keeping it immediately before the write: UserReference userReference = this.userReferenceResolver.resolve(CurrentUserReference.INSTANCE); document.setAuthor(userReference)…` requires_user_interaction=`no` severity=`high` — recorded high authn-authz at xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java:271 (+125.1s)\n- • `finish_review` summary=`` The change touches one file: `ModelBridge.java` in the LiveData livetable module (the component that persists LiveData inline edits into XWiki documents). It does two things in the private `saveDocum… `` unresolved=`` [\"The repository is a sparse checkout containing only the xwiki-platform-livedata-livetable module, so I could not read `XWiki#checkSavingDocument` itself. My statement of what it enforces (required-… `` — finish_review: 3 unresolved (+143.7s)\n\n### Claims recorded before the run was killed\n\n_Each of these passed the check that the code it quotes exists, and nothing further. None was verified, none was rated, and none of them gates anything — a killed run reports no findings._\n\n- Pre-save rights check (checkSavingDocument) removed from LiveData document save — `xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java:271` · claimed high\n\n### The reviewer had signed off\n\nThe reviewer recorded that it was finished, and the process was killed afterwards — while verifying, while writing its report, or somewhere else this journal cannot see. The run still did not complete.\n\n> The change touches one file: \\`ModelBridge.java\\` in the LiveData livetable module (the component that persists LiveData inline edits into XWiki documents). It does two things in the private \\`saveDocument()\\` helper: it replaces \\`document.setAuthor(UserReference)\\` with the deprecated \\`document.setAuth…\n\n**It had not settled:**\n\n- The repository is a sparse checkout containing only the xwiki-platform-livedata-livetable module, so I could not read \\`XWiki#checkSavingDocument\\` itself. My statement of what it enforces (required-rights / script-right validation and cancelable save listeners, which plain \\`XWiki#saveDocument\\` does …\n- I could not verify the security consequence, if any, of swapping \\`document.setAuthor(UserReference)\\` for the deprecated \\`document.setAuthorReference(DocumentReference)\\`. The concern would be the document's *content author* not being updated to the editing user (leaving injected content executing wi…\n- I could not see the HTTP/REST routing layer that reaches \\`LiveTableLiveDataEntryStore\\`, so I answered \\`reachable_without_authentication: no\\` on the basis of the in-repo \\`checkAccess(Right.EDIT, ...)\\` guard. On a wiki that grants edit right to guests, this path would be reachable unauthenticated; no…\n",
+  "verdict": {
+    "exit_code": 2,
+    "blocked": true,
+    "reason": "Review incomplete — the review ended with an error (the review process ended without writing its session document.). The result cannot be treated as a pass. Set SECURITY_SCAN_FAIL_ON_INCOMPLETE=false to allow partial reviews through.",
+    "blocking_fingerprints": [],
+    "not_gated_on": []
+  },
+  "counts": {
+    "reported": 0,
+    "blocking": 0,
+    "refuted": 0,
+    "suppressed": 0,
+    "rejected_claims": 0,
+    "by_severity": {
+      "low": 0,
+      "medium": 0,
+      "high": 0,
+      "critical": 0
+    }
+  },
+  "findings": [],
+  "refuted": [],
+  "suppressed": [],
+  "rejected_claims": [],
+  "coverage": {
+    "files_examined": [],
+    "turns": 0,
+    "tool_calls": []
+  },
+  "usage": {
+    "requests": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "revision": {
+    "mode": "diff",
+    "base": "000a21fd4659d42bb56ed028c0285c3c6a77bf3d",
+    "head": "52e70b367ec940c920cfe0a782aa05598915f0b1",
+    "base_sha": "000a21fd4659d42bb56ed028c0285c3c6a77bf3d",
+    "head_sha": "52e70b367ec940c920cfe0a782aa05598915f0b1"
+  },
+  "identity": {
+    "base_sha": "000a21fd4659d42bb56ed028c0285c3c6a77bf3d",
+    "head_sha": "52e70b367ec940c920cfe0a782aa05598915f0b1",
+    "mode": "diff",
+    "agent_version": "0.1.0",
+    "model_requested": "claude-opus-5",
+    "system_prompt_sha": "80bc0b562cced7a2",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "settings": {
+      "fail_on": "high",
+      "min_confidence": "medium",
+      "gate_pre_existing": false,
+      "gate_removed_controls": true,
+      "ungated_categories": [],
+      "verify": true,
+      "verify_votes": 1,
+      "effort": "high",
+      "verifier_context_chars": 20000,
+      "excludes": [
+        "*.eot",
+        "*.gif",
+        "*.ico",
+        "*.jpeg",
+        "*.jpg",
+        "*.lock",
+        "*.map",
+        "*.min.css",
+        "*.min.js",
+        "*.mo",
+        "*.pb.go",
+        "*.pdf",
+        "*.png",
+        "*.pyc",
+        "*.snap",
+        "*.svg",
+        "*.ttf",
+        "*.woff",
+        "*.woff2",
+        "*/.terraform/*",
+        "*/__snapshots__/*",
+        "*/build/*",
+        "*/dist/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+        "*_pb2.py",
+        "Cargo.lock",
+        "Gemfile.lock",
+        "composer.lock",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "yarn.lock"
+      ],
+      "scope": []
+    }
+  },
+  "provenance": {
+    "model_requested": "claude-opus-5",
+    "models_served": [
+      "claude-opus-5"
+    ],
+    "model_substituted": false,
+    "system_prompt_sha": "80bc0b562cced7a2",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "agent_version": "0.1.0"
+  },
+  "coverage_accounting": {
+    "changed": [],
+    "examined": [],
+    "excluded": [],
+    "out_of_scope": [],
+    "diff_truncated": false,
+    "unopened": [],
+    "complete": true
+  },
+  "stage_metrics": {
+    "citations": {
+      "accepted": 0,
+      "rejected_unknown_path": 0,
+      "rejected_not_found": 0,
+      "rejected_ambiguous": 0,
+      "rejected_too_short": 0,
+      "lines_corrected": 0
+    },
+    "verification": {
+      "verified": 0,
+      "skipped": 0,
+      "failed": 0,
+      "verdicts_changed": 0
+    }
+  },
+  "turns_detail": [],
+  "settings": {
+    "fail_on": "high",
+    "min_confidence": "medium",
+    "gate_pre_existing": false,
+    "gate_removed_controls": true,
+    "ungated_categories": [],
+    "verify": true,
+    "verify_votes": 1,
+    "effort": "high",
+    "scope": []
+  }
+}

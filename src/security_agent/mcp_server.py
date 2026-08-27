@@ -42,7 +42,7 @@ import os
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, TextIO
+from typing import Any, Callable, Dict, List, Optional, Sequence, TextIO
 
 from . import __version__
 from .budget import Allowance
@@ -177,6 +177,10 @@ class MCPServer:
         # and then stopped got everything it asked for; one that was refused did
         # not, and only the second is a review that was cut short.
         self.refused_for_budget = False
+        # How to hand the session over. Set by `main` when the parent asked
+        # for a document, and called after every state change rather than at
+        # exit — see `_call_tool`.
+        self.handover: Optional[Callable[[], None]] = None
 
     # ------------------------------------------------------------ the loop
 
@@ -400,6 +404,23 @@ class MCPServer:
                 call_id, summary=result.summary, is_error=result.is_error)
             self._journal_new_state(before)
 
+        # Handed over now, not at exit.
+        #
+        # The first design wrote the document once, when the client closed this
+        # server's input — the normal end. Measured against the corpus, that end
+        # does not arrive: the CLI takes its MCP servers down with it, so a
+        # review that had made seventeen tool calls, found a critical remote
+        # code execution and called `finish_review` handed over nothing, and the
+        # parent correctly reported a process that died. The work was done every
+        # time and the handoff was never reached.
+        #
+        # `write_session` renames a complete document into place, so rewriting
+        # it after each call is safe: the parent sees the last complete one, and
+        # never a partial one. A JSON dump per tool call is unmeasurable beside
+        # a model turn.
+        if self.handover is not None:
+            self.handover()
+
         log.info("%-20s %s%s", name, result.summary,
                  " [rejected]" if result.is_error else "")
         return self._result(request_id, self._tool_result(result))
@@ -606,6 +627,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # yet, nothing has been spent, and the parent can fix the path.
         log.error("%s", exc)
         return EXIT_ERROR
+
+    if args.session_document:
+        # Attached before the first request, so a session that ends after one
+        # tool call has still handed over what it learned. The same function is
+        # called again below, on the ordinary end, when there is nothing left
+        # to add — the last write wins and they are identical.
+        document = Path(args.session_document)
+        revision = Revision(base_sha=args.base_sha or "",
+                            head_sha=args.head_sha or "")
+        server.handover = lambda: _write_session_document(
+            document, server.session, run_id=args.run_id or "",
+            revision=revision, config_digest=args.config_digest or "")
 
     log.info("serving the %s tool set over MCP %s (%d tool calls)",
              args.tools, PROTOCOL_VERSION, server.allowance.ceiling)

@@ -207,14 +207,36 @@ def build_repo(case: Path, member: str, work: Path) -> tuple:
     return repo, base, rev_parse()
 
 
-def review(repo: Path, base: str, head: str, out: Path) -> dict:
+def review(repo: Path, base: str, head: str, out: Path,
+           provider: str = "", profile: str = "") -> dict:
+    """One review of one member.
+
+    `provider` and `profile` are passed through rather than defaulted here, so
+    a corpus run costs whatever the operator chose and never silently the paid
+    path. The corpus is 24 cases and every case is two reviews: a default that
+    billed would make measuring the product an expense nobody agreed to.
+    """
     cmd = [
         sys.executable, "-m", "security_agent",
         "--repo", str(repo), "--mode", "diff", "--base", base, "--head", head,
         "--no-comment", "--output-dir", str(out),
     ]
+    if provider:
+        cmd += ["--provider", provider]
+    if profile:
+        cmd += ["--profile", profile]
     started = time.monotonic()
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    # The package lives in `src/` and is not installed, so the child needs it on
+    # the path. Left to the caller's shell before, which worked whenever the
+    # corpus was run from a prepared environment and failed with "No module
+    # named security_agent" whenever it was not — a run that measures nothing
+    # and says so in a truncated line.
+    env = dict(os.environ)
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = src + os.pathsep + env["PYTHONPATH"] if env.get(
+        "PYTHONPATH") else src
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False,
+                          env=env)
     seconds = time.monotonic() - started
     payload_path = out / "findings.json"
     if not payload_path.is_file():
@@ -273,7 +295,8 @@ def _keep_artifacts(work: Path, result: dict, keep_dir: Optional[Path]) -> None:
         shutil.copy2(source, destination / "findings.json")
 
 
-def run_case(case: dict, keep_dir: Optional[Path] = None) -> dict:
+def run_case(case: dict, keep_dir: Optional[Path] = None,
+             provider: str = "", profile: str = "") -> dict:
     # Resolved, because on macOS the temp directory is reached through a symlink
     # (/var -> /private/var) and the report writer refuses to write through one.
     work = Path(tempfile.mkdtemp(prefix="pair-{}-".format(case["case_id"]))).resolve()
@@ -284,7 +307,7 @@ def run_case(case: dict, keep_dir: Optional[Path] = None) -> dict:
         for member in ("safe", "unsafe"):
             repo, base, head = build_repo(case["_dir"], member, work / member)
             out = work / (member + "-out")
-            members[member] = review(repo, base, head, out)
+            members[member] = review(repo, base, head, out, provider, profile)
 
         if not all(m["ok"] for m in members.values()):
             result["error"] = next(m.get("error") for m in members.values() if not m["ok"])
@@ -540,6 +563,14 @@ def main() -> int:
     parser.add_argument("--case", action="append", metavar="ID",
                         help="Run only this case; repeatable. Re-running a "
                              "handful after a fix beats re-running the corpus.")
+    parser.add_argument(
+        "--provider", choices=("anthropic-api", "claude-cli"), required=True,
+        help="Who runs each review. Required, because omitting it selected the "
+             "paid path — and this command is 48 reviews. A default that bills "
+             "is a bill nobody chose.")
+    parser.add_argument(
+        "--profile", choices=("probe", "normal", "deep"),
+        help="Ceilings for each review. Only the claude-cli provider reads it.")
     parser.add_argument("-c", "--concurrency", type=int, default=4)
     parser.add_argument("--json", metavar="PATH")
     parser.add_argument("--keep-artifacts", metavar="DIR",
@@ -568,7 +599,9 @@ def main() -> int:
 
     results = []
     with ThreadPoolExecutor(max_workers=max(1, min(args.concurrency, len(cases)))) as pool:
-        futures = {pool.submit(run_case, c, keep_dir): c for c in cases}
+        futures = {pool.submit(run_case, c, keep_dir,
+                               args.provider or "",
+                               args.profile or ""): c for c in cases}
         for future in as_completed(futures):
             r = future.result()
             results.append(r)

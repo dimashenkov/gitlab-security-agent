@@ -827,15 +827,20 @@ class TestTheSessionDocument:
         assert not document.exists()
         assert "an-older-job" in journal.read_text()
 
-    def test_a_killed_child_leaves_a_journal_and_no_document(self, git_repo,
-                                                             tmp_path):
-        """The case the two files exist to tell apart, with a real kill.
+    def test_a_killed_child_hands_over_what_it_had_and_no_sign_off(
+            self, git_repo, tmp_path):
+        """A real kill, and the invariant that survives it.
 
-        A child killed mid-review never reaches the document write, so the
-        parent finds nothing to read and must call the run incomplete — while
-        the journal, flushed record by record, still says how far it got. A
-        journal that arrived empty, or a half-written document, would each let a
-        killed run be read as a finished one.
+        The first design wrote the document once, at exit. Measured against the
+        corpus, that exit does not arrive: the CLI takes its MCP servers down
+        with it, so a review that had made seventeen tool calls, found a
+        critical remote code execution and signed off handed over nothing. Every
+        run reported a process that died over work that was finished.
+
+        So the document is written after every state change. A killed child now
+        leaves one — and it says `finished` is false, which is what stops the
+        parent calling the run complete. The old assertion was about the
+        mechanism; this one is about the property the mechanism was for.
         """
         document = tmp_path / "out" / "session.json"
         journal = tmp_path / "out" / "journal.jsonl"
@@ -843,7 +848,13 @@ class TestTheSessionDocument:
             [sys.executable, "-m", "security_agent.mcp_server",
              "--repo", str(git_repo), "--max-tool-calls", "10",
              "--session-document", str(document), "--crash-journal", str(journal),
-             "--run-id", RUN_ID],
+             "--run-id", RUN_ID,
+             # Bound the way a real run binds it. Left empty, the child stamps
+             # empty SHAs and the parent refuses its own child's document —
+             # which is correct, and would make this test pass for a reason
+             # that has nothing to do with the kill.
+             "--base-sha", REVISION.base_sha, "--head-sha", REVISION.head_sha,
+             "--config-digest", DIGEST],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, env={**os.environ, "PYTHONPATH": str(SRC)})
         try:
@@ -858,10 +869,12 @@ class TestTheSessionDocument:
             child.kill()
             child.wait(timeout=30)
 
-        assert not document.exists()
-        with pytest.raises(SessionDocumentError):
-            read_session(document, run_id=RUN_ID, revision=REVISION,
-                         config_digest=DIGEST)
+        # The work reached the parent, and it does not claim to be finished.
+        session = read_session(document, run_id=RUN_ID, revision=REVISION,
+                               config_digest=DIGEST)
+        assert [c.name for c in session.tool_calls] == ["read_file"]
+        assert session.finished is False, (
+            "a killed review must never hand over a sign-off it did not make")
 
         trace = read_trace(journal)
         assert trace.present

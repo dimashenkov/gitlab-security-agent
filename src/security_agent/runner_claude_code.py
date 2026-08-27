@@ -391,7 +391,12 @@ class ClaudeCodeRunner:
             for _ in range(spent):
                 self.budget.review.note_tool_call()
 
-        if not handoff.session_document.exists():
+        # No grace period after a kill. The wait is for a rename already in
+        # flight from a process that is shutting down cleanly; a process this
+        # parent has just signalled is not writing anything, and waiting on it
+        # would only make a failed review slow as well as failed.
+        grace = 0.0 if result.killed else DOCUMENT_GRACE_SECONDS
+        if not _wait_for(handoff.session_document, grace):
             # Nothing authoritative. Whatever the CLI said about itself, the
             # child never reached the end — so the crash journal is the whole
             # story, and it is diagnostics rather than findings.
@@ -416,6 +421,14 @@ class ClaudeCodeRunner:
         if result.killed or result.failed:
             # The document is there and the process still did not end cleanly.
             # The findings in it are real, and the review is not finished.
+            #
+            # The trace comes too, now that the child hands over as it goes: the
+            # document says what was established and the journal says what was
+            # in flight when the kill landed — a call that started and never
+            # reported back is visible in one and invisible in the other.
+            trace = read_trace(handoff.crash_journal)
+            if trace.present:
+                self.trace_markdown = render_trace(trace)
             return session, _killed_reason(result), result.detail
 
         if result.returncode != 0:
@@ -612,6 +625,37 @@ def _parse_terminal(returncode: int, stdout: str, stderr: str) -> CliResult:
         usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
         payload=payload,
     )
+
+
+# How long the parent waits for the child's document after the CLI has exited.
+#
+# The child writes it when its own stdin closes, which happens as the CLI shuts
+# down — so the parent asking the instant `claude` exits asks a moment too
+# early. That race made every run report "ended without writing its session
+# document" over a review that had made twenty-one tool calls and claimed two
+# findings: the work was done, the handoff was not, and the artifact said the
+# process had died.
+#
+# Bounded, and short. Waiting is for a write already in flight; a child that
+# genuinely died will never write, and turning that into a long pause would
+# make a failed review slow as well as failed.
+DOCUMENT_GRACE_SECONDS = 10.0
+
+
+def _wait_for(path: Path, seconds: float = DOCUMENT_GRACE_SECONDS) -> bool:
+    """Is the document there, allowing for a write that has not landed yet?
+
+    `write_session` renames into place, so the file appears whole or not at
+    all — there is no half-written state to observe, and polling for existence
+    is enough.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        if path.exists():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
 
 
 def _killed_reason(result: CliResult) -> str:

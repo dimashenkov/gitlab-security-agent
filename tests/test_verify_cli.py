@@ -333,22 +333,29 @@ class TestAVerifierThatDidNotVote:
         assert "without submitting a verdict" in vote.error
         assert vote.verdict != VERDICT_CONFIRMED
 
-    def test_a_session_that_wrote_no_document_is_an_error_carrying_its_trace(
+    def test_a_vote_submitted_before_the_child_died_still_counts(
             self, cfg, ws, budget, fake_cli):
-        """The verdict was recorded inside the child and the child died before
-        it could hand it over. There is no vote — and the reader gets how far it
-        got, which is diagnostics and never a verdict."""
+        """This asserted the opposite yesterday, and yesterday was right.
+
+        The child used to hand its session over once, at exit, so a verdict
+        recorded and then killed reached nobody — the vote had to be an error.
+        It hands over after every state change now, because that exit does not
+        arrive: the CLI takes its MCP servers down with it.
+
+        So the document written at the moment of the vote *is* the session at
+        the moment of the vote, not one a deadline cut off later. And a verifier
+        is not a reviewer: `submit_verdict` is its whole answer, and there was
+        nothing further it was going to do. Counting it is right.
+        """
         candidate = make_candidate()
 
         run(cfg, ws, [candidate], budget, fake_cli(
             verdict=CONFIRMED, kill_server=True))
 
         vote = candidate.votes[0]
-        assert vote.error
-        assert "session document" in vote.error
-        # The crash journal is the only thing left, and it says what happened.
-        assert "submit_verdict" in vote.error
-        assert vote.verdict != VERDICT_CONFIRMED
+        assert not vote.error
+        assert vote.verdict == VERDICT_CONFIRMED
+        assert vote.channel == "submit_verdict"
 
     def test_a_document_from_another_run_is_refused_rather_than_read(
             self, cfg, ws, budget, fake_cli, monkeypatch):
