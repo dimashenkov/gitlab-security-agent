@@ -46,6 +46,17 @@ jobs:
           # workflow puts it there. A pull request from a fork gets a read-only
           # token, so the comment is skipped and the artifact is still written.
           SECURITY_SCAN_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Which comment is the agent's own is now decided by its author, not
+          # by a marker string — the marker is public and an HTML comment, so
+          # the author of a pull request could post an invisible one and have
+          # the report written into a comment they own and can rewrite.
+          #
+          # `GITHUB_TOKEN` is an installation token and installation tokens are
+          # refused at `GET /user`, so the agent cannot ask who it is. Told
+          # here instead. This comes from the workflow, which the repository
+          # owner controls, never from the pull request, which its author does.
+          # Without it every push leaves a new comment rather than editing one.
+          SECURITY_SCAN_COMMENT_AUTHOR: 'github-actions[bot]'
           SECURITY_SCAN_OUTPUT_DIR: .security-scan
           # The ordinary threshold, kept so verification runs. `continue-on-error`
           # above is what makes this advisory.

@@ -71,7 +71,27 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
 
     base, head = _resolve_range(cfg, root, mode, args)
     workspace = Workspace(root=root, excludes=cfg.excludes, diff_base=base,
-                          diff_head=head, scope=cfg.scope)
+                          diff_head=head, scope=cfg.scope,
+                          diff_ceiling=cfg.diff_ceiling_bytes)
+
+    # Before anything else about the change is decided: can it rewrite the
+    # rules it is judged by?
+    #
+    # It used to be asked further down, after the empty-review return — so a
+    # change that edited a prompt and touched no reviewable file exited 0
+    # without the question being put. And it was asked of the *filtered* list,
+    # so an exclude pattern or a `--path` covering the prompt directory
+    # answered it. Both are the same defect: a guard whose input the guarded
+    # party supplies.
+    from .config import prompt_dir_risk
+
+    risk = prompt_dir_risk(cfg.resolved_prompt_dir(), root,
+                           workspace.raw_changed_paths())
+    if risk and risk.startswith("REFUSE"):
+        log.error("%s", risk[len("REFUSE: "):])
+        return EXIT_ERROR
+    if risk:
+        log.warning("%s", risk)
 
     if mode == "diff":
         changed = workspace.changed_files()
@@ -93,18 +113,6 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     else:
         log.info("reviewing %d tracked file(s) at %s",
                  len(workspace.tracked_files()), _abbrev(head))
-
-    # Before anything is read by the model: can this change rewrite the rules
-    # it is about to be reviewed under?
-    from .config import prompt_dir_risk
-
-    risk = prompt_dir_risk(cfg.resolved_prompt_dir(), root,
-                           [path for path, _ in workspace.changed_files()])
-    if risk and risk.startswith("REFUSE"):
-        log.error("%s", risk[len("REFUSE: "):])
-        return EXIT_ERROR
-    if risk:
-        log.warning("%s", risk)
 
     if args.reuse:
         reused = _reuse(cfg, args, root, mode, base, head)
@@ -377,9 +385,19 @@ def _resolve_range(
     probe = Workspace(root=root, excludes=cfg.excludes)
     gl = cfg.gitlab
 
-    head = args.head or gl.source_branch_sha or "HEAD"
-    if not probe.rev_exists(head):
-        head = "HEAD"
+    # An explicit head, or one the forge named, must exist. Falling back to
+    # local `HEAD` reviewed a different commit and said nothing — the base has
+    # raised for exactly this since it was written, and the head silently did
+    # the opposite. A head nobody named is `HEAD` by construction and needs no
+    # check.
+    head = args.head or gl.source_branch_sha
+    if head and not probe.rev_exists(head):
+        raise WorkspaceError(
+            "head revision {!r} is not in this clone, so the review would read "
+            "a different commit than the one it was asked about. In a merge "
+            "request pipeline this means the clone is too shallow — set "
+            "GIT_DEPTH: 0.".format(head))
+    head = head or "HEAD"
 
     if mode != "diff":
         return "", head
@@ -471,8 +489,18 @@ def _revision_for(mode: str, base: str, head: str, workspace):
         except WorkspaceError:
             return ""
 
+    head_sha = resolve(head)
+    if not head_sha:
+        # Not `or "HEAD"`. That is a name, not a commit, and it was written
+        # into the artifact as one — so a review could not say which code it
+        # read, and the session document bound itself to a string. The same
+        # substitution was removed from the MCP configuration hours earlier and
+        # reappeared here.
+        raise WorkspaceError(
+            "could not resolve {!r} to a commit. A review that cannot name the "
+            "code it read cannot be archived, compared or reused.".format(head))
     return Revision(mode=mode, base=base, head=head,
-                    base_sha=resolve(base), head_sha=resolve(head) or "HEAD")
+                    base_sha=resolve(base), head_sha=head_sha)
 
 
 def _cli_provider_problem(cfg: Config) -> str:

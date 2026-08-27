@@ -1,9 +1,11 @@
 """Tests for posting the review back to the merge request.
 
-Two behaviours carry weight here. The note must be *edited* rather than
+Three behaviours carry weight here. The note must be *edited* rather than
 re-posted, or a branch with ten pushes buries the discussion under ten copies of
-the same report. And a failure to comment must never change the pipeline
-verdict — a scan that passes because the API was unreachable is a hole.
+the same report. A failure to comment must never change the pipeline verdict —
+a scan that passes because the API was unreachable is a hole. And the note it
+edits must be one it wrote: the marker is a fixed string in an open-source
+repository, and the author of a merge request can put it in a note of their own.
 """
 
 import pytest
@@ -43,6 +45,18 @@ class FakeSession:
         return FakeResponse(200, {"id": 99})
 
 
+WHOAMI = {"username": "project_7_bot", "id": 1234}
+IMPOSTOR = {"username": "mr-author", "id": 77}
+
+
+def own(note_id, body=COMMENT_MARKER + "\n## previous report"):
+    return {"id": note_id, "body": body, "author": dict(WHOAMI)}
+
+
+def impostor(note_id, body=COMMENT_MARKER + "\n## No findings"):
+    return {"id": note_id, "body": body, "author": dict(IMPOSTOR)}
+
+
 def context(**overrides):
     values = {
         "api_url": "https://gitlab.example.com/api/v4",
@@ -69,8 +83,9 @@ class TestCreatingAndUpdating:
         session = FakeSession([
             FakeResponse(200, [
                 {"id": 1, "body": "unrelated review comment"},
-                {"id": 2, "body": COMMENT_MARKER + "\n## previous report"},
+                own(2),
             ]),
+            FakeResponse(200, WHOAMI),
             FakeResponse(200, {"id": 2}),
         ])
         result = GitLabClient(context(), session=session).post_or_update_note("new body")
@@ -80,12 +95,14 @@ class TestCreatingAndUpdating:
         assert session.calls[-1]["url"].endswith("/notes/2")
 
     def test_never_touches_a_note_it_did_not_write(self):
+        """An unrelated note is not a candidate at all — no author lookup is
+        needed and none is made."""
         session = FakeSession([
             FakeResponse(200, [{"id": 1, "body": "Looks good to me"}]),
             FakeResponse(200, {"id": 500}),
         ])
         GitLabClient(context(), session=session).post_or_update_note("body")
-        assert session.calls[-1]["method"] == "POST"
+        assert [call["method"] for call in session.calls] == ["GET", "POST"]
 
     def test_ignores_system_notes(self):
         # GitLab's own "added 3 commits" notes must never be mistaken for ours.
@@ -100,6 +117,82 @@ class TestCreatingAndUpdating:
         session = FakeSession([FakeResponse(200, []), FakeResponse(200, {"id": 1})])
         GitLabClient(context(), session=session)
         assert session.headers["PRIVATE-TOKEN"] == "glpat-test"
+
+
+class TestOwnership:
+    """The marker nominates a candidate; the author decides."""
+
+    def test_a_marker_written_by_somebody_else_is_never_edited(self):
+        """The defect this exists to catch: ownership decided by the marker
+        alone. The marker is a fixed string in an open-source repository and an
+        HTML comment, so it renders invisibly, and the author of a merge
+        request can always comment on their own merge request. Editing their
+        note either hands them the report to rewrite once the pipeline ends, or
+        is refused with a 403 — and `publish` swallows that, so the report is
+        never posted, on this run or any later one.
+        """
+        session = FakeSession([
+            FakeResponse(200, [impostor(1)]),
+            FakeResponse(200, WHOAMI),
+            FakeResponse(200, {"id": 500}),
+        ])
+        result = GitLabClient(context(), session=session).post_or_update_note("body")
+
+        assert "created note 500" in result
+        assert [call["method"] for call in session.calls] == ["GET", "GET", "POST"]
+
+    def test_its_own_note_behind_an_impostor_is_still_found(self):
+        """An impostor noting first must not cost the agent its own note, or a
+        single forged note turns every later run into a fresh duplicate."""
+        session = FakeSession([
+            FakeResponse(200, [impostor(1), own(2)]),
+            FakeResponse(200, WHOAMI),
+            FakeResponse(200, {"id": 2}),
+        ])
+        result = GitLabClient(context(), session=session).post_or_update_note("new")
+
+        assert "updated note 2" in result
+        assert session.calls[-1]["url"].endswith("/notes/2")
+
+    def test_an_identity_that_cannot_be_read_posts_a_new_note(self):
+        """Unable to establish ownership must fail toward a duplicate note,
+        never toward editing one."""
+        session = FakeSession([
+            FakeResponse(200, [impostor(1)]),
+            FakeResponse(403, None, "denied"),
+            FakeResponse(200, {"id": 500}),
+        ])
+        result = GitLabClient(context(), session=session).post_or_update_note("body")
+
+        assert "created note 500" in result
+        assert [call["method"] for call in session.calls] == ["GET", "GET", "POST"]
+
+    def test_a_note_from_a_renamed_account_is_matched_by_id(self):
+        """A username can be released and taken by somebody else; the numeric
+        id is what the token actually is."""
+        renamed = own(2)
+        renamed["author"]["username"] = "old-bot-name"
+        session = FakeSession([
+            FakeResponse(200, [renamed]),
+            FakeResponse(200, WHOAMI),
+            FakeResponse(200, {"id": 2}),
+        ])
+        result = GitLabClient(context(), session=session).post_or_update_note("new")
+
+        assert "updated note 2" in result
+
+    def test_the_identity_is_read_once_however_many_markers_are_present(self):
+        """A discussion stuffed with forged markers must not become one API
+        call per note."""
+        session = FakeSession([
+            FakeResponse(200, [impostor(n) for n in range(5)] + [own(9)]),
+            FakeResponse(200, WHOAMI),
+            FakeResponse(200, {"id": 9}),
+        ])
+        GitLabClient(context(), session=session).post_or_update_note("new")
+
+        assert [call["url"] for call in session.calls].count(
+            "https://gitlab.example.com/api/v4/user") == 1
 
 
 class TestErrorMapping:

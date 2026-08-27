@@ -385,7 +385,7 @@ class TestAVerifierThatDidNotVote:
         during the kill; reading it would be reading a session that was still
         going."""
         profile = Profile("test-deadline", review_turns=None,
-                          review_tool_calls=10, verifiers=3, verifier_turns=4,
+                          review_tool_calls=10, verifier_sessions=3,
                           verifier_tool_calls=5, runtime_seconds=1)
         budget = RunBudget(profile=profile, turns_enforced=False)
         candidate = make_candidate()
@@ -439,7 +439,7 @@ class TestTheBudgetDecidesHowManySessionsRun:
 
         run(cfg, ws, candidates, budget, fake_cli(verdict=CONFIRMED))
 
-        assert budget.verifier_sessions == PROFILES["normal"].verifiers == 3
+        assert budget.verifier_sessions == PROFILES["normal"].verifier_sessions == 3
         for candidate in candidates[:3]:
             assert candidate.votes[0].error == ""
             assert candidate.verdict == VERDICT_CONFIRMED

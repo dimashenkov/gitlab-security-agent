@@ -4,7 +4,8 @@ The GitLab path has been exercised by a real pipeline for days. This one has
 not, so the tests carry the weight — and the properties that matter are the
 ones shared with GitLab rather than anything GitHub-specific: one comment
 edited in place, never a second; a failure to post never touches the exit code;
-and a comment the agent did not write is never edited.
+and a comment the agent did not write is never edited — including one that
+carries the agent's own marker, which anyone reading this repository can copy.
 """
 
 from __future__ import annotations
@@ -15,7 +16,13 @@ import pytest
 
 from security_agent.config import ForgeContext
 from security_agent.forge import publish as dispatch
-from security_agent.github import GitHubClient, GitHubError, _clip, publish
+from security_agent.github import (
+    IDENTITY_ENV,
+    GitHubClient,
+    GitHubError,
+    _clip,
+    publish,
+)
 from security_agent.report import COMMENT_MARKER
 
 
@@ -59,6 +66,27 @@ def ctx(**overrides) -> ForgeContext:
     return ForgeContext(**body)
 
 
+# Who the token posts as, and who else is in the thread. The impostor is the
+# pull request's own author: they can always comment on their own pull request,
+# and the marker is a fixed string in a public repository.
+WHOAMI = {"login": "scan-bot", "id": 1234}
+IMPOSTOR = {"login": "pr-author", "id": 77}
+
+
+def own(comment_id, body=COMMENT_MARKER + "\nold"):
+    return {"id": comment_id, "body": body, "user": dict(WHOAMI)}
+
+
+def impostor(comment_id, body=COMMENT_MARKER + "\n## No findings"):
+    return {"id": comment_id, "body": body, "user": dict(IMPOSTOR)}
+
+
+@pytest.fixture(autouse=True)
+def _no_configured_login(monkeypatch):
+    # A developer machine that happens to export it must not decide the result.
+    monkeypatch.delenv(IDENTITY_ENV, raising=False)
+
+
 # ------------------------------------------------------------------ posting
 
 
@@ -76,27 +104,111 @@ def test_a_second_run_edits_the_first_comment_rather_than_adding_one():
     """A pipeline that appends on every push buries the discussion under its
     own output, and reviewers stop reading any of it."""
     session = FakeSession([
-        FakeResponse(payload=[{"id": 5, "body": "unrelated"},
-                              {"id": 6, "body": COMMENT_MARKER + "\nold"}]),
+        FakeResponse(payload=[{"id": 5, "body": "unrelated"}, own(6)]),
+        FakeResponse(payload=WHOAMI),
         FakeResponse(payload={"id": 6}),
     ])
     result = GitHubClient(ctx(), session).post_or_update_note("new")
 
     assert result == "updated comment 6"
-    method, url, kwargs = session.calls[1]
+    method, url, kwargs = session.calls[-1]
     assert method == "PATCH"
     assert url.endswith("/issues/comments/6")
     assert kwargs["json"]["body"] == "new"
 
 
 def test_a_comment_the_agent_did_not_write_is_never_touched():
-    """Matched on the marker, not the author: the token can change between
-    runs, and nothing else in the thread may be edited."""
+    """An unrelated comment is not a candidate at all — no author lookup is
+    needed and none is made."""
     session = FakeSession([FakeResponse(payload=[{"id": 5, "body": "a human wrote this"}]),
                            FakeResponse(payload={"id": 9})])
     GitHubClient(ctx(), session).post_or_update_note("body")
 
     assert [call[0] for call in session.calls] == ["GET", "POST"]
+
+
+# --------------------------------------------------------------- impersonation
+
+
+def test_a_marker_written_by_somebody_else_is_never_edited():
+    """The defect this exists to catch: ownership decided by the marker alone.
+
+    The marker is a fixed string in an open-source repository and an HTML
+    comment, so it renders invisibly, and the pull request's author can post it
+    on their own pull request. Editing it either hands the report to an account
+    that rewrites it once the pipeline ends, or is refused — and a refusal is
+    swallowed, so the report is never posted at all, on this run or any later
+    one.
+    """
+    session = FakeSession([
+        FakeResponse(payload=[impostor(5)]),
+        FakeResponse(payload=WHOAMI),
+        FakeResponse(payload={"id": 9}),
+    ])
+    result = GitHubClient(ctx(), session).post_or_update_note("body")
+
+    assert result == "created comment 9"
+    assert [call[0] for call in session.calls] == ["GET", "GET", "POST"]
+    assert "PATCH" not in [call[0] for call in session.calls]
+
+
+def test_the_agents_own_comment_behind_an_impostor_is_still_found():
+    """An impostor posting first must not cost the agent its own comment, or a
+    single forged comment turns every later run into a fresh duplicate."""
+    session = FakeSession([
+        FakeResponse(payload=[impostor(5), own(6)]),
+        FakeResponse(payload=WHOAMI),
+        FakeResponse(payload={"id": 6}),
+    ])
+
+    assert GitHubClient(ctx(), session).post_or_update_note("new") == (
+        "updated comment 6")
+    assert [call[0] for call in session.calls] == ["GET", "GET", "PATCH"]
+    assert session.calls[-1][1].endswith("/issues/comments/6")
+
+
+def test_an_identity_that_cannot_be_read_posts_a_new_comment():
+    """Unable to establish ownership must fail toward a duplicate comment, not
+    toward editing one. `/user` is refused for an installation token, which is
+    exactly what GitHub Actions hands the job."""
+    session = FakeSession([
+        FakeResponse(payload=[impostor(5, COMMENT_MARKER + "\nold")]),
+        FakeResponse(status=403, text="Resource not accessible by integration"),
+        FakeResponse(payload={"id": 9}),
+    ])
+
+    assert GitHubClient(ctx(), session).post_or_update_note("body") == (
+        "created comment 9")
+    assert [call[0] for call in session.calls] == ["GET", "GET", "POST"]
+
+
+def test_a_configured_login_stands_in_for_an_unreadable_user_endpoint(monkeypatch):
+    """The workflow controls the environment; the pull request's author does
+    not. Without this, an installation token could never edit its own comment
+    and would leave a new one on every push."""
+    monkeypatch.setenv(IDENTITY_ENV, "github-actions[bot]")
+    bot = {"id": 6, "body": COMMENT_MARKER + "\nold",
+           "user": {"login": "github-actions[bot]"}}
+    session = FakeSession([FakeResponse(payload=[impostor(5), bot]),
+                           FakeResponse(payload={"id": 6})])
+
+    assert GitHubClient(ctx(), session).post_or_update_note("new") == (
+        "updated comment 6")
+    assert [call[0] for call in session.calls] == ["GET", "PATCH"]
+
+
+def test_the_identity_is_read_once_however_many_markers_are_in_the_thread():
+    """A thread stuffed with forged markers must not become one API call per
+    comment."""
+    session = FakeSession([
+        FakeResponse(payload=[impostor(n) for n in range(5)] + [own(6)]),
+        FakeResponse(payload=WHOAMI),
+        FakeResponse(payload={"id": 6}),
+    ])
+    GitHubClient(ctx(), session).post_or_update_note("new")
+
+    assert [url for _, url, _ in session.calls].count(
+        "https://api.github.com/user") == 1
 
 
 def test_it_posts_to_the_issues_endpoint_not_the_pull_one():
@@ -158,14 +270,15 @@ def test_a_marker_on_the_second_page_is_still_found():
     """The pagination loop was written and never exercised. A second comment
     per run is exactly what this client exists to prevent."""
     first = [{"id": n, "body": "chatter"} for n in range(100)]
-    second = [{"id": 500, "body": COMMENT_MARKER + "\nold"}]
+    second = [own(500)]
     session = FakeSession([FakeResponse(payload=first),
                            FakeResponse(payload=second),
+                           FakeResponse(payload=WHOAMI),
                            FakeResponse(payload={"id": 500})])
 
     assert GitHubClient(ctx(), session).post_or_update_note("new") == (
         "updated comment 500")
-    assert [call[0] for call in session.calls] == ["GET", "GET", "PATCH"]
+    assert [call[0] for call in session.calls] == ["GET", "GET", "GET", "PATCH"]
 
 
 def test_a_short_page_ends_the_search_rather_than_paging_forever():

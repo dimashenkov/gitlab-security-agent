@@ -113,6 +113,7 @@ SESSION_FIELDS: Dict[str, str] = {
     "final_summary": "final_summary",
     "unresolved": "unresolved",
     "verdict": "verdict",
+    "diff_truncated": "diff_truncated",
     "_attempts": "citation_attempts",
 }
 
@@ -283,6 +284,7 @@ def _encoded_session(session: Session) -> Dict[str, Any]:
         "final_summary": session.final_summary,
         "unresolved": list(session.unresolved),
         "verdict": session.verdict,
+        "diff_truncated": session.diff_truncated,
         # The per-claim retry counter. It decides nothing after the run, and it
         # is here because a loader that drops the fields it judges unimportant
         # is a loader nobody can point at and say what it keeps.
@@ -451,6 +453,7 @@ def _decode_session(payload: Dict[str, Any], where: str) -> Session:
         final_summary=_text(payload, "final_summary", where),
         unresolved=_strings(payload, "unresolved", where),
         verdict=_decode_verdict_payload(_field(payload, "verdict", where), where),
+        diff_truncated=_flag(payload, "diff_truncated", where),
         _attempts=_counters(payload, "citation_attempts", where),
     )
 

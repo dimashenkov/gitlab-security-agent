@@ -121,6 +121,52 @@ def policy_excluded(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
 NEVER_FORGIVEN = frozenset({STOP_INCONCLUSIVE})
 
 
+def _partial(outcome: ScanOutcome) -> bool:
+    """Did this run fail to cover the change it claims to have reviewed?
+
+    Two ways, and until now only one of them reached here. The agent can stop
+    early — that is `stop_reason`. Or the change can be larger than the diff the
+    reviewer is shown: `Workspace._bounded` cuts at a ceiling and records it,
+    and everything after the cut was never put in front of the model. The run
+    then ends `completed`, the coverage accounting says every changed file was
+    accounted for, and the gate exits 0 — "checked and clean" over the first
+    part of a change. That is the failure this product exists to prevent, and
+    the only thing standing in front of it was a warning in the report.
+
+    Read from `coverage.diff_truncated` rather than from the notice appended to
+    the diff, because the notice is text in the model's context and an author
+    can write the same sentence into a file. The flag is accounting.
+
+    It is deliberately *not* in `NEVER_FORGIVEN`. A profile that cannot conclude
+    is a property of the configuration and no run of it means anything; a
+    truncated diff is a property of one change, and the operator has real moves
+    — split the change, narrow the review with `--path`, or raise
+    `SECURITY_SCAN_DIFF_CEILING_BYTES`. That last one was named here
+    before it existed, which made the remedy a sentence rather than a
+    move; a reader told to do something they cannot do is a reader who
+    stops reading. A
+    ceiling nobody can get past would make a large legitimate change permanently
+    unmergeable, and a gate that cannot be satisfied gets deleted rather than
+    obeyed. So it fails loudly by default and stays forgivable by the same
+    documented flag as every other partial review.
+    """
+    return not outcome.complete or outcome.coverage.diff_truncated
+
+
+def _why_partial(outcome: ScanOutcome) -> str:
+    """The sentence naming which of the two happened, for the author to act on.
+
+    Truncation is named separately because the remedy is different: nothing
+    about turn limits tells anyone to split a merge request.
+    """
+    if not outcome.complete:
+        return STOP_EXPLANATIONS.get(outcome.stop_reason, "the review did not complete")
+    return (
+        "the change was larger than the reviewer can be shown, so it read the "
+        "first part of the diff and no more. Split the change, or narrow the "
+        "review with --path, for a complete reading")
+
+
 def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
     """The pipeline verdict for this run."""
     # An incomplete review has no opinion worth acting on. Reporting "no
@@ -145,8 +191,8 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
                                           "the review could not conclude"))),
         )
 
-    if not outcome.complete and cfg.fail_on_incomplete:
-        explanation = STOP_EXPLANATIONS.get(outcome.stop_reason, "the review did not complete")
+    if _partial(outcome) and cfg.fail_on_incomplete:
+        explanation = _why_partial(outcome)
         detail = " ({})".format(outcome.stop_detail) if outcome.stop_detail else ""
         return Decision(
             exit_code=EXIT_ERROR,
@@ -190,12 +236,18 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
             policy_excluded=excluded,
         )
 
-    if not outcome.complete:
+    if _partial(outcome):
+        # Named even when it is forgiven. "Coverage is partial" is the whole
+        # difference between this exit 0 and a clean one, and the sentence
+        # carries which of the two produced it.
+        why = "the change was too large to be shown in full"
+        if not outcome.complete:
+            why = outcome.stop_detail or outcome.stop_reason
         return Decision(
             exit_code=EXIT_OK,
             reason=(
                 "No blocking findings, but the review did not complete ({}). "
-                "Coverage is partial.".format(outcome.stop_detail or outcome.stop_reason)
+                "Coverage is partial.".format(why)
             ),
             non_blocking_reasons=notes,
             policy_excluded=excluded,

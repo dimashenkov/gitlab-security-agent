@@ -294,8 +294,15 @@ def prompt_dir_risk(prompt_dir: Path, repo_root: Path,
         relative = prompt_dir.relative_to(repo_root)
     except ValueError:                      # pragma: no cover - guarded above
         return None
-    prefix = str(relative).rstrip("/") + "/"
-    touched = sorted(path for path in changed if path.startswith(prefix))
+    if str(relative) == ".":
+        # The prompt directory *is* the repository. `relative` is `.`, the
+        # prefix below would be `./`, and no path git reports begins with that
+        # — so every change passed, including one that edited a prompt. The
+        # narrowest possible configuration was the one nothing guarded.
+        touched = sorted(changed)
+    else:
+        prefix = str(relative).rstrip("/") + "/"
+        touched = sorted(path for path in changed if path.startswith(prefix))
 
     if touched:
         return (
@@ -369,6 +376,15 @@ class Config:
     # --- scan scope ---
     mode: str = "auto"  # auto | diff | repo
     diff_context_lines: int = 12
+    # How many bytes of a whole-change diff are read before the pipe is closed.
+    # Zero means the workspace's own default, which is derived from what
+    # `get_diff` shows the model.
+    #
+    # Configurable because the gate tells a reader of a truncated review that
+    # they may raise it, and that sentence was false while the number was a
+    # constant — a remedy nobody can perform moves the blame to somebody who
+    # cannot act on it.
+    diff_ceiling_bytes: int = 0
     excludes: Sequence[str] = DEFAULT_EXCLUDES
     # Which of the changed files this run is answerable for. Empty means all of
     # them, which is the only sensible default for a gate.
@@ -446,6 +462,7 @@ class Config:
             max_output_tokens_total=_env_int("SECURITY_SCAN_MAX_OUTPUT_TOKENS", 400_000),
             mode=_env("SECURITY_SCAN_MODE", "auto"),
             diff_context_lines=_env_int("SECURITY_SCAN_CONTEXT_LINES", 12),
+            diff_ceiling_bytes=_env_int("SECURITY_SCAN_DIFF_CEILING_BYTES", 0),
             verify=_env_bool("SECURITY_SCAN_VERIFY", True),
             verify_votes=_env_int("SECURITY_SCAN_VERIFY_VOTES", 1),
             verify_model=_env("SECURITY_SCAN_VERIFY_MODEL"),

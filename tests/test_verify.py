@@ -136,14 +136,38 @@ class TestVerifierFailures:
         assert candidate.verdict == VERDICT_CONFIRMED
         assert "unverified" in candidate.verdict_reason
 
-    def test_failed_votes_do_not_count_toward_the_tally(self):
+    def test_a_lone_survivor_cannot_refute_a_panel_of_three(self):
+        """This passed on a panel of two, which `_votes_for` cannot produce.
+
+        Panels are one, three or five. Built at two, the old assertion held for
+        a reason that never occurs in a run — and its stated rule, that a
+        failed vote does not count toward the tally, is now only half true: it
+        does not agree with anything, and it does hold its seat in the
+        denominator. Rebuilt at the size a real panel has.
+
+        Two dead sessions must not do what three dead sessions cannot: being
+        unable to check a claim is not evidence against it, so the finding
+        stands on what the reviewer said.
+        """
         candidate = make_candidate(severity="critical")
         candidate.votes = [
             vote(VERDICT_REFUTED),
             Vote(verdict=VERDICT_UNCERTAIN, reasoning="", error="boom"),
+            Vote(verdict=VERDICT_UNCERTAIN, reasoning="", error="boom"),
         ]
         _decide(candidate)
-        # One usable vote, so the two-vote critical rule does not apply.
+
+        assert candidate.verdict == VERDICT_CONFIRMED
+        assert "never reported" in candidate.verdict_reason
+
+    def test_a_full_panel_of_three_still_refutes_on_a_majority(self):
+        """The control. A rule that ignored every refutation would be safe and
+        useless, and this is the case the one above must not have broken."""
+        candidate = make_candidate(severity="high")
+        candidate.votes = [vote(VERDICT_REFUTED), vote(VERDICT_REFUTED),
+                           vote(VERDICT_CONFIRMED)]
+        _decide(candidate)
+
         assert candidate.verdict == VERDICT_REFUTED
 
 

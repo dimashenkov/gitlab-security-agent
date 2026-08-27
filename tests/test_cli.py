@@ -12,6 +12,7 @@ import pytest
 
 from fakes import FakeClient, FakeResponse, json_text, text, tool_use
 from security_agent import cli
+from security_agent.config import Config, GitLabContext
 from security_agent.gate import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK
 from security_agent.models import VERDICT_CONFIRMED, VERDICT_REFUTED
 
@@ -347,3 +348,59 @@ class TestTheReportPathIsNotContributorControlled:
         assert cli.main(["--repo", str(git_repo), "--mode", "repo", "--no-comment",
                          "--output-dir", str(out)]) == EXIT_OK
         assert (out / "report.md").is_file()
+
+
+class TestTheReviewedCommitIsNamedOrTheRunFails:
+    """Two ways the run used to review one commit while saying another.
+
+    The base has raised on a revision that is not in the clone since it was
+    written. The head silently fell back to local `HEAD` — so an explicit
+    `--head`, or the SHA the forge named for the branch, could be absent from a
+    shallow clone and the review would read different code and say nothing.
+
+    And the artifact recorded the literal string `HEAD` as the head commit when
+    `rev-parse` failed. That is a name, not a commit: a review that cannot say
+    which code it read cannot be archived, compared, or reused — and the CLI
+    runner's session document binds itself to that value.
+    """
+
+    def test_an_explicit_head_that_is_not_in_the_clone_is_refused(
+            self, git_repo, tmp_path):
+        code = cli.main([
+            "--repo", str(git_repo), "--mode", "diff",
+            "--base", "HEAD", "--head", "0" * 40,
+            "--no-comment", "--output-dir", str(tmp_path / "out"), "--quiet"])
+
+        assert code == 2
+
+    def test_the_message_says_the_clone_is_the_problem(self, git_repo, caplog):
+        """A pipeline that reads "not in this clone" fixes GIT_DEPTH. One that
+        reads nothing reviews the wrong commit for a month."""
+        from security_agent.workspace import WorkspaceError
+
+        args = cli._parse_args([
+            "--repo", str(git_repo), "--mode", "diff", "--head", "0" * 40])
+
+        with pytest.raises(WorkspaceError) as raised:
+            cli._resolve_range(Config(gitlab=GitLabContext()),
+                               Path(str(git_repo)), "diff", args)
+
+        assert "GIT_DEPTH" in str(raised.value)
+
+    def test_an_unresolvable_head_is_never_recorded_as_the_word_head(
+            self, git_repo):
+        from security_agent.workspace import Workspace, WorkspaceError
+
+        ws = Workspace(root=git_repo, diff_base="", diff_head="HEAD")
+
+        with pytest.raises(WorkspaceError):
+            cli._revision_for("diff", "", "no-such-revision", ws)
+
+    def test_an_ordinary_head_still_resolves_to_a_commit(self, git_repo):
+        from security_agent.workspace import Workspace
+
+        ws = Workspace(root=git_repo, diff_base="", diff_head="HEAD")
+        revision = cli._revision_for("repo", "", "HEAD", ws)
+
+        assert len(revision.head_sha) == 40
+        assert revision.head_sha != "HEAD"

@@ -102,6 +102,12 @@ class Session:
     # session, one candidate, one vote — a second submission is refused rather
     # than allowed to overwrite the first.
     verdict: Optional[Dict[str, Any]] = None
+    # The whole-change diff was cut off at its ceiling while this session ran.
+    # Recorded here because on the CLI path `get_diff` runs in a child process
+    # against a different `Workspace`, so the parent's own flag is always False
+    # — the fact has to travel with the session or the gate never learns that
+    # the reviewer saw the first part of a change and no more.
+    diff_truncated: bool = False
     _attempts: Dict[str, int] = field(default_factory=dict)
 
     def note_file(self, path: str) -> None:
@@ -484,6 +490,12 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
     path = str(args.get("path") or "")
     context_lines = _as_int(args.get("context_lines"), 12)
     body = ws.diff(path=path, context_lines=context_lines)
+    # Only a *whole-change* diff can hide part of the change. A truncated
+    # single-file diff means that file was not fully shown, which the trim
+    # notice below already says to the model — it is the unqualified one that
+    # decides whether the review saw the change it is answerable for.
+    if not path and ws.diff_truncated:
+        session.diff_truncated = True
     if not body.strip():
         return ToolResult(
             "Empty diff for {}.".format(path or "this merge request"),

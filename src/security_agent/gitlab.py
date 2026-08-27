@@ -34,6 +34,8 @@ class GitLabError(Exception):
 class GitLabClient:
     def __init__(self, ctx: GitLabContext, session: Optional[Any] = None) -> None:
         self.ctx = ctx
+        self._identity: Optional[Dict[str, Any]] = None
+        self._identity_resolved = False
         self.session = session or requests.Session()
         self.session.headers.update({
             "PRIVATE-TOKEN": ctx.token,
@@ -62,11 +64,21 @@ class GitLabClient:
         return "created note {}".format(created.get("id", "?"))
 
     def _find_own_note(self) -> Optional[int]:
-        """Find a previous note from this agent by its marker.
+        """Find this agent's previous note: the marker *and* the author.
 
-        Matching on the marker rather than the author id means the note is found
-        even if the token changes between runs, and it never touches a note the
-        agent did not write.
+        The marker cannot establish ownership on its own. It is a fixed string
+        in an open-source repository and an HTML comment, so it renders
+        invisibly, and the author of a merge request can always comment on their
+        own merge request. Trusting it alone produces one of two failures, both
+        silent: a token with Maintainer rights writes the report into a note the
+        attacker owns and can rewrite the moment the pipeline ends, and a token
+        without them is refused with a 403, `publish` swallows it, and the
+        report is never posted — not on this run and not on any later one,
+        because the impostor keeps matching.
+
+        So a marker only nominates a candidate; the author decides. Scanning
+        continues past an impostor, because the genuine note may be further
+        down the discussion.
         """
         page = 1
         while page <= 10:  # 1000 notes is far more than any real discussion
@@ -79,11 +91,52 @@ class GitLabClient:
             for note in notes:
                 if note.get("system"):
                     continue
-                if COMMENT_MARKER in (note.get("body") or ""):
+                if COMMENT_MARKER not in (note.get("body") or ""):
+                    continue
+                identity = self._own_identity()
+                if identity is None:
+                    # Not knowing who this token is must cost a duplicate note,
+                    # never an edit to somebody else's.
+                    return None
+                if _authored_by(note, identity):
                     return note.get("id")
+                log.warning(
+                    "note %s carries this agent's marker but was written by %s "
+                    "— leaving it alone and posting a new note",
+                    note.get("id"), _author_name(note) or "another account")
             if len(notes) < 100:
                 return None
             page += 1
+        return None
+
+    def _own_identity(self) -> Optional[Dict[str, Any]]:
+        """Who this token comments as, or None when that cannot be established.
+
+        `/user` answers for any token that can create a note — a project or
+        group access token resolves to its own bot user. Resolved at most once
+        per client, and only once a marker candidate has actually been seen, so
+        a first run still costs one listing and one create.
+        """
+        if self._identity_resolved:
+            return self._identity
+        self._identity_resolved = True
+
+        try:
+            user = self._request(
+                "GET", "{}/user".format(self.ctx.api_url.rstrip("/")))
+        except GitLabError as exc:
+            user = None
+            log.warning("could not read the authenticated user: %s", exc)
+        if isinstance(user, dict) and (
+                user.get("username") or user.get("id") is not None):
+            self._identity = {"username": user.get("username") or "",
+                              "id": user.get("id")}
+            return self._identity
+
+        log.warning(
+            "this token's own identity is unknown, so no existing note can be "
+            "shown to belong to this agent — posting a new note instead of "
+            "editing one.")
         return None
 
     def _request(self, method: str, url: str, **kwargs: Any) -> Any:
@@ -150,6 +203,29 @@ def publish(ctx: GitLabContext, body: str) -> Optional[str]:
     except GitLabError as exc:
         log.error("could not post the merge request comment: %s", exc)
         return None
+
+
+def _author_name(note: Dict[str, Any]) -> str:
+    """The author to name in the log, or "" — used only for a message."""
+    author = note.get("author")
+    return str(author.get("username") or "") if isinstance(author, dict) else ""
+
+
+def _authored_by(note: Dict[str, Any], identity: Dict[str, Any]) -> bool:
+    """Whether this note was written by the account the agent posts as.
+
+    The numeric id wins when both sides have one: a username can be released
+    and taken over by somebody else, a user id cannot. Compared as text because
+    a JSON id may arrive as either a number or a string, and `1 != "1"` would
+    read as "not ours" — which fails toward a duplicate note, but silently.
+    """
+    author = note.get("author")
+    author = author if isinstance(author, dict) else {}
+    own_id, author_id = identity.get("id"), author.get("id")
+    if own_id is not None and author_id is not None:
+        return str(own_id) == str(author_id)
+    own_name = str(identity.get("username") or "").lower()
+    return bool(own_name) and own_name == str(author.get("username") or "").lower()
 
 
 def _clip(body: str) -> str:

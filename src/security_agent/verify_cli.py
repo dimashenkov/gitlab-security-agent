@@ -260,7 +260,7 @@ class ClaudeCodeVerifier:
                 votes[slot] = _failed(
                     "no verifier session was available: this run's budget of {} "
                     "verifier session(s) was already committed, so this claim "
-                    "was not checked".format(self.budget.profile.verifiers))
+                    "was not checked".format(self.budget.profile.verifier_sessions))
 
         live = [slot for slot, seat in enumerate(seats) if seat is not None]
         if live:

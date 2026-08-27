@@ -354,6 +354,17 @@ class ClaudeCodeRunner:
         if session is not None:
             _apply_session(outcome, session)
 
+        # What the change contained is the parent's own knowledge — it holds
+        # the workspace — and it is filled whether or not a session came back,
+        # because a killed run still has a change it was asked about. Without
+        # it the report could not say how much of the change had been opened,
+        # on the one runner whose reviews are the ones being read.
+        if mode == "diff" and self.ws.diff_base:
+            outcome.coverage.changed = [p for p, _ in self.ws.changed_files()]
+            if self.ws.scope:
+                outcome.coverage.out_of_scope = self.ws.out_of_scope(
+                    [p for p, _ in self.ws.all_changed_files()])
+
         outcome.stop_reason = stop_reason
         outcome.stop_detail = stop_detail
         outcome.trace_markdown = self.trace_markdown
@@ -717,6 +728,16 @@ def _apply_session(outcome: ScanOutcome, session: Session) -> None:
     outcome.finished_explicitly = session.finished
     outcome.unresolved = list(session.unresolved)
     outcome.summary = session.final_summary
+    # The coverage accounting, which was entirely empty on this runner: the
+    # report's "N of M changed file(s) opened" line simply did not render, and
+    # the gate never learned that a change had been shown to the reviewer only
+    # in part.
+    #
+    # `diff_truncated` has to travel with the session because `get_diff` runs
+    # in the child, against a different `Workspace` — the parent's own flag is
+    # always False here. The other two are the parent's own knowledge and are
+    # filled by the caller, which holds the workspace.
+    outcome.coverage.diff_truncated = session.diff_truncated
 
 
 # --------------------------------------------------------------- environment

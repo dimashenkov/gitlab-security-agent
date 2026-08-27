@@ -21,6 +21,14 @@ readers call it. The alternative — a second majority rule written into the
 loader — is the failure this module exists to prevent, and the drifting copy is
 always the one nobody reads.
 
+One thing every rule here shares: **the panel is its reserved seats, not the
+replies that arrived.** A verifier session can die, and it leaves behind a vote
+carrying `error`. Counting only the votes that came back turns a lost session
+into a smaller panel, and a smaller panel is one where fewer voices form a
+majority — so a transport failure, not a verifier, decides the gate. Every
+denominator below is `len(votes)`; what an empty seat may never do is help
+anything reach a threshold.
+
 Separate from `verify` rather than inside it because `verify` imports the
 Anthropic SDK, and the loader runs in the child process on the path that costs
 nothing.
@@ -103,15 +111,33 @@ def decide(finding: Finding, votes: List[Vote]) -> Disposition:
     """
     severity, severity_derivation = initial_rating(finding)
     confidence = finding.confidence
+    # **The denominator is the seats, not the survivors.** `votes` holds one
+    # entry per seat the panel reserved; a session that died leaves its seat
+    # filled by a vote carrying `error`, and an empty seat is evidence in
+    # neither direction. It must not count as agreement, and — the part that
+    # was wrong here — it must not shrink the denominator until a smaller
+    # number of voices becomes a majority.
+    #
+    # With two of three sessions dead, counting only survivors let one reply
+    # carry a correction, switch on the removed-control gate and set the
+    # panel's confidence by itself. That is the single-verifier decision the
+    # odd panel was introduced to remove, arriving through a transport failure
+    # instead of through a vote — so whether a merge blocked depended on which
+    # session happened to crash.
     usable = [v for v in votes if not v.error]
-    verdict = _verdict(usable, severity)
+    seats = len(votes)
+    verdict = _verdict(votes, severity)
 
-    # Unanimity, like every other upward move here. One verifier calling it a
-    # removed control is not enough to gate a merge on — and with nothing
-    # usable to count, nobody called it anything.
+    # Unanimity of the *seats*, like every other upward move here. One verifier
+    # calling it a removed control is not enough to gate a merge on, and a
+    # panel of one survivor is unanimous by default. This flag gates whatever
+    # the severity says, so a lone voice turning it on is a merge blocked by a
+    # crash; the finding itself still stands on its own rating, because the
+    # verdict rule above never lets an unfilled panel dismiss a claim.
     removes_control = (
         verdict != VERDICT_REFUTED
-        and bool(usable)
+        and seats > 0
+        and len(usable) == seats
         and all(v.removes_control == "yes" for v in usable)
     )
 
@@ -133,7 +159,7 @@ def decide(finding: Finding, votes: List[Vote]) -> Disposition:
     # facts about the finding, so a verifier that disagrees corrects a fact and
     # the number follows — the label was the one part that moved between runs,
     # and taking opinions on it directly is what made it move.
-    impact, reachable, interaction, corrected = _corrected_facts(finding, usable)
+    impact, reachable, interaction, corrected = _corrected_facts(finding, votes)
     severity, severity_derivation = _rating(
         finding, impact, reachable, interaction, corrected,
         severity, severity_derivation)
@@ -146,11 +172,11 @@ def decide(finding: Finding, votes: List[Vote]) -> Disposition:
         interaction=interaction,
         severity=severity,
         severity_derivation=severity_derivation,
-        confidence=_confidence(verdict, usable, confidence),
+        confidence=_confidence(verdict, votes, confidence),
     )
 
 
-def _confidence(verdict: str, usable: List[Vote], claimed: str) -> str:
+def _confidence(verdict: str, votes: List[Vote], claimed: str) -> str:
     """What the panel leaves confidence at, for a claim it did not refute.
 
     Confidence moves in both directions, because it means something different
@@ -169,17 +195,60 @@ def _confidence(verdict: str, usable: List[Vote], claimed: str) -> str:
         # keeps the finding visible without letting it block the merge.
         return "low"
     # Confirmed; refuted never reaches here.
-    return agreed_confidence(usable, claimed)
+    return agreed_confidence(votes, claimed)
 
 
-def _verdict(usable: List[Vote], severity: str) -> str:
-    """The majority rule, and the one place it is written down."""
+def _verdict(votes: List[Vote], severity: str) -> str:
+    """The majority rule, and the one place it is written down.
+
+    `votes` is one entry per reserved seat. The counting below is over the
+    votes that were actually cast, and the quorum at the end is over the seats,
+    because those two questions have different right answers — see `_quorate`.
+    """
+    usable = [v for v in votes if not v.error]
     if not usable:
         # Being unable to check a claim is not evidence against it. What to
         # tell the reader about why is the caller's business; the claim itself
         # survives.
         return VERDICT_CONFIRMED
 
+    verdict = _majority(usable, severity)
+    if verdict != VERDICT_CONFIRMED and not _quorate(votes, usable):
+        # The panel never met, so it has dismissed nothing. Both of the other
+        # outcomes end with the finding not blocking — `refuted` removes it,
+        # and `uncertain` forces confidence to `low`, which is under the gate —
+        # so returning either one here would let two dead sessions ungate a
+        # real finding through the single reply that survived.
+        #
+        # This is the same answer the no-usable-vote branch above gives, and
+        # the same one `verify._decide` gives when every seat errored: a claim
+        # nobody could check stands exactly as the reviewer left it. Without
+        # this, three errored seats blocked the merge and two errored seats did
+        # not, which is not a rule anybody could hold in their head.
+        return VERDICT_CONFIRMED
+    return verdict
+
+
+def _quorate(votes: List[Vote], usable: List[Vote]) -> bool:
+    """Did enough of the panel meet to decide anything against the claim?
+
+    Half the reserved seats or more. `verify._votes_for` forces every panel
+    odd, so for any panel this system can really build, half-or-more is a
+    majority of the seats — one survivor out of three is not quorate, two are.
+
+    A quorum rather than a plain seat-majority in each rule, because those two
+    fail in opposite directions. Counting empty seats against a *refutation*
+    protects the finding; counting them against a *confirmation* would mean a
+    panel that lost a seat could no longer confirm, landing on `uncertain` —
+    and `uncertain` is under the gate. So confirmation keeps the survivors as
+    its denominator, refutation needs the panel to have met, and everything
+    else in this module needs a majority of the seats outright.
+    """
+    return len(usable) * 2 >= len(votes)
+
+
+def _majority(usable: List[Vote], severity: str) -> str:
+    """What the verifiers that did answer add up to."""
     refuted = [v for v in usable if v.verdict == VERDICT_REFUTED]
     confirmed = [v for v in usable if v.verdict == VERDICT_CONFIRMED]
 
@@ -225,6 +294,11 @@ def _corrected_facts(
     agreement among those who spoke. Severity is computed from these facts, so
     a correction is a move on the gate, and the same rule applies to it as to
     every other move on the gate: one voice does not decide.
+
+    `votes` is therefore every reserved seat, including the ones that errored.
+    The sentence above was written before the code matched it: the denominator
+    used to be the votes that came back, so with two of three sessions dead the
+    survivor's proposal was "a majority" and moved the rating on its own.
     """
     facts = {
         "impact": finding.impact,
@@ -240,7 +314,8 @@ def _corrected_facts(
         # and that verifier might be the one outvoted on whether the finding
         # was real at all. Severity is computed from these facts, so a single
         # proposal could move the finding across the gate on its own.
-        proposed = [getattr(v, attr) for v in votes if getattr(v, attr)]
+        proposed = [getattr(v, attr) for v in votes
+                    if not v.error and getattr(v, attr)]
         agreed = {value for value in proposed if proposed.count(value) * 2 > len(votes)}
         if len(agreed) == 1 and facts[key] not in agreed:
             facts[key] = agreed.pop()
@@ -283,9 +358,18 @@ def agreed_confidence(votes: List[Vote], claimed: str) -> str:
     terms it did the opposite: a finding that does not block is the invisible
     one. A median errs toward what most of the panel saw, in both directions,
     and one outlier moves nothing.
+
+    A seat whose session errored is silence too, and it is counted the same
+    way: as agreement with the claim. Without it the median was taken over the
+    survivors, so one verifier out of a three-seat panel that lost two sessions
+    proposed `low` and the whole panel's confidence became `low` — under the
+    gate, decided by a crash. `votes` is therefore every reserved seat.
     """
-    confirming = [v for v in votes if v.verdict == VERDICT_CONFIRMED]
+    confirming = [v for v in votes
+                  if not v.error and v.verdict == VERDICT_CONFIRMED]
     if not confirming:
         return claimed
+    empty_seats = sum(1 for v in votes if v.error)
     proposals = [v.corrected_confidence or claimed for v in confirming]
+    proposals.extend([claimed] * empty_seats)
     return sorted(proposals, key=confidence_rank)[len(proposals) // 2]

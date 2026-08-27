@@ -60,42 +60,71 @@ _EXPLANATIONS = {
 }
 
 
+# The smallest panel a finding that could block ever gets. `verify._votes_for`
+# escalates any gate-eligible claim to three votes and forces the count odd, so
+# three is also the smallest number of seats a run must be able to hand out
+# before verification means anything at all.
+SMALLEST_GATING_PANEL = 3
+
+
 @dataclass(frozen=True)
 class Profile:
     """A named policy. Allowances are cut from it, one per session.
 
-    `verifiers` is votes per candidate and is odd on purpose. Two verifiers
-    cannot form a majority, so a disagreement between them is settled by a rule
-    rather than by evidence — measured, that produced three blocks and one pass
-    across four identical runs of one case, because a single hedge forced the
-    verdict to uncertain and uncertain is under the gate. A profile that quietly
-    sets two would revert that fix while looking like a budget choice.
+    `verifiers` is a **run-wide ceiling on verifier sessions** — the money
+    limit, and the largest single cost in the tool. It is not the panel size,
+    although it was documented as "votes per candidate" for as long as the
+    field has existed. Nothing reads it that way: `RunBudget.reserve_verifier`
+    is its only consumer and it hands out one seat per *vote across the whole
+    run*, so `verifier_sessions=3` seats one three-vote panel and every later
+    gate-eligible finding is reported unverified.
+
+    How many votes a claim gets is `Config.verify_votes`
+    (`SECURITY_SCAN_VERIFY_VOTES`, `--verifiers`), read by `verify._votes_for`,
+    which escalates a gate-eligible claim to three and forces the count odd —
+    and that is where the odd-panel rule belongs. It used to be applied to this
+    field instead, which guarded nothing: an odd *budget* does not make a panel
+    odd, and a profile could not have made one even if it tried.
+
+    What this field does need guarding against is starvation. Seats are
+    reserved before the sessions start, so a pool smaller than the panel leaves
+    the rest of the seats empty, and `panel._quorate` discards a panel that
+    lost half its seats — the run pays for a session whose vote cannot count.
 
     `review_turns` is `None` when the runner cannot enforce it. The Claude Code
     CLI has no `--max-turns`, and a profile that advertises twenty turns to a
     runner which does not count turns is a profile that lies. Wall clock and
     tool calls are the portable ceilings; turns are an extra the Messages API
     path can offer and the CLI path cannot.
+
+    There is no `verifier_turns`. It was declared here, never read by anything,
+    and never reported — the real ceiling on a verifier's turns is
+    `verify.MAX_VERIFY_TURNS`, which is 14, while this field said 8 for
+    `normal` and 12 for `deep`. A second copy of a limit, disagreeing with the
+    enforced one and applied by nobody, is worse than no limit at all. The
+    argument is still accepted and ignored so that call sites outside this
+    module keep working; delete it from them and then delete it from here.
     """
 
     name: str
     review_turns: Optional[int]
     review_tool_calls: int
-    verifiers: int
-    verifier_turns: int
+    verifier_sessions: int
     verifier_tool_calls: int
     runtime_seconds: int
     # Some profiles cannot produce a verdict at all, whatever they find.
     conclusive: bool = True
 
     def __post_init__(self) -> None:
-        if self.verifiers not in (0, 1, 3, 5):
+        if self.verifier_sessions and self.verifier_sessions < SMALLEST_GATING_PANEL:
             raise ValueError(
-                "{}: a verifier panel must be odd — {} verifiers cannot form a "
-                "majority, and settling a disagreement by rule instead of by "
-                "evidence is the defect the odd panel fixed".format(
-                    self.name, self.verifiers))
-        if self.verifiers and self.verifier_tool_calls < 1:
+                "{}: {} verifier session(s) cannot seat a panel. A finding that "
+                "could block gets {} votes, seats are reserved before the "
+                "sessions start, and a panel that lost half its seats decides "
+                "nothing — so this buys a verifier whose vote is discarded. "
+                "Use 0 for no verification at all.".format(
+                    self.name, self.verifier_sessions, SMALLEST_GATING_PANEL))
+        if self.verifier_sessions and self.verifier_tool_calls < 1:
             raise ValueError(
                 "{}: a verifier with no tool calls cannot search for the "
                 "control it is required to name, and a verdict that cannot say "
@@ -105,7 +134,7 @@ class Profile:
     @property
     def allocated_tool_calls(self) -> int:
         """The most this profile can hand out, if every verifier is used."""
-        return self.review_tool_calls + self.verifiers * self.verifier_tool_calls
+        return self.review_tool_calls + self.verifier_sessions * self.verifier_tool_calls
 
 
 PROFILES: Dict[str, Profile] = {
@@ -115,17 +144,22 @@ PROFILES: Dict[str, Profile] = {
     # time, by design. It is therefore never allowed to conclude anything —
     # see `conclusive`.
     "probe": Profile("probe", review_turns=6, review_tool_calls=40,
-                     verifiers=0, verifier_turns=0, verifier_tool_calls=0,
+                     verifier_sessions=0, verifier_tool_calls=0,
                      runtime_seconds=300, conclusive=False),
     # The local default. Room above the measured maximum rather than level
     # with it: a ceiling that only just covers the longest observed run is a
     # ceiling that truncates the next one.
+    # `verifier_sessions=3` is one panel for the whole run: the first gate-eligible
+    # finding is checked and any later one is reported unverified, which blocks
+    # rather than passes but is not a checked result. Raising it is a real
+    # increase in spend, so it is a decision to take with a measurement rather
+    # than in passing.
     "normal": Profile("normal", review_turns=20, review_tool_calls=100,
-                      verifiers=3, verifier_turns=8, verifier_tool_calls=15,
+                      verifier_sessions=3, verifier_tool_calls=15,
                       runtime_seconds=1_200),
     # Asked for explicitly, never a default.
     "deep": Profile("deep", review_turns=40, review_tool_calls=250,
-                    verifiers=3, verifier_turns=12, verifier_tool_calls=25,
+                    verifier_sessions=3, verifier_tool_calls=25,
                     runtime_seconds=1_800),
 }
 
@@ -144,7 +178,6 @@ class Allowance:
     label: str
     ceiling: int
     spent: int = 0
-    exhausted: bool = False
 
     def note_tool_call(self) -> bool:
         """Count one attempt. False means this one should be refused.
@@ -153,13 +186,27 @@ class Allowance:
         rejected — one documented rule, so the number means the same thing on
         both runners. Counting only successes would let a session with a broken
         argument loop for free.
+
+        The call that reaches the ceiling is served; the next one is refused.
+        Refusing the one that reaches it throws away work already decided on.
         """
         if self.exhausted:
             return False
         self.spent += 1
-        if self.spent >= self.ceiling:
-            self.exhausted = True
         return True
+
+    @property
+    def exhausted(self) -> bool:
+        """Nothing left to spend. **The one definition of exhaustion.**
+
+        Derived rather than stored. It used to be a flag set inside
+        `note_tool_call`, which made it a second copy of a fact the counters
+        already hold: an allowance spent through any other route — the CLI
+        runner folds a child's spend straight onto `budget.review` — had the
+        counter moved and the flag left behind, and `RunBudget` read the flag.
+        So two budgets with identical numbers reported different exhaustion.
+        """
+        return self.spent >= self.ceiling
 
     @property
     def remaining(self) -> int:
@@ -183,7 +230,6 @@ class RunBudget:
     review: Allowance = field(init=False)
     verifier_allowances: List[Allowance] = field(default_factory=list)
     review_turns: int = 0
-    verifier_turns: int = 0
     # Recorded when a runner can supply them, never required. `None` means the
     # backend did not say — which is reported as "unavailable", never as zero.
     input_tokens: Optional[int] = None
@@ -226,11 +272,12 @@ class RunBudget:
             return False
         target = allowance or self.review
         allowed = target.note_tool_call()
-        if target.exhausted and target is self.review:
-            # Only the reviewer's exhaustion ends the run. A verifier that
-            # spends its allowance has finished searching and still votes; the
-            # review around it is unaffected.
-            self.stopped_by = STOPPED_TOOL_CALLS
+        # Whether the run has stopped is asked of `check()`, which reads the
+        # reviewer's allowance directly. Deciding it here as well would make
+        # the answer depend on which entry point spent the call — and the
+        # Claude Code runner spends through `budget.review` rather than
+        # through this method.
+        self.check()
         return allowed
 
     def note_review_turn(self) -> None:
@@ -238,9 +285,6 @@ class RunBudget:
         limit = self.profile.review_turns
         if self.turns_enforced and limit is not None and self.review_turns >= limit:
             self.stopped_by = STOPPED_TURNS
-
-    def note_verifier_turn(self) -> None:
-        self.verifier_turns += 1
 
     def reserve_verifier(self) -> Optional[Allowance]:
         """Claim a verifier session and its own tool calls, or refuse.
@@ -253,7 +297,7 @@ class RunBudget:
         """
         if self.check():
             return None
-        if self.verifier_sessions >= self.profile.verifiers:
+        if self.verifier_sessions >= self.profile.verifier_sessions:
             self.stopped_by = STOPPED_VERIFIERS
             return None
         allowance = Allowance(
@@ -263,10 +307,23 @@ class RunBudget:
         return allowance
 
     def check(self) -> str:
-        """The ceiling that has been hit, or "". Cheap enough to call often."""
+        """The ceiling that has been hit, or "". Cheap enough to call often.
+
+        The reviewer's allowance is read here rather than flagged when it is
+        spent, so that a run stops on the same fact whichever way the calls
+        were counted. Only the reviewer's exhaustion ends the run: a verifier
+        that spends its allowance has finished searching and still votes.
+
+        Tool calls are tested before the clock because reaching an allowance is
+        an event that definitely happened, while `elapsed` becomes true at the
+        moment somebody asks — and a report naming the wrong ceiling sends the
+        reader to raise the wrong limit.
+        """
         if self.stopped_by:
             return self.stopped_by
-        if self.elapsed > self.profile.runtime_seconds:
+        if self.review.exhausted:
+            self.stopped_by = STOPPED_TOOL_CALLS
+        elif self.elapsed > self.profile.runtime_seconds:
             self.stopped_by = STOPPED_RUNTIME
         return self.stopped_by
 
@@ -296,7 +353,7 @@ class RunBudget:
                 "" if self.profile.conclusive else " (never conclusive)"),
             "Reviewer turns: {}{}".format(self.review_turns, self._turn_ceiling()),
             "Verifier sessions: {} / {}".format(self.verifier_sessions,
-                                                self.profile.verifiers),
+                                                self.profile.verifier_sessions),
             # Allocated, not permitted, and spent separately from both. Without
             # the middle number "40 of 100" hides that sixty of those hundred
             # were handed to verifiers and were never the reviewer's to spend.

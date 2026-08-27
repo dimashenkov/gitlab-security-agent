@@ -184,6 +184,85 @@ def test_a_path_that_is_not_utf8_survives_as_a_key():
     assert not decoded.startswith('"')
 
 
+# ------------------------------------- the same failure, without any quoting
+
+
+# Git does not quote a space: it is not a control character, not a backslash and
+# not a double quote. What it does instead is terminate the path with a single
+# TAB, so the space cannot be read as the end of the name. `.strip()` removed
+# that tab *and* whatever real whitespace the name ended with — so `handler.py `
+# was filed under `handler.py`, a key nothing looks up, and every finding in it
+# came out "already there". Same gate, same silence, no accented character
+# anywhere near it.
+SPACED = ("handler.py ", "two words.py")
+
+
+@pytest.fixture
+def spaced_repo(tmp_path):
+    root = tmp_path / "spaced"
+    (root / "src").mkdir(parents=True)
+    for name in SPACED:
+        try:
+            (root / "src" / name).write_text("VALUE = 1\n", encoding="utf-8")
+        except OSError as exc:
+            pytest.skip("this filesystem refuses the name {!r}: {}".format(name, exc))
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "T")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    base = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    for name in SPACED:
+        (root / "src" / name).write_text(
+            'VALUE = db.execute("SELECT " + user_id)\n', encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "change")
+    return Workspace(root=root, diff_base=base, diff_head="HEAD")
+
+
+def test_the_two_views_agree_on_a_name_with_whitespace(spaced_repo):
+    """The same assertion as the quoted case, and it failed for the other
+    reason: one view reads the NUL form and keeps every byte, the other parsed
+    the header and threw the trailing one away."""
+    changed = sorted(path for path, _ in spaced_repo.changed_files())
+    attributed = sorted(spaced_repo.changed_line_map().files())
+
+    assert changed == attributed
+
+
+@pytest.mark.parametrize("name", SPACED)
+def test_a_change_in_a_name_with_whitespace_is_attributed(spaced_repo, name):
+    """`""` means "already there", and a pre-existing finding does not block."""
+    from security_agent.evidence import attribution
+
+    assert attribution("src/" + name, 1, 1, spaced_repo.changed_line_map()) == "added"
+
+
+@pytest.mark.parametrize("header,expected", [
+    # What git actually writes, taken from its output: one tab terminator when
+    # the name contains a space, and none when it does not.
+    ("+++ b/src/handler.py \t", "src/handler.py "),
+    ("+++ b/src/two words.py\t", "src/two words.py"),
+    ("+++ b/src/plain.py", "src/plain.py"),
+    # Quoted *and* terminated: the prefix is inside the quotes, the tab is not.
+    ('+++ "b/src/caf\\303\\251 x.py"\t', "src/café x.py"),
+    ('+++ "b/src/tab\\there.py"', "src/tab\there.py"),
+    ("+++ /dev/null", "/dev/null"),
+])
+def test_a_header_names_the_file_exactly(header, expected):
+    """One tab comes off, and nothing else. A name that ends in a tab is
+    quoted by git — tab is a control character — so removing exactly one
+    terminator can never eat a real one."""
+    from security_agent.evidence import _header_path
+
+    assert _header_path(header) == expected
+
+
 # --------------------------------------- the boundary the decoder sits behind
 
 

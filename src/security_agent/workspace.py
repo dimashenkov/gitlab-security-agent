@@ -48,6 +48,7 @@ class Workspace:
         diff_base: str = "",
         diff_head: str = "HEAD",
         scope: Sequence[str] = (),
+        diff_ceiling: int = 0,
     ) -> None:
         self.root = root.resolve()
         if not (self.root / ".git").exists():
@@ -65,6 +66,9 @@ class Workspace:
         # reaches the artifact so a report cannot claim coverage the run did not
         # have.
         self.diff_truncated = False
+        # Zero means "use the class default". Held rather than defaulted at the
+        # call site so `diff_ceiling` has one answer.
+        self._diff_ceiling = max(0, int(diff_ceiling))
         self._changed_lines: Optional[dict] = None
 
     # ---------------------------------------------------------------- paths
@@ -249,6 +253,28 @@ class Workspace:
                 out.append((path, _STATUS_NAMES.get(code, code)))
         return out
 
+    def raw_changed_paths(self) -> List[str]:
+        """Every path this change touched, with neither filter applied.
+
+        The excludes say what the model may read and the scope says what the
+        review is answerable for. Both are the wrong lens for a question about
+        what the *change* did — and two such questions exist: does this change
+        edit its own suppression file, and does it edit the prompts it is judged
+        by. Answering either through a filtered list hands a committed exclude
+        pattern the power to switch the guard off.
+
+        Rename detection is off for the same reason it is off in
+        `change_touches`: with `-M` a rename reports only its new path, so a
+        change that moved a guarded file *away* reads as having left it alone.
+        """
+        if not self.diff_base:
+            return []
+        raw = self.git(
+            "diff", "--no-color", "--no-ext-diff", "--no-renames",
+            "--name-status", "-z", self.diff_base, self.diff_head,
+        )
+        return [path for path, _ in _parse_name_status(raw)]
+
     def change_touches(self, relative: str) -> bool:
         """Does the change under review edit this exact file?
 
@@ -347,6 +373,17 @@ class Workspace:
     # was partial rather than implying the change was abnormal.
     MAX_DIFF_BYTES = 512 * 1024
 
+    @property
+    def diff_ceiling(self) -> int:
+        """The ceiling actually in force, which an operator can raise.
+
+        The gate tells a reader of a truncated review that they may raise this;
+        that sentence was false when it was written, because the number was a
+        constant with no configuration surface. A remedy nobody can perform is
+        worse than none — it moves the blame to a reader who cannot act.
+        """
+        return self._diff_ceiling or self.MAX_DIFF_BYTES
+
     def _bounded(self, args: List[str]) -> str:
         """Read git's output up to a ceiling, then stop reading.
 
@@ -391,7 +428,7 @@ class Workspace:
                     break
                 chunks.append(chunk)
                 size += len(chunk)
-                if size >= self.MAX_DIFF_BYTES:
+                if size >= self.diff_ceiling:
                     truncated = True
                     break
         finally:
@@ -410,7 +447,7 @@ class Workspace:
             body = body.rsplit("\n", 1)[0] + (
                 "\n… this diff was cut off at {} bytes. What follows it was not "
                 "read, and a change this large has not been fully reviewed."
-                .format(self.MAX_DIFF_BYTES))
+                .format(self.diff_ceiling))
         return body
 
     def changed_line_map(self):

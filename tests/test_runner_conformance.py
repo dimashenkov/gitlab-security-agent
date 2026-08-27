@@ -126,19 +126,19 @@ FINISH = ("finish_review",
 # Python interpreter up, import the package and answer a tool call first — and a
 # ceiling that only just covers the setup is a test that fails on a busy machine.
 KILL_PROFILE = Profile("conformance-kill", review_turns=None,
-                       review_tool_calls=100, verifiers=3, verifier_turns=8,
+                       review_tool_calls=100, verifier_sessions=3,
                        verifier_tool_calls=15, runtime_seconds=5)
 # For the one scenario that starts nothing at all and so needs no setup time.
 IDLE_KILL_PROFILE = Profile("conformance-idle", review_turns=None,
-                            review_tool_calls=100, verifiers=3, verifier_turns=8,
+                            review_tool_calls=100, verifier_sessions=3,
                             verifier_tool_calls=15, runtime_seconds=1)
 # Long enough that a scenario meant to finish never races the clock.
 CALM_PROFILE = Profile("conformance", review_turns=None, review_tool_calls=100,
-                       verifiers=3, verifier_turns=8, verifier_tool_calls=15,
+                       verifier_sessions=3, verifier_tool_calls=15,
                        runtime_seconds=600)
 # Three tool calls and no more, so the fourth is refused by the child.
 TIGHT_PROFILE = Profile("conformance-tight", review_turns=None,
-                        review_tool_calls=3, verifiers=3, verifier_turns=8,
+                        review_tool_calls=3, verifier_sessions=3,
                         verifier_tool_calls=15, runtime_seconds=600)
 
 
@@ -971,7 +971,7 @@ class TestVerifierBudget:
         # Every seat this profile grants is already committed — the state a
         # panel of three reaches on the fourth vote it needs.
         seats = [cli.budget.reserve_verifier()
-                 for _ in range(cli.budget.profile.verifiers)]
+                 for _ in range(cli.budget.profile.verifier_sessions)]
         assert all(seat is not None for seat in seats)
 
         verify_candidates_with_cli(

@@ -512,3 +512,53 @@ def test_the_denied_list_is_not_empty():
     """A list that emptied itself in a refactor would leave the allowlist as
     the only layer, and this file's second-layer tests would still pass."""
     assert len(DENIED_TOOLS) >= 10
+
+
+class TestTheCoverageAccountingCrossesTheBoundary:
+    """It was empty on this runner, entirely.
+
+    The report's "N of M changed file(s) opened" line did not render, and the
+    gate never learned that a change had been shown to the reviewer only in
+    part — on the one runner whose reviews are the ones actually being read.
+
+    Two different kinds of fact, and they travel differently. What the change
+    contained is the parent's own knowledge: it holds the workspace. Whether
+    the diff was cut off is the *child's*, because `get_diff` runs there,
+    against a different `Workspace` — the parent's own flag is always false on
+    this path, so a fact read from it would always have said "not truncated".
+    """
+
+    def test_a_truncated_diff_travels_with_the_session(self, tmp_path):
+        from security_agent.models import ScanOutcome
+        from security_agent.session_document import read_session, write_session
+        from security_agent.tools import Session
+
+        session = Session()
+        session.diff_truncated = True
+        document = tmp_path / "session.json"
+        write_session(document, session, run_id="r1", revision=REVISION,
+                      config_digest="d")
+
+        restored = read_session(document, run_id="r1", revision=REVISION,
+                                config_digest="d")
+        outcome = ScanOutcome(mode="diff")
+        runner._apply_session(outcome, restored)
+
+        assert outcome.coverage.diff_truncated is True
+
+    def test_the_parents_flag_is_not_what_is_read(self, cfg, budget, git_repo):
+        """The child does the diffing. Reading the parent's workspace would
+        answer "not truncated" every time, which is the shape of a check that
+        cannot fail."""
+        from security_agent.models import ScanOutcome
+        from security_agent.tools import Session
+
+        workspace = Workspace(root=git_repo, diff_base="", diff_head="HEAD")
+        assert workspace.diff_truncated is False
+
+        session = Session()
+        session.diff_truncated = True
+        outcome = ScanOutcome(mode="diff")
+        runner._apply_session(outcome, session)
+
+        assert outcome.coverage.diff_truncated is True

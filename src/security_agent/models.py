@@ -157,8 +157,7 @@ class Finding:
         Line numbers stay out: unrelated edits move code, and an accepted risk
         must survive that.
         """
-        return self.fingerprints[0] if self.fingerprints else _digest(
-            self.category, self.file, "")
+        return self.fingerprints[0]
 
     @property
     def anchors(self) -> List[str]:
@@ -182,9 +181,8 @@ class Finding:
         or starting anywhere inside the same block.
         """
         seen, out = set(), []
-        for line in self.evidence.splitlines():
-            collapsed = " ".join(line.split()).lstrip("+- ")
-            if collapsed and collapsed not in seen and _distinctive(collapsed):
+        for collapsed in _quoted_lines(self.evidence):
+            if collapsed not in seen and _distinctive(collapsed):
                 seen.add(collapsed)
                 out.append(collapsed)
         return out
@@ -195,9 +193,26 @@ class Finding:
 
         The first is what gets printed and what a person copies into the ignore
         file; the rest exist so that a suppression written against one run still
-        matches the next.
+        matches the next. Never empty — the report prints `fingerprints[0]`
+        under "accept this risk by adding", and `suppress.Rule.matches` asks
+        whether the value in the ignore file is *in this list*. A finding whose
+        printed identity was absent from the list was an escape hatch that
+        silently did nothing: the entry was written, the reason was recorded,
+        the merge blocked again on the next run, and nothing said why.
+
+        The fallback covers the finding whose every quoted line is boilerplate,
+        which `anchors` rejects on purpose. It is the whole quote rather than
+        the empty string, because the empty string is the *same* value for
+        every anchorless finding in one file and category — and `report_finding`
+        drops a candidate whose fingerprint equals an earlier one as a
+        duplicate, so a shared identity there does not weaken suppression, it
+        deletes findings. Less stable between runs than an anchor, and that is
+        the right direction: an identity that fails to match costs a repeated
+        suppression entry, one that matches too much hides a weakness.
         """
-        return [_digest(self.category, self.file, a) for a in self.anchors]
+        values = [_digest(self.category, self.file, a) for a in self.anchors]
+        return values or [
+            _digest(self.category, self.file, "\n".join(_quoted_lines(self.evidence)))]
 
 
 # Lines that carry no identity. Length alone is not the test — `if err != nil {`
@@ -212,6 +227,21 @@ _BOILERPLATE = frozenset({
     "catch (Exception e) {", "try {", "try:", "except:", "finally {",
     "public:", "private:", "else:", "else", "do", "begin", "rescue", "ensure",
 })
+
+
+def _quoted_lines(evidence: str) -> List[str]:
+    """The quoted code, one normalised line at a time, diff markers removed.
+
+    Shared by `anchors` and by the fallback fingerprint so the two cannot drift:
+    the fallback exists precisely for the quote `anchors` returns nothing for,
+    and a second copy of this normalisation would decide that differently.
+    """
+    out = []
+    for line in evidence.splitlines():
+        collapsed = " ".join(line.split()).lstrip("+- ")
+        if collapsed:
+            out.append(collapsed)
+    return out
 
 
 def _distinctive(line: str) -> bool:

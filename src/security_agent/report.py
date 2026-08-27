@@ -302,8 +302,9 @@ def _truncated_diff_note(outcome: ScanOutcome) -> List[str]:
         "> [!WARNING]",
         "> **The change was too large to show in full.** The reviewer was given "
         "the first part of the diff and no more, so anything after that point "
-        "was not examined through it. Narrow the review with `--path`, or split "
-        "the change, for a complete reading.",
+        "was not examined through it. Narrow the review with `--path`, split "
+        "the change, or raise `SECURITY_SCAN_DIFF_CEILING_BYTES`, for a "
+        "complete reading.",
     ]
 
 

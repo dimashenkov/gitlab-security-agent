@@ -263,6 +263,31 @@ def unquote_path(path: str) -> str:
     return out.decode("utf-8", errors="surrogateescape")
 
 
+def _header_path(line: str) -> str:
+    """The file named by a `+++ b/...` header, decoded exactly.
+
+    Two details, both of which decide whether a finding is attributed to the
+    change or recorded as pre-existing — and pre-existing does not block.
+
+    Git terminates the path with a single TAB when it contains a space, so that
+    the space cannot be mistaken for the end of the name. That one tab is what
+    gets removed here, and nothing else. `.strip()` was removing it *and* any
+    real trailing whitespace, so `src/handler ` — a legal name on Linux, which
+    git does not quote because a space is not a control character — became the
+    key `src/handler`, which nothing ever looks up. The file then appeared in
+    neither the additions nor the deletions, which is how a weakness that was
+    *already there* is recorded.
+
+    The `b/` prefix goes last, after unquoting, because git puts the prefix
+    inside the quotes: `"b/src/caf\\303\\251.py"`.
+    """
+    body = line[4:]
+    if body.endswith("\t"):
+        body = body[:-1]
+    path = unquote_path(body)
+    return path[2:] if path.startswith("b/") else path
+
+
 def changed_lines(diff_text: str) -> ChangedLines:
     """Split a unified diff into the lines a change is answerable for.
 
@@ -273,27 +298,53 @@ def changed_lines(diff_text: str) -> ChangedLines:
     real merge request reverting GitPython's CVE-2023-41040 guard was found and
     confirmed by the agent, then waved through as "pre-existing" for precisely
     this reason.
+
+    The diff is parsed as a structure, not scanned for lines that look like
+    headers, because half of a diff is text an author wrote. A file that adds
+
+        ++ b/src/decoy.py
+
+    produces the diff line `+++ b/src/decoy.py`, and reading that as a file
+    header hands every addition below it to a file that does not exist — the
+    file actually being changed loses them, and a finding on the vulnerable
+    line the author added right after it comes out "pre-existing", which does
+    not block. The same trick with `-- ` suppressed deletions, and it did not
+    even need an attacker: `--` opens a comment in SQL, Lua, Haskell and Ada,
+    so deleting one such line from a migration was already invisible to the
+    removed-control rule.
     """
     added: Dict[str, Set[int]] = {}
     removed: Dict[str, Set[int]] = {}
     current: Optional[str] = None
     lineno = 0
+    # Whether we are reading the body of a hunk, which is the only part of a
+    # diff whose text an author chose. See `_header_path` for what that means.
+    in_hunk = False
 
     for line in diff_text.splitlines():
-        if line.startswith("+++ "):
-            path = unquote_path(line[4:].strip())
-            if path.startswith("b/"):
-                path = path[2:]
-            current = None if path == "/dev/null" else path
-            if current is not None:
-                added.setdefault(current, set())
-                removed.setdefault(current, set())
-            continue
-        if line.startswith("--- ") or line.startswith("diff --git"):
+        # Column zero belongs to the diff's own structure. Every line of a hunk
+        # body carries a marker column — `+`, `-`, or a space — so a line
+        # beginning `diff ` or `@@ ` cannot have come out of a file, whatever
+        # an author wrote in it. These two are therefore trusted anywhere;
+        # `+++ ` and `--- ` are not, and are read only outside a hunk body.
+        if line.startswith("diff "):
+            in_hunk = False
+            current = None
             continue
         match = HUNK_HEADER.match(line)
         if match:
             lineno = int(match.group(1))
+            in_hunk = True
+            continue
+        if not in_hunk:
+            if line.startswith("+++ "):
+                path = _header_path(line)
+                current = None if path == "/dev/null" else path
+                if current is not None:
+                    added.setdefault(current, set())
+                    removed.setdefault(current, set())
+            # `--- `, `index`, mode and similarity lines say nothing this map
+            # needs; the new-side header alone names the file.
             continue
         if current is None:
             continue

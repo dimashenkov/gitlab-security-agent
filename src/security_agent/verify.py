@@ -720,15 +720,27 @@ def _decide(candidate: Candidate) -> None:
     # Prose about the decision rather than part of it, so it stays here: a
     # finding that was never verified carries a reason its caller wrote, and
     # the loader cannot recompute either one.
-    candidate.verdict_reason = _reason(usable, decided.verdict)
+    candidate.verdict_reason = _reason(usable, decided.verdict, len(candidate.votes))
     candidate.removes_control = decided.removes_control
     candidate.severity = decided.severity
     candidate.severity_derivation = decided.severity_derivation
     candidate.confidence = decided.confidence
 
 
-def _reason(votes: List[Vote], verdict: str) -> str:
-    """Pick the verifier reasoning that best explains the aggregate verdict."""
+def _reason(votes: List[Vote], verdict: str, seats: int = 0) -> str:
+    """Pick the verifier reasoning that best explains the aggregate verdict.
+
+    `seats` is how many verifiers the panel reserved; `votes` is how many
+    answered. The two came apart when the panel started counting seats rather
+    than survivors, and the prose did not follow: one survivor refuting out of
+    three seats produces `confirmed` — the panel is not quorate, so the claim
+    stands — with the refuter's own reasoning printed underneath it as the
+    explanation, and no tally at all, because the tally only appeared when more
+    than one vote came back.
+
+    A sentence that argues against the verdict above it is worse than no
+    sentence. So an unfilled panel says so, first.
+    """
     preferred = [v for v in votes if v.verdict == verdict and v.reasoning]
     if preferred:
         head = preferred[0].reasoning
@@ -741,6 +753,16 @@ def _reason(votes: List[Vote], verdict: str) -> str:
                    if v.verdict == verdict and v.control_search), "")
     if search:
         head = "{} Searched: {}".format(head, search).strip()
+    empty = max(0, seats - len(votes))
+    if empty:
+        # Named before anything else, because it changes how the rest reads.
+        # With seats empty the verdict may be what the claim arrived as rather
+        # than what anybody concluded, and the reasoning below it is one
+        # verifier's opinion and not the panel's.
+        missing = ("{} of {} verifier(s) never reported, so the panel could "
+                   "not settle this and the finding stands as reported"
+                   .format(empty, seats))
+        return "{} — {}".format(missing, head) if head else missing
     if len(votes) > 1:
         tally = "{}/{} verifier(s) agreed".format(
             sum(1 for v in votes if v.verdict == verdict), len(votes))

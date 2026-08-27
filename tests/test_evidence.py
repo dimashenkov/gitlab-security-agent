@@ -134,6 +134,21 @@ class TestChangedLines:
         # would shift every line number in the file by one.
         assert 0 not in changed_lines(DIFF).added["app/views.py"]
 
+    def test_a_header_inside_a_hunk_is_content(self):
+        """The neighbour of the test above, and the one it did not imply.
+
+        A `+++ b/…` line outside a hunk names a file; inside a hunk it is a
+        line somebody added, and reading it as a header gives that author's
+        remaining additions away to a file that does not exist. The chain this
+        breaks is in `test_diff_structure.py`.
+        """
+        diff = (DIFF.replace('+def get_user(request):',
+                             '+++ b/attacker/choice.py\n+def get_user(request):'))
+        result = changed_lines(diff)
+
+        assert "attacker/choice.py" not in result.files()
+        assert result.added["app/views.py"] == {13, 14, 15, 16}
+
     def test_handles_a_deleted_file(self):
         diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-x = 1\n-y = 2\n"
         assert not changed_lines(diff)
