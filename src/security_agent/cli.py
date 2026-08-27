@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from . import __version__
-from .config import Config, ConfigError
+from .config import PROVIDER_API, PROVIDER_CLI, PROVIDERS, Config, ConfigError
 from .gate import EXIT_ERROR, EXIT_OK, decide
 from .models import VERDICT_REFUTED
 from .workspace import Workspace, WorkspaceError
@@ -121,20 +121,39 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     if rules:
         log.info("%d active suppression rule(s) from %s", len(rules), cfg.ignore_file)
 
-    if not _has_credentials():
+    if cfg.provider == PROVIDER_API and not _has_credentials():
         log.error(
             "no Anthropic credentials found. Set ANTHROPIC_API_KEY as a masked "
             "CI/CD variable on the project."
         )
         return EXIT_ERROR
+    if cfg.provider == PROVIDER_CLI:
+        # The credential check above is deliberately skipped rather than
+        # widened: this runner authenticates as the developer, through the CLI
+        # they installed, and an API key present in the environment is the one
+        # thing it must not reach for. The runner removes it from the child's
+        # environment for the same reason.
+        problem = _cli_provider_problem(cfg)
+        if problem:
+            log.error("%s", problem)
+            return EXIT_ERROR
 
-    client = anthropic.Anthropic(max_retries=cfg.max_retries, timeout=cfg.request_timeout)
-    agent = SecurityAgent(cfg, workspace, client=client)
+    briefing = build_briefing(cfg, workspace, mode)
+    log.info("starting review — provider=%s model=%s effort=%s mode=%s",
+             cfg.provider, cfg.model, cfg.effort, mode)
 
-    log.info("starting review — model=%s effort=%s mode=%s", cfg.model, cfg.effort, mode)
-    with _folded("review", "Reviewing the change"):
-        outcome = agent.run(mode=mode, briefing=build_briefing(cfg, workspace, mode))
-    candidates = list(agent.candidates)
+    client = None
+    if cfg.provider == PROVIDER_API:
+        client = anthropic.Anthropic(max_retries=cfg.max_retries,
+                                     timeout=cfg.request_timeout)
+        agent = SecurityAgent(cfg, workspace, client=client)
+        with _folded("review", "Reviewing the change"):
+            outcome = agent.run(mode=mode, briefing=briefing)
+        candidates = list(agent.candidates)
+    else:
+        outcome, candidates, budget, digest = _review_with_cli(
+            cfg, workspace, mode, briefing, base, head)
+
     log.info(
         "agent finished: %s%s, %d turn(s), %d candidate finding(s)",
         outcome.stop_reason,
@@ -149,15 +168,41 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     # `report_finding`, so everything here cites code that provably exists.
     if candidates:
         with _folded("verify", "Verifying {} finding(s)".format(len(candidates))):
-            outcome.verification_usage = verify_candidates(
-                cfg, workspace, client, candidates,
-                provenance=outcome.provenance, metrics=outcome.metrics)
+            if client is not None:
+                outcome.verification_usage = verify_candidates(
+                    cfg, workspace, client, candidates,
+                    provenance=outcome.provenance, metrics=outcome.metrics)
+            else:
+                # Through the same CLI, not the API. Splitting providers
+                # mid-review would mean one review's findings were read by two
+                # execution paths — and, worse here, that every successful local
+                # review still arrived with a bill, which is the one thing this
+                # provider exists to prevent.
+                from .verify_cli import verify_candidates_with_cli
+
+                verify_candidates_with_cli(
+                    cfg, workspace, candidates, budget, config_digest=digest,
+                    revision=outcome.revision, provenance=outcome.provenance,
+                    metrics=outcome.metrics)
 
     # A suppression the change itself adds cannot excuse that change.
-    ignore_touched = any(
-        path == str(cfg.ignore_file).lstrip("./")
-        for path, _ in workspace.changed_files()
-    )
+    # Asked of git, not of the filtered file list. Three things were wrong with
+    # the comparison this replaces, and the first alone meant the guard had
+    # never once fired since it was written:
+    #
+    # * `str(".security-agent-ignore.yml").lstrip("./")` strips every leading
+    #   character in the *set* `{".", "/"}`, not the prefix `"./"`, so it
+    #   produced `security-agent-ignore.yml` and git reports
+    #   `.security-agent-ignore.yml`. The two are never equal.
+    # * `changed_files()` applies the scope, so `--path src` would have hidden a
+    #   root-level suppression file from the guard.
+    # * `changed_files()` also applies the excludes, so an exclude pattern
+    #   covering the file would have switched the guard off.
+    #
+    # A merge request that adds a weakness and the entry excusing it, in one
+    # commit, is the case this exists for. It was exploitable with three lines
+    # of YAML and no knowledge of the finding.
+    ignore_touched = workspace.change_touches(str(cfg.ignore_file))
     if ignore_touched and rules:
         log.warning(
             "%s is edited by this change, so its entries do not apply here — "
@@ -375,6 +420,81 @@ def _resolve_range(
     )
 
 
+def _review_with_cli(cfg: Config, workspace, mode: str, briefing: str,
+                     base: str, head: str):
+    """Run the review through the developer's own `claude`, and spend nothing.
+
+    Returns the outcome, its candidates, and the budget — the budget because
+    verification draws its seats from the same one, and handing it back is what
+    keeps the reviewer's allowance and each verifier's allowance disjoint parts
+    of a single policy rather than two policies that happen to agree.
+    """
+    from .budget import PROFILES, RunBudget
+    from .runner_claude_code import ClaudeCodeRunner
+
+    profile = PROFILES.get(cfg.profile, PROFILES["normal"])
+    # This runner cannot count turns — the CLI has no `--max-turns` — so the
+    # budget says so rather than printing a ceiling nobody applied.
+    budget = RunBudget(profile=profile, turns_enforced=False)
+
+    revision = _revision_for(mode, base, head, workspace)
+    runner = ClaudeCodeRunner(cfg, workspace, budget)
+    runner.config_digest = _digest_for(cfg, revision)
+
+    with _folded("review", "Reviewing the change"):
+        outcome = runner.run(mode=mode, briefing=briefing, revision=revision)
+    return outcome, list(outcome.reported), budget, runner.config_digest
+
+
+def _digest_for(cfg: Config, revision) -> str:
+    """The short key for "what policy produced this".
+
+    Every handoff file is bound to it, so a document written under one set of
+    gate settings cannot be read back into a run under another. Same code, other
+    policy, different review — and a document accepted across that line would be
+    a cheaper answer to a question nobody asked.
+    """
+    from .agent import _provenance
+    from .identity import digest, review_identity
+
+    return digest(review_identity(cfg, revision, _provenance(cfg)))
+
+
+def _revision_for(mode: str, base: str, head: str, workspace):
+    from .models import Revision
+
+    def resolve(rev: str) -> str:
+        if not rev:
+            return ""
+        try:
+            return workspace.git("rev-parse", rev).strip()
+        except WorkspaceError:
+            return ""
+
+    return Revision(mode=mode, base=base, head=head,
+                    base_sha=resolve(base), head_sha=resolve(head) or "HEAD")
+
+
+def _cli_provider_problem(cfg: Config) -> str:
+    """Why `--provider claude-cli` cannot run this review, or "".
+
+    Every answer here is a refusal rather than a downgrade. The runner exists to
+    stop a review costing money, so the one failure it must never have is
+    quietly becoming the paid path — and the second is quietly becoming a
+    weaker review that still renders a verdict.
+    """
+    from .runner_claude_code import cli_available
+
+    if cli_available() is None:
+        return (
+            "--provider {} needs the `claude` command on PATH, and it is not "
+            "there. This runner uses the CLI you already have; it will not fall "
+            "back to the paid API, because which account is charged is not a "
+            "decision to make on your behalf.".format(PROVIDER_CLI)
+        )
+    return ""
+
+
 def _abbrev(rev: str) -> str:
     """Shorten a SHA for logging, but never a branch name."""
     if len(rev) > 12 and all(c in "0123456789abcdef" for c in rev.lower()):
@@ -405,6 +525,10 @@ def _build_config(args: argparse.Namespace) -> Config:
         cfg.max_turns = args.max_turns
     if args.path:
         cfg.scope = tuple(args.path)
+    if args.provider:
+        cfg.provider = args.provider
+    if args.profile:
+        cfg.profile = args.profile
     if args.output_dir:
         cfg.output_dir = Path(args.output_dir)
     if args.prompt_dir:
@@ -459,6 +583,19 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
                         help="Override the automatic diff/repo choice.")
     parser.add_argument("--base", metavar="REV", help="Diff base revision.")
     parser.add_argument("--head", metavar="REV", help="Diff head revision.")
+    parser.add_argument(
+        "--provider", choices=PROVIDERS,
+        help="Who runs the review. {} is the default and what CI uses. {} "
+             "shells out to your own `claude`, on the subscription you already "
+             "pay for. There is no automatic choice between them: if the one "
+             "you name cannot run, the review fails rather than quietly "
+             "charging the other.".format(PROVIDER_API, PROVIDER_CLI))
+    parser.add_argument(
+        "--profile", choices=("probe", "normal", "deep"),
+        help="Ceilings for a local run: time, tool calls and verifier count. "
+             "`probe` is small enough to run on every save and is never allowed "
+             "to conclude anything — what it finds is a lead. Only the "
+             "{} provider reads this.".format(PROVIDER_CLI))
     parser.add_argument(
         "--changed-only", action="store_true",
         help="Review this branch against the commit it left from. Resolves the "

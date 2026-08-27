@@ -10,6 +10,7 @@ link was tested and the chain was not. The transport is the thing under test.
 import io
 import json
 import os
+import select
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ import pytest
 
 from security_agent import mcp_server
 from security_agent import tools as tools_module
+from security_agent.crash_journal import read_trace
 from security_agent.mcp_server import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
@@ -27,11 +29,39 @@ from security_agent.mcp_server import (
     VERIFIER,
     build_server,
 )
+from security_agent.models import Revision
+from security_agent.session_document import SessionDocumentError, read_session
 from security_agent.tools import ToolResult
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
 READ_VIEWS = 'db.execute("SELECT * FROM users WHERE id = " + user_id)'
+
+RUN_ID = "job-4417"
+DIGEST = "9c1f0a3b5e7d2648"
+REVISION = Revision(base_sha="a" * 40, head_sha="b" * 40)
+
+# A finding that really is in the fixture repository, so the citation check
+# accepts it. Sent as tool arguments rather than built with `make_finding`,
+# because what is under test is the whole path from a client's bytes to a file.
+FINDING = {
+    "title": "SQL injection in user lookup",
+    "severity": "high",
+    "confidence": "high",
+    "category": "injection",
+    "file": "app/views.py",
+    "line": 3,
+    "impact": "broad_data_access",
+    "reachable_without_authentication": "yes",
+    "requires_user_interaction": "no",
+    "evidence": READ_VIEWS,
+    "description": "User input is concatenated into a query.",
+    "exploit_scenario": "An anonymous caller sends id=1 OR 1=1 and reads every row.",
+    "recommendation": "Use a parameterised query.",
+}
+
+SIGN_OFF = ("Read the changed handler and its only caller; the id is "
+            "concatenated straight into the query and bound nowhere on the path.")
 
 
 def line(request_id, method, **params):
@@ -515,3 +545,326 @@ class TestStdoutIsProtocolOnly:
         assert [r["id"] for r in replies] == [1, 2]
         assert replies[0]["result"]["content"][0]["text"] == "done"
         assert "noise on the protocol stream" in capsys.readouterr().err
+
+
+@pytest.fixture
+def journalled(git_repo, tmp_path):
+    """A reviewer that appends its events, as the CLI runner starts one."""
+    return build_server(
+        root=git_repo, tool_set=REVIEWER, max_tool_calls=10,
+        crash_journal_path=tmp_path / "run" / "journal.jsonl",
+        run_id=RUN_ID, revision=REVISION)
+
+
+def traced(server):
+    return read_trace(server.journal.path)
+
+
+class TestTheCrashJournal:
+    """What is left when this process is killed and writes no document.
+
+    The journal is never authoritative and is read only after a kill, which is
+    also why nothing else notices when it is wrong: a missing record, a doubled
+    one, or a start with no finish all produce a file that reads perfectly and
+    describes a run that did not happen that way. Every test here drives real
+    JSON-RPC through the loop and then reads the file the run actually left.
+    """
+
+    def test_the_journal_opens_before_the_first_call(self, journalled):
+        """An empty file cannot say whether the run began or the disk was gone.
+
+        A child killed during start-up leaves exactly that, so the first record
+        is written when the journal is opened rather than when work starts.
+        """
+        trace = traced(journalled)
+
+        assert trace.present
+        assert trace.mode == REVIEWER
+        assert trace.revision == "{}..{}".format("a" * 12, "b" * 12)
+
+    def test_each_call_is_journalled_as_a_start_and_a_result(self, journalled):
+        """A call recorded as one record cannot say it was interrupted.
+
+        The one thing this file exists to answer is where the run stopped, and
+        that is visible only because a call has two records: a start with no
+        finish is the call the kill landed in.
+        """
+        call(journalled, 1, "read_file", path="app/views.py")
+        call(journalled, 2, "git_log")
+
+        trace = traced(journalled)
+        assert [c.name for c in trace.calls] == ["read_file", "git_log"]
+        assert all(c.finished for c in trace.calls)
+        assert trace.unmatched_results == ()
+        assert trace.unreadable == ()
+        assert trace.missing_sequence_numbers == ()
+
+    def test_a_failed_call_is_journalled_as_failed(self, journalled):
+        """A tool that refused and a tool that answered must not read alike.
+
+        Both come back as a result; only `is_error` separates "I read the file"
+        from "there is no such file", and a trace that lost it would show a run
+        making progress it never made.
+        """
+        call(journalled, 1, "read_file", path="does/not/exist.py")
+
+        (traced_call,) = traced(journalled).calls
+        assert traced_call.finished
+        assert traced_call.is_error
+
+    def test_a_call_the_server_refused_is_not_journalled_as_a_call_that_ran(
+            self, git_repo, tmp_path):
+        """A start with no finish means "the kill landed here", nothing else.
+
+        A budget refusal and an unoffered name never reach a tool. Journalling
+        them as started would leave records the reader renders as "started,
+        outcome unknown" — pointing a person diagnosing a kill at two calls that
+        never began.
+        """
+        server = build_server(
+            root=git_repo, tool_set=VERIFIER, max_tool_calls=1,
+            crash_journal_path=tmp_path / "journal.jsonl", run_id=RUN_ID)
+
+        call(server, 1, "report_finding", **FINDING)  # not in the verifier set
+        call(server, 2, "git_log")                    # budget already spent
+
+        assert traced(server).calls == ()
+
+    def test_an_accepted_finding_reaches_the_journal(self, journalled):
+        """Without it a killed run cannot say what it had already established.
+
+        Read off the session rather than off the tool's answer: the answer is
+        prose written for the model, and a journal that decided from its wording
+        would hold a second definition of what the citation check accepted.
+        """
+        call(journalled, 1, "report_finding", **FINDING)
+
+        (claimed,) = traced(journalled).findings_claimed
+        assert claimed.title == FINDING["title"]
+        assert claimed.file == "app/views.py"
+        assert claimed.line == 3
+        assert claimed.fingerprint == journalled.session.candidates[0].fingerprint
+
+    def test_a_dropped_claim_reaches_the_journal(self, journalled):
+        """A run that discards half of what the reviewer said cannot be diagnosed.
+
+        The reasons are the signal for whether the prompt or the tools need
+        work, and after a kill this file is the only place they survive.
+        """
+        bogus = dict(FINDING, evidence="nothing like this is in the file")
+        call(journalled, 1, "report_finding", **bogus)
+        call(journalled, 2, "report_finding", **bogus)  # second failure drops it
+
+        (rejected,) = traced(journalled).claims_rejected
+        assert rejected.reason == "evidence-not-found"
+        assert traced(journalled).findings_claimed == ()
+
+    def test_the_sign_off_reaches_the_journal(self, journalled):
+        """A run killed after signing off got further than one killed before it."""
+        call(journalled, 1, "finish_review", summary=SIGN_OFF,
+             unresolved=["Could not tell whether the proxy strips the header."])
+
+        trace = traced(journalled)
+        assert trace.review_finished
+        assert trace.review_summary == SIGN_OFF
+        assert trace.unresolved == (
+            "Could not tell whether the proxy strips the header.",)
+
+    def test_a_repeated_sign_off_is_journalled_once(self, journalled):
+        """Two records for one sign-off would be a false account of the run.
+
+        `finish_review` keeps the first sign-off and ignores a second call, so a
+        journal written from `session.finished` being true — rather than from it
+        having just become true — records a sign-off that never happened.
+        """
+        call(journalled, 1, "finish_review", summary=SIGN_OFF)
+        call(journalled, 2, "finish_review", summary=SIGN_OFF + " Again.")
+
+        records = [json.loads(text) for text
+                   in journalled.journal.path.read_text().splitlines()]
+        assert [r["kind"] for r in records].count("review_finished") == 1
+
+    def test_a_verdict_reaches_a_verifier_journal(self, git_repo, tmp_path):
+        """A verifier has no findings and no sign-off; its one event is the vote."""
+        server = build_server(
+            root=git_repo, tool_set=VERIFIER, max_tool_calls=10,
+            crash_journal_path=tmp_path / "journal.jsonl", run_id=RUN_ID)
+
+        call(server, 1, "submit_verdict", verdict="refuted",
+             reasoning="The caller binds the id as a parameter first.")
+
+        trace = traced(server)
+        assert trace.verdict == "refuted"
+        assert "binds the id" in trace.verdict_reasoning
+
+    def test_a_journal_is_only_written_when_one_was_asked_for(self, reviewer,
+                                                              tmp_path):
+        """The API runner shares these tools and has no child to survive."""
+        call(reviewer, 1, "git_log")
+
+        assert reviewer.journal is None
+        assert list(tmp_path.glob("*.jsonl")) == []
+
+
+@pytest.fixture
+def finished_run(git_repo, tmp_path, monkeypatch, capfd):
+    """One review driven through `main()` until its stdin closes.
+
+    Through `main()` rather than `serve()` because the document is written when
+    the client disconnects, and that is `main()`'s decision — as is the exit
+    code, which is the other half of what the parent reads. `capfd` because
+    `main` claims file descriptor 1 and refuses to start without a real one.
+    """
+    document = tmp_path / "out" / "session.json"
+    monkeypatch.setattr("sys.stdin", io.StringIO("".join(text + "\n" for text in (
+        line(1, "tools/call", name="report_finding", arguments=FINDING),
+        line(2, "tools/call", name="read_file", arguments={"path": "app/views.py"}),
+        line(3, "tools/call", name="finish_review", arguments={"summary": SIGN_OFF}),
+    ))))
+
+    code = mcp_server.main([
+        "--repo", str(git_repo), "--max-tool-calls", "10",
+        "--session-document", str(document),
+        "--crash-journal", str(tmp_path / "out" / "journal.jsonl"),
+        "--run-id", RUN_ID,
+        "--base-sha", REVISION.base_sha, "--head-sha", REVISION.head_sha,
+        "--config-digest", DIGEST])
+    capfd.readouterr()
+    return code, document
+
+
+class TestTheSessionDocument:
+    """The review itself, crossing the process boundary as a file.
+
+    Everything the gate reads accumulates in this process and dies with it. A
+    document that does not arrive, or arrives describing another run, does not
+    look like a failure — it looks like a review with fewer findings in it,
+    which is indistinguishable from a clean one.
+    """
+
+    def test_the_document_round_trips_through_the_reader(self, finished_run):
+        """The whole point: what this process learned is what the parent gets.
+
+        Read back through `read_session`, which recomputes every fingerprint and
+        re-derives every disposition, so a document that survived the trip while
+        meaning something else fails here rather than at the gate.
+        """
+        code, document = finished_run
+        session = read_session(document, run_id=RUN_ID, revision=REVISION,
+                               config_digest=DIGEST)
+
+        assert code == 0
+        assert [c.finding.title for c in session.candidates] == [FINDING["title"]]
+        assert session.candidates[0].evidence_located_line == 3
+        assert session.finished
+        assert session.final_summary == SIGN_OFF
+        # The exposure journal, which is what answers "were these bytes ever put
+        # in front of the model" and exists nowhere but in this session.
+        assert ("app/views.py", "read_file") in session.exposures
+
+    def test_the_document_is_bound_to_the_run_that_wrote_it(self, finished_run):
+        """A document from another run parses and answers a question nobody asked.
+
+        The binding is only as good as the arguments carrying it: a child that
+        dropped the run id or the resolved SHAs would write a document that
+        matches every run, including yesterday's.
+        """
+        _, document = finished_run
+
+        with pytest.raises(SessionDocumentError):
+            read_session(document, run_id="some-other-job", revision=REVISION,
+                         config_digest=DIGEST)
+        with pytest.raises(SessionDocumentError):
+            read_session(document, run_id=RUN_ID,
+                         revision=Revision(base_sha="c" * 40, head_sha="d" * 40),
+                         config_digest=DIGEST)
+        with pytest.raises(SessionDocumentError):
+            read_session(document, run_id=RUN_ID, revision=REVISION,
+                         config_digest="0000000000000000")
+
+    def test_a_document_that_cannot_be_written_exits_two(
+            self, git_repo, tmp_path, monkeypatch, capfd, caplog):
+        """Exit 0 with no document would say "checked" with nothing checked.
+
+        This is the opposite of what an unwritable spend report does, and on
+        purpose: that file is a number, this file is the review. The parent
+        finding no document treats the run as killed and exits 2 regardless, so
+        exiting 0 here would make the two processes disagree about the same run.
+        """
+        blocker = tmp_path / "blocker"
+        blocker.write_text("not a directory")
+        monkeypatch.setattr("sys.stdin", io.StringIO(
+            line(1, "tools/call", name="git_log", arguments={}) + "\n"))
+
+        code = mcp_server.main([
+            "--repo", str(git_repo), "--max-tool-calls", "10",
+            "--session-document", str(blocker / "session.json"),
+            "--run-id", RUN_ID])
+        capfd.readouterr()
+
+        assert code == 2
+        assert "could not be handed over" in caplog.text
+
+    def test_a_journal_that_already_exists_stops_the_start(
+            self, git_repo, tmp_path, caplog):
+        """Carrying on without the journal that was asked for is the silent option.
+
+        The stale file does not go away because this run decided to ignore it.
+        It stays, this run appends nothing, and a kill afterwards leaves the
+        parent reading another run's progress as this one's — a confident wrong
+        account of a death, which is worse than not starting.
+        """
+        journal = tmp_path / "journal.jsonl"
+        journal.write_text('{"seq": 1, "run": "an-older-job", "kind": "run_started"}\n')
+        document = tmp_path / "session.json"
+
+        code = mcp_server.main([
+            "--repo", str(git_repo), "--crash-journal", str(journal),
+            "--session-document", str(document), "--run-id", RUN_ID])
+
+        assert code == 2
+        assert "already exists" in caplog.text
+        assert not document.exists()
+        assert "an-older-job" in journal.read_text()
+
+    def test_a_killed_child_leaves_a_journal_and_no_document(self, git_repo,
+                                                             tmp_path):
+        """The case the two files exist to tell apart, with a real kill.
+
+        A child killed mid-review never reaches the document write, so the
+        parent finds nothing to read and must call the run incomplete — while
+        the journal, flushed record by record, still says how far it got. A
+        journal that arrived empty, or a half-written document, would each let a
+        killed run be read as a finished one.
+        """
+        document = tmp_path / "out" / "session.json"
+        journal = tmp_path / "out" / "journal.jsonl"
+        child = subprocess.Popen(
+            [sys.executable, "-m", "security_agent.mcp_server",
+             "--repo", str(git_repo), "--max-tool-calls", "10",
+             "--session-document", str(document), "--crash-journal", str(journal),
+             "--run-id", RUN_ID],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env={**os.environ, "PYTHONPATH": str(SRC)})
+        try:
+            child.stdin.write(line(1, "tools/call", name="read_file",
+                                   arguments={"path": "app/views.py"}) + "\n")
+            child.stdin.flush()
+            # Wait for the reply, so the kill lands after a call was recorded
+            # rather than in a race with start-up.
+            assert select.select([child.stdout], [], [], 30)[0], "no reply came back"
+            assert json.loads(child.stdout.readline())["id"] == 1
+        finally:
+            child.kill()
+            child.wait(timeout=30)
+
+        assert not document.exists()
+        with pytest.raises(SessionDocumentError):
+            read_session(document, run_id=RUN_ID, revision=REVISION,
+                         config_digest=DIGEST)
+
+        trace = read_trace(journal)
+        assert trace.present
+        assert [c.name for c in trace.calls] == ["read_file"]
+        assert trace.calls[0].finished
+        assert not trace.review_finished

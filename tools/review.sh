@@ -7,6 +7,8 @@
 # before any of that.
 #
 #     tools/review.sh                      # current branch against main
+#     tools/review.sh --profile probe      # small enough to run on every save
+#     tools/review.sh --provider anthropic-api   # the paid path, by name
 #     tools/review.sh --base v1.2.0
 #     tools/review.sh --path src/security_agent   # only what changed there
 #     tools/review.sh --noticed "the region param goes into a query unescaped"
@@ -29,14 +31,23 @@ BASE=""
 NOTICED=""
 OUT=".security-scan"
 PATHS=()
+# The point of this script is a review you can run ten times a day, so it uses
+# the client you already pay for. The paid path has to be asked for by name.
+PROVIDER="claude-cli"
+PROFILE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --base)    BASE="$2"; shift 2 ;;
         --noticed) NOTICED="$2"; shift 2 ;;
         --output)  OUT="$2"; shift 2 ;;
-        --path)    PATHS+=(--path "$2"); shift 2 ;;
-        -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --path)     PATHS+=(--path "$2"); shift 2 ;;
+        --provider) PROVIDER="$2"; shift 2 ;;
+        --profile)  PROFILE="$2"; shift 2 ;;
+        # The whole header block, not a hardcoded line count: the range was
+        # `2,20p` and three lines of new usage silently fell off the end of
+        # `--help` when they were added.
+        -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -60,9 +71,18 @@ if [ "$BASE" = "$head" ]; then
     exit 2
 fi
 
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    echo "ANTHROPIC_API_KEY is not set. A review costs roughly \$0.60-3.65 and" >&2
-    echo "the spread is 4-6x, so set a spending limit on the account too." >&2
+if [ "$PROVIDER" = "anthropic-api" ]; then
+    if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+        echo "ANTHROPIC_API_KEY is not set. A review on this provider costs" >&2
+        echo "roughly \$0.60-3.65 and the spread is 4-6x, so set a spending" >&2
+        echo "limit on the account too." >&2
+        exit 2
+    fi
+elif ! command -v claude >/dev/null 2>&1; then
+    # Refused rather than switched. Which account is charged is not a decision
+    # to make on somebody's behalf.
+    echo "--provider claude-cli needs the \`claude\` command on PATH." >&2
+    echo "This will not fall back to the paid API." >&2
     exit 2
 fi
 
@@ -71,6 +91,7 @@ echo "reviewing ${BASE:0:12}..${short}  ($(git rev-list --count "$BASE..HEAD") c
 set +e
 PYTHONPATH=src python3 -m security_agent \
     --repo "$root" --mode diff --base "$BASE" --head "$head" \
+    --provider "$PROVIDER" ${PROFILE:+--profile "$PROFILE"} \
     ${PATHS[@]+"${PATHS[@]}"} \
     --no-comment --output-dir "$OUT"
 code=$?

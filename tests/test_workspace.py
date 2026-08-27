@@ -142,6 +142,18 @@ class TestExcludes:
         assert not ws.is_excluded("app/views.py")
 
 
+
+def _injected(env):
+    """The `GIT_CONFIG_*` settings, as a mapping.
+
+    Every caller wants "is this setting pinned", and reading it off numbered
+    keys by hand is how a test comes to assert the count instead.
+    """
+    count = int(env.get("GIT_CONFIG_COUNT", "0"))
+    return {env["GIT_CONFIG_KEY_{}".format(i)]: env["GIT_CONFIG_VALUE_{}".format(i)]
+            for i in range(count)}
+
+
 class TestGitEnvironment:
     """The environment git subprocesses run in.
 
@@ -163,12 +175,16 @@ class TestGitEnvironment:
         assert env["HOME"] == "/nonexistent"
 
     def test_ownership_check_is_waived_without_a_config_file(self):
+        """Asserted as a setting that is present, not as a count.
+
+        This read `GIT_CONFIG_COUNT == "1"` and broke the day a second setting
+        was added for an unrelated reason. A test that fails when something is
+        *added* teaches whoever adds it to edit the assertion, which is how the
+        thing it was guarding stops being guarded.
+        """
         from security_agent.workspace import _git_env
 
-        env = _git_env()
-        assert env["GIT_CONFIG_COUNT"] == "1"
-        assert env["GIT_CONFIG_KEY_0"] == "safe.directory"
-        assert env["GIT_CONFIG_VALUE_0"] == "*"
+        assert _injected(_git_env())["safe.directory"] == "*"
 
     def test_git_still_works_through_this_environment(self, git_repo):
         # The settings above are only correct if git actually accepts them.

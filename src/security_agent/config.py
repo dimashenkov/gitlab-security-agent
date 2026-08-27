@@ -35,6 +35,11 @@ MODEL_PRICING = {
 }
 
 
+PROVIDER_API = "anthropic-api"
+PROVIDER_CLI = "claude-cli"
+PROVIDERS: Sequence[str] = (PROVIDER_API, PROVIDER_CLI)
+
+
 class ConfigError(Exception):
     """Configuration is unusable; exit before calling the API."""
 
@@ -333,6 +338,22 @@ class Config:
     max_turns: int = 60
     max_runtime_seconds: int = 2_700
     max_output_tokens_total: int = 400_000
+
+    # --- who runs the review ---
+    #
+    # `anthropic-api` is the shipped path and what CI uses. `claude-cli` shells
+    # out to the developer's own `claude`, on the subscription they already pay
+    # for, so a local review costs nothing.
+    #
+    # There is deliberately no `auto`. A mode whose whole job is to decide which
+    # of two billing arrangements to charge is a decision about money taken on
+    # somebody's behalf, and `--provider` is two words. If the chosen runner
+    # cannot run, the review fails — it never quietly becomes the other one.
+    provider: str = "anthropic-api"
+    # Which set of ceilings a local run uses. Only the `claude-cli` path reads
+    # it: the API path has had its own limits since before profiles existed, and
+    # giving it a second set would mean two answers to "when does this stop".
+    profile: str = "normal"
 
     # --- scan scope ---
     mode: str = "auto"  # auto | diff | repo

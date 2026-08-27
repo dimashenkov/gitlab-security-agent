@@ -249,10 +249,27 @@ def probe_conformance(args) -> Result:
 
 
 def probe_no_fallback(args) -> Result:
-    text = _source("cli.py") + _source("config.py") + _source("runners.py")
-    if "claude-cli" not in text:
+    """Asked of the list itself, not of the source text.
+
+    The first version searched three files for the string `"auto"` and reported
+    the rule broken because `mode` has been `auto | diff | repo` since long
+    before providers existed. Same root cause as the conformance probe's false
+    pass, in the other direction: a check satisfied by a string rather than by
+    the thing. A tracker that invents a defect teaches its reader to skip the
+    line, which costs exactly as much as one that hides a defect.
+    """
+    import importlib
+    import sys
+
+    sys.path.insert(0, str(ROOT / "src"))
+    try:
+        providers = importlib.import_module("security_agent.config").PROVIDERS
+    except (ImportError, AttributeError):
         return Result(TODO, "no --provider selection")
-    if "auto" in re.findall(r'"(auto)"', text):
+
+    if "claude-cli" not in providers:
+        return Result(TODO, "no --provider selection")
+    if "auto" in providers:
         return Result(BROKEN, "an `auto` provider exists — money decided for "
                               "the operator")
     # Both needles, for the reason in `probe_conformance`: "fallback" alone

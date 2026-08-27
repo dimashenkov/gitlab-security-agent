@@ -20,6 +20,17 @@ The failure mode this file is written against is the quiet one. On this
 transport a crash, a stray `print`, and a tool that found nothing all reach the
 client as the same silence or the same unusable line — so every path here ends
 in an answer, and the answer says which of those happened.
+
+The same boundary is why this process writes two files. The `Session` that holds
+the findings, the rejections, the coverage and the sign-off accumulates *here*,
+in a child the parent cannot reach into, and dies with the process. So when the
+client disconnects — the normal end — the whole session is written once,
+atomically, as the authoritative document the parent reads. And while the run
+goes on, each domain event is appended to a crash journal, which is worth
+nothing when the document exists and is the only thing left when the process was
+killed before it could write one. The two are not alternatives: one says what
+was found, the other says how far it got, and only the first ever gates
+anything.
 """
 
 from __future__ import annotations
@@ -36,7 +47,10 @@ from typing import Any, Dict, List, Optional, Sequence, TextIO
 from . import __version__
 from .budget import Allowance
 from .config import Config, ConfigError
+from .crash_journal import CrashJournal, CrashJournalError
 from .gate import EXIT_ERROR, EXIT_OK
+from .models import Revision, ToolCallRecord
+from .session_document import SessionDocumentError, write_session
 from .tools import (
     Session,
     ToolResult,
@@ -131,6 +145,7 @@ class MCPServer:
         allowance: Allowance,
         session: Optional[Session] = None,
         server_name: str = SERVER_NAME,
+        journal: Optional[CrashJournal] = None,
     ) -> None:
         self.ws = workspace
         self.tools = list(tools)
@@ -149,6 +164,13 @@ class MCPServer:
         self.allowance = allowance
         self.session = Session() if session is None else session
         self.server_name = server_name
+        # Optional, never authoritative, and deliberately held *here* rather
+        # than inside the tool handlers. Journalling from `tools.py` would put a
+        # file write in every handler and tie the tool layer — which the API
+        # runner shares, and which has no child process to survive — to a file
+        # only this transport needs. This layer already sees every call and
+        # every change the call made, which is all the journal records.
+        self.journal = journal
         self.initialized = False
         # Set when a call was actually turned away for budget — not when the
         # last permitted call was spent. A session that used its ceiling exactly
@@ -329,6 +351,21 @@ class MCPServer:
                 "no tool named {!r} is offered by this server; it offers "
                 "{}".format(name, ", ".join(sorted(self.offered))))
 
+        # Read before the call so the journal can be told what this one call
+        # added. See `_journal_new_state` for why it is a comparison and not a
+        # reading of the result text.
+        before = self._session_state()
+
+        call_id = ""
+        if self.journal is not None:
+            # Here, and not above the two checks. Neither a budget refusal nor
+            # an unoffered name runs a tool, and a `tool_started` with no
+            # `tool_finished` after it is rendered as "started, outcome
+            # unknown" — true of a call the kill interrupted, false of a call
+            # that was turned away before it began.
+            call_id = self.journal.tool_started(
+                name, arguments, turn=self.session.turn)
+
         try:
             result = dispatch(self.ws, self.session, name, arguments)
         except Exception as exc:
@@ -342,9 +379,86 @@ class MCPServer:
                     name, type(exc).__name__, exc),
                 "error: {}".format(type(exc).__name__), is_error=True)
 
+        # The audit trail, recorded where the API path records it — right after
+        # the dispatch, with the name, the arguments and the summary all in
+        # hand. Without this the artifact's account of what the review actually
+        # did was blank on this runner: the report's coverage section, the
+        # journal entry a person judges, and the conformance comparison against
+        # the other runner all read zero tool calls for a review that made
+        # dozens. The crash journal is not a substitute — it exists for a run
+        # that died, and it is deliberately not gateable state.
+        self.session.tool_calls.append(ToolCallRecord(
+            turn=self.session.turn,
+            name=name,
+            arguments=arguments if isinstance(arguments, dict) else {},
+            summary=result.summary,
+            is_error=result.is_error,
+        ))
+
+        if self.journal is not None:
+            self.journal.tool_finished(
+                call_id, summary=result.summary, is_error=result.is_error)
+            self._journal_new_state(before)
+
         log.info("%-20s %s%s", name, result.summary,
                  " [rejected]" if result.is_error else "")
         return self._result(request_id, self._tool_result(result))
+
+    # ------------------------------------------------------------- journalling
+
+    def _session_state(self) -> Dict[str, Any]:
+        """How much of the session already existed before a call ran."""
+        return {
+            "candidates": len(self.session.candidates),
+            "rejected": len(self.session.rejected),
+            "finished": self.session.finished,
+            "verdict": self.session.verdict is not None,
+        }
+
+    def _journal_new_state(self, before: Dict[str, Any]) -> None:
+        """Append whatever this call added, found by comparing the session to itself.
+
+        Read off `Session` rather than off the tool's result. The result is
+        prose written for the model to act on, and deciding from its wording
+        whether a finding was accepted would put a second definition of
+        "accepted" in this codebase, in the file least likely to be updated when
+        the first one changes. What the citation check decided is in the
+        session, exactly once.
+
+        The two flags are the same idea for the two fields that are set once and
+        never again. `finish_review` called twice keeps the first sign-off and
+        leaves `finished` true through both calls, so journalling on the value
+        rather than on the change would write a second `review_finished` and
+        make one sign-off read as two — in the file whose only job is to say
+        truthfully how far a killed run got.
+        """
+        journal = self.journal
+        if journal is None:
+            return
+        session = self.session
+        for candidate in session.candidates[before["candidates"]:]:
+            journal.finding_accepted(
+                title=candidate.finding.title,
+                file=candidate.finding.file,
+                # The located line, not the claimed one: the citation check
+                # corrects the number, and the journal should name the place a
+                # person can open.
+                line=candidate.line,
+                severity=candidate.severity,
+                confidence=candidate.confidence,
+                fingerprint=candidate.fingerprint,
+            )
+        for claim in session.rejected[before["rejected"]:]:
+            journal.claim_rejected(
+                title=claim.title, file=claim.file, reason=claim.reason,
+                detail=claim.detail)
+        if session.finished and not before["finished"]:
+            journal.review_finished(
+                summary=session.final_summary, unresolved=session.unresolved)
+        if session.verdict is not None and not before["verdict"]:
+            journal.verdict_submitted(
+                verdict=str(session.verdict.get("verdict") or ""),
+                reasoning=str(session.verdict.get("reasoning") or ""))
 
     # ---------------------------------------------------------------- shapes
 
@@ -383,8 +497,16 @@ def build_server(
     excludes: Sequence[str] = (),
     prompt_dir: Optional[Path] = None,
     scope: Sequence[str] = (),
+    crash_journal_path: Optional[Path] = None,
+    run_id: str = "",
+    revision: Optional[Revision] = None,
 ) -> MCPServer:
-    """Assemble a session from the same parts the API path uses."""
+    """Assemble a session from the same parts the API path uses.
+
+    `crash_journal_path` is optional and, when given, is not best-effort: see
+    `main` for why a journal that was asked for and could not be opened stops
+    the server from starting.
+    """
     workspace = Workspace(
         root=root, excludes=excludes, diff_base=diff_base, diff_head=diff_head,
         scope=scope)
@@ -402,7 +524,30 @@ def build_server(
             "session that may make no tool calls cannot review anything"
             .format(max_tool_calls))
     allowance = Allowance(tool_set, max_tool_calls)
-    return MCPServer(workspace, tools, allowance)
+
+    journal = None
+    if crash_journal_path is not None:
+        journal = CrashJournal(Path(crash_journal_path), run_id=run_id)
+        # Written before anything else can be. A child killed during start-up
+        # would otherwise leave an empty file, and an empty file cannot say
+        # whether the run never began or the disk was never reachable.
+        journal.run_started(mode=tool_set, revision=_revision_line(revision))
+    return MCPServer(workspace, tools, allowance, journal=journal)
+
+
+def _revision_line(revision: Optional[Revision]) -> str:
+    """Which commits were being read, for a person reading a killed run's trace.
+
+    Resolved SHAs when there are any, the symbolic names when there are not: a
+    trace saying `main..HEAD` names different code every day, which is the same
+    problem the document's binding exists to solve — but here it is a diagnostic
+    string, so an approximate answer beats no answer.
+    """
+    if revision is None:
+        return ""
+    base = revision.base_sha or revision.base
+    head = revision.head_sha or revision.head
+    return "{}..{}".format(base[:12], head[:12])
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -415,6 +560,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         level=logging.INFO, stream=sys.stderr,
         format="%(levelname)s %(name)s: %(message)s")
 
+    # What the document is an answer *about*. The resolved SHAs are separate
+    # arguments from `--base`/`--head` because those are what the operator
+    # configured — `main`, `HEAD`, a branch name — and none of them identifies a
+    # commit a week later, which is exactly what a document read by another
+    # process has to be bound to.
+    revision = Revision(
+        base=args.base or "", head=args.head or "HEAD",
+        base_sha=args.base_sha or "", head_sha=args.head_sha or "")
+
     try:
         server = build_server(
             root=Path(args.repo or ".").resolve(),
@@ -423,12 +577,33 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             tool_set=args.tools,
             max_tool_calls=args.max_tool_calls,
             scope=tuple(args.path or ()),
+            crash_journal_path=(
+                Path(args.crash_journal) if args.crash_journal else None),
+            run_id=args.run_id or "",
+            revision=revision,
         )
     except (WorkspaceError, ConfigError, ValueError) as exc:
         # A server that never came up must not exit zero. On this transport the
         # client sees a closed pipe either way, and the exit code is the only
         # place the difference between "no findings" and "never started" is
         # written down.
+        log.error("%s", exc)
+        return EXIT_ERROR
+    except CrashJournalError as exc:
+        # Fatal, and the only defensible answer. `CrashJournal` raises this when
+        # the file is already there, which means either another child is writing
+        # to that path right now or a previous run's journal was left behind —
+        # and the stale file does not go away because we decided to carry on
+        # without a journal. It stays, this run appends nothing to it, and if
+        # this run is then killed the parent reads yesterday's progress as
+        # today's. A confident wrong account of a death is worse than no
+        # account, and worse still than not starting.
+        #
+        # Note this is the opposite trade from the one `CrashJournal` makes
+        # *during* a run, where a failed write is swallowed. That is right too:
+        # once the review is happening, losing it to keep its diagnostics honest
+        # costs more than the diagnostics are worth. Here nothing has happened
+        # yet, nothing has been spent, and the parent can fix the path.
         log.error("%s", exc)
         return EXIT_ERROR
 
@@ -448,6 +623,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.spend_report:
         _write_spend_report(Path(args.spend_report), server)
+
+    # `serve()` returned, so stdin closed: the client disconnected, which is how
+    # a review that ran to the end ends. Everything this process learned is in
+    # `server.session` and nowhere else.
+    if args.session_document and not _write_session_document(
+            Path(args.session_document), server.session,
+            run_id=args.run_id or "", revision=revision,
+            config_digest=args.config_digest or ""):
+        return EXIT_ERROR
 
     if server.refused_for_budget:
         # The client got its answers and then hit the ceiling. Exiting zero
@@ -538,6 +722,49 @@ def _write_spend_report(path: Path, server: "MCPServer") -> None:
         log.error("could not write the spend report to %s: %s", path, exc)
 
 
+def _write_session_document(
+    path: Path,
+    session: Session,
+    *,
+    run_id: str,
+    revision: Revision,
+    config_digest: str,
+) -> bool:
+    """The review itself, out of this process and into the parent's hands.
+
+    Returns whether it was written; `main` turns a `False` into exit 2. That is
+    the opposite of what `_write_spend_report` does with the same kind of
+    failure, and the difference is what is being lost. The spend report is
+    accounting — without it the parent is missing a number, and a review that
+    happened is still a review. This document *is* the review: the candidates,
+    the rejections, what was examined, the sign-off. None of it exists anywhere
+    else once this process ends.
+
+    So the argument that a completed review must not be failed by a bad disk
+    does not reach this case, because without the document there is no completed
+    review left to protect — only a process that once had one. Exiting 0 here
+    would say "checked" while handing over nothing that was checked, and the
+    parent, finding no document, treats the run as killed and exits 2 anyway.
+    The choice is between the two processes agreeing and this one's exit code
+    being a lie; and of the two, a lie that says "clean" is the failure this
+    whole project is built to prevent.
+
+    `write_session` either renames a complete document into place or leaves the
+    path alone, so a `False` here also means no half-document was left behind
+    for the parent to find.
+    """
+    try:
+        write_session(path, session, run_id=run_id, revision=revision,
+                      config_digest=config_digest)
+    except SessionDocumentError as exc:
+        log.error(
+            "the review completed and could not be handed over: %s. This run "
+            "reports as incomplete, because nothing that was found can be read "
+            "by anyone now.", exc)
+        return False
+    return True
+
+
 def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m security_agent.mcp_server",
@@ -565,6 +792,38 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
              "disconnects. The parent has no other way to learn it: the child "
              "holds the allowance, and tool-call accounting has to mean the "
              "same thing on both runners or the two cannot be compared.")
+    parser.add_argument(
+        "--session-document", metavar="PATH",
+        help="Where to write the whole session when the client disconnects: "
+             "the findings, the rejected claims, the coverage and the sign-off. "
+             "This is the review; it accumulates in this process and reaches "
+             "the parent no other way. A path that cannot be written is "
+             "reported as a run that did not complete.")
+    parser.add_argument(
+        "--crash-journal", metavar="PATH",
+        help="Where to append one line per event as the run goes. Read only "
+             "when this process was killed and wrote no session document; it "
+             "says how far the run got, never what it found. The path must not "
+             "already exist.")
+    parser.add_argument(
+        "--run-id", metavar="ID", default="",
+        help="The run this session belongs to. Stamped into the session "
+             "document and every journal record, so a document left over from "
+             "an earlier run is refused rather than read as this one's.")
+    parser.add_argument(
+        "--base-sha", metavar="SHA", default="",
+        help="The resolved base commit, for binding the session document. "
+             "Distinct from --base, which is what the operator configured: "
+             "`main` names different code on different days and cannot say "
+             "which code a document describes.")
+    parser.add_argument(
+        "--head-sha", metavar="SHA", default="",
+        help="The resolved head commit, for binding the session document.")
+    parser.add_argument(
+        "--config-digest", metavar="DIGEST", default="",
+        help="Digest of the configuration this run was launched under. Bound "
+             "into the session document: the same code under a different "
+             "policy is a different review, and both documents parse.")
     return parser.parse_args(argv)
 
 

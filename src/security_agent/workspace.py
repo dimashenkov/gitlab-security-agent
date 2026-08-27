@@ -224,6 +224,30 @@ class Workspace:
                 out.append((path, _STATUS_NAMES.get(code, code)))
         return out
 
+    def change_touches(self, relative: str) -> bool:
+        """Does the change under review edit this exact file?
+
+        Asks git, and applies neither the excludes nor the scope. Both of those
+        say what this *review* is answerable for; this question is about what
+        the *change* did, and the one caller is the guard that stops a merge
+        request from suppressing its own findings. A file hidden from the review
+        by an exclude pattern is still a file the change edited, and letting an
+        exclusion decide whether that guard fires would hand the exclusion the
+        power to switch the guard off.
+
+        Deleted paths count. Removing the file that carried a suppression is an
+        edit to it, and the guard's question is "did this change touch the rules
+        it is judged by".
+        """
+        if not self.diff_base:
+            return False
+        wanted = self.repo_path(relative)
+        raw = self.git(
+            "diff", "--no-color", "--no-ext-diff", "-M", "--name-status", "-z",
+            self.diff_base, self.diff_head, check=False,
+        )
+        return any(path == wanted for path, _ in _parse_name_status(raw))
+
     def all_changed_files(self) -> List[Tuple[str, str]]:
         """Every changed file, scope ignored. What the report needs to be honest.
 
@@ -568,9 +592,23 @@ def _git_env() -> dict:
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
         "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_COUNT": "2",
         "GIT_CONFIG_KEY_0": "safe.directory",
         "GIT_CONFIG_VALUE_0": "*",
+        # Git quotes any path holding a byte over 0x7f, and this defaults to on.
+        # `src/café.py` comes out of a plain diff as `"b/src/caf\303\251.py"` —
+        # a string no caller can look up. The changed-line map is built from a
+        # plain diff, so an accented character in a file name put every finding
+        # in that file under a key nothing matched: attribution came back empty,
+        # `in_changed_lines` was false, and the gate skips a finding it believes
+        # was already there. One character in a path, and a confirmed critical
+        # stopped blocking.
+        #
+        # Set here rather than at the one call site because the same quoting
+        # would silently mis-key anything else parsed from a textual diff, and
+        # the next such parser will not remember to ask.
+        "GIT_CONFIG_KEY_1": "core.quotePath",
+        "GIT_CONFIG_VALUE_1": "false",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_OPTIONAL_LOCKS": "0",
         "LC_ALL": "C.UTF-8",
