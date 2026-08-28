@@ -244,13 +244,16 @@ def probe_conformance(args) -> Result:
     if len(covered) < len(CONFORMANCE_SCENARIOS):
         absent = [CONFORMANCE_SCENARIOS[k] for k in CONFORMANCE_SCENARIOS
                   if k not in covered]
-        return Result(PARTIAL, "{}/13 — missing: {}".format(
-            len(covered), "; ".join(absent[:3]) + ("…" if len(absent) > 3 else "")))
+        return Result(PARTIAL, "{}/{} — missing: {}".format(
+            len(covered), len(CONFORMANCE_SCENARIOS),
+            "; ".join(absent[:3]) + ("…" if len(absent) > 3 else "")))
     verdict = _pytest(files, args.tests)
     if verdict is None:
-        return Result(PARTIAL, "13/13 named, not run — pass --tests")
+        return Result(PARTIAL, "{n}/{n} named, not run — pass --tests".format(
+            n=len(CONFORMANCE_SCENARIOS)))
     passed, summary = verdict
-    return Result(DONE if passed else BROKEN, "13/13 named — {}".format(summary))
+    return Result(DONE if passed else BROKEN, "{n}/{n} named — {s}".format(
+        n=len(CONFORMANCE_SCENARIOS), s=summary))
 
 
 def probe_no_fallback(args) -> Result:
@@ -516,10 +519,10 @@ CHECKS = [
     Check("3b", "submit_verdict", "tool, prompt, loop", probe_submit_verdict),
     Check("3", "ClaudeCodeRunner", "matches on a fixed diff", probe_runner),
     Check("4", "tool confinement", "2/2", probe_confinement),
-    Check("5", "conformance", "13/13", probe_conformance),
+    Check("5", "conformance", "every named scenario", probe_conformance),
     Check("6", "no silent fallback", "exit 2, 0 API calls", probe_no_fallback),
     Check("7", "scope control", "2 flags, tested", probe_scope),
-    Check("8", "advisory pairs", "24 pairs, decision preserved", probe_use),
+    Check("8", "advisory pairs", "every measurable pair, decision preserved", probe_use),
     Check("9", "fixes", "judged = fixed + recorded", probe_fixes),
     Check("—", "whole suite", "green", probe_suite),
     Check("—", "local billing", "established, not assumed", probe_spend),

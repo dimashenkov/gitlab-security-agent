@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -250,6 +251,39 @@ def test_the_heading_does_not_promise_reviews_of_our_own_code():
     assert "own repository" not in heading[0]
 
 
+def adjudicate(root: Path, case_id: str, why: str = "cannot measure") -> None:
+    (root / "corpus-real" / "adjudications.yml").write_text(
+        "adjudications:\n"
+        "  - case_id: {}\n    case_is_malformed: true\n"
+        "    why_malformed: {}\n".format(case_id, why), encoding="utf-8")
+
+
+def test_a_case_ruled_unable_to_measure_leaves_both_sides_of_the_fraction(root):
+    """It passed, and then somebody read its safe member and found the weakness
+    still in it. Two cases went that way in one afternoon.
+
+    The result is not wrong; the question it answered was. So the case leaves
+    the numerator and the denominator together, rather than staying as a pass
+    against a total nobody can reach — the plan said 24 of 24 for a day after
+    the total became 22, and the target could not have been met against its own
+    document.
+    """
+    from stage2 import probe_spend  # noqa: F401  (same module, same ROOT)
+
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True},
+                           {"case_id": "two", "pair_success": True}])
+    assert probe_use(Args()).state == DONE
+    assert "2/2" in probe_use(Args()).detail
+
+    adjudicate(root, "one")
+    after = probe_use(Args())
+
+    assert after.state == DONE, after
+    assert "1/1" in after.detail, after
+
+
 # ------------------------------------------------------------ how it was billed
 
 
@@ -371,6 +405,12 @@ def test_the_tracker_measures_the_point_the_plan_now_states():
     check = next(c for c in stage2.CHECKS if c.number == "8")
 
     assert "journal" not in " ".join(row), row
-    assert "24" in row[3], row
-    assert "24" in check.target, check.target
     assert "review" not in check.target.lower(), check.target
+
+    # And neither states a count. The plan said 24 and two cases were then
+    # adjudicated unable to measure anything, so the target could never be
+    # reached against its own number — a denominator written into a document
+    # goes stale the first time a case is ruled out, and nobody notices,
+    # because the document is not what computes it.
+    assert not re.search(r"\d", row[3]), row[3]
+    assert not re.search(r"\d", check.target), check.target
