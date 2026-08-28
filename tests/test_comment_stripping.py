@@ -404,6 +404,178 @@ def test_a_left_shift_after_a_method_name_is_still_a_left_shift():
     assert status == STRIPPED, status
 
 
+# ------------------------ a delimiter that doubles as an operator, per language
+
+
+# The ruby defect in general form. `%` there is either a modulo or a literal
+# opener, and reading it wrong put the scanner outside a string whose contents
+# then looked like comments. Every scanner here has the same shape of decision
+# to make: `/` is division in all seven and also opens a regex in js and ts,
+# and `//` and `/*` open comments in six of them. Rust and C# are in the list
+# for that reason and not as filler — they run the same slash boundary.
+#
+# Exact output, both directions. Asserting only that a literal survives passes
+# for a scanner that keeps every comment too, and asserting only that a comment
+# is gone passes for one that deletes the line it was on.
+AMBIGUOUS = [
+    (".ts", "regex after =",
+     "const r = /a\\/\\/b/;\nconst k = 1;\n",
+     "const r = /a\\/\\/b/;\nconst k = 1;\n"),
+    (".ts", "regex after (",
+     "test(/a\\/\\/b/);\nconst k = 1;\n",
+     "test(/a\\/\\/b/);\nconst k = 1;\n"),
+    (".ts", "regex after method",
+     "s.replace(/\\/\\//g, '');\nconst k = 1;\n",
+     "s.replace(/\\/\\//g, '');\nconst k = 1;\n"),
+    (".ts", "regex after return",
+     "function f() { return /a\\/\\/b/; }\n",
+     "function f() { return /a\\/\\/b/; }\n"),
+    (".ts", "regex after &&",
+     "const q = a && /a\\/\\/b/.test(s);\n",
+     "const q = a && /a\\/\\/b/.test(s);\n"),
+    (".ts", "regex holds a block open",
+     "const r = /a\\/*b/;\nconst k = 1;\n",
+     "const r = /a\\/*b/;\nconst k = 1;\n"),
+    (".ts", "template literal",
+     "const t = `a ${b} // no`;\nconst k = 1;\n",
+     "const t = `a ${b} // no`;\nconst k = 1;\n"),
+    (".ts", "division", "const d = a / b / c;  // note\n",
+     "const d = a / b / c;\n"),
+    (".js", "regex after method",
+     "s.split(/\\/\\//);\nconst k = 1;\n",
+     "s.split(/\\/\\//);\nconst k = 1;\n"),
+    (".js", "division", "const d = a / b / c;  // note\n",
+     "const d = a / b / c;\n"),
+    (".rs", "division", "let d = a / b / c;  // note\n",
+     "let d = a / b / c;\n"),
+    (".rs", "raw string", 'let r = r#"a // b"#;\nlet k = 1;\n',
+     'let r = r#"a // b"#;\nlet k = 1;\n'),
+    (".cs", "division", "var d = a / b / c;  // note\n",
+     "var d = a / b / c;\n"),
+    (".cs", "verbatim string", 'var v = @"C:\\a // b";\nvar k = 1;\n',
+     'var v = @"C:\\a // b";\nvar k = 1;\n'),
+    (".php", "division", "<?php\n$d = $a / $b;  // note\n",
+     "<?php\n$d = $a / $b;\n"),
+    (".php", "heredoc", "<?php\n$x = <<<SQL\n  -- // no\nSQL;\n",
+     "<?php\n$x = <<<SQL\n  -- // no\nSQL;\n"),
+    (".php", "hash comment", "<?php\n$k = 1;  # note\n", "<?php\n$k = 1;\n"),
+    (".go", "division", "d := a / b  // note\n", "d := a / b\n"),
+    (".go", "raw string", "r := `a // b`\nx := 1\n", "r := `a // b`\nx := 1\n"),
+    (".java", "division", "int d = a / b;  // note\n", "int d = a / b;\n"),
+    (".java", "text block", 'String s = """\n  a // b\n  """;\n',
+     'String s = """\n  a // b\n  """;\n'),
+    (".rb", "percent literal", "m.module_eval %{ #{n} }\n",
+     "m.module_eval %{ #{n} }\n"),
+    (".rb", "heredoc argument", "m.module_eval <<RUBY\n#@gen\nRUBY\n",
+     "m.module_eval <<RUBY\n#@gen\nRUBY\n"),
+    (".rb", "regex argument", "s.gsub /a#b/, ''\n", "s.gsub /a#b/, ''\n"),
+    (".rb", "modulo", "x = a % b  # note\n", "x = a % b\n"),
+    (".rb", "left shift", "x = a << b  # note\n", "x = a << b\n"),
+]
+
+
+@pytest.mark.parametrize("suffix,label,source,expected", AMBIGUOUS,
+                         ids=["{}-{}".format(s[1:], lbl.replace(" ", "-"))
+                              for s, lbl, _, _ in AMBIGUOUS])
+def test_a_delimiter_that_is_also_an_operator_is_read_the_right_way(
+        suffix, label, source, expected):
+    assert strip_comments(source, suffix) == expected
+
+
+def test_every_scanner_with_a_slash_ambiguity_is_covered():
+    """An ambiguity list is only worth the languages on it, and a scanner added
+    later would not add itself.
+
+    Python is the exception and not an omission: `#` is its only comment marker
+    and nothing else opens with it, so there is no operator to confuse it with.
+    It is checked exactly instead, by the token test below.
+    """
+    covered = {suffix for suffix, _, _, _ in AMBIGUOUS}
+    for language in LANGUAGES:
+        if language == "python":
+            continue
+        assert SUFFIX[language] in covered, language
+
+
+def test_the_python_scanner_removes_comments_and_nothing_else():
+    """The one language where the claim can be checked rather than argued.
+
+    Tokenize before and after and compare everything that is not a comment. It
+    is the guard the ruby scanner did not have, and the ruby scanner is the one
+    that deleted a corpus case's weakness and reported the file as stripped.
+
+    Run over this repository's own python, which is real code that ships here
+    rather than a fixture written to pass. Over the standard library on this
+    machine — 1508 files, 1401 of them stripped — it also moves no non-comment
+    token, but that is not a corpus a test may depend on.
+    """
+    import ast
+    import io
+    import tokenize
+
+    ignored = {tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE,
+               tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER}
+
+    def stream(text):
+        return [(t.type, t.string, t.start)
+                for t in tokenize.generate_tokens(io.StringIO(text).readline)
+                if t.type not in ignored]
+
+    def docstring_positions(text) -> set:
+        """Where a string is allowed to become `''`, and nowhere else.
+
+        Exempting every `STRING -> ''` was the hole: a scanner that blanked a
+        SQL query, a default value or an f-string would have passed, and this
+        test's whole claim is that nothing but prose is removed. A docstring is
+        the first statement of a module, class or function, which `ast` knows
+        exactly and a rule of thumb does not.
+        """
+        found = set()
+        for node in ast.walk(ast.parse(text)):
+            if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                     ast.AsyncFunctionDef)):
+                continue
+            body = getattr(node, "body", None) or []
+            first = body[0] if body else None
+            if (isinstance(first, ast.Expr)
+                    and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                found.add((first.value.lineno, first.value.col_offset))
+        return found
+
+    files = sorted({p for d in ("src", "tools") for p in (ROOT / d).rglob("*.py")})
+    assert len(files) > 20, "found {} files to check".format(len(files))
+
+    stripped_count, exempted, offenders = 0, 0, []
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        out, status = strip_comments_report(text, ".py")
+        if status != STRIPPED:
+            continue
+        stripped_count += 1
+        before, after = stream(text), stream(out)
+        if len(before) != len(after):
+            offenders.append("{}: {} tokens -> {}".format(
+                path.name, len(before), len(after)))
+            continue
+        docstrings = docstring_positions(text)
+        for a, b in zip(before, after):
+            if a[:2] == b[:2]:
+                continue
+            if (a[0] == tokenize.STRING and b[1] == "''"
+                    and a[2] in docstrings):
+                exempted += 1
+                continue
+            offenders.append("{}: {!r} -> {!r}".format(
+                path.name, a[1][:40], b[1][:40]))
+            break
+
+    assert stripped_count > 20, "only {} files were stripped".format(stripped_count)
+    assert exempted > 20, "only {} docstrings removed — the exemption is not "\
+                          "being exercised".format(exempted)
+    assert not offenders, offenders[:3]
+
+
 def test_a_scanner_returning_overlapping_spans_is_reported_not_raised():
     """Giving up is a result; crashing is not — and this was the one give-up
     path that crashed.
