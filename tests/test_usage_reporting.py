@@ -484,14 +484,28 @@ def test_no_stored_member_run_is_priced_as_a_free_review():
 
     Each of the 38 members recorded five zeros, and `cost_of` returned `0.0`
     for every one — which is what made the batch totals believable. A stored
-    run must now come back either as a real figure or as "not reported", and
-    never as an exact zero.
+    run that reached a conclusion must now come back either as a real figure
+    or as "not reported", and never as an exact zero.
+
+    Runs that did not complete are excluded, and the reason is not
+    convenience. The php batch met the subscription's session limit and five of
+    its members were refused before they began: the CLI returned a usage block
+    of four zeros, and that is *true* — no request was made, so no tokens were
+    used. Asserting otherwise would mean insisting a run cost something when it
+    did not, which is the same kind of wrong in the other direction.
+
+    What protects a reader from summing a batch of refusals and calling the
+    afternoon cheap is not this test. It is the line `pair_corpus` prints above
+    the table: those cases did not complete, are not scored, and their empty
+    finding lists are empty because the review stopped rather than because it
+    found nothing.
     """
     members = [
         (path.name, row.get("case_id"), name, body.get("usage"))
         for path in sorted(MEASUREMENTS.glob("*.json"))
         for row in json.loads(path.read_text(encoding="utf-8"))
         for name, body in (row.get("members") or {}).items()
+        if body.get("stop_reason") == "completed"
     ]
     if not members:
         pytest.skip("no stored batches to read")
@@ -601,3 +615,40 @@ def test_a_run_that_genuinely_used_nothing_is_still_a_report():
     assert usage.reported is True
     assert usage.complete is True
     assert usage.cost_usd(3.0, 15.0) == 0.0
+
+
+def test_a_batch_of_refusals_is_not_summed_into_a_cheap_afternoon():
+    """The guard the test above leans on, asserted rather than assumed.
+
+    A run refused before it began truthfully used no tokens, so it prices at
+    zero and there is nothing wrong with that figure on its own. The danger is
+    the sum: five refusals beside one real review would read as an afternoon
+    that cost almost nothing, when in fact one review happened and five did
+    not. The php batch was exactly that shape — the session limit refused five
+    of its twelve runs.
+
+    So an incomplete case must not reach the cost line at all, in either half
+    of it: not in the total, and not in the count of runs the total stands for.
+    """
+    scored = {"case_id": "php-fm29", "language": "php", "family": "xss",
+              "pair_success": True, "safe_false_positive": False,
+              "unsafe_recall": True, "seconds": 1.0, "cost": 0.71,
+              "members": {"unsafe": {}, "safe": {}}}
+    refused = {"case_id": "php-pg62", "language": "php", "family": "xss",
+               "incomplete": ["safe", "unsafe"], "seconds": 1.0, "cost": 0.0,
+               "members": {"unsafe": {"stop_reason": "error"},
+                           "safe": {"stop_reason": "error"}}}
+
+    import contextlib
+    import io
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        report([scored] + [dict(refused, case_id="php-{}".format(i))
+                           for i in range(5)])
+    printed = out.getvalue()
+
+    assert "did not complete and are not scored" in printed
+    # One pair costed, out of one pair scored — not one out of six.
+    assert "$0.71" in printed
+    assert " of 6 " not in printed
+    assert "6 pairs" not in printed
