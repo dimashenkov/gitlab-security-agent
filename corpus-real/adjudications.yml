@@ -52,6 +52,38 @@ adjudications:
       discrimination in either direction. Exclude it from the score; do not
       count it as a failure.
 
+  - case_id: py-2cp2-2r3c-7p7r
+    member: safe
+    file: hydra/_internal/instantiate/_instantiate2.py
+    severity_reported: critical
+    claim: Target blocklist is a string denylist checked pre-resolution
+    verdict: real
+    adjudicated_on: 2026-08-28
+    # Inherited rather than decided again. The `-snap` twin below was
+    # adjudicated on 2026-08-24 and the reasoning is recorded there; this entry
+    # exists because the decisive file is *byte-identical* between the two
+    # constructions, so every word of that argument applies here unchanged.
+    #
+    # The two were adjudicated apart because the exclusion is keyed on
+    # `case_id` and `-snap` is a different id. Nothing looked at whether the
+    # twin shared the file, so the regression member stayed schedulable and was
+    # in the second batch of the plan — a case that cannot measure anything,
+    # queued to be measured.
+    evidence: >-
+      `diff` reports `safe/change/hydra/_internal/instantiate/_instantiate2.py`
+      identical between `py-2cp2-2r3c-7p7r` and `py-2cp2-2r3c-7p7r-snap`. The
+      fix under review is the same blocklist, with the same
+      spelling-before-resolution ordering, the same two-prefix normalisation,
+      and therefore the same aliasing and incompleteness described below.
+    case_is_malformed: true
+    why_malformed: >-
+      The advisory is CWE-94/CWE-470 in `hydra.utils.instantiate` and the
+      maintainers' fix IS this blocklist, so a reviewer saying the shipped fix
+      does not close the advisory's own class of bug is right. The safe member
+      is therefore only partially safe, and a pair whose safe member still
+      carries the weakness cannot measure discrimination in either direction.
+      Exclude it from the score; do not count it as a failure.
+
   - case_id: cs-q939-rpr3-3284
     member: safe
     file: src/Renci.SshNet/ScpClient.cs
