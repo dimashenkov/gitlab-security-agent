@@ -145,16 +145,33 @@ def _reviewed_nothing(outcome: ScanOutcome) -> bool:
     that knew a list of spellings. Whether a file was opened is a fact about
     the run, and it stays true for endings nobody has invented yet.
 
-    Three signs of work, not one. A file opened is the obvious one; a tool call
-    covers listing the change or searching for a caller, which is a review
-    doing its job without having opened anything yet; and a reported finding is
-    the strongest of all, because nothing can report a weakness in code it did
-    not read. A rule resting on the first alone would have called a truncated
-    review with findings in it absent, and a rule that fires on real work is a
-    rule that gets switched off.
+    `exposures` and nothing else, after two readings of the alternatives.
+
+    Not `tool_calls`. A tool call is an *attempt*, and the record keeps the
+    failures: a read the budget refused, a path that did not exist, a search
+    that matched nothing. `list_changed_files` then `finish_review` is two
+    calls and no code seen. Counting attempts would let a session that reached
+    the repository and got nothing out of it pass as work.
+
+    Not `files_examined`, which means files the agent opened *by name*. A
+    whole-change `get_diff` puts thirty files in front of the model without
+    opening one, and `search_code` returns lines from files nobody named. That
+    list answers "nothing" for a review that read the entire change.
+
+    Not a reported finding either, though it is tempting. A finding proves its
+    citation exists — `report_finding` validates the quoted lines against the
+    file — which is a fact about the quote and not about whether the change was
+    investigated. Nothing in `report_finding` records an exposure, so a finding
+    is not evidence that any of the change reached the model.
+
+    `exposures` is the one record of what actually arrived, through any of the
+    three channels that can carry it. It is proof of inspection and only that:
+    whether the inspection went far enough is the completeness question, which
+    `finish_review`, the profile and the budget answer separately and more
+    strictly. This is the sanity check underneath them — the one that says the
+    MCP server came up and the reviewer got something to read.
     """
-    return not (outcome.coverage.examined or outcome.tool_calls
-                or outcome.reported)
+    return not outcome.exposures
 
 
 def _partial(outcome: ScanOutcome) -> bool:
@@ -233,9 +250,9 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
         return Decision(
             exit_code=EXIT_ERROR,
             reason=(
-                "{}{}, and it opened no part of the change. That is not a "
-                "partial review to weigh — it is an absent one, and no setting "
-                "makes it a pass.".format(explanation, detail)),
+                "{}{}, and no part of the change is recorded as having "
+                "reached the reviewer. There is no partial coverage to weigh, "
+                "so no setting makes it a pass.".format(explanation, detail)),
         )
 
     if _partial(outcome) and cfg.fail_on_incomplete:

@@ -311,6 +311,41 @@ class TestExposureIsNotTheSameAsOpening:
         # And none of them was opened.
         assert not session.files_examined
 
+    def test_a_deleted_file_is_exposed_by_the_lines_it_lost(self):
+        """A deletion writes `+++ /dev/null` and names the file only on the
+        `--- a/...` line, and the header this read was the `+++` one — so every
+        removed line of a deleted file went into the conversation and the
+        record said nothing had reached the model.
+
+        Invisible until the gate began reading exposures to tell a review that
+        stopped early from one nothing reached. A deletion-only change, stopped
+        partway, was about to be called an absent review — and a deletion is
+        exactly where a removed control lives.
+        """
+        from security_agent.tools import _paths_in_diff
+
+        deletion = (
+            "diff --git a/app/auth.py b/app/auth.py\n"
+            "deleted file mode 100644\n"
+            "--- a/app/auth.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,3 +0,0 @@\n"
+            "-def check(user):\n"
+            "-    return user.is_admin\n")
+
+        assert _paths_in_diff(deletion) == ["app/auth.py"]
+
+    def test_an_edited_file_is_named_once_not_twice(self):
+        """Both header lines carry it, and an exposure is a fact about a file
+        rather than a count of mentions."""
+        from security_agent.tools import _paths_in_diff
+
+        edit = ("--- a/app/views.py\n"
+                "+++ b/app/views.py\n"
+                "@@ -1 +1 @@\n-a\n+b\n")
+
+        assert _paths_in_diff(edit) == ["app/views.py"]
+
     def test_reading_a_file_records_both(self, ws):
         session = Session()
         dispatch(ws, session, "read_file", {"path": "app/views.py"})

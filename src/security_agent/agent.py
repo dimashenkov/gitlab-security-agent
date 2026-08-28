@@ -317,6 +317,9 @@ class SecurityAgent:
         outcome.turns = self.session.turn
         outcome.tool_calls = list(self.session.tool_calls)
         outcome.files_examined = list(self.session.files_examined)
+        # What actually reached the model, which is what the gate reads to
+        # tell a review that stopped early from one that never started.
+        outcome.exposures = list(self.session.exposures)
         outcome.coverage.examined = list(self.session.files_examined)
         outcome.coverage.diff_truncated = self.ws.diff_truncated
         outcome.metrics = self.session.metrics

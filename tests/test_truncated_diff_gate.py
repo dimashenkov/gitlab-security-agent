@@ -67,11 +67,14 @@ def outcome_for(ws: Workspace) -> ScanOutcome:
     ws.diff()
     outcome.coverage.diff_truncated = ws.diff_truncated
     # A truncated review is one that read the first part of a large change, so
-    # it opened something. Recorded here because the gate now separates a
-    # review that stopped early from one that never started, and a fixture
-    # leaving coverage empty describes the second while meaning the first.
+    # part of that change reached the model. Recorded here because the gate now
+    # separates a review that stopped early from one nothing reached, and a
+    # fixture with no exposures describes the second while meaning the first.
+    #
+    # As an exposure rather than as `examined`: `get_diff` is what happened
+    # here, and it carries a file's bytes without opening it by name.
     outcome.coverage.changed = ["big/one.py", "big/two.py"]
-    outcome.coverage.examined = ["big/one.py"]
+    outcome.exposures = [("big/one.py", "get_diff")]
     return outcome
 
 

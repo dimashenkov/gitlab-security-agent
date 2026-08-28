@@ -747,6 +747,9 @@ def _apply_session(outcome: ScanOutcome, session: Session) -> None:
     outcome.rejected_claims = list(session.rejected)
     outcome.tool_calls = list(session.tool_calls)
     outcome.files_examined = list(session.files_examined)
+    # What actually reached the model, which is what the gate reads to
+    # tell a review that stopped early from one that never started.
+    outcome.exposures = list(session.exposures)
     outcome.coverage.examined = list(session.files_examined)
     outcome.metrics = session.metrics
     outcome.duplicates_dropped = session.duplicates_dropped

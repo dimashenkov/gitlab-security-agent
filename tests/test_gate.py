@@ -25,20 +25,22 @@ from security_agent.models import (
 
 
 def outcome_with(*candidates, **kwargs):
-    """A run that opened at least one file, unless a test says otherwise.
+    """A run that saw some of the change, unless a test says otherwise.
 
     The default matters. Every test here about an incomplete review means a
     review that did some work and then stopped, and the fixture used to build
-    one that had opened nothing — which is a different thing, and now decided
-    differently: `fail_on_incomplete` weighs partial coverage and there is no
-    partial coverage in a run that never started. Pass `coverage=Coverage()`
-    for the absent case, as the tests below that mean it do.
+    one where nothing had reached the model — a different thing, and now
+    decided differently: `fail_on_incomplete` weighs partial coverage, and a
+    run that saw nothing has none to weigh. Pass `exposures=[]` for that case,
+    as the tests below that mean it do.
     """
     outcome = ScanOutcome(mode="diff", stop_reason=kwargs.pop("stop_reason", STOP_COMPLETED))
     outcome.stop_detail = kwargs.pop("stop_detail", "")
     outcome.reported = list(candidates)
     outcome.coverage = kwargs.pop(
         "coverage", Coverage(changed=["app/views.py"], examined=["app/views.py"]))
+    outcome.exposures = kwargs.pop(
+        "exposures", [("app/views.py", "get_diff")])
     for key, value in kwargs.items():
         setattr(outcome, key, value)
     return outcome
@@ -298,44 +300,73 @@ class TestSomeEndingsAreNotTheOperatorsToForgive:
         STOP_BUDGET,        # it ran out before opening anything
         STOP_TURN_LIMIT,    # it spent its turns without opening anything
     ])
-    def test_a_review_that_opened_nothing_is_never_a_pass(self, stop_reason):
+    def test_a_review_nothing_reached_is_never_a_pass(self, stop_reason):
         """The hole the flag was standing in front of.
 
         `fail_on_incomplete` weighs *partial* coverage: six files of ten, the
-        operator knows which six. There is nothing to weigh in a run that
-        opened no file — the CLI failing to start, the MCP server never coming
-        up, a terminal object that will not parse. Six of the eight ways the
-        local runner can fail reached exit 0 through that flag, and the reason
-        printed was "No blocking findings, but the review did not complete."
+        operator knows which six. There is nothing to weigh when no part of the
+        change reached the model — the CLI failing to start, the MCP server
+        never coming up, a terminal object that will not parse. Six of the
+        eight ways the local runner can fail reached exit 0 through that flag,
+        and the reason printed was "No blocking findings, but the review did
+        not complete."
 
-        Every stop reason, because the rule is about the absence of work rather
-        than about the endings somebody thought to name.
+        Every stop reason, because the rule is about the absence of evidence
+        rather than about the endings somebody thought to name.
         """
-        outcome = outcome_with(stop_reason=stop_reason, coverage=Coverage(
-            changed=["app/views.py"]))
+        outcome = outcome_with(stop_reason=stop_reason, exposures=[],
+                               coverage=Coverage(changed=["app/views.py"]))
 
         for forgiving in (True, False):
             cfg = Config(gitlab=GitLabContext(), fail_on_incomplete=forgiving)
             decision = decide(cfg, outcome)
 
             assert decision.exit_code == EXIT_ERROR, (
-                "fail_on_incomplete={} passed a review that opened "
-                "nothing".format(forgiving))
-        assert "absent one" in decision.reason
+                "fail_on_incomplete={} passed a review nothing reached".format(
+                    forgiving))
+        assert "reached the reviewer" in decision.reason
 
-    def test_a_tool_call_without_a_file_still_counts_as_work(self):
-        """Opening a file is not the only thing a reviewer does — it can list
-        the change, search for a caller, or read a diff. Judging on
-        `coverage.examined` alone would call those runs absent, and a rule that
-        fires on real work is a rule that gets switched off."""
+    def test_a_whole_diff_read_without_opening_a_file_is_work(self):
+        """Opening a file by name is not how most of a change is seen. A
+        whole-change `get_diff` puts every changed file in front of the model
+        and opens none of them, so judging on `files_examined` would call the
+        commonest shape of review absent — and a rule that fires on real work
+        is a rule that gets switched off."""
         cfg = Config(gitlab=GitLabContext(), fail_on_incomplete=False)
         outcome = outcome_with(
             stop_reason=STOP_TURN_LIMIT,
             coverage=Coverage(changed=["app/views.py"]),
+            exposures=[("app/views.py", "get_diff")])
+
+        assert decide(cfg, outcome).exit_code != EXIT_ERROR
+
+    def test_calling_tools_without_seeing_code_is_not_work(self):
+        """`list_changed_files` then `finish_review` is two tool calls and no
+        code seen, and the record keeps failures too — a refused read and a
+        search that matched nothing are both in it. Counting attempts would let
+        a session that reached the repository and got nothing out of it pass."""
+        cfg = Config(gitlab=GitLabContext(), fail_on_incomplete=False)
+        outcome = outcome_with(
+            stop_reason=STOP_TURN_LIMIT, exposures=[],
+            coverage=Coverage(changed=["app/views.py"]),
             tool_calls=[ToolCallRecord(name="list_changed_files", arguments={},
                                        turn=1, summary="listed the change")])
 
-        assert decide(cfg, outcome).exit_code != EXIT_ERROR
+        assert decide(cfg, outcome).exit_code == EXIT_ERROR
+
+    def test_a_finding_alone_does_not_legitimise_the_run(self):
+        """A finding proves its citation exists — `report_finding` validates
+        the quoted lines against the file — which is a fact about the quote and
+        not about whether the change was investigated. Nothing in
+        `report_finding` records an exposure. So a finding is shown, and it is
+        not what decides that a review happened."""
+        cfg = Config(gitlab=GitLabContext(), fail_on_incomplete=False)
+        outcome = outcome_with(
+            make_candidate(severity="low"),
+            stop_reason=STOP_TURN_LIMIT, exposures=[],
+            coverage=Coverage(changed=["app/views.py"]))
+
+        assert decide(cfg, outcome).exit_code == EXIT_ERROR
 
     def test_the_set_is_not_empty(self):
         """A refactor that emptied it would leave every test above passing."""

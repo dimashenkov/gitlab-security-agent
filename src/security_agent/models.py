@@ -802,6 +802,17 @@ class ScanOutcome:
 
     tool_calls: List[ToolCallRecord] = field(default_factory=list)
     files_examined: List[str] = field(default_factory=list)
+    # (path, channel) for every file whose bytes reached the model, which is a
+    # different question from which files it opened: a whole-change `get_diff`
+    # carries every changed file without opening one, and `search_code`
+    # returns lines from files nobody named.
+    #
+    # It travels this far because the gate needs it. Deciding whether a review
+    # did any work from `tool_calls` counts a *refused* read as work — the
+    # attempt is accounting, not evidence that anything reached the reviewer —
+    # and deciding it from `files_examined` answers "nothing" for a review that
+    # read the entire diff and opened no file.
+    exposures: List[tuple] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     verification_usage: Usage = field(default_factory=Usage)
     provenance: Provenance = field(default_factory=Provenance)

@@ -792,12 +792,28 @@ HANDLERS: Dict[str, Handler] = {
 }
 
 
-_DIFF_PATH = re.compile(r"^\+\+\+ b/(.+)$", re.M)
+# Both sides of a file header. `+++ b/...` names the file as it is after the
+# change and is what an addition or an edit carries; a deletion writes
+# `+++ /dev/null` and names the file only on the `--- a/...` line, so reading
+# the `+++` side alone recorded no exposure for it.
+#
+# The bytes of a deleted file are in the diff either way — every removed line
+# of it — so a review of a deletion had the code in front of it and the record
+# said nothing had reached the model. That mattered once the gate began reading
+# this to tell a review that stopped early from one nothing reached: a
+# deletion-only change, partial, was about to be called an absent review.
+_DIFF_PATH = re.compile(r"^(?:\+\+\+ b|--- a)/(.+)$", re.M)
 
 
 def _paths_in_diff(body: str) -> List[str]:
-    """The files a unified diff actually carries content for."""
-    return [line for line in _DIFF_PATH.findall(body or "") if line != "/dev/null"]
+    """The files a unified diff actually carries content for.
+
+    Deduplicated, because an ordinary edit names the same file on both header
+    lines and an exposure is a fact about a file rather than a count of
+    mentions.
+    """
+    return list(dict.fromkeys(
+        line for line in _DIFF_PATH.findall(body or "") if line != "/dev/null"))
 
 
 _SEARCH_PATH = re.compile(r"^([^\s:][^:]*):\d+:", re.M)
