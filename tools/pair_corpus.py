@@ -58,6 +58,7 @@ from artifact import (
     case_digest,
     load_adjudications,
     malformed_cases,
+    ruled_incidental,
     signature,
 )
 from artifact import is_target as _is_target
@@ -216,7 +217,7 @@ def review(repo: Path, base: str, head: str, out: Path,
             "payload": json.loads(payload_path.read_text())}
 
 
-def hits_target(payload: dict, case: dict):
+def hits_target(payload: dict, case: dict, excused=()):
     """Did the review report the finding this case is about?
 
     Three answers, not two. `None` means the review never reached one — the run
@@ -237,7 +238,9 @@ def hits_target(payload: dict, case: dict):
     """
     if not payload.get("complete", False):
         return None
-    return any(_is_target(f, case) for f in payload.get("findings", []))
+    return any(_is_target(f, case)
+               and f.get("fingerprint") not in excused
+               for f in payload.get("findings", []))
 
 
 def _keep_artifacts(work: Path, result: dict, keep_dir: Optional[Path]) -> None:
@@ -266,7 +269,8 @@ def _keep_artifacts(work: Path, result: dict, keep_dir: Optional[Path]) -> None:
 
 
 def run_case(case: dict, keep_dir: Optional[Path] = None,
-             provider: str = "", profile: str = "") -> dict:
+             provider: str = "", profile: str = "",
+             adjudications: Optional[Sequence[dict]] = None) -> dict:
     # Resolved, because on macOS the temp directory is reached through a symlink
     # (/var -> /private/var) and the report writer refuses to write through one.
     work = Path(tempfile.mkdtemp(prefix="pair-{}-".format(case["case_id"]))).resolve()
@@ -294,7 +298,14 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
             result["error"] = next(m.get("error") for m in members.values() if not m["ok"])
             return result
 
-        safe_hit = hits_target(members["safe"]["payload"], case)
+        # A hand decision may rule that a finding matching the coarse key
+        # is not this case's weakness after all — a lesser one of the same
+        # family in the same file. Without this the only ruling available
+        # was to throw the whole case away, so a correct incidental in the
+        # safe member failed a pair that discriminated perfectly.
+        excused = ruled_incidental(adjudications, case["case_id"], "safe")
+        safe_hit = hits_target(members["safe"]["payload"], case,
+                               excused=excused)
         unsafe_hit = hits_target(members["unsafe"]["payload"], case)
 
         # Kept for every case, scored or not. `signature()` already extracts
@@ -323,6 +334,11 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
             return [
                 {"category": f.get("category"), "file": f.get("file"),
                  "severity": f.get("severity"), "title": f.get("title"),
+                 # The identity a hand ruling names. Absent from this
+                 # summary until now, so a decision about one finding
+                 # could only be written against its file — which
+                 # excuses every finding in that file.
+                 "fingerprint": f.get("fingerprint"),
                  "blocking": f.get("fingerprint") in set(
                      payload.get("verdict", {}).get("blocking_fingerprints", []))}
                 for f in payload.get("findings", [])
@@ -355,9 +371,14 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
         result.update({
             "unsafe_target_recall": unsafe_hit,
             "safe_target_persistence": safe_hit,
+            # An excused finding moves here rather than disappearing.
+            # The ruling says the pair still discriminates, not that the
+            # finding is uninteresting — and a real weakness dropped from
+            # the report because a ruling took it out of the score is the
+            # opposite of what the ruling said.
             "safe_incidental": [
                 f for f in summarise(members["safe"]["payload"])
-                if not _is_target(f, case)
+                if not _is_target(f, case) or f.get("fingerprint") in excused
             ],
             "unsafe_incidental": [
                 f for f in summarise(members["unsafe"]["payload"])
@@ -578,11 +599,17 @@ def main() -> int:
     print("running {} pair(s) across {} worker(s)\n".format(
         len(cases), min(args.concurrency, len(cases))))
 
+    # Read once, before anything runs. The rulings decide what counts as
+    # this case's weakness, so a run that read them afterwards would score
+    # against a different question than the one it was given.
+    adjudications = load_adjudications(Path(args.cases))
+
     results = []
     with ThreadPoolExecutor(max_workers=max(1, min(args.concurrency, len(cases)))) as pool:
         futures = {pool.submit(run_case, c, keep_dir,
                                args.provider or "",
-                               args.profile or ""): c for c in cases}
+                               args.profile or "",
+                               adjudications): c for c in cases}
         for future in as_completed(futures):
             r = future.result()
             results.append(r)
@@ -599,7 +626,7 @@ def main() -> int:
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2))
         print("\nraw results written to {}".format(args.json))
-    report(results, load_adjudications(Path(args.cases)))
+    report(results, adjudications)
     return 0
 
 

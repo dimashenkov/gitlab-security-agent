@@ -52,6 +52,45 @@ adjudications:
       discrimination in either direction. Exclude it from the score; do not
       count it as a failure.
 
+  - case_id: rb-g65v-27r3-5p6m
+    member: safe
+    file: lib/guard/livereload/websocket.rb
+    severity_reported: low
+    claim: The response code discloses which traversed paths exist
+    verdict: real
+    adjudicated_on: 2026-08-28
+    incidental: true
+    evidence: >-
+      The fix stops serving the file: `_serve` no longer calls `_serve_file`
+      for a readable path, and sends a constant response instead. But it sends
+      403 when `_readable_file(path)` is true and 404 when it is false, so a
+      request for `../../etc/shadow` still answers a question about the host —
+      the traversal is unchanged and only the body is withheld. The reviewer
+      described that exactly, and rated it `low`, which is the right weight.
+    why_not_the_target: >-
+      The advisory is arbitrary file *read* through directory traversal, and
+      that is closed: no file content leaves the process on the safe member.
+      What remains is existence disclosure, a lesser weakness of the same
+      family in the same file — which is why `is_target` matched it on
+      category and path, and why matching on category and path cannot tell the
+      two apart. The pair discriminates: the unsafe member serves the file and
+      the safe one does not.
+    # No fingerprint, so this ruling changes no score yet — `ruled_incidental`
+    # excuses nothing without one, on purpose.
+    #
+    # A ruling has to name the finding it is about. Naming its file excuses
+    # every finding in that file, so a safe member reporting both this oracle
+    # and a genuine arbitrary read in the same file would pass. The batch
+    # summary did not record fingerprints when this result was written, and
+    # `--keep-artifacts` keeps only runs that did not finish, so there is
+    # nothing to read one out of. Summaries carry it from now on.
+    #
+    # Until this case runs again the pair stays scored as it was: a decision
+    # taken on evidence that does not exist is the thing this file was created
+    # to stop.
+    fingerprint: ""
+    takes_effect: after the case is run again and its finding has an identity
+
   - case_id: py-2cp2-2r3c-7p7r
     member: safe
     file: hydra/_internal/instantiate/_instantiate2.py

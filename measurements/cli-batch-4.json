@@ -1,0 +1,353 @@
+[
+  {
+    "case_id": "rb-g65v-27r3-5p6m",
+    "language": "ruby",
+    "family": "path-traversal",
+    "case_digest": "65c50ec7c045d7d4",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "d1d85a160dab32bb",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "80bc0b562cced7a2",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.4274275
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 103.39150249999999,
+        "cost": 0.0,
+        "usage": {
+          "requests": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "coverage": {
+          "changed": [
+            "lib/guard/livereload/websocket.rb"
+          ],
+          "examined": [
+            "lib/guard/livereload/reactor.rb",
+            "lib/guard/livereload/websocket.rb"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "39e13d9aa35b7d53",
+          "severity": "high",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true
+        },
+        "blocking": [
+          [
+            "path-traversal",
+            "lib/guard/livereload/websocket.rb",
+            "return _serve_file(path) if _readable_file(path)"
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "80bc0b562cced7a2",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.2894205
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 153.06686308400003,
+        "cost": 0.0,
+        "usage": {
+          "requests": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "coverage": {
+          "changed": [
+            "lib/guard/livereload/websocket.rb"
+          ],
+          "examined": [
+            "lib/guard/livereload/reactor.rb",
+            "lib/guard/livereload/websocket.rb"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.08967054743621501,
+    "safe_findings": [
+      {
+        "category": "path-traversal",
+        "file": "lib/guard/livereload/websocket.rb",
+        "severity": "low",
+        "title": "Response code discloses arbitrary filesystem path existence via traversal",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "path-traversal",
+        "file": "lib/guard/livereload/websocket.rb",
+        "severity": "high",
+        "title": "Arbitrary file read / path traversal in LiveReload HTTP handler",
+        "blocking": true
+      }
+    ],
+    "cost": 0.0,
+    "seconds": 153.06686308400003
+  },
+  {
+    "case_id": "php-p2ch-c2c3-4xm5",
+    "language": "php",
+    "family": "csrf",
+    "case_digest": "1b695c86d9182463",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "80bc0b562cced7a2",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.9745670000000001
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 242.69056591700001,
+        "cost": 0.0,
+        "usage": {
+          "requests": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "coverage": {
+          "changed": [
+            "modules/backend/classes/BackendController.php",
+            "modules/backend/classes/Controller.php"
+          ],
+          "examined": [
+            "modules/backend/classes/BackendController.php",
+            "modules/backend/classes/Controller.php",
+            "modules/backend/classes/ControllerBehavior.php"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "80bc0b562cced7a2",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.8028355000000001
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 400.44625762499993,
+        "cost": 0.0,
+        "usage": {
+          "requests": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "coverage": {
+          "changed": [
+            "modules/backend/classes/BackendController.php",
+            "modules/backend/classes/Controller.php"
+          ],
+          "examined": [
+            "modules/backend/classes/BackendController.php",
+            "modules/backend/classes/Controller.php"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [
+      {
+        "category": "authn-authz",
+        "file": "modules/backend/classes/Controller.php",
+        "severity": "medium",
+        "title": "Removal of lowercase-only action check allows invoking arbitrary controller methods via URL",
+        "blocking": false
+      }
+    ],
+    "safe_false_positive": false,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.009370329981017004,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "authn-authz",
+        "file": "modules/backend/classes/Controller.php",
+        "severity": "medium",
+        "title": "Removal of lowercase-only action check allows invoking arbitrary controller methods via URL",
+        "blocking": false
+      }
+    ],
+    "cost": 0.0,
+    "seconds": 400.44625762499993
+  }
+]

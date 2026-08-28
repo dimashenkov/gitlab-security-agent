@@ -21,7 +21,20 @@ construction: regression
 #   baseline, one fixed and one not. Direction carries no answer.
 # Never score the two constructions together.
 decisive_control: the change the maintainers shipped as the fix
-expected_category: csrf
+# The maintainers' fix is a lowercase-only check on the method name:
+# `Controller::methodExists` rejects a name whose lowercased form
+# differs from itself. An AJAX handler is camelCase (`onSave`) and a
+# page action is routed lowercase, so the check is what stops a
+# handler from being reachable as an action — and a page action does
+# not carry the AJAX CSRF token, which is how the advisory's CSRF
+# arises.
+#
+# So `authn-authz` names the mechanism and `csrf` names the
+# consequence, and they are two words for one weakness rather than two
+# weaknesses. Contrast go-8r62-w5wh-fc5m, where CWE-200 beside CWE-346
+# really are two, and the key is narrowed to one instead. Both count;
+# the target file still has to match.
+expected_category: ['csrf', 'authn-authz']
 # Every file the fix touched, not the first one. A fix is not obliged
 # to fit in one file, and naming only the first counted a finding in
 # the others as the wrong place — Winter's CSRF fix normalises a name

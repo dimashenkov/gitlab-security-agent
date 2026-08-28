@@ -164,6 +164,46 @@ def load_adjudications(root) -> list:
     return list(data.get("adjudications") or [])
 
 
+def ruled_incidental(adjudications, case_id: str, member: str) -> list:
+    """Findings a hand decision has ruled are not this case's weakness.
+
+    `is_target` matches on category and file, deliberately coarsely, and it
+    cannot tell "the weakness the advisory is about" from "a lesser one of the
+    same family in the same file". guard-livereload is the example: the fix
+    stops serving the traversed file and answers 403 for a readable path and
+    404 for an absent one, so the reviewer's finding — that the response code
+    now discloses which paths exist — is correct, is path-traversal, is in the
+    target file, and is *not* the arbitrary file read the advisory is about.
+    The pair discriminates perfectly and was scored as a failure.
+
+    Without this the only thing an adjudication could say was
+    `case_is_malformed`, which throws the whole case away. So a finding could
+    be ruled incidental and the ruling did nothing: `incidental: true` was
+    written in this file and read by no code at all.
+
+    Matched on the **fingerprint**, and on nothing else. The first version
+    matched on the file, which excuses every finding in it — so a safe member
+    reporting both the existence oracle *and* a genuine arbitrary file read in
+    `websocket.rb` would have passed. A ruling has to name the finding it is
+    about; naming its neighbourhood is a ruling about the wrong thing.
+
+    A ruling with no fingerprint excuses nothing, deliberately. The batch
+    summary did not record fingerprints when the guard-livereload result was
+    written, so the ruling for it cannot be precise until that case runs again
+    — and the honest behaviour then is to leave the pair scored as it was and
+    say why, rather than to widen the key until it fits.
+    """
+    return [
+        row["fingerprint"]
+        for row in adjudications or []
+        if row.get("case_id") == case_id
+        and row.get("member") == member
+        and row.get("incidental") is True
+        and not row.get("case_is_malformed")
+        and row.get("fingerprint")
+    ]
+
+
 def malformed_cases(root) -> dict:
     """Cases an adjudication has ruled cannot measure anything, and why.
 

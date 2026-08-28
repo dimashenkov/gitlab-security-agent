@@ -233,6 +233,103 @@ def test_a_malformed_case_is_excluded_by_name(tmp_path):
     assert [c["case_id"] for c in load_cases(tmp_path)] == ["good-case"]
 
 
+TRAVERSAL_CASE = {"case_id": "one", "expected_category": ["path-traversal"],
+                  "expected_file": ["lib/websocket.rb"]}
+
+LESSER_FINDING = {"category": "path-traversal", "file": "lib/websocket.rb",
+                  "severity": "low", "fingerprint": "aa11bb22cc33dd44",
+                  "title": "the response code leaks existence"}
+
+REAL_FINDING = dict(LESSER_FINDING, severity="high",
+                    fingerprint="ffee0099aabbccdd",
+                    title="arbitrary file read through traversal")
+
+
+def test_a_finding_ruled_incidental_no_longer_fails_the_pair():
+    """`is_target` matches on category and file, deliberately coarsely, and
+    cannot tell the weakness the advisory is about from a lesser one of the
+    same family in the same file.
+
+    guard-livereload is the case. The fix stops serving the traversed file and
+    answers 403 for a readable path and 404 for an absent one, so the
+    reviewer's finding — that the response code discloses which paths exist —
+    is correct, is path-traversal, is in the target file, and is not the
+    arbitrary file read the advisory is about. The pair discriminated
+    perfectly and was scored as a failure.
+    """
+    from pair_corpus import hits_target
+
+    payload = {"complete": True, "findings": [LESSER_FINDING]}
+
+    assert hits_target(payload, TRAVERSAL_CASE) is True
+    assert hits_target(payload, TRAVERSAL_CASE,
+                       excused=["aa11bb22cc33dd44"]) is False
+
+
+def test_a_ruling_excuses_one_finding_and_not_its_neighbours():
+    """The first version excused by *file*, so a safe member reporting both the
+    oracle and a genuine arbitrary file read in `websocket.rb` would have
+    passed. A ruling has to name the finding it is about; naming its
+    neighbourhood is a ruling about the wrong thing."""
+    from pair_corpus import hits_target
+
+    payload = {"complete": True, "findings": [LESSER_FINDING, REAL_FINDING]}
+
+    assert hits_target(payload, TRAVERSAL_CASE,
+                       excused=["aa11bb22cc33dd44"]) is True
+
+
+def test_a_ruling_with_no_fingerprint_excuses_nothing():
+    """Deliberately. The batch summary did not record fingerprints when the
+    guard-livereload result was written, so its ruling cannot be precise until
+    that case runs again — and the honest behaviour meanwhile is to leave the
+    pair scored as it was, not to widen the key until it fits."""
+    from artifact import ruled_incidental
+
+    rulings = [{"case_id": "one", "member": "safe",
+                "file": "lib/websocket.rb", "incidental": True}]
+
+    assert ruled_incidental(rulings, "one", "safe") == []
+
+
+def test_the_ruling_is_read_from_the_file_and_not_merely_written_in_it():
+    """`incidental: true` sat in `adjudications.yml` and no code read it. A
+    decision recorded and not enforced is the defect this repository keeps
+    finding in itself, and it was in the file where the decisions live."""
+    from artifact import ruled_incidental
+
+    rulings = [
+        {"case_id": "one", "member": "safe", "fingerprint": "aa11",
+         "incidental": True},
+        {"case_id": "two", "member": "safe", "fingerprint": "bb22",
+         "incidental": True},
+        # A finding in the *unsafe* member is the target being found, which is
+        # the pair working.
+        {"case_id": "one", "member": "unsafe", "fingerprint": "cc33",
+         "incidental": True},
+        # Ruled malformed instead, which drops the whole case elsewhere. It
+        # must not also quietly excuse a finding.
+        {"case_id": "one", "member": "safe", "fingerprint": "dd44",
+         "incidental": True, "case_is_malformed": True},
+    ]
+
+    assert ruled_incidental(rulings, "one", "safe") == ["aa11"]
+    assert ruled_incidental(rulings, "one", "unsafe") == ["cc33"]
+    assert ruled_incidental([], "one", "safe") == []
+
+
+def test_a_safe_finding_nobody_ruled_on_still_fails_the_pair():
+    """The floor. Every safe finding excused by default would make the safe
+    member unable to fail, which is the half of the pair that catches a tool
+    that flags everything."""
+    from pair_corpus import hits_target
+
+    payload = {"complete": True, "findings": [LESSER_FINDING]}
+
+    assert hits_target(payload, TRAVERSAL_CASE, excused=[]) is True
+    assert hits_target(payload, TRAVERSAL_CASE, excused=["somethingelse"]) is True
+
+
 # ------------------------------------------------- keeping the evidence
 
 
