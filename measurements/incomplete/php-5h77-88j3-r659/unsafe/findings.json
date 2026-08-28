@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-28T16:26:54+00:00",
+  "generated_at": "2026-08-28T16:35:00+00:00",
   "summary": "",
   "mode": "diff",
   "model": "claude-opus-5",
@@ -36,6 +36,7 @@
   "rejected_claims": [],
   "coverage": {
     "files_examined": [
+      "includes/functions-formatting.php",
       "includes/functions-infos.php"
     ],
     "exposures": [
@@ -45,6 +46,78 @@
       ],
       [
         "--\nincludes/functions-infos.php-81-    );\nincludes/functions-infos.php-82-    $options = yourls_apply_filter( 'stats_pie_options', $options );\nincludes/functions-infos.php-83-\nincludes/functions-infos.php-84-    $script_data = array_merge( array( 'Country' => 'Value' ), $_data );\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-180-    $return['message'] = 'success';\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-182-}\nincludes/functions-api.php-183-\n--\nincludes/functions-api.php-187-\nincludes/functions-api.php-188-\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-190-    $return = array(\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-192-        'statusCode' => '200',\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-194-        'message'    => 'success',\nincludes/functions-api.php-195-    );\nincludes/functions-api.php-196-\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-198-}\nincludes/functions-api.php-199-\n--\nincludes/functions-api.php-204-\nincludes/functions-api.php-205-\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-207-    $keyword = str_replace( yourls_get_yourls_site() . '/' , '', $shorturl );\nincludes/functions-api.php-208-    $keyword = yourls_sanitize_keyword( $keyword );\nincludes/functions-api.php-209-\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-31-\nincludes/functions-api.php-32-\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-38-}\nincludes/functions-api.php-39-\n--\nincludes/functions-api.php-44-\nincludes/functions-api.php-45-\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-48-}\nincludes/functions-api.php-49-\n--\nincludes/functions-api.php-54-\nincludes/functions-api.php-55-\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-api.php-59-}\nincludes/functions-api.php-60-\n--\nincludes/functions-api.php-175-\nincludes/functions-api.php-176-\nincludes/functions-api.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-formatting.php",
+        "read_file"
+      ],
+      [
+        "includes/functions-formatting.php-131-\nincludes/functions-formatting.php-132-\nincludes/functions-formatting.php-133-\nincludes/functions-formatting.php-134-\nincludes/functions-formatting.php-135-\nincludes/functions-formatting.php-136-\nincludes/functions-formatting.php-137-\nincludes/functions-formatting.php-138-\nincludes/functions-formatting.php-139-\nincludes/functions-formatting.php-140-\nincludes/functions-formatting.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-formatting.php-142-    $url = yourls_esc_url( $unsafe_url, 'safe', $protocols );\nincludes/functions-formatting.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-formatting.php-144-}\nincludes/functions-formatting.php-145-\nincludes/functions-formatting.php-146-\nincludes/functions-formatting.php-147-\nincludes/functions-formatting.php-148-\nincludes/functions-formatting.php-149-\nincludes/functions-formatting.php-150-\nincludes/functions-formatting.php-151-\nincludes/functions-formatting.php-152-\nincludes/functions-formatting.php-153-\n--\nincludes/functions-formatting.php-733-\nincludes/functions-formatting.php-734-\nincludes/functions-formatting.php-735-\nincludes/functions-formatting.php-736-\nincludes/functions-formatting.php-737-\nincludes/functions-formatting.php-738-\nincludes/functions-formatting.php-739-\nincludes/functions-formatting.php-740-\nincludes/functions-formatting.php-741-\nincludes/functions-formatting.php-742-\nincludes/functions-formatting.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-formatting.php-545-\nincludes/functions-formatting.php-546-\nincludes/functions-formatting.php-547-\nincludes/functions-formatting.php-548-\nincludes/functions-formatting.php-549-\nincludes/functions-formatting.php-550-\nincludes/functions-formatting.php-551-\nincludes/functions-formatting.php-552-\nincludes/functions-formatting.php-553-\nincludes/functions-formatting.php-554-\nincludes/functions-formatting.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-formatting.php-671-\nincludes/functions-formatting.php-672-\nincludes/functions-formatting.php-673-\nincludes/functions-formatting.php-674-\nincludes/functions-formatting.php-675-\nincludes/functions-formatting.php-676-\nincludes/functions-formatting.php-677-\nincludes/functions-formatting.php-678-\nincludes/functions-formatting.php-679-\nincludes/functions-formatting.php-680-\nincludes/functions-formatting.php",
         "search_code"
       ],
       [
@@ -60,7 +133,15 @@
         "search_code"
       ],
       [
+        "includes/functions-infos.php-11-\nincludes/functions-infos.php-12-    yourls_do_action( 'pre_stats_countries_map' );\nincludes/functions-infos.php-13-\nincludes/functions-infos.php-14-\nincludes/functions-infos.php-15-    if( $id === null )\nincludes/functions-infos.php-16-        $id = uniqid ( 'yourls_stats_map_' );\n--\nincludes/functions-infos.php-39-\nincludes/functions-infos.php-40-\nincludes/functions-infos.php-41-\nincludes/functions-infos.php-42-\nincludes/functions-infos.php-43-\nincludes/functions-infos.php-44-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
         "includes/functions-infos.php-15-    if( $id === null )\nincludes/functions-infos.php-16-        $id = uniqid ( 'yourls_stats_map_' );\nincludes/functions-infos.php-17-\nincludes/functions-infos.php-18-    $data = array_merge( array( 'Country' => 'Hits' ), $countries );\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-186-\nincludes/functions-infos.php-187-    yourls_do_action( 'pre_stats_line' );\nincludes/functions-infos.php-188-\nincludes/functions-infos.php-189-\nincludes/functions-infos.php-190-    if( $id === null )\nincludes/functions-infos.php",
         "search_code"
       ],
       [
@@ -68,11 +149,75 @@
         "search_code"
       ],
       [
+        "includes/functions-infos.php-212-        \"colors\"      => \"['#2a85b3']\",\nincludes/functions-infos.php-213-    );\nincludes/functions-infos.php-214-    $options = yourls_apply_filter( 'stats_line_options', $options );\nincludes/functions-infos.php-215-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-217-\nincludes/functions-infos.php-218-    echo yourls_apply_filter( 'stats_line', $lineChart, $values, $options, $id );\nincludes/functions-infos.php-219-}\nincludes/functions-infos.php-220-\nincludes/functions-infos.php-221-\nincludes/functions-infos.php-222-\nincludes/functions-infos.php-223-\nincludes/functions-infos.php-224-\nincludes/functions-infos.php-225-\nincludes/functions-infos.php-226-\n--\nincludes/functions-infos.php-357-\nincludes/functions-infos.php-358-\nincludes/functions-infos.php-359-\nincludes/functions-infos.php-360-\nincludes/functions-infos.php-361-\nincludes/functions-infos.php-362-\nincludes/functions-infos.php-363-\nincludes/functions-infos.php-364-\nincludes/functions-infos.php-365-\nincludes/functions-infos.php-366-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-24-        'width'           => \"550\",\nincludes/functions-infos.php-25-        'height'          => \"340\",\nincludes/functions-infos.php-26-        'theme'           => 'maximized'\nincludes/functions-infos.php-27-    );\nincludes/functions-infos.php-28-    $options = yourls_apply_filter( 'stats_countries_map_options', $options );\nincludes/functions-infos.php-29-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-253-\nincludes/functions-infos.php-254-\nincludes/functions-infos.php-255-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-257-    $parse = @parse_url( $url );\nincludes/functions-infos.php-258-\nincludes/functions-infos.php-259-\n--\nincludes/functions-infos.php-276-\nincludes/functions-infos.php-277-\nincludes/functions-infos.php-278-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
         "includes/functions-infos.php-281-}\nincludes/functions-infos.php-282-\nincludes/functions-infos.php-283-\nincludes/functions-infos.php-284-\n--\nincludes/functions-infos.php-334-\nincludes/functions-infos.php-335-\nincludes/functions-infos.php-336-\nincludes/functions-infos.php-337-\nincludes/functions-infos.php",
         "search_code"
       ],
       [
+        "includes/functions-infos.php-4-\nincludes/functions-infos.php-5-\nincludes/functions-infos.php-6-\nincludes/functions-infos.php-7-\nincludes/functions-infos.php-8-\nincludes/functions-infos.php-9-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-46-\nincludes/functions-infos.php-47-    yourls_do_action( 'pre_stats_pie' );\nincludes/functions-infos.php-48-\nincludes/functions-infos.php-49-\nincludes/functions-infos.php-50-    if( $id === null )\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-52-\nincludes/functions-infos.php-53-\nincludes/functions-infos.php-54-    if ( count( $data ) > $limit ) {\nincludes/functions-infos.php-55-        $i= 0;\nincludes/functions-infos.php-56-        $trim_data = array( 'Others' => 0 );\nincludes/functions-infos.php-57-        foreach( $data as $item=>$value ) {\n--\nincludes/functions-infos.php-179-\nincludes/functions-infos.php-180-\nincludes/functions-infos.php-181-\nincludes/functions-infos.php-182-\nincludes/functions-infos.php-183-\nincludes/functions-infos.php-184-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-80-        'pieSliceText' => 'label',\nincludes/functions-infos.php-81-    );\nincludes/functions-infos.php-82-    $options = yourls_apply_filter( 'stats_pie_options', $options );\nincludes/functions-infos.php-83-\nincludes/functions-infos.php-84-    $script_data = array_merge( array( 'Country' => 'Value' ), $_data );\nincludes/functions-infos.php-85-    $script_data = yourls_google_array_to_data_table( $script_data );\nincludes/functions-infos.php-86-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
         "includes/functions-infos.php-86-\nincludes/functions-infos.php-87-    $pie = yourls_google_viz_code( 'PieChart', $script_data, $options, $id );\nincludes/functions-infos.php-88-\nincludes/functions-infos.php-89-    echo yourls_apply_filter( 'stats_pie', $pie, $data, $limit, $size, $options, $id );\n--\nincludes/functions-infos.php-197-\nincludes/functions-infos.php-198-    $values = yourls_array_granularity( $values, 30 );\nincludes/functions-infos.php-199-\nincludes/functions-infos.php-200-    $data = array_merge( array( 'Time' => 'Hits' ), $values );\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-install.php-242-        '`click_id` int(11) NOT NULL auto_increment,'.\nincludes/functions-install.php-243-        '`click_time` datetime NOT NULL,'.\nincludes/functions-install.php-244-        '`shorturl` varchar(100) BINARY NOT NULL,'.\nincludes/functions-install.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-install.php-246-        '`user_agent` varchar(255) NOT NULL,'.\nincludes/functions-install.php-247-        '`ip_address` varchar(41) NOT NULL,'.\nincludes/functions-install.php-248-        '`country_code` char(2) NOT NULL,'.\n--\nincludes/functions-upgrade.php-341-        '`click_id` int(11) NOT NULL auto_increment,'.\nincludes/functions-upgrade.php-342-        '`click_time` datetime NOT NULL,'.\nincludes/functions-upgrade.php-343-        '`shorturl` varchar(200) NOT NULL,'.\nincludes/functions-upgrade.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-upgrade.php-345-        '`user_agent` varchar(255) NOT NULL,'.\nincludes/functions-upgrade.php-346-        '`ip_address` varchar(41) NOT NULL,'.\nincludes/functions-upgrade.php-347-        '`country_code` char(2) NOT NULL,'.\n--\nincludes/functions.php-237-\nincludes/functions.php-238-\nincludes/functions.php-239-\nincludes/functions.php",
+        "search_code"
+      ],
+      [
+        "includes/functions.php",
+        "search_code"
+      ],
+      [
+        "includes/functions.php-242-\nincludes/functions.php",
+        "search_code"
+      ],
+      [
+        "includes/functions.php-531-        'keyword'  => yourls_sanitize_keyword($keyword),\nincludes/functions.php",
+        "search_code"
+      ],
+      [
+        "includes/functions.php-533-        'ua'       => substr(yourls_get_user_agent(), 0, 255),\nincludes/functions.php-534-        'ip'       => $ip,\nincludes/functions.php-535-        'location' => yourls_geo_ip_to_countrycode($ip),\n--\nincludes/functions.php-537-\nincludes/functions.php-538-\nincludes/functions.php-539-    try {\nincludes/functions.php",
         "search_code"
       ]
     ],
@@ -98,6 +243,84 @@
       },
       {
         "turn": 0,
+        "tool": "read_file",
+        "summary": "read includes/functions-infos.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'yourls_get_favicon_url|yourls_get_domain': 16 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read includes/functions-infos.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'yourls_stats_pie|yourls_stats_countries_map|yourls_stats_line': 53 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "list_directory",
+        "summary": "listed .",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'yourls_google_viz_code': 87 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'referrer': 42 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read includes/functions-infos.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'function yourls_(esc_js|esc_url|sanitize_url_safe|sanitize_url)\\\\b': 0 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'yourls_esc_js|sanitize_url_safe': 45 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'function yourls_esc_url': 21 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read includes/functions-formatting.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'stats': 60 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
         "tool": "git_log",
         "summary": "git log includes/functions-infos.php",
         "rejected": false
@@ -105,13 +328,7 @@
       {
         "turn": 0,
         "tool": "search_code",
-        "summary": "search 'yourls_get_favicon_url|yourls_get_domain': 3 match(es)",
-        "rejected": false
-      },
-      {
-        "turn": 0,
-        "tool": "read_file",
-        "summary": "read includes/functions-infos.php",
+        "summary": "search 'function yourls_normalize_uri': 21 match(es)",
         "rejected": false
       }
     ]
@@ -121,21 +338,21 @@
     "complete": true,
     "unreported_stages": 0,
     "requests": 1,
-    "input_tokens": 6,
-    "output_tokens": 716,
-    "cache_read_tokens": 25836,
-    "cache_write_tokens": 4866
+    "input_tokens": 26,
+    "output_tokens": 7225,
+    "cache_read_tokens": 236807,
+    "cache_write_tokens": 24170
   },
   "revision": {
     "mode": "diff",
-    "base": "64c722ff94e924c0c0231c306352f4271c57eff8",
-    "head": "bbeecdabb8110f386ac8b39692c91deca5f86c6e",
-    "base_sha": "64c722ff94e924c0c0231c306352f4271c57eff8",
-    "head_sha": "bbeecdabb8110f386ac8b39692c91deca5f86c6e"
+    "base": "c1c137b53397f48c9a8e5653cd58f36202265bfa",
+    "head": "73afd27e6d6b46c0deea88ca56d5606ef8d0bfe4",
+    "base_sha": "c1c137b53397f48c9a8e5653cd58f36202265bfa",
+    "head_sha": "73afd27e6d6b46c0deea88ca56d5606ef8d0bfe4"
   },
   "identity": {
-    "base_sha": "64c722ff94e924c0c0231c306352f4271c57eff8",
-    "head_sha": "bbeecdabb8110f386ac8b39692c91deca5f86c6e",
+    "base_sha": "c1c137b53397f48c9a8e5653cd58f36202265bfa",
+    "head_sha": "73afd27e6d6b46c0deea88ca56d5606ef8d0bfe4",
     "mode": "diff",
     "agent_version": "0.1.0",
     "model_requested": "claude-opus-5",
@@ -210,13 +427,14 @@
     "provider": "claude-cli",
     "auth_method": "claude.ai",
     "auth_subscription": "max",
-    "reported_cost_usd": 0.110065
+    "reported_cost_usd": 0.5418075
   },
   "coverage_accounting": {
     "changed": [
       "includes/functions-infos.php"
     ],
     "examined": [
+      "includes/functions-formatting.php",
       "includes/functions-infos.php"
     ],
     "excluded": [],

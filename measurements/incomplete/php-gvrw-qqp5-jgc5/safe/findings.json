@@ -1,0 +1,285 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-28T16:32:58+00:00",
+  "summary": "**What the change does.** A single file, `src/View/Shortcodes/EmbedShortcodeProvider.php`. The \"simple iframe\" fast path in `sandboxHtml()` previously returned the third-party embed HTML verbatim (`return $html;`). The MR replaces that with a call to a new private helper `removeDangerousAttributes()`, which is meant to strip every iframe attribute outside a 13-name allowlist and to reject `javascript:`/`data:`/`vbscript:`/`file:` values in `src`. It is a hardening change, implemented entirely with regular expressions.\n\n**What I examined.** I read the whole file (496 lines) rather than the hunk, tracing the data path end to end: `handle_shortcode()` -> `embeddableToHtml()` -> `videoEmbed()` -> `sandboxHtml()` -> `removeDangerousAttributes()`, and confirmed the sink is the unescaped `DBField::create_field('HTMLFragment', $content)` at line 228. I confirmed the source is `$extractor->code->html` (line 176), i.e. HTML returned by the remote oEmbed provider for the URL supplied in the shortcode, so it is attacker-influenced by anyone who can author an `[embed]` shortcode. I searched the repository for other callers or config of `sandboxHtml`, `removeDangerousAttributes`, `domains_excluded_from_sandboxing` and `sandboxed_iframe_attributes`; there are none beyond this file.\n\nI then worked through the two new regexes character by character against the HTML5 tokenizer states:\n- The outer tag regex `#^<iframe(?:\"[^\"]*\"|'[^']*'|[^>])*>#i` — I checked that its match always covers at least as much as the browser's opening tag (its quoted alternatives are a superset of the browser's quoted-value handling), so it does not truncate the sanitised region. I also tried to construct catastrophic backtracking against it; because `sandboxHtml` has already guaranteed a `>` exists, every path I tried terminates quickly, so I did not report ReDoS.\n- The `src` scheme check — entity decoding (`ENT_QUOTES|ENT_HTML5`) plus stripping of `\\x00-\\x20` defeats the usual `jav&#x09;ascript:` and `&colon;` obfuscations, and `strtolower` on the parsed scheme handles case. I could not construct a working bypass of that check on its own.\n- The inner attribute regex — this is where the control fails, and it is the finding I reported.\n\n**Conclusion.** One finding: the inner regex on line 446 requires `[\\s/]+` before an attribute name, but the HTML5 \"after attribute value (quoted)\" state starts a new attribute on *any* non-whitespace character. `<iframe src=\"x\"onload=\"alert(1)\">` therefore passes through `removeDangerousAttributes()` completely untouched and is emitted as an `HTMLFragment`. The same gap also bypasses the `src` scheme check. The added function does not provide the containment it implements.\n\nNote on attribution: because the pre-change code returned `$html` raw on this same path, this is an incomplete new control rather than a newly introduced weakness — the exploit worked before the MR too. I reported it because the MR is what claims to close it, and merging it as-is records the path as fixed when it is not.\n\nOne secondary observation I deliberately did **not** report as a finding, since I could not tie it to a concrete exploit: the allowlist omits `sandbox`, so an iframe that a provider deliberately shipped with `sandbox=\"...\"` will have that restriction stripped by the new code. That is a small theoretical loss of defence rather than a traced weakness.",
+  "mode": "diff",
+  "model": "claude-opus-5",
+  "complete": true,
+  "finished_explicitly": true,
+  "unresolved": [
+    "Whether an unauthenticated path can reach `handle_shortcode` with an attacker-chosen URL. I set `reachable_without_authentication: no` on the basis that inserting an `[embed]` shortcode requires content-authoring rights, but the shortcode parser's callers live outside this file and I did not find them in this repository — if any front-end form or API renders user-supplied shortcode content, the finding is unauthenticated.",
+    "The precise trust level of the `Embeddable`/`EmbedContainer` implementation. I confirmed the HTML originates from `$extractor->code->html` but the extractor itself is injected (`Injector::inst()->create(Embeddable::class, ...)`) and its implementation is not in the changed set; I assumed it performs no HTML sanitisation of its own, which is consistent with the existence of `sandboxHtml`.",
+    "No test file for `EmbedShortcodeProvider` exists in this repository snapshot, so I could not check the author's own intended bypass cases against the new sanitizer.",
+    "I could not definitively rule out catastrophic backtracking in the outer regex `#^<iframe(?:\"[^\"]*\"|'[^']*'|[^>])*>#i`. The alternation is ambiguous (a quoted run can also be consumed character-by-character via `[^>]`), which is the classic precondition, but every failing input I constructed was rescued quickly by a reachable `>`. If it can be made to fail, `preg_replace_callback` returns null against a `: string` return type, which would be a TypeError rather than a hang.",
+    "The `domains_excluded_from_sandboxing` suffix match at line 490 uses `str_ends_with($domain, $excludedDomain)`, which matches `evil-youtube.com` against a configured `youtube.com`. This is pre-existing and unchanged by the MR, and the default config is empty, so I did not trace it to an exploit — but it is a real suffix-matching weakness for any site that populates that config."
+  ],
+  "stop_reason": "completed",
+  "stop_detail": "",
+  "trace_markdown": "",
+  "verdict": {
+    "exit_code": 0,
+    "blocked": false,
+    "reason": "1 finding(s) reported, none at or above the high threshold.",
+    "blocking_fingerprints": [],
+    "not_gated_on": [
+      "1 below the high severity threshold"
+    ]
+  },
+  "counts": {
+    "reported": 1,
+    "blocking": 0,
+    "refuted": 0,
+    "suppressed": 0,
+    "rejected_claims": 0,
+    "by_severity": {
+      "low": 1,
+      "medium": 0,
+      "high": 0,
+      "critical": 0
+    }
+  },
+  "findings": [
+    {
+      "fingerprint": "209f011b0b266f8e",
+      "title": "Iframe attribute sanitizer misses attributes not preceded by whitespace (XSS)",
+      "severity": "low",
+      "confidence": "high",
+      "category": "xss",
+      "file": "src/View/Shortcodes/EmbedShortcodeProvider.php",
+      "line": 446,
+      "impact": "state_change",
+      "reachable_without_authentication": "no",
+      "requires_user_interaction": "yes",
+      "severity_derivation": "state_change → high; authentication required → medium; needs a victim to act → low",
+      "evidence": "                    '#[\\s/]+([a-zA-Z_:][a-zA-Z0-9_:.\\-]*)(\\s*=\\s*(\"[^\"]*\"|\\'[^\\']*\\'|[^\\s>]*))?#',",
+      "description": "`sandboxHtml()` now routes the \"simple iframe\" fast path through the newly added `removeDangerousAttributes()` (line 392), which is intended to strip everything outside an allowlist (so event handlers such as `onload` are removed) before the provider-supplied HTML is emitted unescaped via `DBField::create_field('HTMLFragment', $content)` in `videoEmbed()` (line 228).\n\nThe inner attribute regex on line 446 only recognises an attribute when it is preceded by one or more `[\\s/]` characters. The HTML5 tokenizer does not require that: in the \"after attribute value (quoted)\" state, any character that is not whitespace, `/` or `>` is a `missing-whitespace-between-attributes` parse error and is *reconsumed in the before-attribute-name state*, i.e. it starts a new attribute. So `<iframe src=\"x\"onload=\"alert(1)\">` is parsed by every browser as an iframe with an `onload` handler, while the regex, after consuming the ` src=\"x\"` match, resumes scanning at `onload=\"alert(1)\">`, finds no leading whitespace or slash anywhere, and therefore never matches — the handler is copied through verbatim by `preg_replace_callback`.\n\nThe gate above it does not stop this either: `preg_match('#^<iframe[^>]*>#', $html)`, `preg_match('#</iframe\\s*>$#', $html)` and `substr_count($html, '<') <= 2` are all satisfied by a single iframe element whose payload contains no `<`.\n\nThe same gap defeats the `src` scheme check on lines 454-460: `<iframe title=\"a\"src=\"javascript:alert(1)\">` never produces a match for the second attribute, so the `javascript:` value is never inspected.\n\nNet effect: the added function does not deliver the containment it implements, and the \"simple iframe\" branch still emits attacker-controlled event handlers into the page instead of the `data:` sandboxed iframe that the `else` branch (lines 396-414) would have produced.",
+      "exploit_scenario": "A CMS author with only content-editing rights (the privilege level the sandboxing feature exists to contain) inserts `[embed url=\"https://attacker.example/page\"]` into page content. The attacker's server responds with oEmbed/OpenGraph metadata of type `video` whose embed code is:\n\n`<iframe src=\"https://attacker.example/v\"onload=\"fetch('/admin/security/add',{...})\"></iframe>`\n\n`handle_shortcode()` -> `embeddableToHtml()` -> `videoEmbed()` -> `sandboxHtml()` sees a well-formed single iframe with only two `<` characters, so it takes the fast path and calls `removeDangerousAttributes()`. That function strips nothing, because `onload` is not preceded by whitespace. The HTML is cached and rendered unescaped as an `HTMLFragment`. Any visitor — including an administrator previewing or browsing the page — executes the attacker's JavaScript in the site's origin, allowing session-riding requests such as privilege escalation or content modification as that user.",
+      "recommendation": "Do not sanitise HTML with regular expressions here; the tokenizer rules the browser applies cannot be reproduced this way. Parse the fragment with `DOMDocument`/`masterminds/html5` (or SilverStripe's `HTMLValue`), iterate the element's real attribute nodes, drop any name not in `$allowed`, validate `src` against an http/https allowlist, and re-serialise via `HTML::createTag('iframe', $attrs)` so the output is built from known-good attributes rather than edited in place. If a regex approach must be kept as an interim measure, at minimum treat any character following a quoted attribute value as an attribute-name boundary (i.e. make the separator `(?:[\\s/]+|(?<=[\"\\']))`) and fail closed — fall through to the `data:` sandboxed-iframe branch — whenever the opening tag contains anything the parser does not fully account for.",
+      "verification": {
+        "verdict": "confirmed",
+        "reason": "not verified — reported for information only, as it cannot block the merge at the current settings (below the high severity threshold)",
+        "votes": [],
+        "claimed_severity": "high",
+        "claimed_confidence": "high",
+        "claimed_line": 446,
+        "evidence_located_line": 446,
+        "line_corrected": false,
+        "introduced_by_this_change": true,
+        "attributed_by": "added",
+        "removes_existing_control": false,
+        "path_verified": true
+      },
+      "suppressed_by": ""
+    }
+  ],
+  "refuted": [],
+  "suppressed": [],
+  "rejected_claims": [],
+  "coverage": {
+    "files_examined": [
+      "src/View/Shortcodes/EmbedShortcodeProvider.php"
+    ],
+    "exposures": [
+      [
+        "src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "get_diff"
+      ],
+      [
+        "src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "read_file"
+      ],
+      [
+        "src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "search_code"
+      ]
+    ],
+    "turns": 0,
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "list_changed_files",
+        "summary": "1 changed file(s), 0 generated",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "get_diff",
+        "summary": "diff for all files (3900 chars)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "git_log",
+        "summary": "git log src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'sandboxHtml|removeDangerousAttributes|domains_excluded_from_sandboxing|sandboxed_iframe_attributes': 9 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "report_finding",
+        "summary": "recorded high xss at src/View/Shortcodes/EmbedShortcodeProvider.php:446",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "finish_review",
+        "summary": "finish_review: 5 unresolved",
+        "rejected": false
+      }
+    ]
+  },
+  "usage": {
+    "reported": true,
+    "complete": true,
+    "unreported_stages": 0,
+    "requests": 1,
+    "input_tokens": 16,
+    "output_tokens": 26824,
+    "cache_read_tokens": 166517,
+    "cache_write_tokens": 37444
+  },
+  "revision": {
+    "mode": "diff",
+    "base": "31a36a74cfd452a2f213b1e863243e471d029b56",
+    "head": "7d426939e34d240cdd04a820446c549d8e1f8fca",
+    "base_sha": "31a36a74cfd452a2f213b1e863243e471d029b56",
+    "head_sha": "7d426939e34d240cdd04a820446c549d8e1f8fca"
+  },
+  "identity": {
+    "base_sha": "31a36a74cfd452a2f213b1e863243e471d029b56",
+    "head_sha": "7d426939e34d240cdd04a820446c549d8e1f8fca",
+    "mode": "diff",
+    "agent_version": "0.1.0",
+    "model_requested": "claude-opus-5",
+    "system_prompt_sha": "bd359730e26be159",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "settings": {
+      "fail_on": "high",
+      "min_confidence": "medium",
+      "gate_pre_existing": false,
+      "gate_removed_controls": true,
+      "ungated_categories": [],
+      "verify": true,
+      "verify_votes": 1,
+      "effort": "high",
+      "verifier_context_chars": 20000,
+      "suppressions": "",
+      "excludes": [
+        "*.eot",
+        "*.gif",
+        "*.ico",
+        "*.jpeg",
+        "*.jpg",
+        "*.lock",
+        "*.map",
+        "*.min.css",
+        "*.min.js",
+        "*.mo",
+        "*.pb.go",
+        "*.pdf",
+        "*.png",
+        "*.pyc",
+        "*.snap",
+        "*.svg",
+        "*.ttf",
+        "*.woff",
+        "*.woff2",
+        "*/.terraform/*",
+        "*/__snapshots__/*",
+        "*/build/*",
+        "*/dist/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+        "*_pb2.py",
+        "Cargo.lock",
+        "Gemfile.lock",
+        "composer.lock",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "yarn.lock"
+      ],
+      "fail_on_incomplete": true,
+      "verify_max_findings": 40,
+      "verify_model": "",
+      "verify_effort": "high",
+      "diff_ceiling_bytes": 0,
+      "scope": []
+    }
+  },
+  "provenance": {
+    "model_requested": "claude-opus-5",
+    "models_served": [
+      "claude-opus-5"
+    ],
+    "model_substituted": false,
+    "system_prompt_sha": "bd359730e26be159",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "agent_version": "0.1.0",
+    "provider": "claude-cli",
+    "auth_method": "claude.ai",
+    "auth_subscription": "max",
+    "reported_cost_usd": 1.1293265
+  },
+  "coverage_accounting": {
+    "changed": [
+      "src/View/Shortcodes/EmbedShortcodeProvider.php"
+    ],
+    "examined": [
+      "src/View/Shortcodes/EmbedShortcodeProvider.php"
+    ],
+    "excluded": [],
+    "out_of_scope": [],
+    "diff_truncated": false,
+    "unopened": [],
+    "complete": true
+  },
+  "stage_metrics": {
+    "citations": {
+      "accepted": 1,
+      "rejected_unknown_path": 0,
+      "rejected_not_found": 0,
+      "rejected_ambiguous": 0,
+      "rejected_too_short": 0,
+      "lines_corrected": 0
+    },
+    "verification": {
+      "verified": 0,
+      "skipped": 1,
+      "failed": 0,
+      "verdicts_changed": 0
+    }
+  },
+  "turns_detail": [],
+  "settings": {
+    "fail_on": "high",
+    "min_confidence": "medium",
+    "gate_pre_existing": false,
+    "gate_removed_controls": true,
+    "ungated_categories": [],
+    "verify": true,
+    "verify_votes": 1,
+    "effort": "high",
+    "scope": []
+  }
+}

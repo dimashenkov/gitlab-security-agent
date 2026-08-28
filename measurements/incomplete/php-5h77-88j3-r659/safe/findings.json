@@ -1,17 +1,15 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-28T16:14:15+00:00",
-  "summary": "## What the change does\n\nOne file, `includes/functions-infos.php` (YOURLS stats/graph helpers). Three functions were modified, all in a hardening direction:\n\n1. **`yourls_get_domain()`** — added strict types, replaced `@parse_url` with a checked `parse_url`, and added host validation: the host must match `^(\\[[\\da-fA-F:]+\\]|[a-zA-Z0-9._-]+)$`, otherwise it is run through `idn_to_ascii()` and re-validated against `^[a-zA-Z0-9._-]+$` (or, when `intl` is absent, against `^[\\pL\\pN._-]+$`), returning `''` on failure.\n2. **`yourls_get_favicon_url()`** — wraps the domain in `yourls_esc_url()`.\n3. **`yourls_google_array_to_data_table()`** — the array key is now `yourls_esc_js()`-escaped before being interpolated into the single-quoted JS string literal (previously `\"\\t['$label',\"`, raw), and values go through `yourls_esc_url()` and `yourls_esc_js()`.\n\n## What I examined\n\n- Read `functions-infos.php` in full, including the three call sites of `yourls_google_array_to_data_table()` (`yourls_stats_countries_map`, `yourls_stats_pie`, `yourls_stats_line`) and the sink `yourls_google_viz_code()`, which emits the string inside a `<script>` block.\n- Read `yourls_esc_js()`, `yourls_specialchars()`, `yourls_specialchars_decode()`, `yourls_check_invalid_utf8()`, `yourls_esc_url()`, `yourls_normalize_uri()`, `yourls_remove_backslashes_before_query_fragment()` in `functions-formatting.php`, and `yourls_get_protocol()` / `yourls_is_allowed_protocol()` in `functions.php`, to establish what the escapers actually neutralise rather than assuming from their names.\n- Traced `yourls_esc_js()` step by step for a single-quoted JS string context: `yourls_specialchars(..., ENT_COMPAT)` encodes `<`, `>`, `&`, `\"` (so `</script>` breakout is blocked), the `&#39;`/`&#x27;` back-conversion is followed by `addslashes()` as the last transformation, so `'` and `\\` are both escaped and no ordering trick reintroduces an unescaped quote. This genuinely closes the pre-existing raw `'$label'` interpolation.\n- Checked `yourls_get_domain()`'s output character set on every branch (already-safe host, IDN-converted host, no-intl fallback, `javascript:`-style URLs where `path` is used as `host`). Every return value is either `''` or restricted to alphanumerics/`._-`/bracketed hex, so no HTML- or JS-breaking character can survive.\n- Confirmed the PHP 8 baseline (`str_contains` already used in `includes/class-mysql.php`), so the new `str_starts_with` / `??` usage is not a fatal-error regression.\n- `git_log` shows only a synthetic two-commit history, so no prior security context to draw on.\n\n## Conclusion\n\nNo finding. The diff is a net security improvement and I could not construct an exploit path that it introduces or newly exposes.\n\nThe one construct I scrutinised hardest is the surviving raw-interpolation branch at line 372: a value that starts with `[` or `{` after `yourls_esc_url()` is written into the JS unquoted. Because `yourls_esc_url()` only *strips* characters, it can newly cause a string to begin with `[`. But for that to matter the value would already have to be attacker-controlled and non-numeric — in which case the *old* code was more trivially exploitable via a bare `'` in the quoted branch. All three in-repo call sites pass only integer hit counts and the literals `'Hits'` / `'Value'` as values, so I could not source it. Not a regression, and not substantiable as a finding from this repository.",
+  "generated_at": "2026-08-28T16:33:03+00:00",
+  "summary": "## What the change does\n\nSingle file: `includes/functions-infos.php` (YOURLS stats/chart helpers). Three functions modified:\n\n1. **`yourls_get_domain()`** — adds strict types, drops the `@` on `parse_url`, explicitly returns `''` on parse failure, and adds host validation: hosts must match `^(\\[[\\da-fA-F:]+\\]|[a-zA-Z0-9._-]+)$`, otherwise they are run through `idn_to_ascii()` (UTS46) and re-checked against `^[a-zA-Z0-9._-]+$`, or, when `intl` is absent, against `^[\\pL\\pN._-]+$/u`. Anything else returns `''`.\n2. **`yourls_get_favicon_url()`** — wraps the domain in `yourls_esc_url()` before concatenating it into the Google favicon URL.\n3. **`yourls_google_array_to_data_table()`** — the chart *label* is now `yourls_esc_js($label)` (previously interpolated raw into a single-quoted JS string), and non-numeric *values* are now `yourls_esc_url()`'d and then `yourls_esc_js()`'d before being quoted.\n\n## What I examined\n\n- Read `yourls_esc_js`, `yourls_specialchars`, `yourls_specialchars_decode`, `yourls_esc_url`, `yourls_normalize_uri`, `yourls_remove_backslashes_before_query_fragment`, `yourls_get_protocol`, `yourls_is_allowed_protocol`, `yourls_match_current_protocol` to confirm the added controls actually neutralise the sink rather than merely being named for it. `yourls_esc_js` runs `specialchars(ENT_COMPAT)` (so `<` becomes `&lt;`, blocking `</script>` breakout) and `addslashes` (so `'`, `\"`, `\\` are escaped) — it is sound for the single-quoted JS string literal context these values land in via `yourls_google_viz_code()`.\n- Traced the source of chart labels: `yourls_get_referrer()` (`$_SERVER['HTTP_REFERER']`) is stored in the click log and, in YOURLS, surfaces as pie/geo chart labels. That is exactly the raw-interpolation XSS the diff removes, so this change is a net security fix, not a regression.\n- Checked whether the new `yourls_get_domain` validation fails open: both regex paths and the `idn_to_ascii` path return `''` on non-match, and the non-`/u` first regex on invalid UTF-8 simply falls through to the stricter branch. It fails closed.\n- Read `yourls_google_viz_code()` (unchanged) for the surrounding `<script>` context, and checked `$options`/`$id` handling — all hardcoded or `uniqid()` at the visible call sites.\n\n## Conclusion\n\nNo finding. The diff tightens three previously unescaped interpolations and adds host validation; I could not construct a path where the new code is weaker than the old. The one behavioural nuance I noted — `yourls_esc_url()` is applied to `$value` *before* the `str_starts_with($value, '[')` check, so stripping a disallowed leading character (e.g. `<`, a space) could shift a value into the raw-emission branch — is a residue of pre-existing logic and I could not identify any non-numeric attacker-controlled chart *value*, so I did not report it.",
   "mode": "diff",
   "model": "claude-opus-5",
   "complete": true,
   "finished_explicitly": true,
   "unresolved": [
-    "This repository snapshot contains only `includes/`; the admin pages and templates that actually call `yourls_stats_pie()`, `yourls_stats_countries_map()`, `yourls_stats_line()`, `yourls_get_domain()` and `yourls_get_favicon_url()` are not tracked here. I could not confirm reachability or authentication state for the rendered graph output from code, only that the escaping applied is correct for its context.",
-    "Residual raw-interpolation branch at `includes/functions-infos.php:372`: a value starting with `[` after `yourls_esc_url()` is emitted into the `<script>` block unquoted and unescaped. Pre-existing and not reachable from any in-repo caller (all pass numeric counts), but a plugin or out-of-repo caller passing a non-numeric attacker-controlled value would make it an XSS. I could not enumerate such callers.",
-    "Same pattern, also pre-existing and untouched by this diff, in `yourls_google_viz_code()` (lines 402-405 and the `$id` interpolated into `id=\"yourls_graph$id\"` / `getElementById('visualization_$id')` at 395/410). `$id` defaults to `uniqid()` in all in-repo callers, but is a caller-supplied parameter; I could not check out-of-repo callers for a controlled value.",
-    "`yourls_esc_js()` does not escape U+2028/U+2029. Harmless on ES2019+ engines inside a string literal; I did not determine whether the project still targets older browsers where this would terminate the literal.",
-    "The no-`intl` fallback in `yourls_get_domain()` accepts any `\\pL`/`\\pN` host without punycode conversion, so behaviour differs between deployments with and without the `intl` extension. I judged the accepted character set safe for HTML/JS output, but I could not see the consuming templates to confirm no other context (e.g. a URL path or a shell/DB sink) receives it."
+    "The repository snapshot contains only `includes/`; the admin/stats pages that call `yourls_stats_pie()`, `yourls_stats_countries_map()`, `yourls_stats_line()` and `yourls_get_favicon_url()` are not present, so I could not read the actual call sites and confirm reachability or the exact HTML context the favicon URL is rendered into.",
+    "Pre-existing, not reported for lack of a traceable source: in `yourls_google_array_to_data_table()` (line ~372) a value beginning with `[` or `{` is still emitted raw into the JS `arrayToDataTable([...])` literal. Because `yourls_esc_url()` now runs first and strips characters not in its allowlist (e.g. `<`, space, `\"`), an input like `<[1],alert(1)//` would become `[1],alert(1)//` and take the raw branch where previously it would have been quoted. All chart values I could see are integer hit counts from the DB, so I found no attacker-controlled value; a human with access to the admin/ call sites should confirm no plugin or caller passes string values here.",
+    "`yourls_get_domain()` and `yourls_get_favicon_url()` gained strict `string` parameter types. If any caller outside this snapshot passes `null` (e.g. a NULL URL column), PHP 8 raises a TypeError. I could not check the callers, so I could not judge whether this is an availability concern."
   ],
   "stop_reason": "completed",
   "stop_detail": "",
@@ -44,11 +42,11 @@
     "files_examined": [
       "includes/functions-formatting.php",
       "includes/functions-infos.php",
-      "includes/functions.php"
+      "includes/functions-links.php"
     ],
     "exposures": [
       [
-        "includes/class-mysql.php",
+        "includes/functions-deprecated.php",
         "search_code"
       ],
       [
@@ -57,6 +55,18 @@
       ],
       [
         "includes/functions-formatting.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-formatting.php-343-\nincludes/functions-formatting.php-344-\nincludes/functions-formatting.php-345-\nincludes/functions-formatting.php-346-\nincludes/functions-formatting.php-347-\nincludes/functions-formatting.php-348-\nincludes/functions-formatting.php-349-\nincludes/functions-formatting.php-350-\nincludes/functions-formatting.php-351-\nincludes/functions-formatting.php-352-\nincludes/functions-formatting.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-formatting.php-354-    $string = (string) $string;\nincludes/functions-formatting.php-355-\nincludes/functions-formatting.php-356-    if ( 0 === strlen( $string ) ) {\nincludes/functions-formatting.php-357-        return '';\nincludes/functions-formatting.php-358-    }\nincludes/functions-formatting.php-359-\nincludes/functions-formatting.php-360-\nincludes/functions-formatting.php-361-    if ( ! yourls_supports_pcre_u() ) {\nincludes/functions-formatting.php-362-        return $string;\nincludes/functions-formatting.php-363-    }\n--\nincludes/functions.php-1167-\nincludes/functions.php-1168-\nincludes/functions.php-1169-\nincludes/functions.php-1170-\nincludes/functions.php-1171-\nincludes/functions.php-1172-\nincludes/functions.php-1173-\nincludes/functions.php-1174-\nincludes/functions.php-1175-\nincludes/functions.php-1176-\nincludes/functions.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-html.php",
         "search_code"
       ],
       [
@@ -72,15 +82,67 @@
         "search_code"
       ],
       [
+        "includes/functions-infos.php-11-\nincludes/functions-infos.php-12-    yourls_do_action( 'pre_stats_countries_map' );\n--\nincludes/functions-infos.php-28-    $options = yourls_apply_filter( 'stats_countries_map_options', $options );\nincludes/functions-infos.php-29-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-186-\nincludes/functions-infos.php-187-    yourls_do_action( 'pre_stats_line' );\n--\nincludes/functions-infos.php-189-\nincludes/functions-infos.php-190-    if( $id === null )\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-192-\nincludes/functions-infos.php-193-\n--\nincludes/functions-infos.php-214-    $options = yourls_apply_filter( 'stats_line_options', $options );\nincludes/functions-infos.php-215-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-217-\nincludes/functions-infos.php-218-    echo yourls_apply_filter( 'stats_line', $lineChart, $values, $options, $id );\n--\nincludes/functions-infos.php-391-\nincludes/functions-infos.php-392-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-31-\nincludes/functions-infos.php-32-    echo yourls_apply_filter( 'stats_countries_map', $map, $countries, $options, $id );\n--\nincludes/functions-infos.php-43-\nincludes/functions-infos.php-44-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-46-\nincludes/functions-infos.php-47-    yourls_do_action( 'pre_stats_pie' );\n--\nincludes/functions-infos.php-49-\nincludes/functions-infos.php-50-    if( $id === null )\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-52-\nincludes/functions-infos.php-53-\n--\nincludes/functions-infos.php-85-    $script_data = yourls_google_array_to_data_table( $script_data );\nincludes/functions-infos.php-86-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-8-\nincludes/functions-infos.php-9-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php-88-\nincludes/functions-infos.php-89-    echo yourls_apply_filter( 'stats_pie', $pie, $data, $limit, $size, $options, $id );\n--\nincludes/functions-infos.php-183-\nincludes/functions-infos.php-184-\nincludes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-install.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-links.php",
+        "read_file"
+      ],
+      [
         "includes/functions-links.php",
         "search_code"
       ],
       [
-        "includes/functions.php",
-        "read_file"
+        "includes/functions-upgrade.php",
+        "search_code"
       ],
       [
         "includes/functions.php",
+        "search_code"
+      ],
+      [
+        "includes/functions.php-1178-    if ( empty( $protocols ) ) {\nincludes/functions.php-1179-        global $yourls_allowedprotocols;\nincludes/functions.php-1180-        $protocols = $yourls_allowedprotocols;\nincludes/functions.php-1181-    }\nincludes/functions.php-1182-\nincludes/functions.php-1183-    return yourls_apply_filter( 'is_allowed_protocol', in_array( yourls_get_protocol( $url ), $protocols ), $url, $protocols );\nincludes/functions.php-1184-}\nincludes/functions.php-1185-\nincludes/functions.php-1186-\nincludes/functions.php-1187-\n--\nincludes/functions.php-1191-\nincludes/functions.php-1192-\nincludes/functions.php-1193-\nincludes/functions.php-1194-\nincludes/functions.php-1195-\nincludes/functions.php-1196-\nincludes/functions.php-1197-\nincludes/functions.php-1198-\nincludes/functions.php-1199-\nincludes/functions.php-1200-\nincludes/functions.php",
+        "search_code"
+      ],
+      [
+        "includes/functions.php-1211-}\n--\nincludes/functions.php-1283-\nincludes/functions.php-1284-\nincludes/functions.php-1285-\nincludes/functions.php-1286-\nincludes/functions.php-1287-\nincludes/functions.php-1288-\nincludes/functions.php-1289-\nincludes/functions.php-1290-\nincludes/functions.php-1291-\nincludes/functions.php-1292-\nincludes/functions.php",
         "search_code"
       ]
     ],
@@ -113,31 +175,37 @@
       {
         "turn": 0,
         "tool": "read_file",
-        "summary": "read includes/functions-infos.php",
-        "rejected": false
-      },
-      {
-        "turn": 0,
-        "tool": "read_file",
         "summary": "read includes/functions-formatting.php",
         "rejected": false
       },
       {
         "turn": 0,
-        "tool": "search_code",
-        "summary": "search 'yourls_stats_pie|yourls_stats_countries_map|yourls_stats_line|yourls_google_viz_code': 9 match(es)",
+        "tool": "read_file",
+        "summary": "read includes/functions-infos.php",
         "rejected": false
       },
       {
         "turn": 0,
-        "tool": "git_log",
-        "summary": "git log includes/functions-infos.php",
+        "tool": "search_code",
+        "summary": "search 'yourls_stats_pie|yourls_stats_countries_map|yourls_stats_line|yourls_google_viz_code': 53 match(es)",
         "rejected": false
       },
       {
         "turn": 0,
         "tool": "read_file",
         "summary": "read includes/functions-infos.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'yourls_stats_pie|yourls_stats_countries_map|yourls_get_favicon_url': 4 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'stats_pie|favicon_url|countries_map': 15 match(es)",
         "rejected": false
       },
       {
@@ -148,32 +216,38 @@
       },
       {
         "turn": 0,
-        "tool": "search_code",
-        "summary": "search 'function yourls_specialchars|function yourls_check_invalid_utf8|function yourls_get_protocol|function yourls_is_allowed_protocol': 6 match(es)",
-        "rejected": false
-      },
-      {
-        "turn": 0,
         "tool": "read_file",
         "summary": "read includes/functions-formatting.php",
         "rejected": false
       },
       {
         "turn": 0,
-        "tool": "search_code",
-        "summary": "search 'str_starts_with|str_contains': 2 match(es)",
+        "tool": "read_file",
+        "summary": "read includes/functions-links.php",
         "rejected": false
       },
       {
         "turn": 0,
-        "tool": "read_file",
-        "summary": "read includes/functions.php",
+        "tool": "git_log",
+        "summary": "git log .",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'function yourls_check_invalid_utf8|function yourls_get_protocol|function yourls_is_allowed_protocol': 87 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'yourls_google_array_to_data_table|yourls_stats_|referrer': 18 match(es)",
         "rejected": false
       },
       {
         "turn": 0,
         "tool": "finish_review",
-        "summary": "finish_review: 5 unresolved",
+        "summary": "finish_review: 3 unresolved",
         "rejected": false
       }
     ]
@@ -183,21 +257,21 @@
     "complete": true,
     "unreported_stages": 0,
     "requests": 1,
-    "input_tokens": 24,
-    "output_tokens": 11889,
-    "cache_read_tokens": 225327,
-    "cache_write_tokens": 26943
+    "input_tokens": 22,
+    "output_tokens": 14679,
+    "cache_read_tokens": 237817,
+    "cache_write_tokens": 34969
   },
   "revision": {
     "mode": "diff",
-    "base": "a3efb95d4130880dd027d058e96a15190b246772",
-    "head": "4f9bf56a9f0961464a723e8a25d33f943dc05080",
-    "base_sha": "a3efb95d4130880dd027d058e96a15190b246772",
-    "head_sha": "4f9bf56a9f0961464a723e8a25d33f943dc05080"
+    "base": "04079b40a84da22afab432aa131bcb7293a8b059",
+    "head": "b9d84bb9dd68a3fc5387142f49a7aed9ebcf4bd3",
+    "base_sha": "04079b40a84da22afab432aa131bcb7293a8b059",
+    "head_sha": "b9d84bb9dd68a3fc5387142f49a7aed9ebcf4bd3"
   },
   "identity": {
-    "base_sha": "a3efb95d4130880dd027d058e96a15190b246772",
-    "head_sha": "4f9bf56a9f0961464a723e8a25d33f943dc05080",
+    "base_sha": "04079b40a84da22afab432aa131bcb7293a8b059",
+    "head_sha": "b9d84bb9dd68a3fc5387142f49a7aed9ebcf4bd3",
     "mode": "diff",
     "agent_version": "0.1.0",
     "model_requested": "claude-opus-5",
@@ -272,7 +346,7 @@
     "provider": "claude-cli",
     "auth_method": "claude.ai",
     "auth_subscription": "max",
-    "reported_cost_usd": 0.6803885000000001
+    "reported_cost_usd": 0.8366315
   },
   "coverage_accounting": {
     "changed": [
@@ -281,7 +355,7 @@
     "examined": [
       "includes/functions-formatting.php",
       "includes/functions-infos.php",
-      "includes/functions.php"
+      "includes/functions-links.php"
     ],
     "excluded": [],
     "out_of_scope": [],

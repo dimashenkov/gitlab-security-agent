@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-28T16:35:23+00:00",
+  "summary": "",
+  "mode": "diff",
+  "model": "claude-opus-5",
+  "complete": false,
+  "finished_explicitly": false,
+  "unresolved": [],
+  "stop_reason": "error",
+  "stop_detail": "You've hit your session limit · resets 9:30pm (Europe/Sofia).",
+  "trace_markdown": "## ⚠️ AI security review was killed before it finished\n\n> [!WARNING]\n> **This is not a result.** The review process was killed — a time limit, an out-of-memory kill, or the CLI itself dying — so it reached no conclusion and produced no verdict. What follows is the record it appended as it went: how far it got, not what it found. Nothing here was verified, nothing here blocks or clears anything, and code that is not mentioned was not necessarily examined.\n\n_reviewer mode · bd0500a3788a..e23e15e4931d · 0 tool calls started · 0 finished · 0 findings claimed · last record 2026-08-28 16:35:11 UTC_\n",
+  "verdict": {
+    "exit_code": 2,
+    "blocked": true,
+    "reason": "the review ended with an error (You've hit your session limit · resets 9:30pm (Europe/Sofia).), and no part of the change is recorded as having reached the reviewer. There is no partial coverage to weigh, so no setting makes it a pass.",
+    "blocking_fingerprints": [],
+    "not_gated_on": []
+  },
+  "counts": {
+    "reported": 0,
+    "blocking": 0,
+    "refuted": 0,
+    "suppressed": 0,
+    "rejected_claims": 0,
+    "by_severity": {
+      "low": 0,
+      "medium": 0,
+      "high": 0,
+      "critical": 0
+    }
+  },
+  "findings": [],
+  "refuted": [],
+  "suppressed": [],
+  "rejected_claims": [],
+  "coverage": {
+    "files_examined": [],
+    "exposures": [],
+    "turns": 0,
+    "tool_calls": []
+  },
+  "usage": {
+    "reported": true,
+    "complete": true,
+    "unreported_stages": 0,
+    "requests": 1,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0
+  },
+  "revision": {
+    "mode": "diff",
+    "base": "bd0500a3788a08442465ead5dfa2082813ba5df4",
+    "head": "e23e15e4931def4d515ed051858d3995bbb57e9c",
+    "base_sha": "bd0500a3788a08442465ead5dfa2082813ba5df4",
+    "head_sha": "e23e15e4931def4d515ed051858d3995bbb57e9c"
+  },
+  "identity": {
+    "base_sha": "bd0500a3788a08442465ead5dfa2082813ba5df4",
+    "head_sha": "e23e15e4931def4d515ed051858d3995bbb57e9c",
+    "mode": "diff",
+    "agent_version": "0.1.0",
+    "model_requested": "claude-opus-5",
+    "system_prompt_sha": "bd359730e26be159",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "settings": {
+      "fail_on": "high",
+      "min_confidence": "medium",
+      "gate_pre_existing": false,
+      "gate_removed_controls": true,
+      "ungated_categories": [],
+      "verify": true,
+      "verify_votes": 1,
+      "effort": "high",
+      "verifier_context_chars": 20000,
+      "suppressions": "",
+      "excludes": [
+        "*.eot",
+        "*.gif",
+        "*.ico",
+        "*.jpeg",
+        "*.jpg",
+        "*.lock",
+        "*.map",
+        "*.min.css",
+        "*.min.js",
+        "*.mo",
+        "*.pb.go",
+        "*.pdf",
+        "*.png",
+        "*.pyc",
+        "*.snap",
+        "*.svg",
+        "*.ttf",
+        "*.woff",
+        "*.woff2",
+        "*/.terraform/*",
+        "*/__snapshots__/*",
+        "*/build/*",
+        "*/dist/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+        "*_pb2.py",
+        "Cargo.lock",
+        "Gemfile.lock",
+        "composer.lock",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "yarn.lock"
+      ],
+      "fail_on_incomplete": true,
+      "verify_max_findings": 40,
+      "verify_model": "",
+      "verify_effort": "high",
+      "diff_ceiling_bytes": 0,
+      "scope": []
+    }
+  },
+  "provenance": {
+    "model_requested": "claude-opus-5",
+    "models_served": [
+      "claude-opus-5"
+    ],
+    "model_substituted": false,
+    "system_prompt_sha": "bd359730e26be159",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "agent_version": "0.1.0",
+    "provider": "claude-cli",
+    "auth_method": "claude.ai",
+    "auth_subscription": "max",
+    "reported_cost_usd": 0.0
+  },
+  "coverage_accounting": {
+    "changed": [
+      "phpmyfaq/src/phpMyFAQ/Controller/Administration/GroupController.php"
+    ],
+    "examined": [],
+    "excluded": [],
+    "out_of_scope": [],
+    "diff_truncated": false,
+    "unopened": [
+      "phpmyfaq/src/phpMyFAQ/Controller/Administration/GroupController.php"
+    ],
+    "complete": false
+  },
+  "stage_metrics": {
+    "citations": {
+      "accepted": 0,
+      "rejected_unknown_path": 0,
+      "rejected_not_found": 0,
+      "rejected_ambiguous": 0,
+      "rejected_too_short": 0,
+      "lines_corrected": 0
+    },
+    "verification": {
+      "verified": 0,
+      "skipped": 0,
+      "failed": 0,
+      "verdicts_changed": 0
+    }
+  },
+  "turns_detail": [],
+  "settings": {
+    "fail_on": "high",
+    "min_confidence": "medium",
+    "gate_pre_existing": false,
+    "gate_removed_controls": true,
+    "ungated_categories": [],
+    "verify": true,
+    "verify_votes": 1,
+    "effort": "high",
+    "scope": []
+  }
+}

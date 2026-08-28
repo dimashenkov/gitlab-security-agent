@@ -1,0 +1,929 @@
+[
+  {
+    "case_id": "php-7mpf-4465-7fc2",
+    "language": "php",
+    "family": "xss",
+    "case_digest": "2a243eb9de449233",
+    "ran_at": "2026-08-28T16:29:37+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.2116645
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 61.6177135,
+        "cost": 0.2107165,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 18,
+          "output_tokens": 3558,
+          "cache_read_tokens": 95673,
+          "cache_write_tokens": 7384
+        },
+        "coverage": {
+          "changed": [
+            "modules/backend/widgets/Lists.php"
+          ],
+          "examined": [
+            "modules/backend/widgets/Lists.php"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "13f2b53551887099",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.4995070000000001
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 135.42324333300002,
+        "cost": 0.498557,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 38,
+          "output_tokens": 8161,
+          "cache_read_tokens": 262384,
+          "cache_write_tokens": 16315
+        },
+        "coverage": {
+          "changed": [
+            "modules/backend/widgets/Lists.php"
+          ],
+          "examined": [
+            "modules/backend/widgets/Lists.php"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.0025948827042885695,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "xss",
+        "file": "modules/backend/widgets/Lists.php",
+        "severity": "low",
+        "title": "Escaping removed from list image column HTML, enabling stored XSS",
+        "fingerprint": "13f2b53551887099",
+        "blocking": false
+      }
+    ],
+    "cost": 0.7092735,
+    "seconds": 135.42324333300002
+  },
+  {
+    "case_id": "php-5h77-88j3-r659",
+    "language": "php",
+    "family": "xss",
+    "case_digest": "3ffc547d64def2fe",
+    "ran_at": "2026-08-28T16:29:37+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.8366315
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 206.17134075,
+        "cost": 0.8356835,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 14679,
+          "cache_read_tokens": 237817,
+          "cache_write_tokens": 34969
+        },
+        "coverage": {
+          "changed": [
+            "includes/functions-infos.php"
+          ],
+          "examined": [
+            "includes/functions-formatting.php",
+            "includes/functions-infos.php",
+            "includes/functions-links.php"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": false,
+        "finished_explicitly": false,
+        "stop_reason": "error",
+        "stop_detail": "the CLI reported '(no subtype)' and exited 1. A process that failed and still printed a success object has not agreed with itself, and this runner does not choose the reassuring half.",
+        "exit_code": 2,
+        "blocked": true,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.5418075
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 116.36717187499997,
+        "cost": 0.5408585,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 26,
+          "output_tokens": 7225,
+          "cache_read_tokens": 236807,
+          "cache_write_tokens": 24170
+        },
+        "coverage": {
+          "changed": [
+            "includes/functions-infos.php"
+          ],
+          "examined": [
+            "includes/functions-formatting.php",
+            "includes/functions-infos.php"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "incomplete": [
+      "unsafe"
+    ],
+    "cost": 1.3765420000000002,
+    "seconds": 206.17134075
+  },
+  {
+    "case_id": "php-fm29-4mq3-phg6",
+    "language": "php",
+    "family": "authn-authz",
+    "case_digest": "35594c8b0db5ad86",
+    "ran_at": "2026-08-28T16:29:37+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.6702410000000001
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 143.58094,
+        "cost": 0.669292,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 30,
+          "output_tokens": 9102,
+          "cache_read_tokens": 316324,
+          "cache_write_tokens": 28343
+        },
+        "coverage": {
+          "changed": [
+            "modules/backend/behaviors/ImportExportController.php"
+          ],
+          "examined": [
+            "modules/backend/behaviors/ImportExportController.php"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "c06e4b3678637aca",
+          "severity": "medium",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "authn-authz",
+            "modules/backend/behaviors/ImportExportController.php",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.4126315
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 189.13199345800004,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 6314,
+          "cache_read_tokens": 164125,
+          "cache_write_tokens": 17165
+        },
+        "coverage": {
+          "changed": [
+            "modules/backend/behaviors/ImportExportController.php"
+          ],
+          "examined": [
+            "modules/backend/behaviors/ImportExportController.php"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.027307077122789125,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "authn-authz",
+        "file": "modules/backend/behaviors/ImportExportController.php",
+        "severity": "medium",
+        "title": "Import/export permission checks removed from AJAX handlers and download action",
+        "fingerprint": "c06e4b3678637aca",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 189.13199345800004
+  },
+  {
+    "case_id": "php-gvrw-qqp5-jgc5",
+    "language": "php",
+    "family": "xss",
+    "case_digest": "5fd39d621d439640",
+    "ran_at": "2026-08-28T16:32:54+00:00",
+    "members": {
+      "safe": {
+        "complete": false,
+        "finished_explicitly": false,
+        "stop_reason": "error",
+        "stop_detail": "the CLI reported '(no subtype)' and exited 1. A process that failed and still printed a success object has not agreed with itself, and this runner does not choose the reassuring half.",
+        "exit_code": 2,
+        "blocked": true,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.4653795
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 128.105317,
+        "cost": 0.4644255,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 10,
+          "output_tokens": 8994,
+          "cache_read_tokens": 70911,
+          "cache_write_tokens": 20407
+        },
+        "coverage": {
+          "changed": [
+            "src/View/Shortcodes/EmbedShortcodeProvider.php"
+          ],
+          "examined": [
+            "src/View/Shortcodes/EmbedShortcodeProvider.php"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": false,
+        "finished_explicitly": false,
+        "stop_reason": "error",
+        "stop_detail": "You've hit your session limit \u00b7 resets 9:30pm (Europe/Sofia).",
+        "exit_code": 2,
+        "blocked": true,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.0
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 12.451302708000014,
+        "cost": 0.0,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "coverage": {
+          "changed": [
+            "src/View/Shortcodes/EmbedShortcodeProvider.php"
+          ],
+          "examined": [],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "src/View/Shortcodes/EmbedShortcodeProvider.php"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "incomplete": [
+      "safe",
+      "unsafe"
+    ],
+    "cost": 0.4644255,
+    "seconds": 128.105317
+  },
+  {
+    "case_id": "php-mpmw-f6h6-3g26",
+    "language": "php",
+    "family": "authn-authz",
+    "case_digest": "60b0a8adc327cf83",
+    "ran_at": "2026-08-28T16:35:00+00:00",
+    "members": {
+      "safe": {
+        "complete": false,
+        "finished_explicitly": false,
+        "stop_reason": "error",
+        "stop_detail": "You've hit your session limit \u00b7 resets 9:30pm (Europe/Sofia).",
+        "exit_code": 2,
+        "blocked": true,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.0
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 12.608519000000001,
+        "cost": 0.0,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "coverage": {
+          "changed": [
+            "modules/backend/controllers/MyAccount.php"
+          ],
+          "examined": [],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "modules/backend/controllers/MyAccount.php"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": false,
+        "finished_explicitly": false,
+        "stop_reason": "error",
+        "stop_detail": "You've hit your session limit \u00b7 resets 9:30pm (Europe/Sofia).",
+        "exit_code": 2,
+        "blocked": true,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.0
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 12.56367899999998,
+        "cost": 0.0,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "coverage": {
+          "changed": [
+            "modules/backend/controllers/MyAccount.php"
+          ],
+          "examined": [],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "modules/backend/controllers/MyAccount.php"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "incomplete": [
+      "safe",
+      "unsafe"
+    ],
+    "cost": 0.0,
+    "seconds": 12.608519000000001
+  },
+  {
+    "case_id": "php-pg62-f8g4-4wqh",
+    "language": "php",
+    "family": "authn-authz",
+    "case_digest": "dd141c79927efd27",
+    "ran_at": "2026-08-28T16:35:10+00:00",
+    "members": {
+      "safe": {
+        "complete": false,
+        "finished_explicitly": false,
+        "stop_reason": "error",
+        "stop_detail": "You've hit your session limit \u00b7 resets 9:30pm (Europe/Sofia).",
+        "exit_code": 2,
+        "blocked": true,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.0
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 12.514464417,
+        "cost": 0.0,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "coverage": {
+          "changed": [
+            "phpmyfaq/src/phpMyFAQ/Controller/Administration/GroupController.php"
+          ],
+          "examined": [],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "phpmyfaq/src/phpMyFAQ/Controller/Administration/GroupController.php"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": false,
+        "finished_explicitly": false,
+        "stop_reason": "error",
+        "stop_detail": "You've hit your session limit \u00b7 resets 9:30pm (Europe/Sofia).",
+        "exit_code": 2,
+        "blocked": true,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.0
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 12.442101083000011,
+        "cost": 0.0,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "coverage": {
+          "changed": [
+            "phpmyfaq/src/phpMyFAQ/Controller/Administration/GroupController.php"
+          ],
+          "examined": [],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "phpmyfaq/src/phpMyFAQ/Controller/Administration/GroupController.php"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "incomplete": [
+      "safe",
+      "unsafe"
+    ],
+    "cost": 0.0,
+    "seconds": 12.514464417
+  }
+]
