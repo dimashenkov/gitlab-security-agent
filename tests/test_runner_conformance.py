@@ -73,6 +73,7 @@ from security_agent.models import (
 from security_agent.report import build_json
 from security_agent.runner_claude_code import ClaudeCodeRunner
 from security_agent.suppress import apply as apply_suppressions
+from security_agent.tools import HANDLERS
 from security_agent.workspace import Workspace
 
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
@@ -365,13 +366,131 @@ class Server:
             json.dump(self.log, handle, indent=2)
 
 
+def variadic(argv, flag):
+    """A flag's values: everything up to the next `-`, as the CLI parses it.
+
+    Written because the confinement tests read `build_command`'s list and
+    nothing read it the way the program on the other end does. `--tools ""`
+    yields `[""]`, and if a bare value ever followed it that value would land
+    here — which is the failure the adjacency test describes and this is the
+    only thing that would notice.
+    """
+    if flag not in argv:
+        return None
+    values = []
+    for token in argv[argv.index(flag) + 1:]:
+        if token.startswith("-"):
+            break
+        values.append(token)
+    return values
+
+
+# Our own tool names, substituted in from `HANDLERS` when this script is
+# generated rather than typed here. The question "is this ours or a built-in"
+# is asked from this side, because a list of *the CLI's* built-ins is already
+# incomplete the day it is written — `AskUserQuestion` and `EnterPlanMode` were
+# missing from the one this file first held — and every omission would be taken
+# for an unqualified tool of ours and let through by the wildcard. What we
+# offer is a fact about this repository, and it arrives here from the module
+# that defines it.
+OUR_TOOLS = frozenset(@OUR_TOOLS@)
+
+# An MCP server configured on the developer's machine, which `--mcp-config`
+# does not name. The fake pretends this exists so `--strict-mcp-config` has
+# something to exclude: without one, the flag can only be tested by looking for
+# it in the argument list, which is the defect this file is removing.
+OTHER_SERVER = "mcp__somebodys_own_server__"
+
+
+def confinement(argv):
+    """What the flags actually permit, decided the way the CLI would decide it.
+
+    The stand-in used to read `--mcp-config` and nothing else, so every
+    confinement flag could have been deleted from `build_command` and the whole
+    conformance suite would have passed — the fake had no built-in tools to be
+    confined from and no other MCP server to ignore. The flags were asserted to
+    be *present* and never to *do* anything.
+    """
+    tools = variadic(argv, "--tools")
+    allowed = variadic(argv, "--allowedTools") or []
+    denied = variadic(argv, "--disallowedTools") or []
+    return {
+        # `--tools ""` is the CLI's documented way of shipping none of the
+        # built-in set. `None` means the flag was absent, which is "all of
+        # them" — the state this runner must never be in.
+        "built_ins": [] if tools == [""] else ("all" if tools is None else tools),
+        "allowed": allowed,
+        "denied": denied,
+        # What the flag actually decides: whether the servers configured on
+        # this machine, which `--mcp-config` does not name, are started at all.
+        # Modelled separately from the permission lists, because a foreign tool
+        # is already outside `--allowedTools` — so a test that only asked
+        # whether the call was refused passed with the flag and without it.
+        "loads_other_servers": "--strict-mcp-config" not in argv,
+    }
+
+
+def permitted(rules, name, server_key="security_agent"):
+    """May this tool be called, in the order the CLI decides it?
+
+    Deny first, then availability, then allow. Three attempts got here:
+
+    * qualifying every name with our MCP prefix made `Bash` match
+      `mcp__security_agent__*` and pass — the check saying yes to the one
+      thing it was written to say no to;
+    * deciding "is this ours" from the server's offered set refused
+      `submit_verdict` here, which took the transport-level refusal off its own
+      scenario: it is inside our prefix, absent from the *reviewer's* set, and
+      the point is that the server refuses it;
+    * deciding "is this a built-in" from `--disallowedTools` made the answer
+      depend on the flag under test, so a built-in nobody denied was taken for
+      an MCP tool and let through by the wildcard.
+
+    So built-in identity comes from `BUILT_INS`, which is a fact about the CLI
+    rather than about our arguments.
+    """
+    if name in rules["denied"]:
+        return False
+
+    if name not in OUR_TOOLS and not name.startswith("mcp__"):
+        # Not ours and not another server's, so a built-in — whichever ones the
+        # CLI happens to ship today.
+        return rules["built_ins"] == "all" or name in rules["built_ins"]
+
+    qualified = (name if name.startswith("mcp__")
+                 else "mcp__{}__{}".format(server_key, name))
+    # A server this config did not name is not in the session at all when
+    # `--strict-mcp-config` is set — it is never started, which is a stronger
+    # thing than its tools being forbidden.
+    if qualified.startswith(OTHER_SERVER) and not rules["loads_other_servers"]:
+        return False
+
+    for pattern in rules["allowed"]:
+        if pattern.endswith("*") and qualified.startswith(pattern[:-1]):
+            return True
+        if pattern == qualified:
+            return True
+    return False
+
+
 def main():
     argv = sys.argv[1:]
+    rules = confinement(argv)
     server = Server(argv[argv.index("--mcp-config") + 1])
+    server.log.append({"method": "confinement", "rules": rules})
     server.log.append({"method": "briefing", "chars": len(sys.stdin.read())})
     try:
         for step in PLAN["steps"]:
             action = step["do"]
+            if action in ("call", "call_then_kill") and not permitted(
+                    rules, step["name"]):
+                # What the real CLI does with a tool the flags forbid: it does
+                # not make the call. Recorded rather than raised, so a plan
+                # that asks for a forbidden tool produces a run with no tool
+                # calls — which is what the runner would see, and what a test
+                # asserting the flags *work* has to be able to observe.
+                server.log.append({"method": "refused", "name": step["name"]})
+                continue
             if action == "call":
                 server.call(step["name"], step.get("args") or {})
             elif action == "call_then_kill":
@@ -421,7 +540,8 @@ class FakeCli:
             .replace("@PLAN@", json.dumps(json.dumps(script)))
             .replace("@TRANSCRIPT@", repr(str(self.transcript_path)))
             .replace("@CHILD_LOG@", repr(str(self.child_log)))
-            .replace("@KIND_STARTED@", repr(KIND_TOOL_STARTED)),
+            .replace("@KIND_STARTED@", repr(KIND_TOOL_STARTED))
+            .replace("@OUR_TOOLS@", repr(sorted(HANDLERS))),
             encoding="utf-8",
         )
         self.path.chmod(0o755)
@@ -1025,6 +1145,129 @@ class TestForbiddenTool:
         assert_honest(cli.artifact, "forbidden_tool")
         assert cli.artifact["stop_reason"] == STOP_ERROR
         assert cli.artifact["findings"] == []
+
+
+class TestTheConfinementFlagsDoSomething:
+    """The flags were asserted to be present and never to have an effect.
+
+    Every confinement test read `build_command`'s list and compared strings.
+    The stand-in parsed `--mcp-config` and nothing else, so all four flags
+    could have been deleted and the whole suite would have passed — there were
+    no built-in tools to be confined from and no other MCP server to ignore.
+    `--allowedTools` in particular was compared against the same constant that
+    built it, which moves with any rename.
+
+    Now the stand-in reads them the way the CLI does: a variadic option takes
+    everything up to the next `-`, `--tools ""` means the built-in set is
+    empty, and a tool outside `--allowedTools` is not called at all.
+    """
+
+    def test_every_one_of_our_tools_still_works_with_the_built_ins_emptied(
+            self, cfg, workspace, revision, tmp_path):
+        """The direction that matters most. `--tools ""` disabling our own MCP
+        tools would produce a review with no tool calls that reports nothing
+        found — a clean sheet from a review that could not look.
+
+        Each call, not a non-empty finding list: a run where only
+        `report_finding` survived would still produce a finding, with the file
+        never read and the review never signed off.
+        """
+        cli = run_cli(cfg, workspace, revision, tmp_path, "confinement_ours",
+                      script(call(*READ), call("report_finding", FINDING_ARGS),
+                             call(*FINISH), CLOSE))
+
+        assert cli.fake.transcript[0]["rules"]["built_ins"] == []
+        called = [entry["params"]["name"] for entry in cli.fake.transcript
+                  if entry.get("method") == "tools/call"]
+        assert called == ["read_file", "report_finding", "finish_review"]
+        for reply in cli.fake.replies():
+            assert "error" not in reply, reply
+        assert cli.artifact["complete"] is True
+        assert cli.artifact["finished_explicitly"] is True
+        assert cli.artifact["findings"]
+
+    def test_a_built_in_is_not_called_at_all(
+            self, cfg, workspace, revision, tmp_path):
+        """Not refused by our server — never reaching it. That is the
+        difference between `--tools ""` and the two lists: an allowlist and a
+        denylist both leave the tool present and reachable by anything that
+        gets past a permission check."""
+        cli = run_cli(cfg, workspace, revision, tmp_path, "confinement_builtin",
+                      script(call("Bash", {"command": "ls"}),
+                             call(*READ), call(*FINISH),
+                             CLOSE))
+        transcript = cli.fake.transcript
+
+        assert any(entry.get("method") == "refused"
+                   and entry.get("name") == "Bash" for entry in transcript)
+        assert not any(entry.get("params", {}).get("name") == "Bash"
+                       for entry in transcript), "it reached the server"
+
+    def test_another_mcp_server_on_this_machine_is_not_in_the_session(
+            self, cfg, workspace, revision, tmp_path):
+        """`--strict-mcp-config` was tested by looking for it in the argument
+        list, which is what this whole class exists to stop doing.
+
+        The stand-in models what the flag decides: whether the servers
+        configured on this machine are started at all. Modelled separately from
+        the permission lists, because a foreign tool is already outside
+        `--allowedTools` — so the first version of this test was refused with
+        the flag and without it, and passed for the wrong reason.
+        """
+        cli = run_cli(cfg, workspace, revision, tmp_path, "confinement_strict",
+                      script(call("mcp__somebodys_own_server__run", {}),
+                             call(*READ), call(*FINISH), CLOSE))
+        transcript = cli.fake.transcript
+
+        assert transcript[0]["rules"]["loads_other_servers"] is False
+        assert any(entry.get("method") == "refused" for entry in transcript)
+        assert not any("somebodys_own_server" in str(entry.get("params", {}))
+                       for entry in transcript)
+        assert cli.artifact["complete"] is True
+
+    def test_without_the_flag_the_other_server_is_not_excluded(
+            self, cfg, workspace, revision, tmp_path, monkeypatch):
+        """The control, and the reason the test above means anything.
+
+        A foreign tool is outside `--allowedTools` as well, so a test that only
+        asked whether the call was refused was refused with the flag and
+        without it — it passed for a reason that had nothing to do with the
+        flag. Here the flag is taken away and the exclusion stops happening.
+
+        *Not excluded*, which is all this can honestly claim. There is one
+        server in this harness, so a foreign call still lands on ours and is
+        refused there for being unoffered — which is a fact about the stand-in
+        and not about `--strict-mcp-config`. What the flag decides, and what is
+        asserted, is whether the session would have loaded the other server at
+        all.
+        """
+        from security_agent import runner_claude_code as under_test
+
+        original = under_test.build_command
+        monkeypatch.setattr(under_test, "build_command", lambda **kwargs: [
+            argument for argument in original(**kwargs)
+            if argument != "--strict-mcp-config"])
+        # And permitted by the allowlist, which is the other half of the reason
+        # the first version proved nothing: without this the call is refused by
+        # `--allowedTools` whatever `--strict-mcp-config` says.
+        monkeypatch.setattr(under_test, "TOOL_PREFIX", "mcp__")
+
+        cli = run_cli(cfg, workspace, revision, tmp_path, "confinement_loose",
+                      script(call("mcp__somebodys_own_server__run", {}),
+                             call(*READ), call(*FINISH), CLOSE))
+        transcript = cli.fake.transcript
+
+        assert transcript[0]["rules"]["loads_other_servers"] is True
+        # The exclusion the flag causes did not happen. Asserted as the absence
+        # of a refusal rather than as a successful foreign call, because a
+        # successful one is not reachable here — the request would land on our
+        # own server and be refused for being unoffered, which would satisfy a
+        # looser assertion for entirely the wrong reason.
+        assert not any(entry.get("method") == "refused"
+                       and "somebodys_own_server" in entry.get("name", "")
+                       for entry in transcript), (
+            "the foreign tool was still excluded, so the test above is not "
+            "measuring the flag")
 
 
 class TestPartialFinding:
