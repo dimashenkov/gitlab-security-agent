@@ -124,11 +124,20 @@ only way a finding gets checked. A scoped run says so in its report.
 
 ### GitHub Actions
 
-Copy `.github/workflows/self-review.yml`. It needs `ANTHROPIC_API_KEY` as a
-repository secret, `permissions: pull-requests: write`, and `GITHUB_TOKEN`
-passed through explicitly — it is not in the environment otherwise. A pull
-request from a fork gets a read-only token, so the comment is skipped and the
-artifact is still written.
+Copy `templates/github-actions.yml` to `.github/workflows/security-review.yml`.
+It needs `ANTHROPIC_API_KEY` as a repository secret, `permissions:
+pull-requests: write`, and `GITHUB_TOKEN` passed through explicitly — it is not
+in the environment otherwise. A pull request from a fork gets a read-only
+token, so the comment is skipped and the artifact is still written.
+
+It installs the agent from this repository, not from yours. Pin the `@main` in
+it to a tag or a commit: that step is handed your API key, and a branch is
+whatever it holds on the morning the job runs.
+
+Not `.github/workflows/self-review.yml`, which this file used to name. That one
+runs `pip install -e .` on the checked-out repository — the agent here, your
+project in yours, where `gitlab-security-agent` would then not be a command
+that exists. It is this repository's own job and was never a template.
 
 ### GitLab CI
 

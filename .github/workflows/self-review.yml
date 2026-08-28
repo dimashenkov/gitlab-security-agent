@@ -8,6 +8,23 @@
 # not make it a required check and do not set SECURITY_SCAN_FAIL_ON=none to
 # make it advisory — that switch also narrows verification, and advisory mode
 # is exactly where the report is the whole product.
+#
+# NOT A TEMPLATE, and the README named it as one for a day. `pip install -e .`
+# below installs whatever was checked out: the agent here, and the reader's own
+# project in the repository of anyone who copied this — where the next step's
+# `gitlab-security-agent` would not be a command that exists. What to copy is
+# `templates/github-actions.yml`, which installs the agent from its own source.
+#
+# It also runs the pull request's own code and then hands it ANTHROPIC_API_KEY.
+# A fork gets no secrets, so that is a branch in this repository, which today
+# means the one person who can push one. It is inherent rather than sloppy —
+# reviewing a change to a security tool means running the changed tool — but it
+# is the reason this shape must not be recommended to anybody else, and the
+# reason `templates/github-actions.yml` does not have it.
+#
+# Point 8 of STAGE-2.md retired reviewing our own code on 2026-08-27, and this
+# file has never run: it needs a pull request, and everything here goes
+# straight to `main`.
 
 name: Security review (this repository's agent)
 

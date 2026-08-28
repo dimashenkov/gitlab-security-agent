@@ -1,0 +1,84 @@
+# AI security review on every pull request, for a repository that is not this
+# one. Copy it to `.github/workflows/security-review.yml` in your project.
+#
+# The GitLab side has had `templates/security-scan.yml` since the beginning and
+# GitHub had nothing, so the README told a reader to copy
+# `.github/workflows/self-review.yml` instead. That file installs the checked
+# out repository — which here is the agent and in your project is your project,
+# so `gitlab-security-agent` would not be a command that exists. It is this
+# repository's own job and was never a template.
+#
+# The difference that matters is one line: the agent is installed from its own
+# source, so the code under review is read as a diff and never executed. The
+# file it replaced installed and ran the pull request's own tree and then
+# handed it `ANTHROPIC_API_KEY` — safe from a fork, which gets no secrets, and
+# not safe from anyone who can push a branch.
+
+name: Security review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write   # one comment, edited in place on every push
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # Advisory. Remove this to make a finding fail the check — but do not
+    # instead set SECURITY_SCAN_FAIL_ON=none, which also narrows verification
+    # and turns a run that could not conclude into a pass.
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The agent diffs base..head and needs both, not just the tip.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The agent, from its own repository — not `pip install -e .`, which
+      # would install *your* project.
+      #
+      # Pinned to a commit, and shipped that way rather than shipped as `@main`
+      # with a comment telling you to pin it. This installs executable code and
+      # the next step hands it your API key; a template that recommends what it
+      # does not do is worth nothing, and `@main` is whatever that branch holds
+      # on the morning your job runs.
+      #
+      # Move it deliberately, having read what changed between the two commits.
+      - run: >
+          pip install --no-cache-dir
+          "gitlab-security-agent @ git+https://github.com/dimashenkov/gitlab-security-agent@8827d91cb95664aae02a9dfb7e0c3c8b49a0058b"
+
+      - name: Review the change
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Not inherited: GITHUB_TOKEN is not in the environment unless a
+          # workflow puts it there. A pull request from a fork gets a read-only
+          # token, so the comment is skipped and the artifact is still written.
+          SECURITY_SCAN_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Which comment is the agent's own is decided by its author, never by
+          # a marker: the marker is a public string in an HTML comment and the
+          # author of a pull request can write one. GITHUB_TOKEN is an
+          # installation token and is refused at `GET /user`, so the agent
+          # cannot ask who it is and is told here — from the workflow, which
+          # you control, and never from the pull request, which its author
+          # does. Without it every push leaves a new comment.
+          SECURITY_SCAN_COMMENT_AUTHOR: 'github-actions[bot]'
+          SECURITY_SCAN_OUTPUT_DIR: .security-scan
+          SECURITY_SCAN_FAIL_ON: high
+        run: gitlab-security-agent
+
+      - uses: actions/upload-artifact@v4
+        # `always()`: the report of a run that stopped early is the only record
+        # of why it stopped, and that is the run whose artifact is worth most.
+        if: always()
+        with:
+          name: security-review
+          path: .security-scan/
+          retention-days: 30

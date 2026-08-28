@@ -25,7 +25,20 @@ jobs:
           # The action diffs against the base, so it needs more than the tip.
           fetch-depth: 0
 
-      - uses: anthropics/claude-code-security-review@main
+      # Pinned to a commit, not to `@main`. This step is handed an API key, and
+      # a branch reference means whatever that branch holds on the morning the
+      # job runs — the key trusted to code nobody here has read and that can
+      # change between two runs of the same comparison.
+      #
+      # 0c6a49f is `main` as of 2026-02-11. Moving it is a deliberate act with
+      # a reading of the diff behind it, which is the whole point of pinning.
+      #
+      # It pins the action's own code and nothing else. The model is left at
+      # the action's default on purpose — see below — and a default is an alias
+      # the far side controls, so two runs of this benchmark can still differ by
+      # a model. That is a caveat to state beside the numbers, not something
+      # this pin fixes.
+      - uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda
         continue-on-error: true
         with:
           comment-pr: true
