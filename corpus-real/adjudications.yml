@@ -52,6 +52,78 @@ adjudications:
       discrimination in either direction. Exclude it from the score; do not
       count it as a failure.
 
+  - case_id: cs-q939-rpr3-3284
+    member: safe
+    file: src/Renci.SshNet/ScpClient.cs
+    severity_reported: medium
+    claim: An 'E' message before any 'D' walks the download above its target
+    verdict: real
+    adjudicated_on: 2026-08-28
+    evidence: >-
+      `InternalDownload` starts with `directoryCounter = 0` and
+      `currentDirectoryFullName = startDirectoryFullName`. On `E` it decrements
+      first and breaks only on exactly zero, so a first message of `E` leaves
+      the counter at -1, does not break, and sets the current directory to
+      `new DirectoryInfo(currentDirectoryFullName).Parent` — the parent of the
+      directory the caller asked to download into. A following `C0644 n name`
+      takes the `fileSystemInfo is not FileInfo` branch and writes to
+      `Path.Combine(currentDirectoryFullName, fileName)`, one level above the
+      target; each further `E` climbs another level, and the `directoryCounter
+      == 0` break after the write is never reached at -1. `EnsureValidLocalName`
+      is the maintainers' fix and it validates a *name*: there is no `..` and no
+      separator here, so it passes. The only guard on the climb is
+      `Debug.Assert`, which a release build does not contain — a stated
+      invariant that shipped code does not enforce. The same code is in
+      sshnet/SSH.NET `main` as read on 2026-08-28.
+    case_is_malformed: true
+    why_malformed: >-
+      The advisory is CWE-22/CWE-73 — an SCP recursive download writing outside
+      its target — and this is that outcome by a second route the fix does not
+      close. So the safe member still carries the weakness the case is about,
+      and a pair whose safe member carries it cannot measure discrimination in
+      either direction. Exclude it from the score; do not count it as a failure.
+    reported_upstream: no
+    reported_upstream_note: >-
+      Not our call to make unilaterally, and not published here beyond the
+      reading above. Decide before this file goes anywhere public.
+
+  - case_id: py-6x92-6vx4-5fwr
+    member: safe
+    file: cms/admin/forms.py
+    severity_reported: medium
+    claim: >-
+      The add-subpage permission check reads parent_page from GET while the form
+      takes it from POST
+    verdict: real
+    adjudicated_on: 2026-08-28
+    evidence: >-
+      `PageAdmin._has_add_permission_from_request` in `cms/admin/pageadmin.py`
+      reads `request.GET.get("parent_page")`, and falls back to
+      `user_can_add_page(user, site)` — the global "may add a page at all"
+      permission — when it is absent. `parent_page` on the form is an ordinary
+      field and arrives in the body. `clean_parent_page` in the changed file
+      checks `parent_page.site_id != self._site.pk` and nothing else, and the
+      fix under review adds `clean_cms_page` and `clean_source` while leaving
+      `parent_page` unguarded. A POST to the add view with no query string and
+      `parent_page` in the body is therefore authorised by the global check and
+      creates a child under a parent the user has no `add_subpage` right on.
+    not_verifiable: >-
+      Whether the admin's own form posts back to a URL that keeps
+      `?parent_page=`, which would make the GET check see it on the ordinary
+      path. It does not affect the finding — an attacker posts where they like —
+      but it decides whether the ordinary path is also exposed.
+    case_is_malformed: true
+    why_malformed: >-
+      The advisory is CWE-639/CWE-862 broken access control in page
+      administration, and this is broken access control in page administration
+      by a route the fix does not close. The safe member still carries the
+      weakness the case is about, so the pair cannot measure discrimination.
+      Exclude it from the score; do not count it as a failure.
+    reported_upstream: no
+    reported_upstream_note: >-
+      Not our call to make unilaterally, and not published here beyond the
+      reading above. Decide before this file goes anywhere public.
+
   - case_id: rs-8rw6-p7m8-63jp-snap
     member: safe
     file: surrealdb/core/src/doc/output.rs

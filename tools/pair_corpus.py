@@ -54,7 +54,12 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from artifact import case_digest, signature
+from artifact import (
+    case_digest,
+    load_adjudications,
+    malformed_cases,
+    signature,
+)
 from artifact import is_target as _is_target
 
 from security_agent.config import MODEL_PRICING
@@ -84,41 +89,6 @@ def cost_of(usage: dict) -> float:
     )
     input_rate, output_rate = MODEL_PRICING[MODEL]
     return tally.cost_usd(input_rate, output_rate, CACHE_TTL)
-
-
-ADJUDICATIONS = "adjudications.yml"
-
-
-def load_adjudications(root: Path) -> list:
-    """Hand decisions about findings the tool cannot score by itself.
-
-    A finding in the safe member is a claim that the maintainers' fix did not
-    close the weakness. That claim can be true — of the first three adjudicated,
-    two were — and scoring it as a false positive by construction penalised
-    correct work. Nothing automatable decides it, so the decision is recorded
-    once, in a file, rather than made silently on every reading of the table.
-    """
-    path = root / ADJUDICATIONS
-    if not path.is_file():
-        return []
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return list(data.get("adjudications") or [])
-
-
-def malformed_cases(root: Path) -> dict:
-    """Cases an adjudication has ruled cannot measure anything, and why.
-
-    `py-2cp2` is the example: the advisory is about `instantiate`, the fix IS
-    the blocklist, and the reviewer's finding — that a string denylist checked
-    before resolution is bypassable — is a correct statement about the fix. A
-    pair whose safe member still carries the advisory's own weakness cannot
-    discriminate in either direction, and counting it as a failure records the
-    corpus's defect against the product.
-    """
-    return {
-        row["case_id"]: row.get("why_malformed", "adjudicated malformed")
-        for row in load_adjudications(root) if row.get("case_is_malformed")
-    }
 
 
 def load_cases(root: Path, language: str = "", family: str = "") -> list:

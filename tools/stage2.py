@@ -36,7 +36,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from artifact import case_digest
+from artifact import case_digest, malformed_cases
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "security_agent"
@@ -320,10 +320,15 @@ def probe_use(args) -> Result:
     # anything. Counting all 47 as one number would hide that. The plan's
     # target is the 24 regression cases; the snapshot set is reported beside
     # it, not folded into it.
+    # A case a hand decision has ruled unable to measure anything is not a case
+    # this tracker is waiting on. `pair_corpus.py` excludes them and says so on
+    # stderr; the tracker read the corpus directly and did not, so it reported
+    # six pairs run where the scorer had already excluded two of them.
+    excluded = malformed_cases(ROOT / "corpus-real")
     cases, snapshots = [], 0
     for path in sorted((ROOT / "corpus-real").iterdir()):
         case = path / "case.yml" if path.is_dir() else None
-        if case is None or not case.exists():
+        if case is None or not case.exists() or path.name in excluded:
             continue
         body = yaml.safe_load(case.read_text(encoding="utf-8")) or {}
         if body.get("construction") == "regression":
