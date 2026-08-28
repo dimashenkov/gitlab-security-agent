@@ -235,6 +235,116 @@ def advisories(ecosystem: str, limit: int, cwe: str = "", severity: str = "") ->
     return found
 
 
+def _category_field(category: List[str]) -> str:
+    """A scalar for one, a list for several — what the corpus already holds.
+
+    `target_categories` reads either, so this is not about parsing. Every case
+    with one category writes it plain and the two with two write a list, and a
+    rebuilt case that writes `['injection']` where its forty-six siblings write
+    `injection` is a case a reader can pick out as regenerated.
+    """
+    if len(category) == 1:
+        return category[0]
+    return "[{}]".format(", ".join(repr(c) for c in category))
+
+
+def manifest_lines(case_id: str, language: str, category: List[str], item: dict,
+                   construction: str, target: List[str],
+                   dropped: List[str]) -> List[str]:
+    """The `case.yml` of a harvested case, as lines.
+
+    A function rather than a list built inside `harvest`, because `harvest`
+    needs the network and a git clone, so nothing could test what it writes.
+    The one test there was compared corpus files to each other, which passes
+    whatever the generator does — and the generator had already quietly
+    stopped writing the note below `expected_category`.
+    """
+    return [
+        "case_id: {}".format(case_id),
+        "language: {}".format(language),
+        # A label to group by, so the first category when there are several.
+        # `expected_category` below is what is scored against and it keeps all
+        # of them.
+        "family: {}".format(category[0] if category else "unclassified"),
+        "framework: ''",
+        "# Harvested from a published advisory, not written by hand. Ground",
+        "# truth is the maintainers' own fix; this file lives outside the",
+        "# built repository, so the agent never sees it.",
+        "source_advisory: {}".format(item["ghsa"]),
+        "source_cve: {}".format(item["cve"] or "none"),
+        "source_repo: {}".format(item["repo"]),
+        "source_fix_commit: {}".format(item["sha"]),
+        "source_cwes: [{}]".format(", ".join(item["cwes"]) or ""),
+        "severity_reported: {}".format(item["severity"]),
+        "construction: {}".format(construction),
+        "# regression: the two members review the same lines in opposite",
+        "#   directions — safe adds the maintainers' fix, unsafe reverts it.",
+        "#   Exactly symmetric, but every unsafe member deletes something, so",
+        "#   direction predicts the answer and a removed-control rule scores",
+        "#   well here without recognising anything.",
+        "# snapshot: both members add an implementation from a shared",
+        "#   baseline, one fixed and one not. Direction carries no answer.",
+        "# Never score the two constructions together.",
+        "decisive_control: the change the maintainers shipped as the fix",
+        "expected_category: {}".format(_category_field(category)),
+        # Every case written before today carries this note and the code had
+        # stopped writing it, so a rebuilt case came out unlike its siblings —
+        # the explanation of a field living only in the files that happened to
+        # be old enough. Wrapped exactly as they wrap it, because
+        # "indistinguishable from the others" is the point and a differently
+        # folded paragraph is a visible difference.
+        "# Every file the fix touched, not the first one. A fix is not obliged",
+        "# to fit in one file, and naming only the first counted a finding in",
+        "# the others as the wrong place — Winter's CSRF fix normalises a name",
+        "# in BackendController.php and rejects the bad ones in Controller.php.",
+        "# Repository-relative, because `Controller.php` alone would also match",
+        "# `BackendController.php`.",
+        "expected_file: [{}]".format(", ".join(repr(p) for p in target)),
+        "dropped_from_change: [{}]".format(
+            ", ".join(repr(p) for p in dropped[:6])),
+        # A null summary is a real advisory shape, and the sibling field two
+        # lines up already guarded for it.
+        "summary: {!r}".format((item.get("summary") or "")[:200]),
+    ]
+
+
+def advisory(ghsa: str) -> list:
+    """One named advisory, in the shape `harvest` takes.
+
+    The usage in this module's docstring has offered `--advisory GHSA-...`
+    since it was written and no such flag existed, so the one thing a person
+    needs after fixing a bug that damaged a case — rebuild *that* case, and
+    nothing else — could only be had by re-harvesting the ecosystem and hoping
+    the same advisory came back.
+
+    Same filter as `advisories`: exactly one fix commit, because a fix spread
+    over a series gives a pair whose unsafe member is still partly fixed.
+    """
+    proc = subprocess.run(
+        ("gh", "api", "/advisories/" + ghsa, "--jq",
+         "{ghsa: .ghsa_id, cve: .cve_id, summary: .summary, "
+         "severity: .severity, type: .type, cwes: [.cwes[].cwe_id], "
+         "refs: [.references[]? | select(test(\"/commit/\"))]}"),
+        capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise SystemExit("gh api failed: " + proc.stderr.strip()[:300])
+
+    item = json.loads(proc.stdout)
+    # `advisories` asks the API for `type=reviewed` and so never sees an
+    # unreviewed one. Fetching by name bypasses that query, so the check has to
+    # be made here or the two paths build from different populations and a case
+    # named by hand could rest on an advisory nobody vetted.
+    if item.get("type") != "reviewed":
+        raise SystemExit("{} is {}, and only reviewed advisories are harvested"
+                         .format(ghsa, item.get("type") or "of unknown type"))
+    commits = [m for ref in item["refs"] for m in COMMIT_URL.findall(ref)]
+    if len(commits) != 1:
+        raise SystemExit("{} names {} fix commits, not one".format(
+            ghsa, len(commits)))
+    item["repo"], item["sha"] = commits[0]
+    return [item]
+
+
 def fetch_commit(repo_slug: str, sha: str, work: Path) -> Path:
     """Clone just enough history to hold the fix and its parent.
 
@@ -589,42 +699,8 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
         # in different packages are different files, and `Controller.php` alone
         # also matches `BackendController.php`.
         target = list(keep)
-        manifest = [
-            "case_id: {}".format(case_id),
-            "language: {}".format(language),
-            # A label to group by, so the first category when there are
-            # several. `expected_category` below is what is scored against and
-            # it keeps all of them.
-            "family: {}".format(category[0] if category else "unclassified"),
-            "framework: ''",
-            "# Harvested from a published advisory, not written by hand. Ground",
-            "# truth is the maintainers' own fix; this file lives outside the",
-            "# built repository, so the agent never sees it.",
-            "source_advisory: {}".format(item["ghsa"]),
-            "source_cve: {}".format(item["cve"] or "none"),
-            "source_repo: {}".format(item["repo"]),
-            "source_fix_commit: {}".format(item["sha"]),
-            "source_cwes: [{}]".format(", ".join(item["cwes"]) or ""),
-            "severity_reported: {}".format(item["severity"]),
-            "construction: {}".format(construction),
-            "# regression: the two members review the same lines in opposite",
-            "#   directions — safe adds the maintainers' fix, unsafe reverts it.",
-            "#   Exactly symmetric, but every unsafe member deletes something, so",
-            "#   direction predicts the answer and a removed-control rule scores",
-            "#   well here without recognising anything.",
-            "# snapshot: both members add an implementation from a shared",
-            "#   baseline, one fixed and one not. Direction carries no answer.",
-            "# Never score the two constructions together.",
-            "decisive_control: the change the maintainers shipped as the fix",
-            "expected_category: [{}]".format(
-                ", ".join(repr(c) for c in category)),
-            "expected_file: [{}]".format(", ".join(repr(p) for p in target)),
-            "dropped_from_change: [{}]".format(
-                ", ".join(repr(p) for p in dropped[:6])),
-            # A null summary is a real advisory shape, and the sibling field
-            # two lines up already guarded for it.
-            "summary: {!r}".format((item.get("summary") or "")[:200]),
-        ]
+        manifest = manifest_lines(case_id, language, category, item,
+                                  construction, target, dropped)
         (case_dir / "case.yml").write_text("\n".join(manifest) + "\n", encoding="utf-8")
 
         verdict.update({"case_id": case_id, "language": language,
@@ -648,6 +724,10 @@ def main() -> int:
     parser.add_argument("--severity", default="", choices=["", "low", "medium",
                                                            "high", "critical"])
     parser.add_argument("--limit", type=int, default=5)
+    parser.add_argument("--advisory", default="",
+                        help="rebuild one named advisory, e.g. "
+                             "GHSA-mx5j-mp4f-g8jg. Ignores --ecosystem, --cwe, "
+                             "--severity and --limit.")
     parser.add_argument("--out", default="corpus-real")
     parser.add_argument("--construction", choices=(REGRESSION, SNAPSHOT),
                         default=REGRESSION,
@@ -666,12 +746,17 @@ def main() -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    found = advisories(args.ecosystem, args.limit * 4, args.cwe, args.severity)
+    if args.advisory:
+        found, limit = advisory(args.advisory), 1
+    else:
+        found = advisories(args.ecosystem, args.limit * 4, args.cwe,
+                           args.severity)
+        limit = args.limit
     print("{} advisory/advisories with exactly one fix commit\n".format(len(found)))
 
     built, skipped = [], []
     for item in found:
-        if len(built) >= args.limit:
+        if len(built) >= limit:
             break
         verdict = harvest(item, out, args.max_files, args.max_lines,
                           args.construction)

@@ -29,8 +29,8 @@ module Savon
 
     def define_class_operation(operation)
       class_operation_module.module_eval %{
-        def
-          client.call
+        def #{StringUtils.snakecase(operation.to_s)}(locals = {})
+          client.call #{operation.inspect}, locals
         end
       }, __FILE__, __LINE__ - 4
     end
@@ -38,8 +38,8 @@ module Savon
 
     def define_instance_operation(operation)
       instance_operation_module.module_eval %{
-        def
-          self.class.
+        def #{StringUtils.snakecase(operation.to_s)}(locals = {})
+          self.class.#{StringUtils.snakecase(operation.to_s)} locals
         end
       }, __FILE__, __LINE__ - 4
     end

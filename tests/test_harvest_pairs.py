@@ -18,11 +18,14 @@ decides what gets built and what gets thrown away.
 from __future__ import annotations
 
 import filecmp
+import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
@@ -141,6 +144,114 @@ def test_a_cwe_that_does_not_fix_its_output_context_maps_to_each_one():
 
 def test_no_category_is_repeated_when_two_cwes_agree():
     assert category_of(["CWE-94", "CWE-95"]) == ["injection"]
+
+
+def test_the_flag_the_module_documents_exists():
+    """`--advisory GHSA-...` has been in this module's usage since it was
+    written and no such flag existed.
+
+    It is the one thing needed after a bug damages a case: rebuild *that* case
+    and nothing else. Without it the only way back was to re-harvest the
+    ecosystem and hope the same advisory came round again — which would also
+    have brought new cases into a frozen corpus.
+    """
+    import harvest_pairs
+
+    assert "--advisory" in harvest_pairs.__doc__
+
+    called = {}
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(harvest_pairs.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkey.setattr(harvest_pairs, "advisory",
+                   lambda ghsa: called.setdefault("named", ghsa) and [])
+    monkey.setattr(harvest_pairs, "advisories",
+                   lambda *a, **k: called.setdefault("searched", a) and [])
+    monkey.setattr(harvest_pairs.sys, "argv",
+                   ["harvest_pairs.py", "--advisory", "GHSA-mx5j-mp4f-g8jg",
+                    "--out", "/dev/null/nope"])
+    monkey.setattr(harvest_pairs.Path, "mkdir", lambda *a, **k: None)
+    try:
+        harvest_pairs.main()
+    finally:
+        monkey.undo()
+
+    assert called.get("named") == "GHSA-mx5j-mp4f-g8jg"
+    assert "searched" not in called, "the named path also ran a search"
+
+
+def test_a_named_advisory_that_nobody_reviewed_is_refused():
+    """`advisories` asks the API for `type=reviewed` and so never sees an
+    unreviewed one. Fetching by name bypasses that query, so a case named by
+    hand could otherwise rest on an advisory nobody vetted — the two paths
+    building from different populations without saying so.
+    """
+    import harvest_pairs
+
+    payload = json.dumps({
+        "ghsa": "GHSA-xxxx-xxxx-xxxx", "cve": None, "summary": "",
+        "severity": "high", "type": "unreviewed", "cwes": ["CWE-89"],
+        "refs": ["https://github.com/o/r/commit/" + "a" * 40]})
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(harvest_pairs.subprocess, "run",
+                   lambda *a, **k: SimpleNamespace(returncode=0, stdout=payload,
+                                                  stderr=""))
+    try:
+        with pytest.raises(SystemExit) as raised:
+            harvest_pairs.advisory("GHSA-xxxx-xxxx-xxxx")
+    finally:
+        monkey.undo()
+    assert "reviewed" in str(raised.value)
+
+
+def test_a_rebuilt_manifest_is_shaped_like_the_ones_already_in_the_corpus():
+    """"Indistinguishable from its siblings" is the guarantee, and it was false
+    twice over: the note above `expected_file` had stopped being written at
+    all, and `expected_category` came out as `['injection']` where every
+    one-category case in the corpus writes it plain.
+
+    Both are visible to a reader and neither changes how anything parses, which
+    is exactly the kind of drift nothing else here would catch.
+    """
+    from harvest_pairs import _category_field, manifest_lines
+
+    assert _category_field(["injection"]) == "injection"
+    assert _category_field(["xss", "injection"]) == "['xss', 'injection']"
+
+    root = Path(__file__).resolve().parents[1] / "corpus-real"
+    existing = sorted(root.glob("*/case.yml"))
+    assert existing, "no corpus to compare against"
+
+    # The strongest form available and the one with no allowlist in it:
+    # regenerate a real case from its own recorded values and demand the exact
+    # file back. Anything the generator stops writing, wraps differently or
+    # writes in another order fails here, which comparing corpus files to each
+    # other never could — that test passed while the generator had already
+    # dropped a paragraph.
+    spec = yaml.safe_load(
+        (root / "rb-mx5j-mp4f-g8jg" / "case.yml").read_text(encoding="utf-8"))
+    regenerated = manifest_lines(
+        spec["case_id"], spec["language"], category_of(spec["source_cwes"]),
+        {"ghsa": spec["source_advisory"], "cve": spec["source_cve"],
+         "repo": spec["source_repo"], "sha": spec["source_fix_commit"],
+         "cwes": spec["source_cwes"], "severity": spec["severity_reported"],
+         "summary": spec["summary"]},
+        spec["construction"], spec["expected_file"], spec["dropped_from_change"])
+
+    on_disk = (root / "rb-mx5j-mp4f-g8jg" / "case.yml").read_text(encoding="utf-8")
+    assert "\n".join(regenerated) + "\n" == on_disk
+
+    # And the fields of every other case match that shape, so one regenerated
+    # case does not stand for a corpus that has drifted around it.
+    def fields(lines) -> list:
+        return [line.split(":")[0] for line in lines
+                if line.strip() and not line.startswith("#")]
+
+    reference = fields(regenerated)
+    odd = {p.parent.name for p in existing
+           if fields(p.read_text(encoding="utf-8").splitlines()) != reference}
+    assert not odd, "case.yml files whose fields differ from a fresh one: {}".format(
+        sorted(odd))
 
 
 def test_every_mapped_category_is_one_the_agent_can_report():
