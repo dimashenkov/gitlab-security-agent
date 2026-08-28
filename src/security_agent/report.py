@@ -229,9 +229,48 @@ def _header(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
     return ["## ✅ AI security review — no findings reported"]
 
 
+def _tokens_line(usage) -> str:
+    """The token row, or the sentence that replaces it when it would be a lie.
+
+    The partial branch names the count of stages that reported nothing rather
+    than the stages themselves: which stage it was is in the artifact, and a
+    reader who needs that has it. What they must not be able to do is read
+    these figures as the whole review's.
+    """
+    if not usage.reported:
+        return ("**Tokens:** not reported by this runner — absent, not zero, "
+                "and this review is not therefore a cheap one")
+    counted = (
+        "**Tokens:** {:,} in · {:,} out · {:,} read from cache · {:,} written "
+        "to cache, across {} request(s)".format(
+            usage.input_tokens, usage.output_tokens, usage.cache_read_tokens,
+            usage.cache_write_tokens, usage.requests))
+    if usage.complete:
+        return counted
+    return counted + (" — and {} further stage(s) of this review reported "
+                      "nothing, so this is a floor and not the total".format(
+                          usage.unreported_stages))
+
+
+def _cost_bit(cost: Optional[float], floor: Optional[float], gaps: int) -> str:
+    """The three answers a review can give about what it cost.
+
+    One function, because the three were being decided at two call sites and
+    the partial case was missing from both — which is how a total covering one
+    of two stages got printed as the total.
+    """
+    if cost is not None:
+        return "~${:.2f}".format(cost)
+    if floor is not None:
+        return "at least ~${:.2f} — {} stage(s) reported nothing".format(floor, gaps)
+    return "cost not reported by this runner"
+
+
 def _meta_line(cfg: Config, outcome: ScanOutcome) -> List[str]:
     usage = outcome.total_usage()
     input_rate, output_rate = cfg.pricing()
+    cost = usage.cost_usd(input_rate, output_rate, cfg.cache_ttl)
+    floor = usage.partial_cost_usd(input_rate, output_rate, cfg.cache_ttl)
     bits = [
         "{} mode".format(outcome.mode),
         "{} file{} examined".format(
@@ -240,7 +279,15 @@ def _meta_line(cfg: Config, outcome: ScanOutcome) -> List[str]:
             len(outcome.tool_calls), "" if len(outcome.tool_calls) == 1 else "s"),
         "{} turn{}".format(outcome.turns, "" if outcome.turns == 1 else "s"),
         outcome.model,
-        "~${:.2f}".format(usage.cost_usd(input_rate, output_rate, cfg.cache_ttl)),
+        # Never `~$0.00` for a run whose usage never arrived. On the Claude
+        # Code runner that is every run, and the cheapest-looking line on the
+        # comment was the one nobody could substantiate.
+        #
+        # And never a bare figure for a review only part of which was counted:
+        # "at least" is the difference between a total and a floor, and
+        # without it a review whose verifier reported nothing shows its review
+        # stage's cost as the price of the whole thing.
+        _cost_bit(cost, floor, usage.unreported_stages),
     ]
     return ["", "_{}_".format(" · ".join(bits))]
 
@@ -549,10 +596,11 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
             if cfg.verify else "",
             cfg.model, cfg.effort),
         "",
-        "**Tokens:** {:,} in · {:,} out · {:,} read from cache · {:,} written to "
-        "cache, across {} request(s)".format(
-            usage.input_tokens, usage.output_tokens,
-            usage.cache_read_tokens, usage.cache_write_tokens, usage.requests),
+        # A sentence about the gap, never a row of zeros. `0 in · 0 out · 0
+        # read from cache` is a claim that the review used nothing, and on the
+        # Claude Code runner — where the CLI's usage block reaches `CliResult`
+        # and is read by nobody — it was printed under every single review.
+        _tokens_line(usage),
         "",
     ]
     m = outcome.metrics

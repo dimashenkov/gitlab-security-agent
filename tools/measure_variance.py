@@ -26,6 +26,7 @@ import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Optional
 
 # claude-opus-5, $/MTok. Only used for the cost column.
 # Pricing lives in the package, not here. There were three copies of these
@@ -40,16 +41,16 @@ MODEL = "claude-opus-5"
 CACHE_TTL = "1h"
 
 
-def cost_of(usage: dict) -> float:
-    """What a review cost, at the rates and cache TTL the agent actually runs."""
-    tally = Usage(
-        input_tokens=usage["input_tokens"],
-        output_tokens=usage["output_tokens"],
-        cache_read_tokens=usage["cache_read_tokens"],
-        cache_write_tokens=usage["cache_write_tokens"],
-    )
+def cost_of(usage: dict) -> Optional[float]:
+    """What a review cost, or `None` when the runner reported no usage.
+
+    The four counts used to be indexed out of the block directly, so a run
+    that reported nothing arrived as four zeros and priced at $0.00 — and
+    this tool's whole output is a median with a range, which an unmeasured
+    run drags to the floor while looking like a cheap run.
+    """
     input_rate, output_rate = MODEL_PRICING[MODEL]
-    return tally.cost_usd(input_rate, output_rate, CACHE_TTL)
+    return Usage.from_dict(usage).cost_usd(input_rate, output_rate, CACHE_TTL)
 
 
 def run_once(args: argparse.Namespace, index: int) -> dict:
@@ -106,10 +107,20 @@ def summarise(runs: list) -> None:
     if len(exits) > 1:
         print("               ^ THE GATE IS NOT STABLE: identical input, different verdict")
 
-    costs = [cost_of(r["payload"]["usage"]) for r in good]
+    # Only the runs that reported. A median over a set padded with zeros for
+    # the runs nobody measured is not the median of anything, and the row it
+    # prints reads as a spread of real prices.
+    costs = [c for c in (cost_of(r["payload"]["usage"]) for r in good) if c is not None]
     turns = [r["payload"]["coverage"]["turns"] for r in good]
-    print("cost           ${:.3f} median  (${:.3f}–${:.3f})".format(
-        statistics.median(costs), min(costs), max(costs)))
+    if not costs:
+        print("cost           not reported by this runner for any of the {} "
+              "run(s) — absent, not $0.000".format(len(good)))
+    else:
+        print("cost           ${:.3f} median  (${:.3f}–${:.3f}){}".format(
+            statistics.median(costs), min(costs), max(costs),
+            "" if len(costs) == len(good) else
+            "  over {} of {} runs; the rest reported no usage".format(
+                len(costs), len(good))))
     print("turns          {} median  ({}–{})".format(
         int(statistics.median(turns)), min(turns), max(turns)))
     times = [r["seconds"] for r in good]
@@ -182,9 +193,11 @@ def main() -> int:
             result = future.result()
             if result["ok"]:
                 payload = result["payload"]
-                print("run {} · exit {} · {} finding(s) · ${:.3f} · {:.0f}s{}".format(
+                cost = cost_of(payload["usage"])
+                print("run {} · exit {} · {} finding(s) · {} · {:.0f}s{}".format(
                     result["index"], result["exit_code"],
-                    payload["counts"]["reported"], cost_of(payload["usage"]),
+                    payload["counts"]["reported"],
+                    "${:.3f}".format(cost) if cost is not None else "cost n/r",
                     result["seconds"],
                     " · {} retries".format(result["retries"]) if result["retries"] else ""))
             else:

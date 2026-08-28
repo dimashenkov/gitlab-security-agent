@@ -217,6 +217,36 @@ def test_the_artifact_separates_finishing_from_completing(cfg, ws):
     assert payload["finished_explicitly"] is False
 
 
+def test_an_artifact_that_predates_the_field_is_unknown_and_not_a_no(cfg, ws):
+    """The rate this field exists to produce must not be poisoned by artifacts
+    that predate the question.
+
+    The last blocking finding of the repository audit — the Messages API path
+    accepting `end_turn` as a completed review — was held back for a number:
+    how often a real review ends without calling `finish_review`. The field was
+    added to answer it, and the batch summary read it with `bool(...)`, so an
+    artifact written before it existed counted as a review that did not sign
+    off. All 36 member runs already stored are such artifacts. A denominator
+    built from them would have looked like an answer and been one of the worst
+    kinds of wrong: confident, and about the wrong population.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    from artifact import signature
+
+    case = {"expected_category": [], "expected_file": []}
+    base = {"complete": True, "stop_reason": "completed", "findings": [],
+            "verdict": {"exit_code": 0, "blocked": False,
+                        "blocking_fingerprints": []},
+            "usage": {}, "provenance": {}, "settings": {}, "model": "x"}
+
+    assert signature(dict(base), case)["finished_explicitly"] is None
+    assert signature(dict(base, finished_explicitly=False),
+                     case)["finished_explicitly"] is False
+    assert signature(dict(base, finished_explicitly=True),
+                     case)["finished_explicitly"] is True
+
+
 def test_unresolved_reaches_the_artifact_and_the_report(cfg, ws):
     outcome = _run(cfg, ws, finish(summary=GOOD_SUMMARY,
                                    unresolved=["Could not locate the router."]))

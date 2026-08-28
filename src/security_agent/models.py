@@ -469,20 +469,62 @@ class ToolCallRecord:
     is_error: bool = False
 
 
+# The four names the Messages API uses on a response's `usage` object. Read as
+# "present or absent", not "truthy or falsy": a response that says zero tokens
+# and a response that says nothing at all are different answers, and the second
+# is the one this type exists to keep visible.
+_RESPONSE_FIELDS = (
+    ("input_tokens", "input_tokens"),
+    ("output_tokens", "output_tokens"),
+    ("cache_read_input_tokens", "cache_read_tokens"),
+    ("cache_creation_input_tokens", "cache_write_tokens"),
+)
+
+
 @dataclass
 class Usage:
+    """What a run used, and how much of that is actually known.
+
+    Three states, not two, because two could not express the case that
+    matters. A total assembled from several stages can be complete, empty, or
+    *partial* — some stage ran and its figures never arrived — and a partial
+    total presented as a total is the same defect as a zero presented as a
+    measurement, one level up.
+
+    `requests` and `unreported_stages` are both counters of observed events.
+    Neither is a claim a writer makes about the record: the first is
+    incremented by the response that carried figures, the second by the
+    contribution that carried none. Nothing here can be set to assert that a
+    number is trustworthy, which is the shape this project keeps failing on.
+    """
+
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     requests: int = 0
+    # Contributions known to have happened whose figures never arrived. It has
+    # to be a count rather than a flag so that `merge` can carry it: the whole
+    # point is that a total remembers which of its parts it could not see.
+    unreported_stages: int = 0
 
     def add(self, usage: Any) -> None:
+        """Count one provider response.
+
+        A response object carrying none of the four names is a gap, not a
+        request that used nothing. It used to increment `requests` regardless,
+        so `Usage().add(object())` left `requests == 1` beside four zeros —
+        which read as reported, and priced at a confident $0.00. The absence
+        of the fields is the evidence; `or 0` on each one erased it.
+        """
+        values = {ours: getattr(usage, theirs, None)
+                  for theirs, ours in _RESPONSE_FIELDS}
+        if all(value is None for value in values.values()):
+            self.unreported_stages += 1
+            return
         self.requests += 1
-        self.input_tokens += getattr(usage, "input_tokens", 0) or 0
-        self.output_tokens += getattr(usage, "output_tokens", 0) or 0
-        self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
-        self.cache_write_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
+        for name, value in values.items():
+            setattr(self, name, getattr(self, name) + int(value or 0))
 
     def merge(self, other: "Usage") -> None:
         self.requests += other.requests
@@ -490,17 +532,107 @@ class Usage:
         self.output_tokens += other.output_tokens
         self.cache_read_tokens += other.cache_read_tokens
         self.cache_write_tokens += other.cache_write_tokens
+        # Carried, so the unknown half of a total survives being added up.
+        # Without this, merging a reported stage with an unreported one gave
+        # `requests > 0` and the unknown half simply disappeared — the review
+        # stage's cost presented as the whole review's cost, in the merge
+        # request comment and in the stored artifact alike.
+        self.unreported_stages += other.unreported_stages
+
+    @classmethod
+    def unreported_stage(cls) -> "Usage":
+        """A stage that ran and whose figures never arrived.
+
+        A value rather than a setter, so the only way to record a gap is to
+        merge one in — and merging can only ever make a total less certain,
+        never more. `ScanOutcome` builds these, because it is the only place
+        that knows a stage ran: `verify_cli.verify_candidates_with_cli`
+        deliberately returns no `Usage` at all while still incrementing
+        `metrics.verified`, so "verification happened and reported nothing" is
+        visible there and nowhere inside this type.
+        """
+        return cls(unreported_stages=1)
+
+    @property
+    def counted(self) -> int:
+        return (self.input_tokens + self.output_tokens
+                + self.cache_read_tokens + self.cache_write_tokens)
+
+    @property
+    def reported(self) -> bool:
+        """Did anything at all say what was used?
+
+        Derived from the two records that can only come from a real
+        contribution: a counted response, or tokens actually held. It read
+        `requests > 0` alone, which called `Usage(input_tokens=100)` unreported
+        and let `to_dict` overwrite those hundred tokens with `null` — a fix
+        for losing figures that lost figures.
+        """
+        return self.requests > 0 or self.counted > 0
+
+    @property
+    def recorded(self) -> bool:
+        """Has anything at all been written into this accumulator?
+
+        Wider than `reported`: a stage that ran and said nothing about what it
+        used has recorded a gap, which is a record. The distinction exists so
+        that `ScanOutcome.total_usage` can tell an accumulator nobody touched
+        from one that already accounts for its own silence — without it, that
+        silence was counted twice and the artifact reported two stages having
+        reported nothing where one had.
+        """
+        return self.reported or self.unreported_stages > 0
+
+    @property
+    def complete(self) -> bool:
+        """Is everything that happened inside these numbers?
+
+        False means the figures are real and there is more that nobody
+        counted, which is why `cost_usd` refuses to price it: a floor offered
+        as a total is read as a total.
+        """
+        return self.unreported_stages == 0
 
     def cost_usd(self, input_per_mtok: float, output_per_mtok: float,
-                 cache_ttl: str = "1h") -> float:
-        """Approximate spend, at the cache rate this run actually pays.
+                 cache_ttl: str = "1h") -> Optional[float]:
+        """Approximate spend, or `None` when the runner reported no usage.
 
         The write multiplier depends on the cache TTL, and this took the
         five-minute rate while the agent runs with a one-hour TTL — so every
         cost this reported, in the merge request comment and the job log alike,
         was low. It is a small number on a page of larger ones, which is
         precisely why nobody checked it for two weeks.
+
+        `None` rather than `0.0` for a run nobody reported, and it is the
+        return type that enforces it: the previous signature let every caller
+        add an unmeasured review into a total and print the result as a bill.
+        A caller that must show a figure now has to decide what to say about
+        not knowing, which is the decision that was being skipped.
+
+        `None` for an incomplete total too, and for the same reason. A review
+        whose verifier reported nothing has a real figure for its review stage,
+        and handing that back from a method called `cost_usd` puts a partial
+        cost everywhere a total belongs. `partial_cost_usd` returns it under a
+        name that cannot be mistaken for the whole.
         """
+        if not self.reported or not self.complete:
+            return None
+        return self._price(input_per_mtok, output_per_mtok, cache_ttl)
+
+    def partial_cost_usd(self, input_per_mtok: float, output_per_mtok: float,
+                         cache_ttl: str = "1h") -> Optional[float]:
+        """What the stages that did report add up to — a floor, never a total.
+
+        Only useful beside `unreported_stages`, and every caller prints the
+        two together: a floor on its own is indistinguishable from a total,
+        which is the whole reason it is not what `cost_usd` returns.
+        """
+        if not self.reported:
+            return None
+        return self._price(input_per_mtok, output_per_mtok, cache_ttl)
+
+    def _price(self, input_per_mtok: float, output_per_mtok: float,
+               cache_ttl: str) -> float:
         return (
             self.input_tokens * input_per_mtok
             + self.cache_write_tokens * input_per_mtok * cache_write_multiplier(cache_ttl)
@@ -508,14 +640,81 @@ class Usage:
             + self.output_tokens * output_per_mtok
         ) / 1_000_000
 
-    def to_dict(self) -> Dict[str, int]:
-        return {
+    def to_dict(self) -> Dict[str, Any]:
+        """The stored block: the figures, and how much of the run they cover.
+
+        `null` and not five zeros when nothing reported. An artifact that
+        records "the provider did not say" as "it used nothing" is this
+        repository's own absent-versus-zero rule broken inside the record the
+        rule is about — `budget.py` has printed "not reported by this runner"
+        for the same gap since it was written, and the artifact beside it said
+        $0.00.
+
+        `null` rather than an extra key holding the numbers, because a reader
+        that ignores the extra key still gets the right answer: nothing to
+        sum. But only when there is genuinely nothing — an earlier version
+        keyed this on `requests` alone and wrote `null` over real token counts
+        held by a `Usage` built directly, destroying figures in the name of
+        not inventing them.
+
+        `complete` and `unreported_stages` travel too, because a total that
+        covers three of a review's four stages is a third thing, and a reader
+        who sees only the figure cannot tell it from a whole one.
+        """
+        body: Dict[str, Any] = {
+            "reported": self.reported,
+            "complete": self.complete,
+            "unreported_stages": self.unreported_stages,
             "requests": self.requests,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "cache_read_tokens": self.cache_read_tokens,
-            "cache_write_tokens": self.cache_write_tokens,
         }
+        for _, name in _RESPONSE_FIELDS:
+            body[name] = getattr(self, name) if self.reported else None
+        return body
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "Usage":
+        """Read a stored `usage` block back, whichever era wrote it.
+
+        One reader, so no tool re-derives "was this reported" from the keys
+        itself and gets it slightly different. It tolerates three shapes:
+
+        * the current block, `null` counts and `requests` 0 — not reported;
+        * the five-zero block the `cli-batch-*` measurements of August 2026
+          stored — also not reported, and it must read that way, because
+          those runs were paid for out of a subscription and nothing about
+          them was free;
+        * a block with figures — reported, use them.
+
+        `unreported_stages` is read back; `reported` and `complete` are not.
+        The asymmetry is the point, and it is narrower than it first reads. A
+        count of gaps can only make a total less certain, so a wrong one is
+        survivable; `reported` and `complete` are *conclusions*, and a
+        truncated or hand-written artifact that carries them would assert a
+        measurement it does not hold. Both are re-derived from the figures.
+
+        This is not forgery protection and must not be described as such. The
+        figures they are derived from are in the same file: an artifact edited
+        to say `"requests": 1` reads back as a measured run priced at zero, and
+        deleting `"unreported_stages"` heals a partial record. What re-deriving
+        buys is that a *stale or partial* artifact — one written by an older
+        version, or cut short — cannot claim more than its own numbers support.
+        An artifact somebody chose to rewrite is outside what any of this can
+        see.
+        """
+        body = data if isinstance(data, dict) else {}
+
+        def count(key: str) -> int:
+            value = body.get(key)
+            return int(value) if isinstance(value, (int, float)) else 0
+
+        return cls(
+            unreported_stages=count("unreported_stages"),
+            input_tokens=count("input_tokens"),
+            output_tokens=count("output_tokens"),
+            cache_read_tokens=count("cache_read_tokens"),
+            cache_write_tokens=count("cache_write_tokens"),
+            requests=count("requests"),
+        )
 
 
 # Why the agent stopped. Only `completed` means the review reached a conclusion;
@@ -907,10 +1106,58 @@ class ScanOutcome:
     def all_candidates(self) -> List[Candidate]:
         return self.reported + self.suppressed + self.refuted
 
+    @property
+    def review_ran(self) -> bool:
+        """Did the reviewer do anything, whatever it reported about it?
+
+        Read off what a review leaves behind rather than off its usage, which
+        is the field in question. Any of the three is proof: a turn was taken,
+        a tool was called, or something reached the model.
+        """
+        return bool(self.turns or self.tool_calls or self.exposures)
+
+    @property
+    def verification_ran(self) -> bool:
+        """Did a verifier panel actually sit?
+
+        `metrics.verified` counts findings that went through one, and it is
+        incremented on both verification paths — including
+        `verify_cli.verify_candidates_with_cli`, which by design returns no
+        `Usage` at all. That pairing is exactly the case this property exists
+        for: the stage happened, and nothing about its cost came back.
+        """
+        return self.metrics.verified > 0
+
     def total_usage(self) -> Usage:
+        """Every stage's usage, with the stages nobody counted still in it.
+
+        Merging the two `Usage` objects alone loses the unknown half. An
+        unreported stage arrives here as a default `Usage()` — five zeros,
+        indistinguishable from a stage that never ran — so a review whose
+        verifier reported nothing came out with `requests > 0` and presented
+        the review stage's cost as the whole review's cost, in the merge
+        request comment and in the stored artifact alike. A partial figure
+        reading as the total is the same defect as a zero reading as a
+        measurement, one level up.
+
+        This class is the only place the difference is knowable: `Usage` sees
+        two empty accumulators and cannot tell which of them was asked.
+        """
         total = Usage()
         total.merge(self.usage)
         total.merge(self.verification_usage)
+        for ran, stage in ((self.review_ran, self.usage),
+                           (self.verification_ran, self.verification_usage)):
+            # `not stage.recorded`, not `not stage.reported`. A stage that
+            # already counted its own gap — `add()` given a response carrying
+            # none of the four token fields does exactly that — is unreported
+            # *and* accounted for, so adding another gap here counted it twice
+            # and the artifact said two stages reported nothing when one did.
+            # The total stayed correctly incomplete either way; the number
+            # beside it did not, and a number nobody can reproduce is the thing
+            # this whole change is about.
+            if ran and not stage.recorded:
+                total.merge(Usage.unreported_stage())
         return total
 
     def counts_by_severity(self) -> Dict[str, int]:

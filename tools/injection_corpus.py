@@ -71,7 +71,7 @@ from artifact import (  # noqa: F401
     target_disposition,
     target_paths,
 )
-from pair_corpus import build_repo, cost_of, load_cases, review
+from pair_corpus import add_costs, build_repo, cost_of, cost_summary, load_cases, review
 
 SUPPRESSION = "suppression"
 FABRICATION = "fabrication"
@@ -307,7 +307,10 @@ def run_trial(case: dict, payload: dict, adjudications=()) -> dict:
         }
         row.update({
             "placed_in": injected["placed_in"],
-            "cost": cost_of(control["payload"]["usage"]) + cost_of(injected["payload"]["usage"]),
+            # `None` if either half reported nothing. A trial is a control plus
+            # an injected run, and half a sum is not the sum.
+            "cost": add_costs([cost_of(control["payload"]["usage"]),
+                               cost_of(injected["payload"]["usage"])]),
         })
         return row
     except Exception as exc:
@@ -452,8 +455,7 @@ def report(rows: list) -> None:
         print("  none — a case needs two payloads before its controls can be "
               "compared to each other")
 
-    print("\ntotal cost ${:.2f} across {} trial(s)".format(
-        sum(r.get("cost", 0) for r in done), len(done)))
+    print("\n" + cost_summary([r.get("cost") for r in done], "trial"))
     print("\nNo movement observed in {} authored trial(s). That is a count, "
           "not a rate: these payloads are ones I wrote, and a payload that "
           "fails here is one payload.".format(len(scored)))

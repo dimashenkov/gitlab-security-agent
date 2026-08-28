@@ -705,38 +705,83 @@ the answer makes it no longer real code.
 
 ### What it has been measured on
 
-| Language | Hand-written pairs | Harvested from advisories | Weakness families covered |
+Counted by **advisory**, not by directory. A harvested advisory yields a
+`regression` case and usually a `-snap` twin, and `tools/harvest_pairs.py` says
+of the two constructions "never score the two constructions together" — so a
+table that added them would double most rows and leave the four that have no
+twin single. The harvested column below is therefore the number of `regression`
+cases, one per advisory. The rows are the `language:` value in each `case.yml`,
+which is why `javascript` and `typescript` appear separately here even though
+the harvesting plan treats them as one bucket.
+
+| `language:` | Hand-written cases | Harvested advisories | Weakness families covered |
 | --- | ---: | ---: | --- |
-| Python | 5 | 6 | injection, authn-authz, path-traversal, ssrf, deserialization |
-| Go | 4 | 6 | injection, crypto, dos, sensitive-data-exposure |
-| Ruby | 4 | 6 | xss, authn-authz, injection, path-traversal |
-| TypeScript | 3 | 8 | xss, open-redirect, authn-authz |
-| Java | 2 | 4 | injection, deserialization, authn-authz |
-| PHP | 2 | 6 | path-traversal, authn-authz, xss, csrf |
-| Rust | 2 | 6 | injection, race-condition, crypto, authn-authz, dos |
-| C# | 0 | 6 | path-traversal, dos |
+| `python` | 5 | 8 | authn-authz, authorization, deserialization, dos, injection, path-traversal, ssrf |
+| `go` | 5 | 8 | crypto, dos, injection, path-traversal, sensitive-data-exposure |
+| `php` | 2 | 8 | authentication, authn-authz, csrf, path-traversal, xss |
+| `typescript` | 3 | 7 | authn-authz, dos, open-redirect, path-traversal, unclassified, xss |
+| `javascript` | 0 | 1 | sensitive-data-exposure |
+| `ruby` | 4 | 3 | authorization, injection, path-traversal, xss |
+| `rust` | 2 | 3 | authn-authz, crypto, dos, injection, race-condition |
+| `csharp` | 0 | 3 | dos, path-traversal |
+| `java` | 2 | 2 | authn-authz, deserialization, injection |
 
-Eight languages, twelve families, seventy cases. That is coverage, not
-validation — a language appearing in this table means the agent has been run
-against it, not that its behaviour there is bounded.
+```
+# the harvested column — one row per advisory, snapshot twins excluded
+python3 -c "
+import yaml,pathlib,collections
+c=collections.Counter()
+for m in sorted(pathlib.Path('corpus-real').glob('*/case.yml')):
+    b=yaml.safe_load(m.read_text()) or {}
+    if b.get('construction')=='regression': c[b.get('language')]+=1
+print(sorted(c.items()))"
 
-And spread that thin it is barely coverage either. Two to four pairs per
-language means a per-language percentage can only be 0, 33, 67 or 100: one
-batch reported "php 0%, ruby 0%" from a single case each. So new cases now go
-into **javascript/typescript, python, php and go** until each has a count worth
-reading, and the other languages stay as a regression suite rather than being
-deepened.
+# the hand-written column
+python3 -c "
+import yaml,pathlib,collections
+c=collections.Counter()
+for m in sorted(pathlib.Path('corpus').glob('*/case.yml')):
+    c[(yaml.safe_load(m.read_text()) or {}).get('language')]+=1
+print(sorted(c.items()))"
 
-The four were chosen by harvest yield, counted rather than guessed. Advisories
-naming exactly one fix commit, on 2026-08-28: npm 2985, pip 2944, composer
-2686, maven 2237, go 2057 — then a gap to rust 556, rubygems 468, nuget 389.
-Eight good cases cannot be drawn from the bottom three without lowering the bar
-for what counts as an advisory. `go` is fourth over the slightly larger maven
-because the other three are web languages with nearly one profile of weakness
-between them, and go's cases are `dos` from nil dereference and resource
-exhaustion — without it the set measures one style of code rather than a tool.
-`javascript` and `typescript` count as one: the language is decided by a file
-extension, mixed repositories are the norm, and the agent compiles nothing.
+# and the whole corpus checked at once
+python3 tools/check_corpus.py corpus/ corpus-real/
+```
+
+Nine `language:` values, fifteen families, 43 advisories and 23 hand-written
+cases — 105 case directories in all, which is the number `check_corpus.py`
+reports. That is coverage, not validation: a language appearing in this table
+means the agent has been run against it, not that its behaviour there is
+bounded. The families come from two vocabularies — the hand-written cases use
+`authentication`/`authorization`/`deserialization` where the harvested ones use
+`authn-authz` — so the fifteen is a count of distinct labels, not of distinct
+weaknesses.
+
+Spread thin, a per-language number says very little. Two to four pairs means a
+per-language percentage can only be 0, 33, 67 or 100: one batch reported
+"php 0%, ruby 0%" from a single case each. So **further harvesting goes into
+`javascript`/`typescript`, `python`, `php` and `go`**, each now at eight
+advisories — counting `javascript` and `typescript` as one bucket, which is 8
+by that convention and 1 + 7 by the table's.
+
+This is a decision about where new cases go, not about what the corpus
+contains. The 11 advisories in `csharp`, `java`, `ruby` and `rust` stay: they
+are already built, several carry results that were paid for, and they are still
+scored. Deleting them would throw away evidence, so the corpus is nine
+languages and the harvesting is four.
+
+`go` is in the four for **shape** rather than volume: the other three are web
+languages with nearly one profile of weakness between them, while go's cases
+are `dos` from nil dereference and resource exhaustion — without it the set
+measures one style of code rather than a tool. `javascript` and `typescript`
+count as one because the language is decided by a file extension, mixed
+repositories are the norm, and the agent compiles nothing.
+
+The four were originally picked by counting advisories per package ecosystem in
+the GitHub advisory database. That count was made outside this repository and
+no artifact here records it, so no figure for it is quoted: nothing in the tree
+re-derives it, and a number nobody can re-derive is a claim rather than a
+measurement. What can be checked is the result, and it is the table above.
 
 Nothing about the agent is language-specific: there are no per-language rules,
 no parsers, and no ruleset. It reads the code. The reason to test several

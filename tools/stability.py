@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from artifact import load_adjudications, ruled_incidental
 from injection_corpus import controls_agree, signature
-from pair_corpus import build_repo, cost_of, load_cases, review
+from pair_corpus import build_repo, cost_of, cost_summary, load_cases, review
 
 
 def one_run(case: dict, member: str, index: int, excused=()) -> dict:
@@ -109,8 +109,7 @@ def report(rows: list, case_id: str, member: str) -> int:
         ", ".join("{} x{}".format(code, n) for code, n in sorted(exits.items()))))
     if broken:
         print("{} run(s) failed and are excluded from the comparison".format(len(broken)))
-    print("cost ${:.2f} across {} completed run(s)".format(
-        sum(r.get("cost", 0) for r in good), len(good)))
+    print(cost_summary([r.get("cost") for r in good], "completed run"))
 
     if agreements == pairs:
         # The bound, stated rather than left to the reader. Zero disagreements

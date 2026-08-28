@@ -58,7 +58,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from artifact import is_target
-from pair_corpus import build_repo, cost_of, load_cases
+from pair_corpus import build_repo, cost_of, cost_summary, load_cases
 
 SNAP_SUFFIX = "-snap"
 CONSTRUCTIONS = ("regression", "snapshot")
@@ -419,9 +419,11 @@ def report(cases: list, totals: dict) -> None:
     print("\n   removed-control label on regression/unsafe (rule ON): {}/{}".format(
         labelled, reg_on["scored"]))
 
-    if totals.get("cost"):
-        print("\ntotal cost ${:.2f} across {} review(s)".format(
-            totals["cost"], totals["reviews"]))
+    # Printed whenever there were reviews, not only when the figure was
+    # truthy. `if totals["cost"]` skipped the line entirely for a batch that
+    # reported nothing — the silent version of calling it free.
+    if totals.get("costs"):
+        print("\n" + cost_summary(totals["costs"], "review"))
 
     print("\nThese are counts over a handful of cases, not rates. With this many")
     print("cases the interval around any percentage covers most of the range, so")
@@ -470,7 +472,10 @@ def main() -> int:
         len(groups), len(units), min(args.concurrency, len(units))))
 
     seen: dict = {}
-    totals = {"cost": 0.0, "reviews": 0}
+    # The costs themselves, not a running total. A `+=` over `cost_of` needed a
+    # number from every review and got 0.0 from the ones that reported nothing,
+    # which is how an unmeasured run became a free one.
+    totals: dict = {"costs": [], "reviews": 0}
     with ThreadPoolExecutor(max_workers=max(1, min(args.concurrency, len(units)))) as pool:
         futures = {
             pool.submit(run_unit, spec, gate_on, member): (base, construction, gate_on, member)
@@ -487,7 +492,7 @@ def main() -> int:
             else:
                 observation = observe(result["payload"], spec)
                 seen.setdefault(base, {})[key] = observation
-                totals["cost"] += cost_of(result["payload"]["usage"])
+                totals["costs"].append(cost_of(result["payload"]["usage"]))
                 totals["reviews"] += 1
                 outcome = "{} {}".format(
                     "found" if observation.discovered else "MISS",

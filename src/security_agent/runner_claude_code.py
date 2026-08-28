@@ -777,6 +777,25 @@ class CliResult:
         # completed review. The provider's two statements about itself have to
         # agree before either is taken at face value.
         self.returncode = returncode
+        # Parsed off the terminal object and read by nobody. This is why every
+        # one of the 38 member runs in `measurements/cli-batch-*.json` recorded
+        # five zeros for `usage`: nothing here ever reaches `ScanOutcome.usage`,
+        # and the Messages API path — which does, since the first commit — is
+        # the only reason the field ever holds a figure. (Those runs are
+        # attributed to this runner by their filenames and by the commits that
+        # added them; only four of the 38 carry `provenance.provider`, which
+        # postdates the rest, so the artifacts alone do not establish it.)
+        #
+        # Not wired up here, because the key names inside this block have not
+        # been read off the real binary. The documentation gives the Messages
+        # API spelling (`input_tokens`, `output_tokens`,
+        # `cache_creation_input_tokens`, `cache_read_input_tokens`) and the
+        # TypeScript SDK gives a camelCase one for the neighbouring
+        # `modelUsage`, and picking wrong records the two plain counts and
+        # silently drops the two cache counts — an understated cost that reads
+        # as measured, which is worse than the absence the artifact now states.
+        # One `claude -p` of two tokens settles it; until then the artifact
+        # says "not reported", which is true.
         self.usage = usage or {}
         # Kept whole for the artifact's telemetry half. Never read to decide.
         self.payload = payload or {}

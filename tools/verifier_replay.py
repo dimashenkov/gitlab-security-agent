@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import anthropic
 from injection_corpus import apply_payload, load_payloads
-from pair_corpus import build_repo, cost_of, load_cases
+from pair_corpus import build_repo, cost_of, cost_summary, load_cases
 
 from security_agent.config import Config
 from security_agent.models import Candidate, Finding, Usage
@@ -149,18 +149,20 @@ def report(rows: list) -> int:
         if "error" in row:
             print("{:<5}{}".format(row["run"], str(row["error"])[:60]))
             continue
-        print("{:<5}{:<18}{:<12}{:<12}{:<8}${:.2f}".format(
+        # `n/r` — not reported — rather than $0.00 in the cost column. A
+        # column of zeros beside a column of verdicts reads as a free panel.
+        print("{:<5}{:<18}{:<12}{:<12}{:<8}{}".format(
             row["run"], row["payload"], row["verdict"], row["confidence"],
             "{}/{}".format(sum(1 for v in row["votes"]
                                if v["verdict"] == row["verdict"]),
                            len(row["votes"])),
-            row["cost"]))
+            "${:.2f}".format(row["cost"]) if row.get("cost") is not None else "n/r"))
 
     if not good:
         print("\nNo run produced a verdict.")
         return 2
 
-    print("\ntotal ${:.2f}".format(sum(r["cost"] for r in good)))
+    print("\n" + cost_summary([r.get("cost") for r in good], "run"))
     verdicts = {r["verdict"] for r in good}
     payloads = {r["payload"] for r in good}
 

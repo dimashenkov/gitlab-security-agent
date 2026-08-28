@@ -469,7 +469,18 @@ def signature(payload: dict, case: dict, excused=()) -> dict:
         # `--keep-artifacts` keeps only the runs that failed, so every clean run
         # threw the evidence away. Two batches were paid for and neither can
         # answer the question they were the reason to ask.
-        "finished_explicitly": bool(payload.get("finished_explicitly")),
+        # `None` when the artifact does not carry the field, not `False`.
+        #
+        # `bool(...)` read an absent field as "this review stopped without
+        # signing off", which is a different claim from "nobody recorded
+        # whether it did". Every artifact written before the field existed —
+        # all 36 member runs stored in `measurements/` — would have counted
+        # towards the rate as a run that did not sign off, and that rate is the
+        # evidence the last blocking finding is waiting for. A denominator
+        # poisoned by artifacts that predate the question is worse than no
+        # denominator: it answers.
+        "finished_explicitly": (bool(payload["finished_explicitly"])
+                                if "finished_explicitly" in payload else None),
         "stop_reason": payload.get("stop_reason", ""),
         # The only field that says which limit burned. Dropping it is what made
         # four incomplete runs undiagnosable without paying for them again.

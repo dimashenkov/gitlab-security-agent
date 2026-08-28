@@ -81,16 +81,95 @@ CACHE_TTL = "1h"
 SCORER_VERSION = 3
 
 
-def cost_of(usage: dict) -> float:
-    """What a review cost, at the rates and cache TTL the agent actually runs."""
-    tally = Usage(
-        input_tokens=usage["input_tokens"],
-        output_tokens=usage["output_tokens"],
-        cache_read_tokens=usage["cache_read_tokens"],
-        cache_write_tokens=usage["cache_write_tokens"],
-    )
+def cost_of(usage: dict) -> Optional[float]:
+    """What a review cost, or `None` when the runner reported no usage.
+
+    It used to index the four counts straight out of the block and hand them
+    to `Usage`, so a run that reported nothing arrived as four zeros and was
+    priced at $0.00 — indistinguishable from a review that genuinely used no
+    tokens, which no review ever is. The five `measurements/*.json` batches —
+    38 member runs, none of them free — were summed that way, and the corpus
+    reported a free measurement.
+
+    `Usage.from_dict` decides it now, so this tool and the artifact writer
+    share one rule instead of two that agree until they do not. That includes
+    completeness: a stored total covering only some of a review's stages comes
+    back `None` here rather than as a figure to add up.
+    """
     input_rate, output_rate = MODEL_PRICING[MODEL]
-    return tally.cost_usd(input_rate, output_rate, CACHE_TTL)
+    return Usage.from_dict(usage).cost_usd(input_rate, output_rate, CACHE_TTL)
+
+
+def add_costs(costs: Sequence[Optional[float]]) -> Optional[float]:
+    """The total, or `None` if any part of it is unknown.
+
+    A sum with an unknown addend is unknown. Skipping the unknowns and
+    printing the rest as the total is the arithmetic that turned an
+    unmeasured batch into a cheap one — the reader sees a figure and has no
+    way to tell it accounts for two of five pairs.
+    """
+    values = list(costs)
+    if not values or any(value is None for value in values):
+        return None
+    return sum(value for value in values if value is not None)
+
+
+def cost_summary(costs: Sequence[Optional[float]], unit: str = "pair") -> str:
+    """One line about spend that never reads as free when it is unknown.
+
+    Three cases and three sentences, because they are three different facts:
+    everything measured, nothing measured, and — the one that hides — some
+    measured. The partial case names the shortfall in the same sentence as
+    the figure, so the number cannot be quoted without it.
+    """
+    values = list(costs)
+    known = [value for value in values if value is not None]
+    missing = len(values) - len(known)
+    if not values:
+        return "no runs to cost"
+    if not known:
+        # No currency figure anywhere in this sentence, not even to deny one.
+        # A line that says "not $0.00" still puts a dollar amount on the page,
+        # and the page is skimmed.
+        return ("total cost: NOT REPORTED — {} {}s recorded no usage. This run "
+                "cannot produce that figure; it is not zero.".format(
+                    len(values), unit))
+    if missing:
+        return ("total cost ${:.2f} across {} of {} {}s — the other {} "
+                "reported no usage and are missing from that figure".format(
+                    sum(known), len(known), len(values), unit, missing))
+    return "total cost ${:.2f} across {} {}s".format(
+        sum(known), len(values), unit)
+
+
+def notional_summary(rows: Sequence[dict]) -> str:
+    """What the Claude Code CLI priced these runs at, or "" if it never said.
+
+    A second line and never part of the first, because it is a different
+    quantity. `provenance.reported_cost_usd` is what a run *would* have cost
+    on the API; a two-token reply on a Max plan came back as $0.29, so adding
+    it into "total cost" would bill a subscription. It is printed because the
+    alternative is reporting "not reported" over runs whose provider did give
+    a number — an artifact holds it, and this project takes its figures from
+    artifacts.
+
+    Partial by construction: only runs from after the field existed carry it,
+    so the count is always stated beside the figure.
+    """
+    priced, total, seen = 0, 0.0, 0
+    for row in rows:
+        for member in (row.get("members") or {}).values():
+            seen += 1
+            figure = ((member or {}).get("provenance") or {}).get("reported_cost_usd")
+            if isinstance(figure, (int, float)):
+                priced += 1
+                total += float(figure)
+    if not priced:
+        return ""
+    return ("the CLI priced {} of those {} runs at ${:.2f} in total "
+            "(provenance.reported_cost_usd). That is what they would have cost "
+            "on the API, not what was billed — the login was a subscription — "
+            "and it is not the figure above.".format(priced, seen, total))
 
 
 def load_cases(root: Path, language: str = "", family: str = "") -> list:
@@ -383,7 +462,8 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
                 m for m in ("safe", "unsafe")
                 if not members[m]["payload"].get("complete", False)
             ]
-            result["cost"] = sum(cost_of(m["payload"]["usage"]) for m in members.values())
+            result["cost"] = add_costs(
+                [cost_of(m["payload"]["usage"]) for m in members.values()])
             result["seconds"] = max(m["seconds"] for m in members.values())
             return result
 
@@ -413,7 +493,10 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
             "size_delta": size_delta(case["_dir"]),
             "safe_findings": summarise(members["safe"]["payload"]),
             "unsafe_findings": summarise(members["unsafe"]["payload"]),
-            "cost": sum(cost_of(m["payload"]["usage"]) for m in members.values()),
+            # `None` when either member reported nothing. A pair's cost is the
+            # sum of two runs, and a sum with an unknown half is unknown — not
+            # the half that happens to be measurable.
+            "cost": add_costs([cost_of(m["payload"]["usage"]) for m in members.values()]),
             "seconds": max(m["seconds"] for m in members.values()),
         })
         return result
@@ -570,8 +653,10 @@ def report(results: list, adjudications: Sequence[dict] = ()) -> None:
 
     print(_stratified(done))
 
-    print("\ntotal cost ${:.2f} across {} pairs".format(
-        sum(r["cost"] for r in done), len(done)))
+    print("\n" + cost_summary([r.get("cost") for r in done], "pair"))
+    notional = notional_summary(done)
+    if notional:
+        print(notional)
     print("\nWith this many pairs the confidence interval is wide. Treat a clean "
           "sheet as 'found no failure', not as a bound on the failure rate.")
 
