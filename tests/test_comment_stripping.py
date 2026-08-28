@@ -328,6 +328,125 @@ def test_python_that_stops_parsing_is_reverted_rather_than_shipped():
     assert _python_regressed("def f():\n    'doc'\n", "def f():\n") != ""
 
 
+# --------------------------------------------- ruby literals in argument slots
+
+
+SAVON = (
+    "    def define_class_operation(operation)\n"
+    "      class_operation_module.module_eval %{\n"
+    "        def #{operation_method_name(operation)}(locals = {})\n"
+    "          client.call #{operation.inspect}, locals\n"
+    "        end\n"
+    "      }, __FILE__, __LINE__ - 4\n"
+    "    end\n"
+)
+
+
+def test_a_percent_literal_after_a_method_name_is_a_string_not_a_modulo():
+    """The corpus case this destroyed.
+
+    `value_next` was decided by a hardcoded list of method names, and a list of
+    names is only ever right about the names on it. `module_eval` was not on
+    it, so the `%` read as a modulo, the scanner stayed outside the string, and
+    the `#{...}` inside it was taken for a comment and deleted — leaving `def`
+    with no name and `client.call` with no arguments.
+
+    That is the whole weakness of `rb-mx5j-mp4f-g8jg`: Savon evaluating a WSDL
+    operation name as Ruby source. The review reported nothing because there
+    was nothing left to report, and the miss was scored against the reviewer.
+    """
+    result, status = strip_comments_report(SAVON, ".rb")
+
+    assert "#{operation_method_name(operation)}" in result
+    assert "#{operation.inspect}" in result
+    assert status == UNCHANGED, status
+
+
+@pytest.mark.parametrize("opener", ["#{name}", "#@ivar", "#$global"])
+def test_an_interpolation_read_as_a_comment_refuses_the_file(opener):
+    """The guard that catches the next scanner gap, whatever opens it.
+
+    A Ruby comment never begins with an interpolation. Reaching one outside a
+    string means the scanner is in the wrong place, and deleting the span would
+    delete code — so the file is written through untouched and the harvester
+    reports it. Without this the failure above was silent and vouched for.
+
+    All three openers, because Ruby interpolates `#@ivar` and `#$global`
+    without braces and a guard that knows one form guards against one bug. It
+    earns its keep on its own: over the ruby shipped with this machine it
+    catches three files the scanner would otherwise have deleted code from.
+    """
+    from strip_comments import Untouched, _scan_ruby
+
+    with pytest.raises(Untouched):
+        _scan_ruby("x = %z{ " + opener + " }\n")
+
+
+def test_a_heredoc_after_a_method_name_is_a_heredoc():
+    """The same defect as the percent literal, through a different opener, and
+    the reason the guard above is not written against `#{` alone.
+
+    `module_eval <<RUBY` is how Ruby metaprogramming reads a body from a
+    heredoc. Deciding it is a left shift puts the scanner outside the body, and
+    every line of that body then reads as a comment.
+    """
+    result, status = strip_comments_report(
+        "module_eval <<RUBY\n#@generated_source\nRUBY\n", ".rb")
+    assert "#@generated_source" in result
+    assert status == UNCHANGED, status
+
+
+def test_a_left_shift_after_a_method_name_is_still_a_left_shift():
+    """The floor under the rule above: spacing decides, so a spaced `<<` is an
+    operator and the comment after it goes."""
+    result, status = strip_comments_report("x = a << b # note\n", ".rb")
+    assert "note" not in result
+    assert status == STRIPPED, status
+
+
+def test_a_scanner_returning_overlapping_spans_is_reported_not_raised():
+    """Giving up is a result; crashing is not — and this was the one give-up
+    path that crashed.
+
+    Overlapping spans mean a scanner is wrong, which is precisely when the
+    caller needs a status rather than a traceback: the harvester lists every
+    file it could not vouch for, and an exception is not on that list.
+    """
+    import strip_comments
+
+    original = strip_comments._SCANNERS["ruby"]
+    strip_comments._SCANNERS["ruby"] = lambda text: [(0, 5, ""), (2, 7, "")]
+    try:
+        result, status = strip_comments_report("abcdefghij\n", ".rb")
+    finally:
+        strip_comments._SCANNERS["ruby"] = original
+
+    assert result == "abcdefghij\n"
+    assert status.startswith("unsafe"), status
+
+
+@pytest.mark.parametrize("source,keep", [
+    # A spaced operator stays an operator, both ways round.
+    ("x = a % b\ny = \"#{keep}\"\n", "#{keep}"),
+    ("x = fmt % [a, b]\ny = \"#{keep}\"\n", "#{keep}"),
+    ("x = a / b\ny = \"#{keep}\"\n", "#{keep}"),
+    # Glued to a method name it opens a literal, whatever the name.
+    ("mod.module_eval %{hi #{name}}\n", "#{name}"),
+    ("anything_at_all %{hi #{name}}\n", "#{name}"),
+    ("text.sanitize /[a-z]#{x}/\ny = \"#{keep}\"\n", "#{keep}"),
+])
+def test_the_ruby_rule_is_the_spacing_not_a_list_of_names(source, keep):
+    result, _ = strip_comments_report(source, ".rb")
+    assert keep in result
+
+
+def test_a_comment_after_a_method_name_still_goes():
+    """The permissive direction has a floor: a `#` that is a comment is one."""
+    result, status = strip_comments_report("foo bar  # note\n", ".rb")
+    assert "note" not in result
+    assert status == STRIPPED, status
+
+
 # ------------------------------------------------ the chain, not the links
 
 

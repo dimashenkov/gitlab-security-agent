@@ -301,3 +301,65 @@ def test_a_change_that_only_edits_a_prompt_is_still_asked_about(tmp_path):
 
     assert prompt_dir_risk(
         root / "prompts", root, ws.raw_changed_paths()).startswith("REFUSE")
+
+
+def test_the_readme_offers_the_free_path_first():
+    """It described the paid path only, for a day after the free one shipped.
+
+    A reader opening this project was told they must set `ANTHROPIC_API_KEY` to
+    review their own branch, which stopped being true — and the whole point of
+    that work was that a local review costs nothing. Documentation that lags
+    the code is how a feature comes to exist and not be used.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    # Whitespace-collapsed, because the first version of this test searched the
+    # raw text and failed on a line break inside the sentence it was looking
+    # for. A test that breaks when a paragraph is rewrapped teaches whoever
+    # rewraps it to edit the test.
+    quick = " ".join(readme[readme.index("## Quick start"):].split())
+
+    assert "claude-cli" in quick or "your own `claude`" in quick
+    # And the sentence that matters most about it.
+    assert "will not quietly fall back" in quick
+
+    # *First*, which the name of this test claims and the assertions above do
+    # not: they passed with the free path anywhere in the section, including
+    # below both paid ones. A reader who stops after the first recipe never
+    # reaches the later one, and the point of that work was that a local review
+    # costs nothing.
+    #
+    # By heading order, not by where a word first appears. The first mention of
+    # `ANTHROPIC_API_KEY` in this section is the sentence saying you do not
+    # need one, so a test looking for that string measured the opposite of what
+    # it claimed and would have sent someone rewriting the README to satisfy it.
+    headings = [line for line in
+                readme[readme.index("## Quick start"):].splitlines()
+                if line.startswith("### ")]
+    assert len(headings) >= 2, headings
+    assert "no API bill" in headings[0] or "own branch" in headings[0], (
+        "the first way in is not the free one: {!r}".format(headings[0]))
+
+
+def test_every_setting_the_code_reads_is_in_the_readme():
+    """A configuration table missing a variable is a variable nobody sets.
+
+    Two of these were added the same day and neither reached the table: one
+    decides who the agent posts as — without it a workflow leaves a comment per
+    push — and one decides how much of a large change is read at all.
+    """
+    import re
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    # `rglob`, both quote styles, and digits in the name. The narrow version
+    # read only top-level double-quoted names with no digits, so a setting in
+    # a subpackage, in single quotes, or called `..._V2` was invisible to a
+    # test whose whole job is to notice a setting nobody wrote down.
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "src").rglob("*.py")))
+
+    named = set(re.findall(r"""['"](SECURITY_SCAN_[A-Z0-9_]+)['"]""", source))
+    assert named, "found no settings at all — the pattern stopped matching"
+    missing = sorted(name for name in named if name not in readme)
+
+    assert not missing, "settings the code reads and the README never names: {}".format(missing)

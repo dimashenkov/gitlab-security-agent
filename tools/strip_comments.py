@@ -116,7 +116,15 @@ def strip_comments_report(text: str, suffix: str) -> Tuple[str, str]:
         return text, "unsafe {}: nesting too deep to scan".format(suffix)
     if not spans:
         return text, UNCHANGED
-    out = _apply(text, spans)
+    try:
+        # `_apply` raises on overlapping spans, which is a scanner bug rather
+        # than an unscannable file — but it was raised outside this handler, so
+        # the one give-up path that means "a scanner is wrong" was the one that
+        # crashed instead of being reported. Giving up is a result here; only
+        # crashing is not.
+        out = _apply(text, spans)
+    except Untouched as exc:
+        return text, "unsafe {}: {}".format(suffix, exc)
     if out.count("\n") != text.count("\n"):  # belt and braces; must never fire
         return text, "unsafe {}: line count changed".format(suffix)
     if SUFFIX_LANGUAGE[suffix] == "python":
@@ -729,6 +737,26 @@ _RB_OPENERS = {
     "else", "raise", "puts", "print", "match", "split", "gsub", "sub", "scan",
     "grep", "select", "reject", "assert", "expect", "next", "break",
 }
+# The list above names methods, and a list of names can only ever be right
+# about the names on it. `module_eval %{...}` is not on it, so the `%` read as
+# a modulo, the scanner never entered the string, and the `#{...}` inside it
+# was taken for a comment and deleted — silently, with the file reported as
+# stripped. That destroyed the one case in the corpus whose weakness is Ruby
+# evaluating an interpolated string, which is the shape most Ruby code
+# injection has.
+#
+# Ruby itself does not use a list. After a method name and at least one space,
+# a `%` or `/` glued to a non-space character opens a literal; with a space
+# after it, it is an operator. That is the rule, and it holds for every method
+# name including the ones nobody thought to list.
+#
+# Wrong in the permissive direction costs a comment left in place, which the
+# harvester already reports. Wrong in the other direction deletes code.
+_RB_ARG_LITERAL = re.compile(r"[ \t]+(?:[%/][^\s=]|<<[~-]?[A-Za-z_'\"])")
+# Ruby's three interpolation openers. `#{expr}` is the one everybody writes;
+# `#@ivar` and `#$global` are the brace-free forms, and a guard that knows only
+# the first is a guard against only the bug that was already found.
+_RB_INTERPOLATION = re.compile(r"#[{@$]")
 
 
 def _scan_ruby(text: str) -> List[Span]:
@@ -743,8 +771,16 @@ def _scan_ruby(text: str) -> List[Span]:
     i, n = 0, len(text)
     value_next = True
     pending: List[Tuple[bool, str]] = []
+    # Where the most recent identifier ended, or None. Only whitespace may
+    # stand between it and a `%` or `/` for that character to be opening an
+    # argument literal rather than continuing an expression, so every other
+    # branch clears it and the whitespace branch alone carries it forward.
+    name_end: Optional[int] = None
     while i < n:
         c = text[i]
+        after_name, name_end = name_end, None
+        arg_literal = (after_name is not None
+                       and _RB_ARG_LITERAL.match(text, after_name) is not None)
         if c == "\n":
             i += 1
             if pending:
@@ -754,8 +790,20 @@ def _scan_ruby(text: str) -> List[Span]:
             continue
         if c in " \t\r":
             i += 1
+            name_end = after_name
             continue
         if c == "#":
+            # A comment never starts with an interpolation opener. Reaching one
+            # here means the scanner is outside a string it should have been
+            # inside, and removing the span would delete code — so refuse the
+            # file instead. This is the check that catches the next scanner gap
+            # without knowing what opens it: it caught the heredoc one below.
+            #
+            # All three forms, not just `#{`. Ruby interpolates `#@ivar` and
+            # `#$global` without braces, and a guard that knows one form is a
+            # guard against one bug.
+            if _RB_INTERPOLATION.match(text, i):
+                raise Untouched("interpolation read as a comment at {}".format(i))
             end = _line_end(text, i)
             spans.append((i, end, ""))
             i = end
@@ -772,13 +820,16 @@ def _scan_ruby(text: str) -> List[Span]:
             value_next = False
             continue
         if text.startswith("<<", i):
-            opened = _rb_heredoc_open(text, i, value_next)
+            # `arg_literal` here for the same reason as for `%` and `/`:
+            # `module_eval <<RUBY` is a heredoc, and deciding otherwise puts
+            # the scanner outside a body whose lines then read as comments.
+            opened = _rb_heredoc_open(text, i, value_next or arg_literal)
             if opened:
                 i, marker = opened
                 pending.append(marker)
                 value_next = False
                 continue
-        if c == "/" and value_next:
+        if c == "/" and (value_next or arg_literal):
             end = _rb_regex_end(text, i)
             if end is None:
                 i += 1
@@ -787,7 +838,7 @@ def _scan_ruby(text: str) -> List[Span]:
             i = end
             value_next = False
             continue
-        if c == "%" and value_next:
+        if c == "%" and (value_next or arg_literal):
             match = _RB_PERCENT.match(text, i)
             if match:
                 i = _rb_percent_end(text, match)
@@ -814,6 +865,7 @@ def _scan_ruby(text: str) -> List[Span]:
             word = text[i:j].lstrip("@:")
             value_next = word in _RB_OPENERS
             i = j
+            name_end = j
             continue
         value_next = c not in ")]}"
         i += 1

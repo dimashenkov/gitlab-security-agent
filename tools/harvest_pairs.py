@@ -62,7 +62,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -105,11 +105,33 @@ EXTENSION_LANGUAGE = {
 # Named here so a test can say which file the truth lives in.
 SCHEMA_NAME = "prompts/findings.schema.json"
 
+# A CWE maps to the categories the agent could defensibly emit for it, not to
+# one. Two of the twenty-four cases were scored against a label the advisory
+# does not support:
+#
+#   CWE-116 is *Improper Encoding or Escaping of Output* — the parent of XSS,
+#   with the output context deliberately unnamed. The Unleash case is Slack
+#   and Teams markdown, not a browser, and the review called it `injection`
+#   and was marked wrong for it.
+#
+#   The Mailpit case lists CWE-177, CWE-200 and CWE-346. Its weakness is the
+#   origin check bypass, which is CWE-346 and was missing from this table, so
+#   `category_of` fell through to CWE-200 — a consequence, not the weakness —
+#   and scored the case as sensitive-data-exposure.
+#
+# Both come from one mechanism: a lookup returning the first CWE that happened
+# to have a row, when the order of an advisory's CWE list is not a priority
+# order. Sets rather than a first match, and the union rather than one entry.
 CWE_CATEGORY = {
     "CWE-89": "injection", "CWE-564": "injection", "CWE-943": "injection",
     "CWE-78": "injection", "CWE-77": "injection", "CWE-88": "injection",
     "CWE-94": "injection", "CWE-95": "injection", "CWE-470": "injection",
-    "CWE-79": "xss", "CWE-80": "xss", "CWE-116": "xss",
+    "CWE-79": "xss", "CWE-80": "xss",
+    # Escaping failures whose output context the CWE does not fix.
+    "CWE-116": ("xss", "injection"),
+    # Origin validation. Absent until the Mailpit case showed what its absence
+    # costs: the table answers with whatever weaker CWE it does have a row for.
+    "CWE-346": "authn-authz",
     "CWE-22": "path-traversal", "CWE-23": "path-traversal",
     "CWE-36": "path-traversal", "CWE-59": "path-traversal",
     "CWE-918": "ssrf",
@@ -420,11 +442,44 @@ def language_of(paths: list) -> str:
     return max(counts, key=counts.get) if counts else ""
 
 
-def category_of(cwes: list) -> str:
+def category_of(cwes: list) -> List[str]:
+    """Every category the advisory's CWEs support, in the order they are given.
+
+    Not the first one with a row. An advisory lists its CWEs in no particular
+    order, so "first recognised" resolves to whichever weakness this table
+    happens to cover — which for Mailpit was the consequence rather than the
+    weakness, and made a correct finding score as the wrong one.
+
+    Returning several is not a looser case: `is_target` still requires the
+    finding to be in a file the maintainers' fix touched. It is the difference
+    between asking "is this the weakness" and "did you pick my word for it".
+
+    It is a floor and not a verdict. Two shapes look identical from here and
+    are not the same thing:
+
+      one weakness, several defensible labels — CWE-116 in Unleash is an
+        escaping failure and the output is Slack markdown, so `xss` and
+        `injection` are two words for it. Accepting both is right.
+
+      several weaknesses, one of them the advisory's — Mailpit lists CWE-200
+        beside CWE-346, and the data exposure is what the origin bypass leads
+        to. Accepting both would pass a review that reports the consequence
+        and never finds the bypass, and the target file cannot tell two
+        weaknesses in one file apart. Accepting both is wrong.
+
+    Nothing here can tell which it is looking at, so a harvested case starts
+    with the union and is narrowed by hand when the advisory names its
+    weakness — with the reason written into `case.yml` beside the field.
+    """
+    found: List[str] = []
     for cwe in cwes:
-        if cwe in CWE_CATEGORY:
-            return CWE_CATEGORY[cwe]
-    return ""
+        entry = CWE_CATEGORY.get(cwe)
+        if entry is None:
+            continue
+        for category in ((entry,) if isinstance(entry, str) else entry):
+            if category not in found:
+                found.append(category)
+    return found
 
 
 def harvest(item: dict, out: Path, max_files: int, max_lines: int,
@@ -537,7 +592,10 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
         manifest = [
             "case_id: {}".format(case_id),
             "language: {}".format(language),
-            "family: {}".format(category or "unclassified"),
+            # A label to group by, so the first category when there are
+            # several. `expected_category` below is what is scored against and
+            # it keeps all of them.
+            "family: {}".format(category[0] if category else "unclassified"),
             "framework: ''",
             "# Harvested from a published advisory, not written by hand. Ground",
             "# truth is the maintainers' own fix; this file lives outside the",
@@ -558,7 +616,8 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
             "#   baseline, one fixed and one not. Direction carries no answer.",
             "# Never score the two constructions together.",
             "decisive_control: the change the maintainers shipped as the fix",
-            "expected_category: {}".format(category),
+            "expected_category: [{}]".format(
+                ", ".join(repr(c) for c in category)),
             "expected_file: [{}]".format(", ".join(repr(p) for p in target)),
             "dropped_from_change: [{}]".format(
                 ", ".join(repr(p) for p in dropped[:6])),
@@ -570,7 +629,7 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
 
         verdict.update({"case_id": case_id, "language": language,
                         "construction": construction, "context": len(context),
-                        "category": category or "(unclassified)",
+                        "category": "/".join(category) or "(unclassified)",
                         "files": len(keep), "lines": churn,
                         "dropped": len(dropped),
                         "untouched": sorted(set(untouched))})

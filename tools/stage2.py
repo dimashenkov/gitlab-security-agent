@@ -30,7 +30,9 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "security_agent"
@@ -121,7 +123,6 @@ def _journal() -> dict:
     for verdict_file in sorted(root.glob("*/verdicts.yml")):
         reviews += 1
         try:
-            import yaml
             data = yaml.safe_load(verdict_file.read_text(encoding="utf-8")) or {}
         except Exception:
             continue
@@ -297,13 +298,96 @@ def probe_scope(args) -> Result:
 
 
 def probe_use(args) -> Result:
-    j = _journal()
-    if j["reviews"] == 0:
-        return Result(TODO, "0/20 reviews filed")
-    if j["reviews"] < 20 or j["unadjudicated"]:
-        return Result(PARTIAL, "{}/20 reviews, {} finding(s) unjudged".format(
-            j["reviews"], j["unadjudicated"]))
-    return Result(DONE, "{} reviews, every finding judged".format(j["reviews"]))
+    """Both members of every corpus pair run, and the decision preserved.
+
+    This counted reviews of this repository's own changes until 2026-08-27,
+    when the point stopped being about own code — the question it answered was
+    "was this useful to you", and only the author of the code can answer it.
+    The tracker kept counting the old thing for a day after the plan changed,
+    which is a tracker reporting on work nobody is doing.
+
+    Read from the batch results rather than from a journal, because the batch
+    is what the plan says is done when: every pair through `--provider
+    claude-cli`, results in `measurements/`, unsafe blocked and safe quiet.
+    """
+    # The two constructions are never scored together — in a regression pair
+    # every unsafe member deletes something, so direction alone predicts the
+    # answer and a removed-control rule scores well without recognising
+    # anything. Counting all 47 as one number would hide that. The plan's
+    # target is the 24 regression cases; the snapshot set is reported beside
+    # it, not folded into it.
+    cases, snapshots = [], 0
+    for path in sorted((ROOT / "corpus-real").iterdir()):
+        case = path / "case.yml" if path.is_dir() else None
+        if case is None or not case.exists():
+            continue
+        body = yaml.safe_load(case.read_text(encoding="utf-8")) or {}
+        if body.get("construction") == "regression":
+            cases.append(path.name)
+        else:
+            snapshots += 1
+    if not cases:
+        return Result(TODO, "no corpus")
+
+    # Every verdict any file holds for a case, rather than one file's.
+    #
+    # There is no order to take the latest by. Filename order is not run order
+    # — `first-cli-pair.json` is the oldest run in `measurements/` and sorts
+    # after both batches — and modification time is not a record of anything:
+    # a clone, an unpacked archive or a `touch` rewrites it, so the answer
+    # could change without a byte of the repository changing.
+    #
+    # So it does not guess. Files that agree give the answer; files that
+    # disagree make the case unresolved and say so, which is this project's
+    # own rule that being unable to tell is a third answer and not a verdict.
+    # No two files disagree today; this is what happens when they do.
+    verdicts: Dict[str, set] = {}
+    for path in sorted((ROOT / "measurements").glob("*.json")):
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        if isinstance(body, list):
+            rows = body
+        elif isinstance(body, dict):
+            rows = body.get("results") or []
+        else:
+            continue                       # a scalar is not a batch result
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            case_id = row.get("case_id")
+            if not isinstance(case_id, str) or not case_id:
+                continue
+            if row.get("incomplete"):
+                # A run that did not finish is not a result. Recording it as a
+                # failure is the confusion this whole project is built to
+                # avoid, and it would also make a case that later passes look
+                # like a disagreement.
+                continue
+            # `is True`, not `bool(...)`. A pair passed when the scorer said
+            # so, and `bool("false")` is true — a tracker that reads the string
+            # "false" as a pass can be told the work is done by a typo.
+            verdicts.setdefault(case_id, set()).add(
+                row.get("pair_success") is True)
+
+    run = [c for c in cases if c in verdicts]
+    split = [c for c in run if len(verdicts[c]) > 1]
+    passing = [c for c in run if verdicts[c] == {True}]
+    beside = " (+{} snapshot)".format(snapshots) if snapshots else ""
+    if split:
+        beside = ", {} unresolved: {}{}".format(
+            len(split), ", ".join(sorted(split)[:2]), beside)
+    if not run:
+        return Result(TODO, "0/{} regression pairs run{}".format(
+            len(cases), beside))
+    if len(run) < len(cases) or len(passing) < len(run):
+        return Result(PARTIAL, "{}/{} run, {} preserved{}".format(
+            len(run), len(cases), len(passing), beside))
+    return Result(DONE, "{}/{} pairs, decision preserved{}".format(
+        len(passing), len(cases), beside))
 
 
 def probe_fixes(args) -> Result:
@@ -364,7 +448,7 @@ CHECKS = [
     Check("5", "conformance", "13/13", probe_conformance),
     Check("6", "no silent fallback", "exit 2, 0 API calls", probe_no_fallback),
     Check("7", "scope control", "2 flags, tested", probe_scope),
-    Check("8", "real use", "20 reviews, 0 unjudged", probe_use),
+    Check("8", "advisory pairs", "24 pairs, decision preserved", probe_use),
     Check("9", "fixes", "judged = fixed + recorded", probe_fixes),
     Check("—", "whole suite", "green", probe_suite),
     Check("—", "local spend", "$0.00", probe_spend),
@@ -400,7 +484,10 @@ def main() -> int:
         return 0
 
     width = max(len(c.name) for c, _ in rows)
-    print("Stage 2 — the agent reviews its own repository\n")
+    # Not "reviews its own repository" any more. Point 8 stopped being about
+    # own code on 2026-08-27: the question it answered was "was this useful to
+    # you", and only the author of the code can answer that.
+    print("Stage 2 — the agent qualified against known advisories\n")
     for check, result in rows:
         print("  {:>2}  {}  {:<{w}}  {}".format(
             check.number, _MARK[result.state], check.name, result.detail,

@@ -90,18 +90,37 @@ confirmation that cannot say what would have refuted it is downgraded to
 
 Three ways in. Pick the one that matches where your code lives.
 
-### On your own branch, no CI
+### On your own branch, no CI, no API bill
 
 ```bash
-export ANTHROPIC_API_KEY=...
 tools/review.sh --noticed "what you spotted reading the diff yourself"
 ```
+
+No `ANTHROPIC_API_KEY`. This runs on **your own `claude` CLI**, so it
+authenticates as you and costs no separate bill — it spends the plan you
+already pay for. If `claude` is not on your PATH the review fails; it will not
+quietly fall back to the paid API, because which account is charged is not a
+decision to make on your behalf.
 
 Reviews the current branch against the commit it left from. No forge token,
 nothing posted, nothing blocked — the report lands in `.security-scan/` and the
 result is filed in `journal/` for adjudication. Read your own diff *first* and
 pass what you saw: read the report first and a useful finding can no longer be
 told apart from one you would have found anyway.
+
+```bash
+tools/review.sh --profile probe            # small enough to run on every save
+tools/review.sh --path src/auth            # only what changed there
+tools/review.sh --provider anthropic-api   # the paid path, by name
+```
+
+`probe` is deliberately unable to conclude: it is six turns and no verifiers, so
+it stops early most of the time and always exits 2. What it finds is a lead. No
+setting makes a `probe` run a pass.
+
+`--path` narrows what the review is *answerable for*, never what it may read —
+the agent still follows callers anywhere in the repository, because that is the
+only way a finding gets checked. A scoped run says so in its report.
 
 ### GitHub Actions
 
@@ -117,7 +136,23 @@ artifact is still written.
 
 | Variable | What it is |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Anthropic API key. Mask it and protect it. |
+| `ANTHROPIC_API_KEY` | Anthropic API key. Mask it and protect it. Not needed for `--provider claude-cli`, and deliberately removed from that runner's environment so it cannot be reached for. |
+| `SECURITY_SCAN_COMMENT_AUTHOR` | Who the agent posts as, when it cannot ask the forge. GitHub Actions' `GITHUB_TOKEN` is an installation token and is refused at `/user`, so a workflow using it must set this — `github-actions[bot]` — or the agent will post a new comment on every push instead of editing its own. Which comment is the agent's is decided by its author, never by the marker alone: the marker is a public string in an HTML comment, and a merge request author can write one. |
+| `SECURITY_SCAN_DIFF_CEILING_BYTES` | How much of a whole-change diff is read. A change larger than this is reviewed in part and the report says so; raise it, split the change, or narrow with `--path`. |
+| `SECURITY_SCAN_GITHUB_TOKEN` | The token used to comment on a pull request. Preferred over `GITHUB_TOKEN`, which a workflow has to export deliberately. |
+| `SECURITY_SCAN_PROMPT_DIR` | Where the prompts and the finding schema are read from. A change that edits a file under this directory is refused rather than reviewed — it would be supplying the rules it is judged by. |
+| `SECURITY_SCAN_OUTPUT_DIR` | Where the report and `findings.json` are written. Default `.security-scan`. A symlink anywhere on this path is refused rather than followed. |
+| `SECURITY_SCAN_IGNORE_FILE` | The accepted-risk file. Default `.security-agent-ignore.yml`. An entry added by the change under review does not apply to it. |
+| `SECURITY_SCAN_GATE_REMOVED_CONTROLS` | Whether a change that deletes a security control blocks regardless of the rating. Default true: a deleted guard is not a low-severity opinion. |
+| `SECURITY_SCAN_VERIFY_EFFORT` | Reasoning effort for the verifiers. Default `high` — a verifier that thinks less than the reviewer is not an independent check. |
+| `SECURITY_SCAN_VERIFY_CONCURRENCY` | How many verifier sessions run at once. Default 4. |
+| `SECURITY_SCAN_VERIFIER_CONTEXT` | Below this many characters the verifier is shown the whole file rather than a window around the finding. The control that settles a question is routinely outside a window. |
+| `SECURITY_SCAN_CONTEXT_LINES` | Lines of context in a diff. Default 12. |
+| `SECURITY_SCAN_MAX_OUTPUT_TOKENS` | Total output-token budget for a run. Exhausting it is exit 2, never a pass. |
+| `SECURITY_SCAN_REQUEST_TIMEOUT` | Seconds before one API request is abandoned. Default 900. |
+| `SECURITY_SCAN_MAX_RETRIES` | How many times a transient API failure is retried. Default 3. |
+| `SECURITY_SCAN_REFUSAL_FALLBACK` | Whether the API may re-run a refused turn on another model inside the same call. A security reviewer discusses exploitation for a living, so a policy decline is a realistic failure mode for this workload. |
+| `SECURITY_SCAN_TASK_BUDGET_ENABLED` | Whether the model is given a task budget to pace an open-ended investigation. Dropped automatically if the account cannot use the beta. |
 | `SECURITY_SCAN_GITLAB_TOKEN` | Project or group access token with `api` scope, used to post the review as a merge request comment. |
 
 Mark both **masked** (so they are redacted if they ever reach a job log) and
@@ -454,9 +489,12 @@ across pipelines, so they are read from cache at a fraction of the price), and
 
 ```bash
 pip install -e ".[dev]"
-export ANTHROPIC_API_KEY=sk-...
 
-# Review the current branch against main
+# On your own `claude`, no API key, no separate bill
+gitlab-security-agent --base main --provider claude-cli --no-comment
+
+# On the paid API, which is what CI uses
+export ANTHROPIC_API_KEY=sk-...
 gitlab-security-agent --base main --no-comment
 
 # Review a whole repository

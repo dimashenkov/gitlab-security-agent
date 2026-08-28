@@ -109,9 +109,38 @@ def test_the_language_comes_from_the_files_not_the_ecosystem():
 
 def test_an_unmapped_cwe_yields_no_expected_category():
     """Better an honest blank than a category invented to fill the field."""
-    assert category_of(["CWE-1188"]) == ""
-    assert category_of(["CWE-89"]) == "injection"
-    assert category_of(["CWE-1188", "CWE-918"]) == "ssrf"
+    assert category_of(["CWE-1188"]) == []
+    assert category_of(["CWE-89"]) == ["injection"]
+    assert category_of(["CWE-1188", "CWE-918"]) == ["ssrf"]
+
+
+def test_an_advisory_is_scored_against_all_its_cwes_not_the_first_with_a_row():
+    """The Mailpit case. It lists CWE-177, CWE-200 and CWE-346, and its
+    weakness is the origin check bypass — CWE-346. That row was missing, so the
+    lookup fell through to CWE-200, a consequence rather than the weakness, and
+    a review naming the bypass would have been scored as the wrong finding.
+
+    An advisory lists its CWEs in no order at all, so "first one with a row"
+    resolves to whichever weakness this table happens to cover.
+    """
+    assert category_of(["CWE-177", "CWE-200", "CWE-346"]) == [
+        "sensitive-data-exposure", "authn-authz"]
+
+
+def test_a_cwe_that_does_not_fix_its_output_context_maps_to_each_one():
+    """CWE-116 is *Improper Encoding or Escaping of Output*, the parent of XSS,
+    and it deliberately does not name the output context. Unleash's is Slack
+    and Teams markdown rather than a browser; the review called it `injection`
+    and the answer key said `xss`, so a correct finding scored as a miss.
+
+    Not a looser case: `is_target` still requires the finding to sit in a file
+    the maintainers' fix touched.
+    """
+    assert category_of(["CWE-116"]) == ["xss", "injection"]
+
+
+def test_no_category_is_repeated_when_two_cwes_agree():
+    assert category_of(["CWE-94", "CWE-95"]) == ["injection"]
 
 
 def test_every_mapped_category_is_one_the_agent_can_report():
@@ -122,11 +151,20 @@ def test_every_mapped_category_is_one_the_agent_can_report():
     `path_traversal` and `open_redirect` — none of which the agent can emit —
     because it was written from the same wrong belief as the code it checked.
     A test that shares the code's premise tests nothing.
+
+    Flattened, because an entry may name several. Comparing the raw values
+    would compare tuples against category names, find every tuple unknown, and
+    say so — but a version of that comparison that merely skipped non-strings
+    would pass while checking none of them.
     """
     from security_agent.vocabulary import categories
 
-    unknown = set(CWE_CATEGORY.values()) - set(categories())
+    mapped = set()
+    for entry in CWE_CATEGORY.values():
+        mapped.update((entry,) if isinstance(entry, str) else entry)
+    unknown = mapped - set(categories())
     assert not unknown, "not in {}: {}".format(SCHEMA_NAME, sorted(unknown))
+    assert len(mapped) > 1, "flattening produced nothing to check"
 
 
 def test_every_case_in_every_corpus_can_measure_something():

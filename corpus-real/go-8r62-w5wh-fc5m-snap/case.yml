@@ -21,7 +21,18 @@ construction: snapshot
 #   baseline, one fixed and one not. Direction carries no answer.
 # Never score the two constructions together.
 decisive_control: the change the maintainers shipped as the fix
-expected_category: sensitive-data-exposure
+# The advisory lists CWE-177, CWE-200 and CWE-346, and the weakness is
+# the origin check bypass — CWE-346. That row was missing from the
+# table, so the lookup fell through to CWE-200 and scored the case as
+# sensitive-data-exposure, which is the consequence of the bypass and
+# not the bypass.
+#
+# One category, not both. These are two different weaknesses in one
+# file, so accepting either would pass a review that reports the data
+# exposure and never notices the bypass — and the target file cannot
+# tell two weaknesses in it apart. Contrast ts-w4mq-xh27-6xpx, where
+# the two labels are two words for the same weakness.
+expected_category: ['authn-authz']
 # Every file the fix touched, not the first one. A fix is not obliged
 # to fit in one file, and naming only the first counted a finding in
 # the others as the wrong place — Winter's CSRF fix normalises a name
