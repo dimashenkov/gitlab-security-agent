@@ -948,11 +948,19 @@ def _child_env() -> Dict[str, str]:
     Deliberately not stripped down to nothing: the CLI needs its own
     configuration and credentials to run as the developer at all, and taking
     those away would be the "custom login" this design refuses to build. What
-    is removed is the API key, so a session that could not authenticate as the
-    subscription cannot quietly bill an account instead.
+    is removed is the API key, so a session that could not reach the CLI's own
+    login cannot quietly bill an account instead.
+
+    And the two variables that name the checkout. The design's claim is that
+    the CLI is never given a path into the repository — it runs in an empty
+    directory and the repository reaches only the MCP server, a different
+    process. `PWD` and `OLDPWD` were carrying that path in anyway, which made
+    the claim true of the argument list and false of the environment. The
+    process is given its working directory explicitly by `cwd=`, so neither is
+    needed for it to run.
     """
     env = dict(os.environ)
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "PWD", "OLDPWD"):
         env.pop(name, None)
     return env
 

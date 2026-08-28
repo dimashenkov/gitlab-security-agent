@@ -17,6 +17,7 @@ which guarantee vanished.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -405,6 +406,32 @@ def test_nothing_promises_a_bill_the_code_cannot_establish():
                     offenders.append("{}: {!r} in {!r}".format(
                         name, promise, sentence[:110]))
     assert not offenders, offenders
+
+
+def test_the_readme_names_every_tool_the_agent_has():
+    """It said seven and there were nine.
+
+    `finish_review` and `submit_verdict` were added and the sentence describing
+    the attack surface was not, so a reader counting what the agent can do
+    counted two short. Every tool, by name, because that paragraph is the one
+    somebody reads to decide whether to run this on their repository.
+    """
+    from security_agent.tools import HANDLERS
+
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    missing = sorted(name for name in HANDLERS
+                     if "`{}`".format(name) not in readme)
+
+    assert not missing, "tools the agent has and the README never names: {}".format(
+        missing)
+
+    stated = re.search(r"(\w+) tools and not one of them writes", readme)
+    assert stated, "the sentence stating how many tools there are is gone"
+    words = {"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+             "eleven": 11, "twelve": 12}
+    assert words.get(stated.group(1).lower()) == len(HANDLERS), (
+        "the README says {!r} and there are {}".format(
+            stated.group(1), len(HANDLERS)))
 
 
 def test_every_provenance_field_reaches_the_artifact():

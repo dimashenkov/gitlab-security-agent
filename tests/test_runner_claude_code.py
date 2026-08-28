@@ -296,6 +296,36 @@ class TestTheApiKeyIsNotAvailableToTheCli:
         assert "ANTHROPIC_API_KEY" not in env
         assert "ANTHROPIC_AUTH_TOKEN" not in env
 
+    def test_no_variable_carries_the_repository_path_in(self, monkeypatch):
+        """The claim is that the CLI is never given a path into the checkout —
+        it runs in an empty directory and the repository reaches only the MCP
+        server, a different process.
+
+        `PWD` and `OLDPWD` were carrying it in anyway, so the claim was true of
+        the argument list and false of the environment. The process is handed
+        its working directory by `cwd=`, so it needs neither.
+        """
+        monkeypatch.setenv("PWD", "/home/someone/their-repo")
+        monkeypatch.setenv("OLDPWD", "/home/someone")
+
+        env = runner._child_env()
+
+        assert "PWD" not in env
+        assert "OLDPWD" not in env
+
+    def test_the_rest_of_the_environment_is_left_alone(self, monkeypatch):
+        """Deliberately not stripped to nothing: the CLI needs its own
+        configuration to run as the developer at all, and taking that away
+        would be the custom login this design refuses to build. A test that
+        only checked removals would pass for an environment of one variable."""
+        monkeypatch.setenv("HOME", "/home/someone")
+        monkeypatch.setenv("SOME_UNRELATED_SETTING", "kept")
+
+        env = runner._child_env()
+
+        assert env["HOME"] == "/home/someone"
+        assert env["SOME_UNRELATED_SETTING"] == "kept"
+
 
 # ------------------------------------------------ reading the CLI's own word
 

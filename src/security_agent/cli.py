@@ -554,7 +554,12 @@ def _cli_provider_problem(cfg: Config) -> str:
     quietly becoming the paid path — and the second is quietly becoming a
     weaker review that still renders a verdict.
     """
-    from .runner_claude_code import AUTH_MISSING, authentication, cli_available
+    from .runner_claude_code import (
+        AUTH_MISSING,
+        AUTH_UNKNOWN,
+        authentication,
+        cli_available,
+    )
 
     if cli_available() is None:
         return (
@@ -574,6 +579,15 @@ def _cli_provider_problem(cfg: Config) -> str:
     # `unknown`, and refusing on that would make a working installation
     # unusable on the strength of a guess about its version.
     auth = authentication()
+    if auth.state == AUTH_UNKNOWN:
+        # Said out loud. The run continues — refusing on "I could not tell"
+        # would make a working installation unusable on a guess about its
+        # version — but a check that quietly did not happen is a check nobody
+        # knows to look into, and the report then carries no billing line for
+        # a reason the reader has no way to learn.
+        log.warning("could not read the CLI's authentication: %s. The review "
+                    "will run and its report will not state a billing mode.",
+                    auth.detail)
     if auth.state == AUTH_MISSING:
         return (
             "--provider {} needs a logged-in `claude`, and {}. Run `claude "

@@ -455,10 +455,12 @@ pipeline every night trains people to ignore it.
 The agent reads code an untrusted contributor may have written, in a job holding
 an API key and a GitLab token. That shapes the design:
 
-**No shell, no write tools.** Seven read-only tools: `list_changed_files`,
-`get_diff`, `list_directory`, `read_file`, `search_code`, `git_log`, and
-`report_finding`. A general-purpose exec tool here would be an escalation path,
-not a convenience.
+**No shell, no write tools.** Nine tools and not one of them writes anything.
+Six read: `list_changed_files`, `get_diff`, `list_directory`, `read_file`,
+`search_code`, `git_log`. One reports: `report_finding`. Two are protocol —
+`finish_review` ends a review and `submit_verdict` casts a verifier's vote —
+and the two sets are disjoint, so a reviewer cannot vote on itself. A
+general-purpose exec tool here would be an escalation path, not a convenience.
 
 **Containment is checked after symlink resolution.** A path is resolved and then
 tested for containment under the repository root — never by string prefix. A
@@ -476,9 +478,17 @@ attempt to steer the review is itself a reportable finding.
 
 **Prompts never come from the repository under review.** `resolved_prompt_dir()`
 searches the operator's setting and the agent's own installation — never the
-working directory. This project's own `self-review` job runs the image built from
-the default branch for exactly this reason: a merge request that edits a prompt is
-reviewed by the *current trusted* prompt, not by the one it proposes.
+working directory. And a change that edits a file under that directory is
+refused rather than reviewed: it would be supplying the rules it is judged by.
+
+The GitLab job in `.gitlab-ci.yml` runs the image built from the default branch
+for the same reason, so a merge request that edits a prompt is reviewed by the
+*current trusted* one rather than by the one it proposes. The GitHub workflow in
+`.github/workflows/self-review.yml` does not have that property — it installs
+the checked-out pull request and runs it — which is one of the two reasons it is
+this repository's own job and not the template. What to copy is
+`templates/github-actions.yml`, which installs the agent from a pinned commit of
+its own source.
 
 **A failed comment cannot turn a red pipeline green.** The exit code comes from
 the findings; GitLab API failures are logged and ignored.
@@ -528,6 +538,77 @@ gitlab-security-agent --effort low --no-verify --no-comment
 
 The report lands in `.security-scan/report.md`, with the machine-readable result
 in `.security-scan/findings.json`.
+
+### What `--provider claude-cli` does
+
+It runs the review through the `claude` CLI you already have, as a subprocess.
+Five things it does to that subprocess, each of which you can check in the
+argument list it builds:
+
+- **No built-in tools.** `--tools ""`, which is the CLI's own documented way of
+  shipping none of them. The agent sees the security tools over MCP and nothing
+  else — not `Bash`, not `Read`, not `WebFetch`. `--allowedTools` and
+  `--disallowedTools` are also set, as a second and third statement of the same
+  intention; an allowlist and a denylist both leave a tool present and reachable
+  by anything that gets past a permission check, and `--tools ""` is what makes
+  it absent.
+- **Only our MCP server.** `--strict-mcp-config`, so the servers you have
+  configured on this machine are not started for this session. Their tools are
+  ones the prompt never described.
+- **Not started inside your repository.** The CLI runs in an empty temporary
+  directory, so it never loads `CLAUDE.md`, `.claude/settings.json`, your hooks
+  or your plugins — all files the author of a change under review could edit,
+  and all of them a second instruction channel underneath the prompt. That is
+  the absence of a working directory rather than a setting that could be
+  misconfigured.
+
+  It is not a claim that no path reaches the process. The MCP configuration it
+  is handed names the checkout, because that is how the server is told what to
+  read, and the environment it inherits may name it too — `CI_PROJECT_DIR` and
+  `GITHUB_WORKSPACE` among others. `PWD` and `OLDPWD` are removed because
+  nothing needs them. What the design rests on is that the CLI has no tool with
+  which to open any of it: the repository is read by the MCP server, a
+  different process, and the CLI's own file tools are not in the session.
+- **No API credentials.** `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are
+  removed from the subprocess environment, so the review cannot reach for a key
+  you set for something else.
+- **Nothing written about the session.** `--no-session-persistence`: a security
+  review is not a conversation to resume, and a transcript of one on disk is a
+  copy of the reviewed code nobody asked for.
+
+Before it starts, it asks `claude auth status`. Not logged in is a refusal with
+exit 2 — a launch that arrives at a generic error twenty seconds later helps
+nobody. A CLI too old to answer that question logs a warning saying so and the
+run continues; refusing on "I could not tell" would make a working installation
+unusable on a guess about its version.
+
+**About what it costs.** The report prints a `Billing:` line saying what the
+CLI reported about its own login, and nothing more. A subscription login says
+so; an API-billed one says that instead; a CLI that would not say produces no
+line at all. Note that the CLI reports a `total_cost_usd` for every run
+*including on a subscription* — on a Max plan a two-token reply is quoted at
+$0.29 — so that figure is what the run would have cost on the API and not what
+anyone was charged. It is recorded in the artifact as
+`provenance.reported_cost_usd` and never read as a bill.
+
+There is no automatic choice of provider. If the one you named cannot run, the
+review fails; it does not quietly become the other one, because which account
+is charged is not a decision to make on your behalf.
+
+What that failure exits with divides in two, and the line is whether any of the
+change reached the reviewer:
+
+- **Unconditionally exit 2**, whatever `SECURITY_SCAN_FAIL_ON_INCOMPLETE` says:
+  a missing CLI, a login that has expired, a dead MCP server, and any failure
+  that leaves no usable session behind. Nothing was reviewed, so there is no
+  partial coverage for anyone to weigh. `--profile probe` is exit 2 for the
+  same kind of reason: it is six turns and no verifiers, and says of itself
+  that it cannot conclude.
+- **Exit 2 by default, and lowerable to 0 by that setting**: a crash, a
+  timeout, an unparseable terminal object or an exhausted budget that still
+  left a session with some coverage in it. There the report names what was
+  covered, and letting the pipeline through while limits are tuned is a policy
+  choice about your own risk.
 
 ---
 
