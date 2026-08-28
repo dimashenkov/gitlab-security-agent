@@ -360,8 +360,11 @@ class Config:
     # --- who runs the review ---
     #
     # `anthropic-api` is the shipped path and what CI uses. `claude-cli` shells
-    # out to the developer's own `claude`, on the subscription they already pay
-    # for, so a local review costs nothing.
+    # out to the developer's own `claude`, under whatever login that CLI
+    # already has. What such a run costs is a property of that login, which
+    # the runner asks about and records rather than assumes: removing an API
+    # key from a child proves the child cannot use that key, and proves
+    # nothing about how the CLI's own stored credentials are billed.
     #
     # There is deliberately no `auto`. A mode whose whole job is to decide which
     # of two billing arrangements to charge is a decision about money taken on

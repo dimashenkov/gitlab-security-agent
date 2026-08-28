@@ -250,6 +250,77 @@ def test_the_heading_does_not_promise_reviews_of_our_own_code():
     assert "own repository" not in heading[0]
 
 
+# ------------------------------------------------------------ how it was billed
+
+
+def review(root: Path, name: str, **provenance) -> None:
+    """One filed review, with the provenance an artifact actually carries."""
+    directory = root / "journal" / name
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "findings.json").write_text(
+        json.dumps({"provenance": provenance}), encoding="utf-8")
+
+
+def test_a_run_is_judged_by_its_login_and_not_by_the_figure(root):
+    """The CLI reports `total_cost_usd` on a subscription too — a two-token
+    reply on a Max plan came back as $0.29 — so it is what the run *would* have
+    cost. A probe reading it as a bill calls every subscription run billed,
+    which is the opposite of what it was written to find.
+
+    Both runs here carry a large figure. Only the login separates them.
+    """
+    from stage2 import probe_spend
+
+    review(root, "on-a-plan", provider="claude-cli", auth_method="claude.ai",
+           auth_subscription="max", reported_cost_usd=0.29)
+    assert probe_spend(Args()).state == DONE
+
+    review(root, "on-a-key", provider="claude-cli", auth_method="api-key",
+           reported_cost_usd=0.29)
+    result = probe_spend(Args())
+
+    assert result.state == "broken"
+    assert "on-a-key" in result.detail
+
+
+def test_a_run_that_did_not_say_how_it_was_authenticated_is_named(root):
+    """Not counted as billed and not counted as free. The version before this
+    read a missing cost as a zero and called that proof of a free run — the
+    project's own absent-versus-zero rule, broken inside the tool that checks
+    it."""
+    from stage2 import probe_spend
+
+    review(root, "said-nothing", provider="claude-cli")
+    result = probe_spend(Args())
+
+    assert result.state == PARTIAL
+    assert "no auth method" in result.detail
+
+
+def test_a_figure_without_a_login_is_still_a_run_that_did_not_say(root):
+    """The sentence said "neither a cost nor an auth method" and this artifact
+    has a cost — so it described the one case it was reached by incorrectly."""
+    from stage2 import probe_spend
+
+    review(root, "priced-but-anonymous", provider="claude-cli",
+           reported_cost_usd=0.29)
+    result = probe_spend(Args())
+
+    assert result.state == PARTIAL
+    assert "no auth method" in result.detail
+
+
+def test_an_api_run_is_not_a_local_run(root):
+    """The probe is about the local runner. An artifact from the paid path is
+    not evidence either way, and reading one would be reading the wrong
+    question — which the version before this did to every artifact, by looking
+    for a container no artifact has ever had."""
+    from stage2 import probe_spend
+
+    review(root, "from-ci", provider="anthropic-api")
+    assert probe_spend(Args()).state == TODO
+
+
 # ------------------------------------------------- the tracker against the plan
 
 

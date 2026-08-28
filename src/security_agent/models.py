@@ -758,6 +758,41 @@ class Provenance:
     verifier_prompt_sha: str = ""
     schema_sha: str = ""
     agent_version: str = ""
+    # How the run was authenticated, when the provider could say — the local
+    # runner asks `claude auth status` and records the two fields that decide
+    # anything. Never the account's email or organisation, which the same
+    # command returns and which decide nothing.
+    #
+    # Here so the report can say what was established instead of what was
+    # hoped. Removing an API key from a child process proves the child cannot
+    # use that key; it proves nothing about how the CLI's own stored login is
+    # billed, and this project spent a week describing local runs as free on
+    # the strength of that inference.
+    auth_method: str = ""
+    auth_subscription: str = ""
+    # Which runner produced this. The artifact recorded the model, the prompts
+    # and the schema and never this, so nothing downstream could tell a local
+    # review from one the API was billed for — including the tracker row whose
+    # whole job was to say no local run had been billed, which read a container
+    # no artifact has ever had and skipped every file in silence.
+    provider: str = ""
+    # What the provider said this run would have cost, in dollars, or `None`
+    # when it said nothing. *Notional*, and the name says so, because it is
+    # not a bill: the CLI reports `total_cost_usd` on a subscription too, and
+    # on a Max plan a two-token reply came back as $0.29. Anything reading that
+    # figure as "this run was charged" would mark every subscription run as
+    # billed — so the billed/not question is answered by `auth_method`, and
+    # this is recorded beside it as the provider's own arithmetic.
+    reported_cost_usd: Optional[float] = None
+
+    @property
+    def billing(self) -> str:
+        """One line for the report, and "unstated" when nothing was learned."""
+        if self.auth_method == "claude.ai" and self.auth_subscription:
+            return "Claude subscription ({})".format(self.auth_subscription)
+        if self.auth_method:
+            return "the Claude Code login in use ({})".format(self.auth_method)
+        return "not established by this run"
 
     def note_served(self, model: str) -> None:
         if model and model not in self.models_served:
@@ -777,6 +812,14 @@ class Provenance:
             "verifier_prompt_sha": self.verifier_prompt_sha,
             "schema_sha": self.schema_sha,
             "agent_version": self.agent_version,
+            # Written, because a field the artifact does not carry is a field
+            # nothing downstream can read — and these were added for readers
+            # that then found nothing. `probe_spend` was rewritten to decide
+            # from `auth_method` on the same day this omitted it.
+            "provider": self.provider,
+            "auth_method": self.auth_method,
+            "auth_subscription": self.auth_subscription,
+            "reported_cost_usd": self.reported_cost_usd,
         }
 
 

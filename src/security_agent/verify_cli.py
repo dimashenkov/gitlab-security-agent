@@ -1,12 +1,12 @@
-"""Adversarial verification on the developer's subscription, not on the API.
+"""Adversarial verification through the developer's own `claude`, not the API.
 
 `verify.py` runs each verifier as a conversation this process drives, turn by
 turn, against the Messages API — and every one of those turns is money. That is
 the right thing in CI and the wrong thing on a laptop, where the rule this
 project holds itself to (*a cosmetic change does not justify a paid run*) has
 already stopped verification from being exercised for days at a time. This
-module runs the same panel through the `claude` CLI, which the developer has
-already paid for once.
+module runs the same panel through the `claude` CLI, under the login that CLI
+already has rather than under an API key.
 
 ## What is the same, deliberately
 

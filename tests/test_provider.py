@@ -1,9 +1,9 @@
 """Choosing who runs the review, and never choosing it for the operator.
 
-Two runners exist. `anthropic-api` is what CI uses and what costs money;
-`claude-cli` shells out to the developer's own client on the subscription they
-already pay for. The whole value of the second one is that a local review is
-free, and the whole risk of it is that a failure quietly becomes a bill.
+Two runners exist. `anthropic-api` is what CI uses and what bills an API key;
+`claude-cli` shells out to the developer's own client, under whatever login it
+already has. The whole value of the second one is that it does not reach for
+that key, and the whole risk of it is that a failure quietly does.
 
 So there is no `auto`. A mode whose job is to decide which of two billing
 arrangements to charge is a decision about money taken on somebody's behalf,

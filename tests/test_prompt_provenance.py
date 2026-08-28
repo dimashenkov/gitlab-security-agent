@@ -303,12 +303,11 @@ def test_a_change_that_only_edits_a_prompt_is_still_asked_about(tmp_path):
         root / "prompts", root, ws.raw_changed_paths()).startswith("REFUSE")
 
 
-def test_the_readme_offers_the_free_path_first():
-    """It described the paid path only, for a day after the free one shipped.
+def test_the_readme_offers_the_local_path_first():
+    """It described the API path only, for a day after the local one shipped.
 
     A reader opening this project was told they must set `ANTHROPIC_API_KEY` to
-    review their own branch, which stopped being true — and the whole point of
-    that work was that a local review costs nothing. Documentation that lags
+    review their own branch, which stopped being true. Documentation that lags
     the code is how a feature comes to exist and not be used.
     """
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -323,10 +322,9 @@ def test_the_readme_offers_the_free_path_first():
     assert "will not quietly fall back" in quick
 
     # *First*, which the name of this test claims and the assertions above do
-    # not: they passed with the free path anywhere in the section, including
-    # below both paid ones. A reader who stops after the first recipe never
-    # reaches the later one, and the point of that work was that a local review
-    # costs nothing.
+    # not: they passed with the local path anywhere in the section, including
+    # below both API ones. A reader who stops after the first recipe never
+    # reaches the later one.
     #
     # By heading order, not by where a word first appears. The first mention of
     # `ANTHROPIC_API_KEY` in this section is the sentence saying you do not
@@ -336,8 +334,117 @@ def test_the_readme_offers_the_free_path_first():
                 readme[readme.index("## Quick start"):].splitlines()
                 if line.startswith("### ")]
     assert len(headings) >= 2, headings
-    assert "no API bill" in headings[0] or "own branch" in headings[0], (
-        "the first way in is not the free one: {!r}".format(headings[0]))
+    assert "own branch" in headings[0], (
+        "the first way in is not the local one: {!r}".format(headings[0]))
+
+
+BILLING_PROMISES = (
+    "costs nothing",
+    "spend nothing",
+    "no separate bill",
+    "no API bill",
+    "for free",
+    "already pay for",
+    "the subscription you",
+)
+
+# Where a claim about somebody's bill would be read as a promise. Prose a
+# reader meets, not a measurement: `LIMITATIONS.md` quoting an observed
+# "$0.60 – $3.65 per review" is a number from a cost calculation, and
+# `measurements/` is full of recorded totals.
+BILLING_SURFACES = (
+    "README.md",
+    "STAGE-2.md",
+    "src/security_agent/cli.py",
+    "src/security_agent/config.py",
+    "src/security_agent/budget.py",
+    "src/security_agent/runner_claude_code.py",
+    "src/security_agent/verify_cli.py",
+    "src/security_agent/mcp_server.py",
+    "src/security_agent/report.py",
+    "tools/review.sh",
+    "tools/stage2.py",
+    # The tests too. A docstring is where the reasoning is written down, and
+    # two of them carried the claim after every line of prose had been fixed —
+    # which is how it would come back: somebody reads the explanation, believes
+    # it, and restores the sentence it explains.
+    "tests/test_provider.py",
+    "tests/test_runner_claude_code.py",
+    "tests/test_verify_cli.py",
+)
+
+
+def test_nothing_promises_a_bill_the_code_cannot_establish():
+    """Removing `ANTHROPIC_API_KEY` from a child proves the child cannot use
+    that key. It proves nothing about how the CLI's own stored login is billed,
+    and this project described local runs as free on that inference for a week
+    — in the README's first heading, in `--provider`'s help, in four module
+    docstrings and in the tracker row that claimed to check it.
+
+    What may be said is what `claude auth status` reported, which the runner
+    records in provenance and the report prints as a `Billing:` line. What may
+    not be said is a billing outcome nobody asked about.
+    """
+    import re
+
+    # In a sentence that is about the local path, not anywhere in the file.
+    # "A pipeline re-run costs nothing" is true — `--reuse` makes no model call
+    # — and "saying where it came from costs nothing" is a figure of speech
+    # about attribution. A pattern blunt enough to catch those is a pattern
+    # somebody edits out of the test rather than out of the prose.
+    subject = re.compile(r"claude|subscription|provider|local review",
+                         re.IGNORECASE)
+    offenders = []
+    for name in BILLING_SURFACES:
+        text = (ROOT / name).read_text(encoding="utf-8")
+        for sentence in re.split(r"(?<=[.;])\s+", " ".join(text.split())):
+            if not subject.search(sentence):
+                continue
+            for promise in BILLING_PROMISES:
+                if promise in sentence:
+                    offenders.append("{}: {!r} in {!r}".format(
+                        name, promise, sentence[:110]))
+    assert not offenders, offenders
+
+
+def test_every_provenance_field_reaches_the_artifact():
+    """A field nothing serialises is a field no reader can have.
+
+    Three were added for readers that then found nothing: `provider`,
+    `auth_method` and `auth_subscription` went into `Provenance` and not into
+    `to_dict`, and `probe_spend` was rewritten the same day to decide from
+    `auth_method`. Both halves looked right and the chain was never joined.
+
+    Compared by value and not by key name. Two key sets are equal for a
+    `to_dict` that writes two fields under each other's names, and swapping a
+    pair of fields is exactly the edit a rename introduces.
+    """
+    from security_agent.models import Provenance
+
+    marks = {}
+    for name, spec in Provenance.__dataclass_fields__.items():
+        kind = spec.type
+        marks[name] = ["mark-" + name] if "List" in str(kind) else "mark-" + name
+    written = Provenance(**marks).to_dict()
+
+    for name, mark in marks.items():
+        assert name in written, "on Provenance and never written down: " + name
+        assert written[name] == mark, (
+            "`{}` is serialised as {!r}, which is another field's value".format(
+                name, written[name]))
+
+
+def test_the_billing_line_says_only_what_was_established():
+    """Three answers and no fourth: a subscription the CLI named, some other
+    login it named, or nothing learned. The last must not read as either of
+    the first two."""
+    from security_agent.models import Provenance
+
+    assert Provenance(auth_method="claude.ai",
+                      auth_subscription="max").billing == (
+        "Claude subscription (max)")
+    assert "subscription" not in Provenance(auth_method="api-key").billing
+    assert Provenance().billing == "not established by this run"
 
 
 def test_every_setting_the_code_reads_is_in_the_readme():

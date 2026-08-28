@@ -535,6 +535,11 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
             prov.schema_sha[:8], prov.agent_version),
         "",
     ]
+    if prov.auth_method or prov.auth_subscription:
+        # Only when the provider said something. A line reading "not
+        # established" on every API run would be noise, and the honest silence
+        # is the absence of the line rather than a sentence about not knowing.
+        lines += ["**Billing:** {}".format(prov.billing), ""]
     lines += [
         "**Settings:** fail on `{}` · minimum confidence `{}` · verification "
         "`{}`{} · model `{}` · effort `{}`".format(

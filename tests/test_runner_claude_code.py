@@ -1,4 +1,4 @@
-"""The runner that spends nothing, and the two ways it could quietly lie.
+"""The runner that stays off the API key, and the two ways it could quietly lie.
 
 It could **let the reviewed repository speak.** The CLI skips its workspace
 trust dialog in non-interactive mode, so a client started inside the checkout
@@ -26,6 +26,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -620,6 +621,113 @@ class TestNoSilentFallback:
 
     def test_cli_available_never_raises(self):
         assert cli_available("a-command-that-does-not-exist") is None
+
+
+class TestAuthenticationIsAskedBeforeTheRun:
+    """A CLI that is installed and not logged in used to spend the whole launch
+    — process group, MCP server, teardown — to arrive at a generic error.
+
+    The check that would have caught "no usable credential" early is skipped on
+    this path on purpose, because there is no API key to look for. So the
+    question is asked of the CLI itself.
+    """
+
+    def _status(self, monkeypatch, stdout, returncode=0):
+        monkeypatch.setattr(runner, "cli_available", lambda executable="claude": "/x/claude")
+        monkeypatch.setattr(runner.subprocess, "run", lambda *a, **k: SimpleNamespace(
+            returncode=returncode, stdout=stdout, stderr=""))
+
+    def test_a_missing_executable_is_not_authenticated(self, monkeypatch):
+        monkeypatch.setattr(runner, "cli_available", lambda executable="claude": None)
+
+        assert runner.authentication().state == runner.AUTH_MISSING
+
+    def test_a_logged_out_cli_says_so(self, monkeypatch):
+        self._status(monkeypatch, json.dumps({"loggedIn": False}))
+
+        result = runner.authentication()
+        assert result.state == runner.AUTH_MISSING
+        assert "no login" in result.detail
+
+    def test_a_logged_in_cli_reports_how(self, monkeypatch):
+        self._status(monkeypatch, json.dumps({
+            "loggedIn": True, "authMethod": "claude.ai",
+            "subscriptionType": "max"}))
+
+        result = runner.authentication()
+        assert result.state == runner.AUTH_OK
+        assert result.subscription_backed is True
+
+    def test_an_api_billed_login_is_authenticated_and_not_subscription(self, monkeypatch):
+        """Both facts, kept apart. It may run — refusing somebody's own working
+        login would be this program deciding how they are allowed to pay — and
+        nothing about the run may then be described as subscription usage."""
+        self._status(monkeypatch, json.dumps({
+            "loggedIn": True, "authMethod": "api-key", "subscriptionType": None}))
+
+        result = runner.authentication()
+        assert result.state == runner.AUTH_OK
+        assert result.subscription_backed is False
+
+    @pytest.mark.parametrize("stdout", ["", "Logged in as somebody", "[1, 2]"])
+    def test_an_answer_that_cannot_be_read_is_unknown_not_a_refusal(
+            self, monkeypatch, stdout):
+        """An older CLI prints prose here, or nothing. That is a failure to
+        ask, not a failure to authenticate, and refusing on it would make a
+        working installation unusable on a guess about its version."""
+        self._status(monkeypatch, stdout)
+
+        assert runner.authentication().state == runner.AUTH_UNKNOWN
+
+    def test_a_preflight_that_hangs_is_unknown_rather_than_a_dead_review(
+            self, monkeypatch):
+        """A check that can block forever turns "is this logged in" into "this
+        review never starts", which is worse than what it came to prevent."""
+        monkeypatch.setattr(runner, "cli_available", lambda executable="claude": "/x/claude")
+
+        def hang(*_a, **_k):
+            raise runner.subprocess.TimeoutExpired(cmd="claude", timeout=1.0)
+
+        monkeypatch.setattr(runner.subprocess, "run", hang)
+        result = runner.authentication()
+
+        assert result.state == runner.AUTH_UNKNOWN
+        assert "did not answer" in result.detail
+
+    def test_the_account_email_is_never_held(self, monkeypatch):
+        """`claude auth status` returns the account's email address and its
+        organisation id, and neither decides anything here. A field that is
+        never held cannot leak into a report."""
+        self._status(monkeypatch, json.dumps({
+            "loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max",
+            "email": "person@example.com", "orgId": "8b6e89a3-16d1",
+            "orgName": "person@example.com's Organization"}))
+
+        result = runner.authentication()
+        rendered = repr(result)
+
+        assert "person@example.com" not in rendered
+        assert "8b6e89a3" not in rendered
+        assert set(result.__dataclass_fields__) == {
+            "state", "method", "subscription", "detail"}
+
+    def test_the_parents_api_key_does_not_decide_the_answer(self, monkeypatch):
+        """With one set, a CLI that would report a subscription can report an
+        API login — and this program would then refuse the very run it exists
+        to make free."""
+        monkeypatch.setattr(runner, "cli_available", lambda executable="claude": "/x/claude")
+        seen = {}
+
+        def record(*_a, **kwargs):
+            seen.update(kwargs.get("env") or {})
+            return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-parent")
+        monkeypatch.setattr(runner.subprocess, "run", record)
+        runner.authentication()
+
+        assert "ANTHROPIC_API_KEY" not in seen
+        assert "ANTHROPIC_AUTH_TOKEN" not in seen
 
 
 def test_the_denied_list_is_not_empty():

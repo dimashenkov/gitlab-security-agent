@@ -1,9 +1,11 @@
-"""Driving a review with the `claude` CLI, on the developer's own subscription.
+"""Driving a review with the `claude` CLI, under the login it already has.
 
 Every review costs money on the Messages API, and this project's own rule
 forbids paying for a small reason — so the mechanism for reviewing real changes
 sat unused for days because no change was ever quite worth a bill. This runner
-removes the bill for local work. CI stays on the API.
+moves local work off the API key and onto the CLI the developer already has.
+What that costs them depends on how that CLI is authenticated, which is asked
+and recorded rather than assumed. CI stays on the API.
 
 It is deliberately thin. The CLI is not a second provider with equal standing;
 it is the tool the developer already installed, run as themselves, and the
@@ -54,6 +56,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -84,12 +87,6 @@ PROVIDER = "claude-cli"
 SERVER_KEY = "security_agent"
 TOOL_PREFIX = "mcp__{}__".format(SERVER_KEY)
 
-# Every built-in the CLI ships that could read, write or run anything. Named
-# rather than relying on `--allowedTools` alone: an allowlist says what is
-# permitted and a denylist says what is refused, and the two disagree exactly
-# when a new built-in appears that nobody added to either. Refusing by name
-# means a tool added upstream is not silently available; refusing by omission
-# means it is.
 # What `--tools` is given so the CLI ships no built-in tools into the session.
 # Its own help: "Use \"\" to disable all tools, \"default\" to use all tools, or
 # specify tool names". Named rather than written inline so that a test can
@@ -97,6 +94,12 @@ TOOL_PREFIX = "mcp__{}__".format(SERVER_KEY)
 # visible edit rather than a deleted pair of quotation marks.
 NO_BUILTIN_TOOLS = ""
 
+# Every built-in the CLI ships that could read, write or run anything. Named
+# rather than relying on `--allowedTools` alone: an allowlist says what is
+# permitted and a denylist says what is refused, and the two disagree exactly
+# when a new built-in appears that nobody added to either. Refusing by name
+# means a tool added upstream is not silently available; refusing by omission
+# means it is.
 DENIED_TOOLS: Tuple[str, ...] = (
     "Bash", "Edit", "Write", "NotebookEdit", "Read", "Glob", "Grep",
     "WebFetch", "WebSearch", "Task", "TodoWrite", "KillShell", "BashOutput",
@@ -121,6 +124,120 @@ class RunnerError(Exception):
 def cli_available(executable: str = "claude") -> Optional[str]:
     """The path to the CLI, or `None`. Never raises, never guesses."""
     return shutil.which(executable)
+
+
+# How long `claude auth status` may take before the answer is "cannot tell".
+# It is a local read of stored credentials, so a second is generous; the point
+# of the ceiling is that a preflight which hangs turns "is this authenticated"
+# into "this review never starts", which is a worse failure than the one it
+# came to prevent.
+AUTH_TIMEOUT = 10.0
+
+AUTH_OK = "authenticated"
+AUTH_MISSING = "not-authenticated"
+AUTH_UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class Authentication:
+    """What `claude auth status` said, reduced to what may be acted on.
+
+    Four fields and no more. The command also returns the account's email
+    address and its organisation id, and neither is anything this program needs
+    to decide whether to run — so neither is read, kept, logged or written into
+    an artifact. A field that is never held cannot leak from a report.
+    """
+
+    state: str = AUTH_UNKNOWN
+    # `claude.ai` for a subscription login, `api-key`/`console` for a billed
+    # one. Empty when the CLI did not say.
+    method: str = ""
+    # `max`, `pro`, and empty when there is none — which is the case that
+    # distinguishes a subscription from an account billed per request.
+    subscription: str = ""
+    detail: str = ""
+
+    @property
+    def subscription_backed(self) -> bool:
+        """Established, rather than inferred from the absence of an API key.
+
+        Stripping `ANTHROPIC_API_KEY` from the child proves the child cannot
+        reach for the parent's key. It proves nothing about how the CLI's own
+        stored login is billed, and the difference is the whole of what this
+        program is allowed to claim about cost.
+        """
+        return self.method == "claude.ai" and bool(self.subscription)
+
+
+def authentication(executable: str = "claude",
+                   timeout: float = AUTH_TIMEOUT) -> Authentication:
+    """Ask the CLI whether it is logged in, before a review is started.
+
+    Three answers, not two, and the third is the point: an older CLI without
+    this subcommand, output that will not parse, or a call that timed out are
+    all `unknown`. Refusing to run on `unknown` would make a working
+    installation unusable on the strength of a guess about its version, and
+    treating `unknown` as authenticated would make the check decoration. It is
+    reported as what it is and the run continues.
+
+    Never raises. A preflight that can throw is a new way for a review to fail.
+    """
+    if cli_available(executable) is None:
+        return Authentication(state=AUTH_MISSING,
+                              detail="`{}` is not on PATH".format(executable))
+    try:
+        proc = subprocess.run(
+            [executable, "auth", "status"],
+            capture_output=True, text=True, timeout=timeout, check=False,
+            # The parent's key must not decide the answer: with it set, a CLI
+            # that would otherwise report a subscription can report an API
+            # login, and this program would then refuse the very run it exists
+            # to make free.
+            env=_child_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return Authentication(
+            state=AUTH_UNKNOWN,
+            detail="`{} auth status` did not answer within {:.0f}s".format(
+                executable, timeout))
+    except OSError as exc:
+        return Authentication(state=AUTH_UNKNOWN,
+                              detail="could not run `{} auth status`: {}".format(
+                                  executable, exc))
+
+    try:
+        payload = json.loads(proc.stdout or "")
+    except json.JSONDecodeError:
+        # An older CLI prints prose here, or nothing. Not a failure to
+        # authenticate — a failure to ask, which is a different sentence.
+        return Authentication(
+            state=AUTH_UNKNOWN,
+            detail="`{} auth status` did not answer in JSON".format(executable))
+    if not isinstance(payload, dict):
+        return Authentication(
+            state=AUTH_UNKNOWN,
+            detail="`{} auth status` answered with {}".format(
+                executable, type(payload).__name__))
+
+    if "loggedIn" not in payload:
+        # A JSON object of some other shape — an older CLI, or a newer one that
+        # renamed the field. Not a logout: the question was never answered.
+        # Reading a missing key as `False` is the absent-versus-zero confusion
+        # this project refuses everywhere else, and here it would refuse to run
+        # on a machine that is perfectly well logged in.
+        return Authentication(
+            state=AUTH_UNKNOWN,
+            detail="`{} auth status` did not say whether it is logged "
+                   "in".format(executable))
+    if payload["loggedIn"] is not True:
+        return Authentication(state=AUTH_MISSING,
+                              detail="`{} auth status` reports no login".format(
+                                  executable))
+    return Authentication(
+        state=AUTH_OK,
+        method=str(payload.get("authMethod") or ""),
+        subscription=str(payload.get("subscriptionType") or ""),
+    )
 
 
 def build_command(
@@ -372,9 +489,40 @@ class ClaudeCodeRunner:
         # across were both blank. Two runs of different prompts against
         # different code would have shared an identity.
         outcome.provenance = _provenance(self.cfg)
+        outcome.provenance.provider = PROVIDER
+        # What the CLI said about its own login, so the report can state the
+        # billing that was established rather than the one that was assumed.
+        # Asked once here rather than per verifier session: it is the same
+        # answer for every process this run starts, and a preflight repeated
+        # per session is a preflight that costs more than it checks.
+        #
+        # And acted on. `cli.py` asks the same question earlier and refuses a
+        # definite no, but this class is also constructed directly — by the
+        # corpus runner and by tests — and a login that ended between the two
+        # calls is a launch nobody would have wanted. Reading the answer for
+        # the report and not for the decision is the shape of a check that
+        # exists and does nothing.
+        auth = authentication(self.executable)
+        if auth.state == AUTH_MISSING:
+            raise RunnerError(
+                "the `claude` CLI is not logged in ({}). Run `claude auth "
+                "login`. This runner will not fall back to the paid API, "
+                "because which account is charged is not a decision to make "
+                "on somebody's behalf.".format(auth.detail))
+        outcome.provenance.auth_method = auth.method
+        outcome.provenance.auth_subscription = auth.subscription
         outcome.provenance.note_served(self.cfg.model)
         started = time.monotonic()
         result = self._launch(command, briefing, handoff)
+
+        # What the CLI priced the run at, recorded and not interpreted. The
+        # terminal object carries `total_cost_usd` on a subscription too — a
+        # two-token reply on a Max plan came back as $0.29 — so it is what the
+        # run *would* have cost, and reading it as a bill would mark every
+        # subscription run as billed. The billed question is the auth method's.
+        cost = result.payload.get("total_cost_usd")
+        if isinstance(cost, (int, float)):
+            outcome.provenance.reported_cost_usd = float(cost)
 
         session, stop_reason, stop_detail = self._collect(handoff, result, revision)
         if session is not None:

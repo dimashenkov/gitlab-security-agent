@@ -1,9 +1,10 @@
 """One budget policy, handed out as fixed allowances that nobody shares.
 
-Local development on a Claude subscription and CI on a paid API key are the
+Local development through the `claude` CLI and CI on a paid API key are the
 same problem wearing different clothes: a review that wanders costs something
-the operator did not agree to. On the subscription it is a plan limit that
-stops the developer working; on the API it is money. Both want the same answer
+the operator did not agree to. Through the CLI that is whatever its login is
+subject to — a plan limit that stops the developer working, or a bill, and
+the runner asks which rather than assuming; on the API it is money. Both want the same answer
 — stop, and say plainly that stopping is not a verdict.
 
 **Allowances, not a shared counter.** The reviewer gets a number of tool calls

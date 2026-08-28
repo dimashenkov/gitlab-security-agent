@@ -448,26 +448,65 @@ def probe_suite(args) -> Result:
 
 
 def probe_spend(args) -> Result:
-    """Local runs must cost nothing. Read it from the artifacts, not from the
-    intent — a runner that silently fell back to the API would still intend to
-    be free."""
+    """How local runs were billed, read from the artifacts rather than assumed.
+
+    Not "local runs cost nothing", which is what this claimed and could not
+    show. It read `provider_telemetry` or `run`, containers no artifact has
+    ever had, so every file was skipped and a clean sheet was reported over a
+    corpus it had not read a byte of — and it tested `cost_usd` for truthiness,
+    so an absent figure passed as a zero, which is this project's own
+    absent-versus-zero rule broken inside the tool that checks it.
+
+    Now: a billed local run is BROKEN, a run whose login the CLI reported as a
+    subscription is what DONE means, and a run that reported neither a cost nor
+    an auth method is named rather than counted either way."""
     root = ROOT / "journal"
     if not root.exists():
         return Result(TODO, "no runs filed")
-    charged = []
+    charged, silent, subscription = [], [], []
     for artifact in sorted(root.glob("*/findings.json")):
         try:
             data = json.loads(artifact.read_text(encoding="utf-8"))
         except Exception:
             continue
-        telemetry = data.get("provider_telemetry") or data.get("run") or {}
-        if telemetry.get("provider") == "claude-cli" and telemetry.get("cost_usd"):
-            charged.append(artifact.parent.name)
+        # From `provenance`, which is where the artifact keeps this. It used to
+        # read `provider_telemetry` or `run`, and no artifact has ever had
+        # either — so every file was skipped and the probe reported a clean
+        # sheet over a corpus it had not read one byte of. The container was
+        # named before the field existed and nothing ever connected the two.
+        prov = data.get("provenance") or {}
+        if prov.get("provider") != "claude-cli":
+            continue
+        name = artifact.parent.name
+        # Decided by the login, never by the figure. The CLI reports
+        # `total_cost_usd` on a subscription too — a two-token reply on a Max
+        # plan came back as $0.29 — so it is what the run *would* have cost,
+        # and a probe reading it as a bill would call every subscription run
+        # billed. The figure is recorded beside the verdict, not used as one.
+        if prov.get("auth_method") and prov.get("auth_method") != "claude.ai":
+            charged.append("{} ({})".format(name, prov["auth_method"]))
+            continue
+        if prov.get("auth_method") == "claude.ai" and prov.get("auth_subscription"):
+            subscription.append(name)
+        else:
+            # No auth method recorded: a run from before the CLI was asked, or
+            # one where it would not say. Named rather than counted either way
+            # — the old version read a missing cost as a zero and called that
+            # proof, which is this project's own absent-versus-zero rule broken
+            # inside the tool that checks it.
+            silent.append(name)
+
     if charged:
         return Result(BROKEN, "{} local run(s) were billed: {}".format(
             len(charged), ", ".join(charged[:3])))
-    return Result(DONE, "no billed local run in {} artifact(s)".format(
-        len(list(root.glob("*/findings.json")))))
+    if not (subscription or silent):
+        return Result(TODO, "no local run to read")
+    if silent:
+        return Result(PARTIAL, "{} run(s) on an established subscription, "
+                               "{} that recorded no auth method".format(
+                                   len(subscription), len(silent)))
+    return Result(DONE, "{} local run(s), each on an established "
+                        "subscription".format(len(subscription)))
 
 
 CHECKS = [
@@ -483,7 +522,7 @@ CHECKS = [
     Check("8", "advisory pairs", "24 pairs, decision preserved", probe_use),
     Check("9", "fixes", "judged = fixed + recorded", probe_fixes),
     Check("—", "whole suite", "green", probe_suite),
-    Check("—", "local spend", "$0.00", probe_spend),
+    Check("—", "local billing", "established, not assumed", probe_spend),
 ]
 
 _MARK = {DONE: "done   ", PARTIAL: "partial", TODO: "todo   ", BROKEN: "BROKEN "}

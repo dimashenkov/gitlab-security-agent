@@ -450,7 +450,7 @@ def _resolve_range(
 
 def _review_with_cli(cfg: Config, workspace, mode: str, briefing: str,
                      base: str, head: str):
-    """Run the review through the developer's own `claude`, and spend nothing.
+    """Run the review through the developer's own `claude`, under its own login.
 
     Returns the outcome, its candidates, and the budget — the budget because
     verification draws its seats from the same one, and handing it back is what
@@ -554,7 +554,7 @@ def _cli_provider_problem(cfg: Config) -> str:
     quietly becoming the paid path — and the second is quietly becoming a
     weaker review that still renders a verdict.
     """
-    from .runner_claude_code import cli_available
+    from .runner_claude_code import AUTH_MISSING, authentication, cli_available
 
     if cli_available() is None:
         return (
@@ -562,6 +562,23 @@ def _cli_provider_problem(cfg: Config) -> str:
             "there. This runner uses the CLI you already have; it will not fall "
             "back to the paid API, because which account is charged is not a "
             "decision to make on your behalf.".format(PROVIDER_CLI)
+        )
+
+    # Asked before the run rather than discovered during it. A CLI that is
+    # installed and not logged in spends the whole launch — process group, MCP
+    # server, teardown — to arrive at a generic error, and the check that would
+    # have caught "no usable credential" early is deliberately skipped on this
+    # path because there is no API key to look for.
+    #
+    # Only a definite `no` refuses. An older CLI without the subcommand answers
+    # `unknown`, and refusing on that would make a working installation
+    # unusable on the strength of a guess about its version.
+    auth = authentication()
+    if auth.state == AUTH_MISSING:
+        return (
+            "--provider {} needs a logged-in `claude`, and {}. Run `claude "
+            "auth login` first. No review was started and no Anthropic API "
+            "fallback was performed.".format(PROVIDER_CLI, auth.detail)
         )
     return ""
 
@@ -657,8 +674,10 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument(
         "--provider", choices=PROVIDERS,
         help="Who runs the review. {} is the default and what CI uses. {} "
-             "shells out to your own `claude`, on the subscription you already "
-             "pay for. There is no automatic choice between them: if the one "
+             "shells out to your own `claude`, under whatever login it has — "
+             "what that costs is a property of that login, which the run "
+             "reports rather than assumes. There is no automatic choice "
+             "between them: if the one "
              "you name cannot run, the review fails rather than quietly "
              "charging the other.".format(PROVIDER_API, PROVIDER_CLI))
     parser.add_argument(

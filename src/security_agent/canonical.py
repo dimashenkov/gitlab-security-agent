@@ -73,6 +73,27 @@ TELEMETRY_PATHS: Tuple[str, ...] = (
     # comparing it would compare which provider died rather than what either
     # concluded.
     "trace_markdown",
+    # How the machine that ran it was logged in. Two developers on the same
+    # commit have different accounts and one may be on a subscription and the
+    # other on an API key, and neither fact changes a word of what the review
+    # concluded. Comparing them would fail every cross-machine comparison for a
+    # reason about the machines.
+    #
+    "provenance.auth_method",
+    "provenance.auth_subscription",
+    # Which runner produced it. Kept here for the same reason as
+    # `models_served`, and against a first instinct that it belonged in the
+    # comparison because "which runner answered is part of the verdict": the
+    # conformance suite exists precisely to vary the runner and ask whether the
+    # decision is unchanged, so a canonical `provider` makes every one of those
+    # comparisons fail for the axis being tested. Which two ran is the harness's
+    # knowledge, not a difference in what they concluded.
+    "provenance.provider",
+    # The provider's own arithmetic about what the run would have cost.
+    # Two runners price the same review differently and a subscription is
+    # quoted a figure it was never charged, so comparing it would compare
+    # price lists rather than verdicts.
+    "provenance.reported_cost_usd",
 )
 
 _MISSING = object()

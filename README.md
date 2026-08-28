@@ -90,17 +90,30 @@ confirmation that cannot say what would have refuted it is downgraded to
 
 Three ways in. Pick the one that matches where your code lives.
 
-### On your own branch, no CI, no API bill
+### On your own branch, no CI, no API key
 
 ```bash
 tools/review.sh --noticed "what you spotted reading the diff yourself"
 ```
 
-No `ANTHROPIC_API_KEY`. This runs on **your own `claude` CLI**, so it
-authenticates as you and costs no separate bill — it spends the plan you
-already pay for. If `claude` is not on your PATH the review fails; it will not
-quietly fall back to the paid API, because which account is charged is not a
-decision to make on your behalf.
+No `ANTHROPIC_API_KEY`. This runs on **your own `claude` CLI**, under whatever
+login it already has. Three things the code does, rather than a promise about
+your bill:
+
+- it removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child
+  process, so the review cannot reach for a key you have set for something
+  else;
+- it asks `claude auth status` before starting, and refuses rather than
+  spending a launch to arrive at a generic error;
+- if `claude` is not on your PATH, or is not logged in, the review fails. It
+  will not quietly fall back to the paid API, because which account is charged
+  is not a decision to make on your behalf.
+
+What that run costs depends on how your `claude` is authenticated, which is
+yours and not this program's to decide. When the CLI reports a subscription
+login the report says so — `Billing: Claude subscription (max)` — and when it
+reports an API-billed one, or will not say, the report says that instead. It
+never states a billing mode it did not establish.
 
 Reviews the current branch against the commit it left from. No forge token,
 nothing posted, nothing blocked — the report lands in `.security-scan/` and the
@@ -499,7 +512,7 @@ across pipelines, so they are read from cache at a fraction of the price), and
 ```bash
 pip install -e ".[dev]"
 
-# On your own `claude`, no API key, no separate bill
+# On your own `claude`, under its own login, with no API key
 gitlab-security-agent --base main --provider claude-cli --no-comment
 
 # On the paid API, which is what CI uses

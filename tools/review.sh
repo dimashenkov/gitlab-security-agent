@@ -32,7 +32,9 @@ NOTICED=""
 OUT=".security-scan"
 PATHS=()
 # The point of this script is a review you can run ten times a day, so it uses
-# the client you already pay for. The paid path has to be asked for by name.
+# the `claude` you already have rather than an API key. What that costs is a
+# property of how that client is logged in, which the run reports. The API
+# path has to be asked for by name.
 PROVIDER="claude-cli"
 PROFILE=""
 

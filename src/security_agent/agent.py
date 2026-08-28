@@ -491,6 +491,10 @@ def _provenance(cfg: Config) -> Provenance:
 
     prompts = cfg.resolved_prompt_dir()
     return Provenance(
+        # Both paths stamp this. A field only one runner sets is a field
+        # every reader has to special-case, and the reader that decides
+        # whether a local run was billed would have read an empty string.
+        provider=cfg.provider,
         model_requested=cfg.model,
         system_prompt_sha=_sha(prompts / "system.md"),
         verifier_prompt_sha=_sha(prompts / "verifier.md"),
