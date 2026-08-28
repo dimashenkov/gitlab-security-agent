@@ -36,7 +36,14 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from artifact import case_digest, malformed_cases
+from artifact import (
+    case_digest,
+    is_target,
+    legacy_case_digest,
+    load_adjudications,
+    malformed_cases,
+    ruled_incidental,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "security_agent"
@@ -304,6 +311,38 @@ def probe_scope(args) -> Result:
     return _from_tests([path], args.tests, "scope control")
 
 
+def _pair_passed(row: dict, case_id: str) -> bool:
+    """Did this pair discriminate, judged by the key in force now?
+
+    The row holds what the reviewer found in each member. Whether those
+    findings are the weakness the case is about is a question about the answer
+    key, and the key is edited when it turns out to have named the wrong thing
+    — so the boolean the scorer wrote is an answer to the key as it stood that
+    afternoon.
+
+    Falls back to the stored value only when the row predates the findings
+    being recorded. That is honest rather than convenient: a row with no
+    findings in it cannot be re-judged, and pretending otherwise would score
+    every old result as a miss.
+    """
+    if "safe_findings" not in row or "unsafe_findings" not in row:
+        return row.get("pair_success") is True
+
+    case_dir = ROOT / "corpus-real" / case_id
+    try:
+        case = yaml.safe_load((case_dir / "case.yml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return row.get("pair_success") is True
+
+    excused = ruled_incidental(
+        load_adjudications(ROOT / "corpus-real"), case_id, "safe")
+    found = any(is_target(f, case) for f in row.get("unsafe_findings") or [])
+    persists = any(is_target(f, case)
+                   and f.get("fingerprint") not in excused
+                   for f in row.get("safe_findings") or [])
+    return found and not persists
+
+
 def probe_use(args) -> Result:
     """Both members of every corpus pair run, and the decision preserved.
 
@@ -361,7 +400,13 @@ def probe_use(args) -> Result:
     # said so. Rows written before `case_digest` existed are neither counted
     # nor thrown away silently: they are reported as what they are, results
     # about a version nobody recorded.
-    current = {name: case_digest(ROOT / "corpus-real" / name) for name in cases}
+    # Either digest. The definition narrowed to the members so that a
+    # corrected answer key stops discarding the run it was corrected
+    # for, and the old whole-tree value still means the members are
+    # unchanged — so accepting it keeps every result already paid for.
+    current = {name: {case_digest(ROOT / "corpus-real" / name),
+                      legacy_case_digest(ROOT / "corpus-real" / name)}
+               for name in cases}
     verdicts: Dict[str, set] = {}
     undated: Dict[str, int] = {}
     for path in sorted((ROOT / "measurements").glob("*.json")):
@@ -390,7 +435,7 @@ def probe_use(args) -> Result:
                 # like a disagreement.
                 continue
             digest = row.get("case_digest")
-            if digest != current.get(case_id):
+            if digest not in current.get(case_id, ()):
                 # Either the case has changed since, or the run predates any
                 # record of which version it saw. Both mean the same thing for
                 # this count and neither is a verdict about the case as it
@@ -398,11 +443,17 @@ def probe_use(args) -> Result:
                 if not digest:
                     undated[case_id] = undated.get(case_id, 0) + 1
                 continue
-            # `is True`, not `bool(...)`. A pair passed when the scorer said
-            # so, and `bool("false")` is true — a tracker that reads the string
+            # Worked out from the findings the row holds and the key in force
+            # now, rather than read from the boolean the scorer wrote at the
+            # time. Two keys have been corrected since results were stored —
+            # CWE-116 is not only XSS, and Winter's lowercase check is the
+            # mechanism under its CSRF — and each correction left a stored
+            # `pair_success` answering a question nobody asks any more.
+            #
+            # `is True`, not `bool(...)`, where the stored value is still used:
+            # `bool("false")` is true, and a tracker that reads the string
             # "false" as a pass can be told the work is done by a typo.
-            verdicts.setdefault(case_id, set()).add(
-                row.get("pair_success") is True)
+            verdicts.setdefault(case_id, set()).add(_pair_passed(row, case_id))
 
     run = [c for c in cases if c in verdicts]
     split = [c for c in run if len(verdicts[c]) > 1]

@@ -715,13 +715,30 @@ the answer makes it no longer real code.
 
 Eight languages, twelve families, seventy cases. That is coverage, not
 validation — a language appearing in this table means the agent has been run
-against it, not that its behaviour there is bounded. The pair counts are small
-enough that a single case moving changes a percentage by five points.
+against it, not that its behaviour there is bounded.
+
+And spread that thin it is barely coverage either. Two to four pairs per
+language means a per-language percentage can only be 0, 33, 67 or 100: one
+batch reported "php 0%, ruby 0%" from a single case each. So new cases now go
+into **javascript/typescript, python, php and go** until each has a count worth
+reading, and the other languages stay as a regression suite rather than being
+deepened.
+
+The four were chosen by harvest yield, counted rather than guessed. Advisories
+naming exactly one fix commit, on 2026-08-28: npm 2985, pip 2944, composer
+2686, maven 2237, go 2057 — then a gap to rust 556, rubygems 468, nuget 389.
+Eight good cases cannot be drawn from the bottom three without lowering the bar
+for what counts as an advisory. `go` is fourth over the slightly larger maven
+because the other three are web languages with nearly one profile of weakness
+between them, and go's cases are `dos` from nil dereference and resource
+exhaustion — without it the set measures one style of code rather than a tool.
+`javascript` and `typescript` count as one: the language is decided by a file
+extension, mixed repositories are the norm, and the agent compiles nothing.
 
 Nothing about the agent is language-specific: there are no per-language rules,
-no parsers, and no ruleset. It reads the code. The reason to test eight
-languages is not to configure eight of anything, it is that a reviewer who has
-only ever been checked on Python is a reviewer nobody has checked.
+no parsers, and no ruleset. It reads the code. The reason to test several
+languages is not to configure several of anything, it is that a reviewer who
+has only ever been checked on Python is a reviewer nobody has checked.
 
 Five of the hand-written cases are **negative controls**, where both members
 contain the alarming construct and only the data flow differs — `pickle.loads`

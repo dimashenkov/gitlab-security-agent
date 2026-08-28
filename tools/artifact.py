@@ -221,7 +221,7 @@ def malformed_cases(root) -> dict:
 
 
 def case_digest(case_dir) -> str:
-    """One hash over a single case — its manifest and both its members.
+    """One hash over a single case's two members — the code the agent saw.
 
     Per case rather than per corpus. `baseline.py` digests the whole tree,
     because its question is whether two whole runs are comparable; the question
@@ -232,10 +232,54 @@ def case_digest(case_dir) -> str:
     Paths as well as contents, for the same reason `baseline.py` gives: moving
     a file between members changes what the agent is handed, and a
     content-only digest would call that the same case.
+
+    The members and not the manifest. Two questions were being asked with one
+    hash: "is this result about the code the agent saw" and "was it scored
+    against the key in force now". They come apart, and answering both with the
+    tree threw away results that were still perfectly good evidence.
+
+    `case.yml` holds the answer key. Correcting a category — CWE-116 is not
+    only XSS, and Winter's lowercase check is the mechanism under its CSRF —
+    changes how a finding is *scored* and not one byte of what the reviewer was
+    shown. A run whose key was corrected afterwards still recorded what the
+    agent found; what is stale is the verdict, and a verdict can be worked out
+    again from the findings that are in the file. Digesting the manifest as
+    well made every key correction discard the run instead.
     """
-    sha = hashlib.sha256()
+    return _digest_of(_files(case_dir, members_only=True), Path(case_dir))
+
+
+def legacy_case_digest(case_dir) -> str:
+    """What `case_digest` returned before it stopped covering the manifest.
+
+    Kept so the change of algorithm does not throw away every result already
+    recorded. A stored digest equal to this one says the whole case — members
+    and manifest — is byte-for-byte what that run saw, which is a stronger
+    statement than the new digest makes and therefore satisfies it. Measured
+    on the day it was written: seven stored rows kept, ten unaffected because
+    they carry no digest at all.
+
+    It does **not** rescue the case it was written for. A row whose manifest
+    was corrected afterwards has a stored whole-case digest that no longer
+    matches, and an opaque hash cannot be asked whether only the manifest
+    moved. `php-p2ch-c2c3-4xm5` is exactly that: its key was widened the same
+    afternoon, and its run is lost until the case is run again. One row, named
+    rather than absorbed — this rescues the unchanged and nothing more.
+    """
+    return _digest_of(_files(case_dir, members_only=False), Path(case_dir))
+
+
+def _files(case_dir, members_only: bool) -> list:
     root = Path(case_dir)
-    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+    if not members_only:
+        return sorted(p for p in root.rglob("*") if p.is_file())
+    return [p for name in ("safe", "unsafe")
+            for p in sorted((root / name).rglob("*")) if p.is_file()]
+
+
+def _digest_of(paths, root: Path) -> str:
+    sha = hashlib.sha256()
+    for path in paths:
         sha.update(str(path.relative_to(root)).encode("utf-8"))
         sha.update(b"\0")
         sha.update(path.read_bytes())

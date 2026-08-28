@@ -183,21 +183,65 @@ def test_a_result_from_before_the_version_was_recorded_is_named_not_dropped(root
     assert "1 from an unrecorded corpus version" in result.detail
 
 
-def test_a_case_edited_after_its_run_stops_counting(root):
-    """The digest is over the case's own files, so editing one case must not
-    invalidate the results of the others."""
+def test_a_member_edited_after_its_run_stops_counting(root):
+    """The digest is over the case's own members, so editing one case must not
+    invalidate the results of the others — and editing the code the agent saw
+    must invalidate its own."""
     case(root, "one")
     case(root, "two")
+    (root / "corpus-real" / "one" / "safe").mkdir()
+    (root / "corpus-real" / "one" / "safe" / "a.py").write_text("x = 1\n")
     batch(root, "b.json", [{"case_id": "one", "pair_success": True},
                            {"case_id": "two", "pair_success": True}])
     assert probe_use(Args()).state == DONE
 
-    (root / "corpus-real" / "one" / "case.yml").write_text(
-        "case_id: one\nconstruction: regression\n# edited\n", encoding="utf-8")
+    (root / "corpus-real" / "one" / "safe" / "a.py").write_text("x = 2\n")
 
     result = probe_use(Args())
     assert result.state == PARTIAL
     assert "1/2 run" in result.detail
+
+
+def test_correcting_the_answer_key_does_not_discard_the_run(root):
+    """Two questions were being asked with one hash: is this result about the
+    code the agent saw, and was it scored against the key in force now.
+
+    `case.yml` holds the key. Correcting a category changes how a finding is
+    scored and not one byte of what the reviewer was shown — and two keys have
+    been corrected since results were stored. Digesting the manifest as well
+    made each correction throw away the run it was made for.
+    """
+    case(root, "one")
+    (root / "corpus-real" / "one" / "safe").mkdir()
+    (root / "corpus-real" / "one" / "safe" / "a.py").write_text("x = 1\n")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+    assert probe_use(Args()).state == DONE
+
+    (root / "corpus-real" / "one" / "case.yml").write_text(
+        "case_id: one\nconstruction: regression\n# the key, corrected\n",
+        encoding="utf-8")
+
+    assert probe_use(Args()).state == DONE, (
+        "a corrected key discarded the run it was corrected for")
+
+
+def test_a_digest_written_by_the_older_definition_is_still_accepted(root):
+    """The definition narrowed to the members. Every digest already stored was
+    computed over the whole case, so refusing them would have discarded five
+    paid runs — a number quietly going to zero because a rule changed
+    underneath it, which is the shape of loss this line of work exists to
+    stop. The old value says the whole case is unchanged, which is stronger
+    than what the new one asks."""
+    from artifact import legacy_case_digest
+
+    case(root, "one")
+    (root / "corpus-real" / "one" / "safe").mkdir()
+    (root / "corpus-real" / "one" / "safe" / "a.py").write_text("x = 1\n")
+    batch(root, "b.json", [{
+        "case_id": "one", "pair_success": True,
+        "case_digest": legacy_case_digest(root / "corpus-real" / "one")}])
+
+    assert probe_use(Args()).state == DONE
 
 
 def test_a_run_that_did_not_finish_is_not_a_failed_pair(root):
