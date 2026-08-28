@@ -124,8 +124,8 @@ def test_a_profile_declares_no_verifier_turn_ceiling():
     by nobody and disagreeing with the enforced one, is worse than no limit,
     because the number is what does the reassuring.
 
-    The argument is still accepted and ignored so that call sites outside
-    `budget.py` keep working; what must not come back is a stored ceiling.
+    The argument is gone as well, not accepted and ignored: what must not come
+    back is either a stored ceiling or a keyword that silently does nothing.
     """
     from dataclasses import fields
 

@@ -21,13 +21,21 @@ every other partial review.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from conftest import make_candidate
+from fakes import FakeClient, FakeResponse, text, tool_use
+from security_agent.agent import SecurityAgent
+from security_agent.config import Config, GitLabContext
 from security_agent.gate import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, decide
-from security_agent.models import STOP_INCONCLUSIVE, ScanOutcome
+from security_agent.models import STOP_COMPLETED, STOP_INCONCLUSIVE, ScanOutcome
+from security_agent.runner_claude_code import _apply_session
+from security_agent.tools import Session, dispatch
 from security_agent.workspace import Workspace
+
+PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 
 
 @pytest.fixture
@@ -137,3 +145,117 @@ class TestWhoMayForgiveIt:
         outcome.reported = [make_candidate(severity="high")]
 
         assert decide(config, outcome).exit_code == EXIT_FINDINGS
+
+
+class TestTheCutHasToReachTheOutcome:
+    """The one assignment `outcome_for` above makes by hand, made by the code.
+
+    Everything in this file so far starts from `outcome.coverage.diff_truncated`
+    already being set. That is the field `gate._partial` reads, and it is the
+    *end* of the chain; the hops that fill it were held by nothing, which is
+    exactly the shape that produced this defect the first time — the workspace
+    recorded the cut correctly for weeks while the runner reported an
+    untruncated diff, because nobody carried the flag across the gap.
+
+    There are two carriers, one per runner, and each had one untested hop:
+
+    * `tools._handle_get_diff` copies the workspace's flag onto the *session*.
+      That is the CLI runner's route, and it needs one, because `get_diff` runs
+      in a child process against a different `Workspace` — the parent's own
+      flag is always False there. `_apply_session` reading the session is
+      tested in `test_runner_claude_code.py`; the session getting the flag in
+      the first place was not, and every test that exercised the far half set
+      `session.diff_truncated = True` by hand.
+    * `agent.py` reads its own workspace, because on the API path there is only
+      one. Nothing asserted that line either.
+
+    Delete either one and `python3 -m pytest tests/ -q` stays green while the
+    gate is handed False for a review that saw the first 4 KB of a change.
+    """
+
+    def _fresh(self, ws: Workspace) -> Workspace:
+        """A second workspace over the same repository.
+
+        `diff_truncated` is sticky once set, so a test about *not* setting it
+        cannot reuse a workspace another call has already diffed.
+        """
+        return Workspace(root=ws.root, diff_base=ws.diff_base, diff_head="HEAD")
+
+    def test_asking_for_the_whole_change_marks_the_session(self, big_change):
+        session = Session()
+        dispatch(big_change, session, "get_diff", {})
+
+        # The precondition, said out loud: if the fixture ever stopped
+        # overflowing the ceiling the assertion below would be about nothing.
+        assert big_change.diff_truncated is True
+        assert session.diff_truncated is True
+
+    def test_a_single_file_diff_does_not_mark_the_session(self, big_change):
+        """`app.py` is over the ceiling on its own, so this is a workspace that
+        genuinely truncated — and the session must still say False.
+
+        The flag means "the review did not see the whole change", which is a
+        statement about the unqualified diff. A file asked for by name and
+        trimmed says so in its own output, and treating that as run-wide
+        truncation would fail every review of a large file: a gate nothing can
+        satisfy is a gate that gets switched off.
+        """
+        ws = self._fresh(big_change)
+        session = Session()
+        dispatch(ws, session, "get_diff", {"path": "app.py"})
+
+        assert ws.diff_truncated is True
+        assert session.diff_truncated is False
+
+    def test_the_cli_runners_chain_ends_at_the_gate(self, config, big_change):
+        """Workspace to session to outcome to exit code, nothing set by hand.
+
+        The whole point of the flag is the last step, so the test that holds
+        the missing hop has to go all the way there. `_apply_session` is the
+        same call the CLI runner makes on the parent side.
+        """
+        session = Session()
+        dispatch(big_change, session, "get_diff", {})
+        outcome = ScanOutcome(mode="diff")
+        _apply_session(outcome, session)
+
+        # The run looks entirely healthy, which is what made this dangerous:
+        # it completed, and reading the diff put the file in front of the
+        # model, so neither of the gate's other two partial-review branches
+        # fires here.
+        assert outcome.complete is True
+        assert outcome.exposures, "nothing reached the model, so a later "\
+                                  "assertion could pass down the wrong branch"
+
+        decision = decide(config, outcome)
+
+        assert decision.exit_code == EXIT_ERROR
+        assert "first part of the diff" in decision.reason
+
+    def test_the_api_runner_records_the_cut_it_made(self, tmp_path, big_change):
+        """The same journey on the other runner, driven by a real agent loop.
+
+        Here the model asks for the diff, the workspace cuts it, and the run
+        ends cleanly on `end_turn` — a completed review of a change it was
+        shown 4 KB of. The line under test is the one in `agent.py` that reads
+        the workspace after the loop; without it this exits 0 saying "No
+        security findings."
+        """
+        cfg = Config(prompt_dir=PROMPTS, output_dir=tmp_path / "out",
+                     gitlab=GitLabContext(), post_comment=False)
+        client = FakeClient([
+            FakeResponse([tool_use("get_diff", {}, id="t1")], stop_reason="tool_use"),
+            FakeResponse([text("Reviewed the change; nothing found.")],
+                         stop_reason="end_turn"),
+        ])
+
+        outcome = SecurityAgent(cfg, big_change, client=client).run(
+            "diff", "Review the change.")
+
+        assert outcome.stop_reason == STOP_COMPLETED
+        assert outcome.coverage.diff_truncated is True
+
+        decision = decide(cfg, outcome)
+
+        assert decision.exit_code == EXIT_ERROR
+        assert "first part of the diff" in decision.reason

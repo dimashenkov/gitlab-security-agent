@@ -571,6 +571,66 @@ class TestTheReviewedCommitIsNamedOrTheRunFails:
 
         assert "GIT_DEPTH" in str(raised.value)
 
+    def _second_commit(self, repo):
+        """Move `HEAD` on, and hand back the commit it moved off.
+
+        A merge request pipeline is exactly this shape: the forge names a
+        commit that is not what local `HEAD` happens to point at, and the whole
+        question is which of the two gets reviewed.
+        """
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(repo), *args), check=True,
+                                  capture_output=True, text=True, env=env).stdout
+
+        earlier = git("rev-parse", "HEAD").strip()
+        (repo / "app" / "views.py").write_text("def get_user():\n    pass\n",
+                                               encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", "later")
+        assert git("rev-parse", "HEAD").strip() != earlier
+        return earlier
+
+    def test_a_head_the_forge_named_that_is_not_in_the_clone_is_refused(
+            self, git_repo):
+        """The other limb of the same `or`, and the one that actually happens.
+
+        `--head` is what a person types; `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`
+        is what every merge request pipeline supplies, and a clone too shallow
+        to hold it is the ordinary failure — that is what `GIT_DEPTH: 0` in the
+        template is for. Only the explicit limb had a test, so deleting
+        `or gl.source_branch_sha` left the suite green while production
+        reviewed local `HEAD` and reported on a commit nobody asked about.
+        """
+        from security_agent.workspace import WorkspaceError
+
+        args = cli._parse_args(["--repo", str(git_repo), "--mode", "diff"])
+        cfg = Config(gitlab=GitLabContext(source_branch_sha="0" * 40))
+
+        with pytest.raises(WorkspaceError) as raised:
+            cli._resolve_range(cfg, Path(str(git_repo)), "diff", args)
+
+        assert "0" * 40 in str(raised.value)
+
+    def test_the_commit_the_forge_named_is_the_one_reviewed(self, git_repo):
+        """The other direction, so the test above cannot be satisfied by
+        refusing everything — and so that dropping the limb is caught even when
+        the named commit *is* in the clone, which is the common case.
+
+        Without it the head comes back as the literal `HEAD`, which resolves to
+        the later commit here: a review of code the forge did not name.
+        """
+        earlier = self._second_commit(git_repo)
+        args = cli._parse_args(["--repo", str(git_repo), "--mode", "repo"])
+        cfg = Config(gitlab=GitLabContext(source_branch_sha=earlier))
+
+        _base, head = cli._resolve_range(cfg, Path(str(git_repo)), "repo", args)
+
+        assert head == earlier
+
     def test_an_unresolvable_head_is_never_recorded_as_the_word_head(
             self, git_repo):
         from security_agent.workspace import Workspace, WorkspaceError

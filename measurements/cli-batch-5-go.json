@@ -1,0 +1,1158 @@
+[
+  {
+    "case_id": "go-qqff-5854-px68",
+    "language": "go",
+    "family": "dos",
+    "case_digest": "4cbe976a0638c873",
+    "ran_at": "2026-08-28T15:42:58+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "82df3b4469b72a9e",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.529055
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 132.550632125,
+        "cost": 0.528108,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 16,
+          "output_tokens": 9143,
+          "cache_read_tokens": 108566,
+          "cache_write_tokens": 24517
+        },
+        "coverage": {
+          "changed": [
+            "pkg/cookie/cookie.go"
+          ],
+          "examined": [
+            "pkg/cookie/cookie.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "7936532830e9f82a",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "dos",
+            "pkg/cookie/cookie.go",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.4091905
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 241.158655042,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 16,
+          "output_tokens": 8183,
+          "cache_read_tokens": 105799,
+          "cache_write_tokens": 15069
+        },
+        "coverage": {
+          "changed": [
+            "pkg/cookie/cookie.go"
+          ],
+          "examined": [
+            "pkg/cookie/cookie.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": -0.0309031556039173,
+    "safe_findings": [
+      {
+        "category": "dos",
+        "file": "pkg/cookie/cookie.go",
+        "severity": "low",
+        "title": "Multipart cookie index lacks lower-bound check, causing out-of-range panic",
+        "fingerprint": "82df3b4469b72a9e",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "pkg/cookie/cookie.go",
+        "severity": "low",
+        "title": "Removed bounds checks on attacker-controlled multipart cookie part count",
+        "fingerprint": "7936532830e9f82a",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 241.158655042
+  },
+  {
+    "case_id": "go-m6jg-wr9m-cg2f",
+    "language": "go",
+    "family": "path-traversal",
+    "case_digest": "8460f79ee6e91abe",
+    "ran_at": "2026-08-28T15:42:58+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.735346
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 165.437166542,
+        "cost": 0.734397,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 18,
+          "output_tokens": 10657,
+          "cache_read_tokens": 172804,
+          "cache_write_tokens": 38148
+        },
+        "coverage": {
+          "changed": [
+            "cmd/uniget/hooks.go"
+          ],
+          "examined": [
+            "cmd/uniget/common.go",
+            "cmd/uniget/hooks.go",
+            "cmd/uniget/main.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.7443589999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 312.576228541,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 24,
+          "output_tokens": 11955,
+          "cache_read_tokens": 274486,
+          "cache_write_tokens": 30717
+        },
+        "coverage": {
+          "changed": [
+            "cmd/uniget/hooks.go"
+          ],
+          "examined": [
+            "cmd/uniget/hooks.go",
+            "cmd/uniget/main.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [
+          {
+            "fingerprint": "fd76407a2d8a6d39",
+            "title": "Path containment check removed from hooks remove/edit allows escape from hooks dir",
+            "severity": "high",
+            "confidence": "medium",
+            "category": "path-traversal",
+            "file": "cmd/uniget/hooks.go",
+            "line": 171,
+            "impact": "state_change",
+            "reachable_without_authentication": "unclear",
+            "requires_user_interaction": "no",
+            "severity_derivation": "state_change \u2192 high",
+            "evidence": "\t\terr = os.Remove(hookFile)\n\t\tif err != nil {\n\t\t\treturn fmt.Errorf(\"unable to remove %s hook %s: %s\", hookType, hookFileName, err)\n\t\t}",
+            "description": "This change deletes the only containment check that kept a hook filename inside the hooks directory. The baseline computed `filepath.Abs(hookFile)` and rejected the operation with \"hook file %s is outside of hookDir %s\" unless the resolved path stayed under `hooksDir`; both copies of that check (in `removeHooksCmd` and in `editHooksCmd`) are removed here.\n\n`hookFileName` comes straight from `args[0]` and is concatenated into the path with no cleaning, no `filepath.Clean`, and no separator rejection:\n\n    hookFileName := args[0]\n    hookFile = preInstallHooksDir + \"/\" + hookFileName\n\nA value containing `../` therefore resolves outside `/etc/uniget/hooks/...` (or `$HOME/.config/uniget/hooks/...` in `--user` mode) and is passed directly to `os.Remove` at line 171. The same root cause affects `editHooksCmd`, where the unconstrained `hookFile` is handed to the spawned editor (line 226-227) and then to `os.Chmod(hookFile, 0700)` at line 236 \u2014 so an escaping path yields arbitrary file content modification plus a mode change to root-only 0700 on any file the process can reach. I searched `cmd/uniget` for any remaining `filepath.Abs`/`Clean`/`Rel` or prefix check and found none, so nothing downstream re-establishes the boundary.\n\nNote that the other checks this commit removes (the `os.Lstat(hookFile); if err == nil` \"is a symlink\" guards in `editHooksCmd` and `processHooks`) were genuinely broken \u2014 `Lstat` succeeds for any existing file, so they rejected every real hook \u2014 and removing those is a correctness fix, not a regression. The `hooksDir` prefix check is different: it was correct and load-bearing, and it is gone.\n\nI could not establish a privilege boundary from the code in this snapshot: only `cmd/uniget` is tracked here, there is no setuid/`sudo` re-exec anywhere in the tree, and the traversal input is the invoking operator's own argv. The exposure is therefore real but conditional \u2014 it matters where `uniget` runs with privileges the argv supplier does not have (a constrained sudoers entry scoped to `uniget hooks *`, a CI job or automation that templates a hook name from a variable, or a root-run wrapper). Confidence is medium for that reason: the source-to-sink chain is fully read, the escalation context is not visible from here.",
+            "exploit_scenario": "Where `uniget` is invoked with privileges above those of whoever supplies the hook name \u2014 e.g. a sudoers rule restricting a user to `uniget hooks *`, or CI automation that builds the hook name from a job variable \u2014 the supplier passes `uniget hooks remove --type pre-install ../../../../etc/cron.d/somejob`. `hookFile` becomes `/etc/uniget/hooks/pre-install.d/../../../../etc/cron.d/somejob`, `fileExists` confirms it, and `os.Remove` at line 171 deletes it as root. Using `hooks edit` with the same argument instead opens `/etc/cron.d/somejob` in the operator's `$EDITOR` for arbitrary rewriting and then applies `os.Chmod(..., 0700)` to it. Before this change both attempts were rejected with \"hook file ... is outside of hookDir ...\".",
+            "recommendation": "Restore the containment check in both `removeHooksCmd` and `editHooksCmd`, and make it robust by comparing cleaned absolute paths against the directory plus a separator rather than a bare `HasPrefix` (which would accept `/etc/uniget-evil`):\n\n    hookFileAbs, err := filepath.Abs(filepath.Clean(hookFile))\n    if err != nil {\n        return fmt.Errorf(\"unable to resolve hook file %s: %w\", hookFile, err)\n    }\n    hooksDirAbs, err := filepath.Abs(hooksDir)\n    if err != nil {\n        return fmt.Errorf(\"unable to resolve hooks dir %s: %w\", hooksDir, err)\n    }\n    if hookFileAbs != hooksDirAbs && !strings.HasPrefix(hookFileAbs, hooksDirAbs+string(os.PathSeparator)) {\n        return fmt.Errorf(\"hook file %s is outside of hookDir %s\", hookFile, hooksDir)\n    }\n\nBetter still, reject the separator at the source, since a hook name is always a single filename: return an error when `args[0] != filepath.Base(args[0])`. Do not reinstate the `os.Lstat` \"is a symlink\" checks in their previous form; if symlinked hooks should be refused, test `fi.Mode()&os.ModeSymlink != 0` on the `Lstat` result instead of treating a nil error as proof of a symlink.",
+            "verification": {
+              "verdict": "refuted",
+              "reason": "1 of 3 verifier(s) never reported, so the panel could not settle this and the finding stands as reported \u2014 The factual half of the claim is accurate \u2014 the diff does delete the `filepath.Abs` + `strings.HasPrefix(hookFileAbs, hooksDir)` containment check from both `removeHooksCmd` and `editHooksCmd` (cmd/uniget/hooks.go, removed hunks at the old lines preceding the current 165-171 and 226-236), and `hookFileName` from `args[0]` now reaches `os.Remove`/`exec.Command`/`os.Chmod` uncleaned. What fails is the impact: the sole source is the invoking operator's own argv of a local CLI, so with no privilege boundary the \"attack\" is deleting a file the caller could already delete with `rm`. The only boundary the reviewer posits (a sudoers rule scoped to `uniget hooks *`, or CI templating a hook name) is self-defeating: the untouched, pre-existing `testHookCmd` at cmd/uniget/hooks.go:338-355 concatenates `args[0]` into `hookFile` with no containment at all and hands it to `runHook` \u2192 `exec.Command(hookFile, ...)` at line 383, and `hooks add --source /any/file` + `hooks run` does the same \u2014 both give arbitrary root code execution in exactly that scenario, without this change. The removed check was also only a string-prefix test that a sibling path such as `/etc/uniget-old/x` already satisfied, so it was never a sound boundary. Searched: I looked for anything that would re-establish the boundary or, failing that, a privilege boundary that would make the traversal meaningful. (1) Searched cmd/uniget for `filepath.Abs|Clean|Rel` and prefix checks \u2014 confirmed via get_diff that both copies are deleted and `path/filepath` is dropped from the imports, so the reviewer is right that no containment remains. (2) Searched the whole tree for `setuid|Setuid|sudo|Geteuid|http.ListenAndServe|http.Handle` \u2014 no matches, no daemon, no privileged re-exec; the repo tracks only cmd/uniget (list_directory on root, depth 2), and `search_code 'hooks (remove|edit|rm|del)'` finds no CI/script caller that templates a hook name. (3) Checked whether the argv supplier is already trusted with more: `--prefix`/`--user` are rootCmd persistent flags (cmd/uniget/main.go:412-414) settable by the same caller, and the unchanged `testHookCmd` (hooks.go:338-355) and `add`+`run` paths already exec attacker-named files as the process user with no containment. (4) Verified via git_log that hooks.go has only two commits (baseline + this change), so the removed check was not a response to a known incident.",
+              "votes": [
+                {
+                  "verdict": "refuted",
+                  "reasoning": "The factual half of the claim is accurate \u2014 the diff does delete the `filepath.Abs` + `strings.HasPrefix(hookFileAbs, hooksDir)` containment check from both `removeHooksCmd` and `editHooksCmd` (cmd/uniget/hooks.go, removed hunks at the old lines preceding the current 165-171 and 226-236), and `hookFileName` from `args[0]` now reaches `os.Remove`/`exec.Command`/`os.Chmod` uncleaned. What fails is the impact: the sole source is the invoking operator's own argv of a local CLI, so with no privilege boundary the \"attack\" is deleting a file the caller could already delete with `rm`. The only boundary the reviewer posits (a sudoers rule scoped to `uniget hooks *`, or CI templating a hook name) is self-defeating: the untouched, pre-existing `testHookCmd` at cmd/uniget/hooks.go:338-355 concatenates `args[0]` into `hookFile` with no containment at all and hands it to `runHook` \u2192 `exec.Command(hookFile, ...)` at line 383, and `hooks add --source /any/file` + `hooks run` does the same \u2014 both give arbitrary root code execution in exactly that scenario, without this change. The removed check was also only a string-prefix test that a sibling path such as `/etc/uniget-old/x` already satisfied, so it was never a sound boundary.",
+                  "corrected_impact": "state_change",
+                  "corrected_confidence": "low",
+                  "error": ""
+                },
+                {
+                  "verdict": "refuted",
+                  "reasoning": "The removal of the `filepath.Abs` + `strings.HasPrefix(hookFileAbs, hooksDir)` guard in `removeHooksCmd`/`editHooksCmd` is real (diff, cmd/uniget/hooks.go), but the \"source\" is the operator's own argv of a local, non-setuid CLI: I searched cmd/uniget for `Setuid`/`Geteuid`/`http.`/`ListenAndServe` and found no daemon, no network entry point, and no privilege re-exec anywhere in the tracked tree, so `os.Remove` at line 171 runs with exactly the privileges of whoever typed the command \u2014 deleting a file they could already delete with `rm`. The only escalation premise the reviewer offers (a sudoers rule scoped to `uniget hooks *` or CI templating) is already fully broken by code this MR does not touch: `testHookCmd` (hooks.go:296-317) builds `hookFile` from `args[0]` with no containment at all and hands it to `runHook` \u2192 `exec.Command(hookFile, ...)`, and `addHooksCmd` + `runHooksCmd` let any caller drop an executable into the hooks dir (chmod 0700) and run it \u2014 both give arbitrary code execution as the invoking (root) user before and after this change, so the deleted check adds no marginal protection in the one scenario where a boundary would exist. The change is a defense-in-depth/robustness regression worth flagging in review, not an exploitable path traversal.",
+                  "corrected_impact": "state_change",
+                  "corrected_confidence": "low",
+                  "error": ""
+                },
+                {
+                  "verdict": "uncertain",
+                  "reasoning": "",
+                  "corrected_impact": "",
+                  "corrected_confidence": "",
+                  "error": "the verifier ended without submitting a verdict (the session ended with 'success'); a claim with no vote behind it is not verified"
+                }
+              ],
+              "claimed_severity": "medium",
+              "claimed_confidence": "medium",
+              "claimed_line": 171,
+              "evidence_located_line": 171,
+              "line_corrected": false,
+              "introduced_by_this_change": true,
+              "attributed_by": "deleted",
+              "removes_existing_control": false,
+              "path_verified": true
+            },
+            "suppressed_by": ""
+          }
+        ],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.06648926202166336,
+    "safe_findings": [],
+    "unsafe_findings": [],
+    "cost": null,
+    "seconds": 312.576228541
+  },
+  {
+    "case_id": "go-r553-m4fv-5v97",
+    "language": "go",
+    "family": "dos",
+    "case_digest": "62e647cf87b2ab26",
+    "ran_at": "2026-08-28T15:49:12+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.355581
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 101.01679758300003,
+        "cost": 0.354629,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 12,
+          "output_tokens": 6917,
+          "cache_read_tokens": 77128,
+          "cache_write_tokens": 14308
+        },
+        "coverage": {
+          "changed": [
+            "internal/smtpd/smtpd.go"
+          ],
+          "examined": [
+            "internal/smtpd/main.go",
+            "internal/smtpd/smtpd.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "b1fbea00230b7d57",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.2556545
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 63.36992995899999,
+        "cost": 0.2547065,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 12,
+          "output_tokens": 4243,
+          "cache_read_tokens": 71983,
+          "cache_write_tokens": 11258
+        },
+        "coverage": {
+          "changed": [
+            "internal/smtpd/smtpd.go"
+          ],
+          "examined": [
+            "internal/smtpd/smtpd.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.011653469361620388,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "internal/smtpd/smtpd.go",
+        "severity": "low",
+        "title": "Unbounded line buffering in SMTP DATA read allows memory exhaustion",
+        "fingerprint": "b1fbea00230b7d57",
+        "blocking": false
+      }
+    ],
+    "cost": 0.6093355,
+    "seconds": 101.01679758300003
+  },
+  {
+    "case_id": "go-qmcq-xw74-w667",
+    "language": "go",
+    "family": "injection",
+    "case_digest": "8460f79ee6e91abe",
+    "ran_at": "2026-08-28T15:42:58+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.829982
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 171.52011695800002,
+        "cost": 0.829033,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 11719,
+          "cache_read_tokens": 249956,
+          "cache_write_tokens": 41097
+        },
+        "coverage": {
+          "changed": [
+            "cmd/uniget/hooks.go"
+          ],
+          "examined": [
+            "cmd/uniget/common.go",
+            "cmd/uniget/hooks.go",
+            "cmd/uniget/main.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.1393705
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 386.15381575000004,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 32,
+          "output_tokens": 18731,
+          "cache_read_tokens": 458523,
+          "cache_write_tokens": 44072
+        },
+        "coverage": {
+          "changed": [
+            "cmd/uniget/hooks.go"
+          ],
+          "examined": [
+            "cmd/uniget/cron.go",
+            "cmd/uniget/hooks.go",
+            "cmd/uniget/main.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [
+          {
+            "fingerprint": "fd76407a2d8a6d39",
+            "title": "Path containment check removed from `hooks remove`/`hooks edit`",
+            "severity": "medium",
+            "confidence": "low",
+            "category": "path-traversal",
+            "file": "cmd/uniget/hooks.go",
+            "line": 171,
+            "impact": "state_change",
+            "reachable_without_authentication": "no",
+            "requires_user_interaction": "no",
+            "severity_derivation": "state_change \u2192 high; authentication required \u2192 medium",
+            "evidence": "\t\terr = os.Remove(hookFile)\n\t\tif err != nil {\n\t\t\treturn fmt.Errorf(\"unable to remove %s hook %s: %s\", hookType, hookFileName, err)",
+            "description": "This change deletes the only control that confined hook operations to the hooks directory. Both `removeHooksCmd` and `editHooksCmd` previously did:\n\n    hookFileAbs, err := filepath.Abs(hookFile)\n    if !strings.HasPrefix(hookFileAbs, hooksDir) { return ...outside of hookDir... }\n\n`hookFile` is built by naive string concatenation from `hookFileName := args[0]` (line 146 for remove, line 203 for edit) onto `hooksDir` (`viper.GetString(\"prefix\") + \"/\" + configDirectory`, which is absolute \u2014 `/etc/uniget` in system mode \u2014 so the deleted check was functional, not dead code). With the check gone, a value such as `../../../../etc/cron.d/job` escapes the hooks tree and reaches `os.Remove(hookFile)` at line 171, and in `editHooksCmd` reaches `exec.Command(editorWithArgs[0], ...)` followed by `os.Chmod(hookFile, 0700)` at line 236 \u2014 arbitrary file deletion, an arbitrary file opened in the invoker's editor, and an arbitrary path chmod'ed to 0700.\n\nTwo related hardening removals in the same commit, which I am not reporting separately: the `os.Lstat` symlink rejection in `processHooks` (now line 425-426), which was meant to stop a symlink planted in `/etc/uniget/hooks/*.d` from being executed by `runHook`; and the change at line 199 from `strings.Split(editor, \" \")[0]` to passing the full split of `$UNIGET_EDITOR`/`$EDITOR` as argv. Both removed `Lstat` checks were in fact broken \u2014 `err == nil` is true for any existing file, not only symlinks \u2014 so deleting them restores functionality that previously always failed.\n\nConfidence is low deliberately: I could not close the trust boundary. `args[0]`, `$EDITOR` and `$UNIGET_PREFIX` are all supplied by the same principal that runs the binary, the hook directories are created root-owned 0755 by `assertDirectory`, and no code path I could find feeds these arguments from a less-privileged source. Under `sudo` the environment is scrubbed by default. So this is a removed hardening control rather than a demonstrated privilege crossing, and it is flagged for a human to weigh rather than asserted as exploitable.",
+            "exploit_scenario": "A caller who can invoke the binary but is expected to be constrained to managing hooks \u2014 for example an automation wrapper or a sudoers rule scoped to `uniget hooks *` \u2014 runs `uniget hooks remove --type pre-install ../../../../etc/cron.d/uniget`. The path is concatenated unchecked onto `/etc/uniget/hooks/pre-install.d/`, resolves outside the hooks tree, and `os.Remove` deletes the file with the process's privileges. The same argument to `hooks edit` opens an arbitrary path in the editor and then chmods it to 0700. Note that the `pre-install` branch of `removeHooksCmd` (lines 150-152) does not even call `assertDirectory`, so nothing else touches the path first.",
+            "recommendation": "Restore the containment check in both commands, and prefer `filepath.Clean`/`filepath.Rel` over a string prefix test so that sibling directories such as `/etc/uniget-evil` do not pass:\n\n    hookFileAbs, err := filepath.Abs(hookFile)\n    if err != nil { return err }\n    hooksDirAbs, err := filepath.Abs(hooksDir)\n    if err != nil { return err }\n    rel, err := filepath.Rel(hooksDirAbs, hookFileAbs)\n    if err != nil || rel == \"..\" || strings.HasPrefix(rel, \"..\"+string(os.PathSeparator)) {\n        return fmt.Errorf(\"hook file %s is outside of hookDir %s\", hookFile, hooksDir)\n    }\n\nBetter still, reject the argument up front unless it is a bare filename (`filepath.Base(args[0]) == args[0]`), matching what `addHooksCmd` already does by taking only the last path segment of `--source`. Separately, if the symlink protection in `processHooks` and `editHooksCmd` is still wanted, reimplement it correctly \u2014 `fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0` \u2014 rather than deleting it.",
+            "verification": {
+              "verdict": "refuted",
+              "reason": "3/3 verifier(s) agreed \u2014 The diff does delete the `filepath.Abs`/`strings.HasPrefix(hookFileAbs, hooksDir)` containment check from both `removeHooksCmd` and `editHooksCmd` (cmd/uniget/hooks.go, removed block before line 168 and before line 236), so the reviewer's reading of the code is accurate. What fails is the trust boundary: the only source is `args[0]` of a local cobra CLI command (`hooks.go:146`, `hooks.go:203`), registered only on `rootCmd` via `initHooksCmd` (`hooks.go:41,48`), and the process runs with exactly the privileges of whoever typed the command \u2014 `search_code` for `setuid|sudoers|NOPASSWD|4755` returned nothing, `cmd/uniget/` contains no server/daemon/API surface, and there is no in-repo caller that feeds `hooks remove`/`hooks edit` from a less-privileged source. Removing a file, or opening and chmod'ing one, that the invoking principal could already `rm`/`chmod` directly is not a privilege crossing; the claimed impact rests entirely on a hypothetical `uniget hooks *`-scoped sudoers rule that exists nowhere in the repository, and `--prefix`/`$HOME`/`$XDG_CONFIG_HOME` are controlled by the same principal anyway, so the deleted check never bounded a security boundary \u2014 it was self-consistency hardening. Searched: I looked for anything that would make `args[0]` cross a privilege boundary or be supplied by a party other than the invoker. (1) `search_code` for `removeHooksCmd|editHooksCmd` \u2014 only 8 hits, all in cmd/uniget/hooks.go (flag registration lines 36-48 and the command definitions at 132/180); no programmatic caller anywhere. (2) `search_code` for `hooks (remove|edit|rm|add)` across the repo \u2014 no matches, so no script, CI job, or wrapper shells out to these subcommands with externally-sourced arguments. (3) `search_code` for `setuid|sudoers|NOPASSWD|chmod \\+?s|4755` \u2014 no matches, so the binary is not installed privileged and no restricted sudo policy ships with it. (4) `list_directory cmd/uniget` \u2014 26 files, all local package-manager subcommands (install, uninstall, cache, search, ...); there is no server, daemon, or RPC entry point that could deliver an attacker-supplied hook name. (5) I confirmed via cmd/uniget/main.go:93-147 that `prefix`/`configDirectory` are derived from the invoker's own `--prefix` flag and `$HOME`/`$XDG_CONFIG_HOME`, i.e. the same principal controls both sides of the comparison the removed check performed. I also verified the removed check was functional (hooksDir is absolute in both system and `--user` mode), so the finding is factually right about the code and wrong only about there being a security boundary to cross.",
+              "votes": [
+                {
+                  "verdict": "refuted",
+                  "reasoning": "The diff does delete the `filepath.Abs`/`strings.HasPrefix(hookFileAbs, hooksDir)` containment check from both `removeHooksCmd` and `editHooksCmd` (cmd/uniget/hooks.go, removed block before line 168 and before line 236), so the reviewer's reading of the code is accurate. What fails is the trust boundary: the only source is `args[0]` of a local cobra CLI command (`hooks.go:146`, `hooks.go:203`), registered only on `rootCmd` via `initHooksCmd` (`hooks.go:41,48`), and the process runs with exactly the privileges of whoever typed the command \u2014 `search_code` for `setuid|sudoers|NOPASSWD|4755` returned nothing, `cmd/uniget/` contains no server/daemon/API surface, and there is no in-repo caller that feeds `hooks remove`/`hooks edit` from a less-privileged source. Removing a file, or opening and chmod'ing one, that the invoking principal could already `rm`/`chmod` directly is not a privilege crossing; the claimed impact rests entirely on a hypothetical `uniget hooks *`-scoped sudoers rule that exists nowhere in the repository, and `--prefix`/`$HOME`/`$XDG_CONFIG_HOME` are controlled by the same principal anyway, so the deleted check never bounded a security boundary \u2014 it was self-consistency hardening.",
+                  "corrected_impact": "",
+                  "corrected_confidence": "low",
+                  "error": ""
+                },
+                {
+                  "verdict": "refuted",
+                  "reasoning": "The removal is real (diff on cmd/uniget/hooks.go deletes the `filepath.Abs` + `strings.HasPrefix(hookFileAbs, hooksDir)` guard from both `removeHooksCmd` and `editHooksCmd`), but the only source for `hookFileName` is `args[0]` of a locally-invoked cobra CLI (`cmd/uniget/hooks.go:146`, `:203`); I searched the whole repo for any non-argv caller (`search_code` for `removeHooksCmd|editHooksCmd`, and for any HTTP/RPC server \u2014 no `http.ListenAndServe`, no daemon, no setuid/4755 anywhere), so the value is supplied by the same principal that already owns the process's privileges. The reviewer's only privilege-crossing scenario (a wrapper or sudoers rule scoped to `uniget hooks *`) is already fully defeated by unchanged code in the same subcommand group: `testHookCmd` at cmd/uniget/hooks.go:346-355 concatenates `args[0]` onto the hooks dir with no containment check ever and passes it to `runHook` \u2192 `exec.Command`, giving arbitrary binary execution, and `addHooksCmd` (lines 94-127) + `hooks run` lets any source file be copied in, chmod'ed 0700 and executed. The deleted guard therefore protected no boundary that the untouched code does not already leave wide open \u2014 it is defense-in-depth churn in a single-principal CLI, not a demonstrated path-traversal vulnerability.",
+                  "corrected_impact": "",
+                  "corrected_confidence": "low",
+                  "error": ""
+                },
+                {
+                  "verdict": "refuted",
+                  "reasoning": "Working backwards from the sink: `os.Remove(hookFile)` at cmd/uniget/hooks.go:171 (and the `exec.Command`/`os.Chmod` at 231-236) is reached only from the cobra `RunE` of `uniget hooks remove`/`hooks edit`; a repo-wide search for other callers (`removeHooksCmd|editHooksCmd|hooks (remove|edit)`) finds only the registrations at hooks.go:36-48, so the sole source of `args[0]` is the argv of the person invoking the binary, acting with that process's own privileges \u2014 deleting/chmod'ing a file you already have rights to is not a privilege crossing. The claim's only non-trivial threat model, a principal confined to `uniget hooks *`, is refuted by unmodified code in the same file: `testHookCmd` (hooks.go:340-355) concatenates `args[0]` onto the hooks dir with no containment check at all and passes it to `runHook` \u2192 `exec.Command(hookFile, ...)` (hooks.go:443), and `addHooksCmd` (hooks.go:88-127) plus `hooks run` let that same principal drop and execute a script as the invoking user; neither was touched by this diff, so such a principal already has arbitrary execution and the removed `HasPrefix` check bought nothing. The removal at hooks.go:159-166 of the baseline is real and is a defense-in-depth regression worth a maintainer's note, but the chain's impact link (a security consequence beyond what the same caller can already do) does not close.",
+                  "corrected_impact": "",
+                  "corrected_confidence": "low",
+                  "error": ""
+                }
+              ],
+              "claimed_severity": "low",
+              "claimed_confidence": "low",
+              "claimed_line": 171,
+              "evidence_located_line": 171,
+              "line_corrected": false,
+              "introduced_by_this_change": true,
+              "attributed_by": "deleted",
+              "removes_existing_control": false,
+              "path_verified": true
+            },
+            "suppressed_by": ""
+          }
+        ],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.06648926202166336,
+    "safe_findings": [],
+    "unsafe_findings": [],
+    "cost": null,
+    "seconds": 386.15381575000004
+  },
+  {
+    "case_id": "go-w67g-5rqw-f597",
+    "language": "go",
+    "family": "crypto",
+    "case_digest": "4ec16450b4de795d",
+    "ran_at": "2026-08-28T15:50:57+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.24551100000000003
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 71.32466058299997,
+        "cost": 0.244558,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 14,
+          "output_tokens": 4524,
+          "cache_read_tokens": 76476,
+          "cache_write_tokens": 9315
+        },
+        "coverage": {
+          "changed": [
+            "conn.go"
+          ],
+          "examined": [
+            "conn.go",
+            "go.mod"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "3df3286cbf29c6b5",
+          "severity": "high",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "crypto",
+            "conn.go",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.2190855
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 171.44148704199995,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 14,
+          "output_tokens": 4375,
+          "cache_read_tokens": 72105,
+          "cache_write_tokens": 7264
+        },
+        "coverage": {
+          "changed": [
+            "conn.go"
+          ],
+          "examined": [
+            "conn.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.0002642124267911401,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "crypto",
+        "file": "conn.go",
+        "severity": "high",
+        "title": "WebSocket client masking keys generated with math/rand instead of crypto/rand",
+        "fingerprint": "3df3286cbf29c6b5",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 171.44148704199995
+  },
+  {
+    "case_id": "go-xhj3-7xw9-vr34",
+    "language": "go",
+    "family": "dos",
+    "case_digest": "d3769868e2364a00",
+    "ran_at": "2026-08-28T15:51:57+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "90d0ae21e5e7b9f4",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.45047600000000004
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 113.93192012500003,
+        "cost": 0.449529,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 18,
+          "output_tokens": 7745,
+          "cache_read_tokens": 132568,
+          "cache_write_tokens": 18953
+        },
+        "coverage": {
+          "changed": [
+            "openapi3filter/req_resp_decoder.go"
+          ],
+          "examined": [
+            "openapi3filter/req_resp_decoder.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "a4a2276d31675678",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "dos",
+            "openapi3filter/req_resp_decoder.go",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.2808705
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 156.04100983299998,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 18,
+          "output_tokens": 4321,
+          "cache_read_tokens": 110323,
+          "cache_write_tokens": 11665
+        },
+        "coverage": {
+          "changed": [
+            "openapi3filter/req_resp_decoder.go"
+          ],
+          "examined": [
+            "openapi3filter/req_resp_decoder.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.007537219686322309,
+    "safe_findings": [
+      {
+        "category": "dos",
+        "file": "openapi3filter/req_resp_decoder.go",
+        "severity": "low",
+        "title": "Integer overflow bypasses new sparse-array guard in sliceMapToSlice",
+        "fingerprint": "90d0ae21e5e7b9f4",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "openapi3filter/req_resp_decoder.go",
+        "severity": "low",
+        "title": "Unbounded allocation from sparse deepObject array indexes (DoS)",
+        "fingerprint": "a4a2276d31675678",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 156.04100983299998
+  }
+]

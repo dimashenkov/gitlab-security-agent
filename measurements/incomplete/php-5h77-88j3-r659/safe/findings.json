@@ -1,0 +1,320 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-28T16:14:15+00:00",
+  "summary": "## What the change does\n\nOne file, `includes/functions-infos.php` (YOURLS stats/graph helpers). Three functions were modified, all in a hardening direction:\n\n1. **`yourls_get_domain()`** — added strict types, replaced `@parse_url` with a checked `parse_url`, and added host validation: the host must match `^(\\[[\\da-fA-F:]+\\]|[a-zA-Z0-9._-]+)$`, otherwise it is run through `idn_to_ascii()` and re-validated against `^[a-zA-Z0-9._-]+$` (or, when `intl` is absent, against `^[\\pL\\pN._-]+$`), returning `''` on failure.\n2. **`yourls_get_favicon_url()`** — wraps the domain in `yourls_esc_url()`.\n3. **`yourls_google_array_to_data_table()`** — the array key is now `yourls_esc_js()`-escaped before being interpolated into the single-quoted JS string literal (previously `\"\\t['$label',\"`, raw), and values go through `yourls_esc_url()` and `yourls_esc_js()`.\n\n## What I examined\n\n- Read `functions-infos.php` in full, including the three call sites of `yourls_google_array_to_data_table()` (`yourls_stats_countries_map`, `yourls_stats_pie`, `yourls_stats_line`) and the sink `yourls_google_viz_code()`, which emits the string inside a `<script>` block.\n- Read `yourls_esc_js()`, `yourls_specialchars()`, `yourls_specialchars_decode()`, `yourls_check_invalid_utf8()`, `yourls_esc_url()`, `yourls_normalize_uri()`, `yourls_remove_backslashes_before_query_fragment()` in `functions-formatting.php`, and `yourls_get_protocol()` / `yourls_is_allowed_protocol()` in `functions.php`, to establish what the escapers actually neutralise rather than assuming from their names.\n- Traced `yourls_esc_js()` step by step for a single-quoted JS string context: `yourls_specialchars(..., ENT_COMPAT)` encodes `<`, `>`, `&`, `\"` (so `</script>` breakout is blocked), the `&#39;`/`&#x27;` back-conversion is followed by `addslashes()` as the last transformation, so `'` and `\\` are both escaped and no ordering trick reintroduces an unescaped quote. This genuinely closes the pre-existing raw `'$label'` interpolation.\n- Checked `yourls_get_domain()`'s output character set on every branch (already-safe host, IDN-converted host, no-intl fallback, `javascript:`-style URLs where `path` is used as `host`). Every return value is either `''` or restricted to alphanumerics/`._-`/bracketed hex, so no HTML- or JS-breaking character can survive.\n- Confirmed the PHP 8 baseline (`str_contains` already used in `includes/class-mysql.php`), so the new `str_starts_with` / `??` usage is not a fatal-error regression.\n- `git_log` shows only a synthetic two-commit history, so no prior security context to draw on.\n\n## Conclusion\n\nNo finding. The diff is a net security improvement and I could not construct an exploit path that it introduces or newly exposes.\n\nThe one construct I scrutinised hardest is the surviving raw-interpolation branch at line 372: a value that starts with `[` or `{` after `yourls_esc_url()` is written into the JS unquoted. Because `yourls_esc_url()` only *strips* characters, it can newly cause a string to begin with `[`. But for that to matter the value would already have to be attacker-controlled and non-numeric — in which case the *old* code was more trivially exploitable via a bare `'` in the quoted branch. All three in-repo call sites pass only integer hit counts and the literals `'Hits'` / `'Value'` as values, so I could not source it. Not a regression, and not substantiable as a finding from this repository.",
+  "mode": "diff",
+  "model": "claude-opus-5",
+  "complete": true,
+  "finished_explicitly": true,
+  "unresolved": [
+    "This repository snapshot contains only `includes/`; the admin pages and templates that actually call `yourls_stats_pie()`, `yourls_stats_countries_map()`, `yourls_stats_line()`, `yourls_get_domain()` and `yourls_get_favicon_url()` are not tracked here. I could not confirm reachability or authentication state for the rendered graph output from code, only that the escaping applied is correct for its context.",
+    "Residual raw-interpolation branch at `includes/functions-infos.php:372`: a value starting with `[` after `yourls_esc_url()` is emitted into the `<script>` block unquoted and unescaped. Pre-existing and not reachable from any in-repo caller (all pass numeric counts), but a plugin or out-of-repo caller passing a non-numeric attacker-controlled value would make it an XSS. I could not enumerate such callers.",
+    "Same pattern, also pre-existing and untouched by this diff, in `yourls_google_viz_code()` (lines 402-405 and the `$id` interpolated into `id=\"yourls_graph$id\"` / `getElementById('visualization_$id')` at 395/410). `$id` defaults to `uniqid()` in all in-repo callers, but is a caller-supplied parameter; I could not check out-of-repo callers for a controlled value.",
+    "`yourls_esc_js()` does not escape U+2028/U+2029. Harmless on ES2019+ engines inside a string literal; I did not determine whether the project still targets older browsers where this would terminate the literal.",
+    "The no-`intl` fallback in `yourls_get_domain()` accepts any `\\pL`/`\\pN` host without punycode conversion, so behaviour differs between deployments with and without the `intl` extension. I judged the accepted character set safe for HTML/JS output, but I could not see the consuming templates to confirm no other context (e.g. a URL path or a shell/DB sink) receives it."
+  ],
+  "stop_reason": "completed",
+  "stop_detail": "",
+  "trace_markdown": "",
+  "verdict": {
+    "exit_code": 0,
+    "blocked": false,
+    "reason": "No security findings.",
+    "blocking_fingerprints": [],
+    "not_gated_on": []
+  },
+  "counts": {
+    "reported": 0,
+    "blocking": 0,
+    "refuted": 0,
+    "suppressed": 0,
+    "rejected_claims": 0,
+    "by_severity": {
+      "low": 0,
+      "medium": 0,
+      "high": 0,
+      "critical": 0
+    }
+  },
+  "findings": [],
+  "refuted": [],
+  "suppressed": [],
+  "rejected_claims": [],
+  "coverage": {
+    "files_examined": [
+      "includes/functions-formatting.php",
+      "includes/functions-infos.php",
+      "includes/functions.php"
+    ],
+    "exposures": [
+      [
+        "includes/class-mysql.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-formatting.php",
+        "read_file"
+      ],
+      [
+        "includes/functions-formatting.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-infos.php",
+        "get_diff"
+      ],
+      [
+        "includes/functions-infos.php",
+        "read_file"
+      ],
+      [
+        "includes/functions-infos.php",
+        "search_code"
+      ],
+      [
+        "includes/functions-links.php",
+        "search_code"
+      ],
+      [
+        "includes/functions.php",
+        "read_file"
+      ],
+      [
+        "includes/functions.php",
+        "search_code"
+      ]
+    ],
+    "turns": 0,
+    "tool_calls": [
+      {
+        "turn": 0,
+        "tool": "list_changed_files",
+        "summary": "1 changed file(s), 0 generated",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "get_diff",
+        "summary": "diff for all files (3373 chars)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'function yourls_esc_js|function yourls_esc_url|function yourls_match_current_protocol|function yourls_sanitize_url': 5 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'yourls_google_array_to_data_table|yourls_get_favicon_url|yourls_get_domain': 7 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read includes/functions-infos.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read includes/functions-formatting.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'yourls_stats_pie|yourls_stats_countries_map|yourls_stats_line|yourls_google_viz_code': 9 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "git_log",
+        "summary": "git log includes/functions-infos.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read includes/functions-infos.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "list_directory",
+        "summary": "listed .",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'function yourls_specialchars|function yourls_check_invalid_utf8|function yourls_get_protocol|function yourls_is_allowed_protocol': 6 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read includes/functions-formatting.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "search_code",
+        "summary": "search 'str_starts_with|str_contains': 2 match(es)",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "read_file",
+        "summary": "read includes/functions.php",
+        "rejected": false
+      },
+      {
+        "turn": 0,
+        "tool": "finish_review",
+        "summary": "finish_review: 5 unresolved",
+        "rejected": false
+      }
+    ]
+  },
+  "usage": {
+    "reported": true,
+    "complete": true,
+    "unreported_stages": 0,
+    "requests": 1,
+    "input_tokens": 24,
+    "output_tokens": 11889,
+    "cache_read_tokens": 225327,
+    "cache_write_tokens": 26943
+  },
+  "revision": {
+    "mode": "diff",
+    "base": "a3efb95d4130880dd027d058e96a15190b246772",
+    "head": "4f9bf56a9f0961464a723e8a25d33f943dc05080",
+    "base_sha": "a3efb95d4130880dd027d058e96a15190b246772",
+    "head_sha": "4f9bf56a9f0961464a723e8a25d33f943dc05080"
+  },
+  "identity": {
+    "base_sha": "a3efb95d4130880dd027d058e96a15190b246772",
+    "head_sha": "4f9bf56a9f0961464a723e8a25d33f943dc05080",
+    "mode": "diff",
+    "agent_version": "0.1.0",
+    "model_requested": "claude-opus-5",
+    "system_prompt_sha": "bd359730e26be159",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "settings": {
+      "fail_on": "high",
+      "min_confidence": "medium",
+      "gate_pre_existing": false,
+      "gate_removed_controls": true,
+      "ungated_categories": [],
+      "verify": true,
+      "verify_votes": 1,
+      "effort": "high",
+      "verifier_context_chars": 20000,
+      "suppressions": "",
+      "excludes": [
+        "*.eot",
+        "*.gif",
+        "*.ico",
+        "*.jpeg",
+        "*.jpg",
+        "*.lock",
+        "*.map",
+        "*.min.css",
+        "*.min.js",
+        "*.mo",
+        "*.pb.go",
+        "*.pdf",
+        "*.png",
+        "*.pyc",
+        "*.snap",
+        "*.svg",
+        "*.ttf",
+        "*.woff",
+        "*.woff2",
+        "*/.terraform/*",
+        "*/__snapshots__/*",
+        "*/build/*",
+        "*/dist/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+        "*_pb2.py",
+        "Cargo.lock",
+        "Gemfile.lock",
+        "composer.lock",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "yarn.lock"
+      ],
+      "fail_on_incomplete": true,
+      "verify_max_findings": 40,
+      "verify_model": "",
+      "verify_effort": "high",
+      "diff_ceiling_bytes": 0,
+      "scope": []
+    }
+  },
+  "provenance": {
+    "model_requested": "claude-opus-5",
+    "models_served": [
+      "claude-opus-5"
+    ],
+    "model_substituted": false,
+    "system_prompt_sha": "bd359730e26be159",
+    "verifier_prompt_sha": "4c3ea369c2d10317",
+    "schema_sha": "771225ae1a564f71",
+    "agent_version": "0.1.0",
+    "provider": "claude-cli",
+    "auth_method": "claude.ai",
+    "auth_subscription": "max",
+    "reported_cost_usd": 0.6803885000000001
+  },
+  "coverage_accounting": {
+    "changed": [
+      "includes/functions-infos.php"
+    ],
+    "examined": [
+      "includes/functions-formatting.php",
+      "includes/functions-infos.php",
+      "includes/functions.php"
+    ],
+    "excluded": [],
+    "out_of_scope": [],
+    "diff_truncated": false,
+    "unopened": [],
+    "complete": true
+  },
+  "stage_metrics": {
+    "citations": {
+      "accepted": 0,
+      "rejected_unknown_path": 0,
+      "rejected_not_found": 0,
+      "rejected_ambiguous": 0,
+      "rejected_too_short": 0,
+      "lines_corrected": 0
+    },
+    "verification": {
+      "verified": 0,
+      "skipped": 0,
+      "failed": 0,
+      "verdicts_changed": 0
+    }
+  },
+  "turns_detail": [],
+  "settings": {
+    "fail_on": "high",
+    "min_confidence": "medium",
+    "gate_pre_existing": false,
+    "gate_removed_controls": true,
+    "ungated_categories": [],
+    "verify": true,
+    "verify_votes": 1,
+    "effort": "high",
+    "scope": []
+  }
+}

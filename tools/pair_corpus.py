@@ -135,8 +135,16 @@ def cost_summary(costs: Sequence[Optional[float]], unit: str = "pair") -> str:
                 "cannot produce that figure; it is not zero.".format(
                     len(values), unit))
     if missing:
-        return ("total cost ${:.2f} across {} of {} {}s — the other {} "
-                "reported no usage and are missing from that figure".format(
+        # "not costable", not "reported no usage". The first go batch showed
+        # why the wording matters: all twelve runs reported their review
+        # stage's tokens, and this line said five of six pairs "reported no
+        # usage" — because the verifier is a second CLI invocation that returns
+        # no `Usage` at all, so the pair's total is incomplete and refuses to
+        # price itself. Correct arithmetic, and a sentence that named the wrong
+        # cause, inside the tool written to stop exactly that.
+        return ("total cost ${:.2f} across {} of {} {}s — the other {} could "
+                "not be costed, because some stage of each reported nothing; "
+                "they are missing from that figure".format(
                     sum(known), len(known), len(values), unit, missing))
     return "total cost ${:.2f} across {} {}s".format(
         sum(known), len(values), unit)
@@ -661,7 +669,15 @@ def report(results: list, adjudications: Sequence[dict] = ()) -> None:
           "sheet as 'found no failure', not as a bound on the failure rate.")
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    """The command line, separated from running it.
+
+    `.gitlab-ci.yml` holds an invocation of this file that costs 8-15 USD, and
+    it was missing `--provider` — a required argument, so the job died on
+    argparse having measured nothing, and nothing in `tests/` reads that file.
+    A test can only put that line in front of the real parser if the parser can
+    be built without starting a single review.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cases", help="directory holding case.yml manifests")
     parser.add_argument("--language")
@@ -684,7 +700,11 @@ def main() -> int:
                              "or did not complete here. On by default under "
                              "the --json path's directory; the reason a run "
                              "stopped lives in the artifact and nowhere else.")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = _build_parser().parse_args()
 
     keep_dir = Path(args.keep_artifacts) if args.keep_artifacts else (
         Path(args.json).resolve().parent / "incomplete" if args.json else None)

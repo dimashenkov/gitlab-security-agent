@@ -103,8 +103,11 @@ class Profile:
     `verify.MAX_VERIFY_TURNS`, which is 14, while this field said 8 for
     `normal` and 12 for `deep`. A second copy of a limit, disagreeing with the
     enforced one and applied by nobody, is worse than no limit at all. The
-    argument is still accepted and ignored so that call sites outside this
-    module keep working; delete it from them and then delete it from here.
+    argument is gone as well, not merely accepted and ignored: passing
+    `verifier_turns=` raises `TypeError`, which is what
+    `test_budget.py::test_a_profile_declares_no_verifier_turn_ceiling` holds.
+    This sentence said the opposite for a while — the exact defect this file's
+    audit round was about, in the file it was reported in.
     """
 
     name: str

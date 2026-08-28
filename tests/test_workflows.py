@@ -15,6 +15,8 @@ argument for checking them here rather than against it.
 from __future__ import annotations
 
 import re
+import shlex
+import sys
 from pathlib import Path
 
 import pytest
@@ -237,3 +239,183 @@ def test_the_pinned_benchmark_names_what_it_pinned():
                          if line.lstrip().startswith("#"))
     assert pin.group(1)[:7] in comments, (
         "no comment names the pinned commit, so nobody can tell what it is")
+
+
+# ----------------------------------------------- the GitLab-shaped CI files
+#
+# `.gitlab-ci.yml` is the pipeline this repository runs; `security-scan.yml` is
+# the file the README tells a GitLab user to include. Neither was read by
+# anything: two audit items were closed by editing them, and both edits could
+# be undone with the suite still green.
+#
+# GitLab's format has `rules`, not `steps`, and a rule decides whether the job
+# is *created at all* — which is the whole subject below, because a job that
+# does not exist leaves no artifact and no note.
+
+GITLAB_YAML = [ROOT / ".gitlab-ci.yml", ROOT / "templates" / "security-scan.yml"]
+
+# The variables a rule may not read. `CI_MERGE_REQUEST_LABELS` is the merge
+# request's labels; `inputs.skip_label` is the template's own name for the one
+# that means "skip". Either in a rule is the same decision: the label removes
+# the job.
+LABEL_VARIABLES = ("CI_MERGE_REQUEST_LABELS", "inputs.skip_label")
+
+
+def gitlab_jobs(path: Path) -> dict:
+    """Top-level keys that are jobs, which in GitLab means they have a script.
+
+    `stages`, `variables` and `default` are not jobs; `default` is the one that
+    would otherwise slip through, because it holds `before_script`.
+    """
+    body = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {name: job for name, job in body.items()
+            if isinstance(job, dict) and job.get("script")}
+
+
+def reviewing_jobs(path: Path) -> dict:
+    """The jobs that run a review, found by what they run.
+
+    By the command rather than by the job's name, for the reason
+    `reviewing_steps` above gives: the names differ between the two files
+    (`self-review`, `$[[ inputs.job_name ]]`) and one of them is not even a
+    literal, so a list of names would quietly check nothing in the file that
+    matters most.
+    """
+    return {name: job for name, job in gitlab_jobs(path).items()
+            if any("gitlab-security-agent" in str(line) for line in job["script"])}
+
+
+def merge_request_review_job(path: Path) -> tuple:
+    """The review job a merge request pipeline creates.
+
+    Told apart from the scheduled whole-repository sweep by the rule that
+    brings it into being, not by its name. The sweep has no merge request, so
+    no label and no note, and none of this applies to it.
+    """
+    for name, job in reviewing_jobs(path).items():
+        for rule in job.get("rules") or []:
+            if isinstance(rule, dict) and "CI_MERGE_REQUEST_IID" in str(rule.get("if") or ""):
+                return name, job
+    return "", {}
+
+
+@pytest.mark.parametrize("path", GITLAB_YAML, ids=lambda p: p.name)
+def test_there_is_a_review_job_to_check(path):
+    """Guards the two tests below, which pass over an empty mapping."""
+    assert reviewing_jobs(path), (
+        "{}: no job runs the agent, so nothing here reviews anything"
+        .format(path.name))
+    name, _job = merge_request_review_job(path)
+    assert name, "{}: no review job runs on a merge request".format(path.name)
+
+
+@pytest.mark.parametrize("path", GITLAB_YAML, ids=lambda p: p.name)
+def test_the_skip_label_never_decides_whether_the_job_exists(path):
+    """The label is honoured inside the job, and nowhere else.
+
+    Both files used to carry `when: never` on the skip label. That produced no
+    job, no artifact and no note — and the note left by the run *before* the
+    label went on stayed up on the merge request, still claiming its verdict.
+    The label became a way to keep a stale pass visible.
+
+    The fix moved the decision into the program: it exits 0 without contacting
+    the model and writes an artifact saying the review was skipped, which costs
+    runner seconds and buys a record that the review did not happen. That fix
+    lives half in `cli.py`, which `TestSkipHatches` holds, and half in these
+    two files, which nothing read.
+
+    Asserted against the parsed rules rather than against the file's text: both
+    files explain in a comment why `when: never` is not there, and a check on
+    the text finds the explanation and passes.
+    """
+    for name, job in reviewing_jobs(path).items():
+        rules = job.get("rules") or []
+        assert rules, "{}: {} has no rules at all".format(path.name, name)
+        for rule in rules:
+            assert isinstance(rule, dict), rule
+            condition = str(rule.get("if") or "")
+            reads_labels = [v for v in LABEL_VARIABLES if v in condition]
+            assert not reads_labels, (
+                "{}: a rule on {} decides from {} (when: {!r}), so a labelled "
+                "merge request gets no job, no artifact and no note"
+                .format(path.name, name, reads_labels, rule.get("when")))
+
+
+def test_the_template_hands_the_skip_label_to_the_program():
+    """The other half: the job runs, and it is told which label to honour.
+
+    Dropping `--skip-label` from the script is the same defect wearing the
+    opposite shape — the job exists, and reviews a merge request that asked not
+    to be reviewed.
+
+    Parsed by the CLI's own argparse, with a sentinel substituted for the
+    input. Never the template's real default: `--skip-label` defaults to
+    exactly that string in `cli.py`, so a script that stopped passing the flag
+    would parse to the same value and this would assert nothing.
+    """
+    from security_agent import cli
+
+    path = ROOT / "templates" / "security-scan.yml"
+    body = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    inputs = (body.get("spec") or {}).get("inputs") or {}
+    assert "skip_label" in inputs, "the template no longer takes a skip label"
+
+    name, job = merge_request_review_job(path)
+    sentinel = "not-the-default-label"
+    parsed = []
+    for command in job["script"]:
+        argv = shlex.split(command.replace("$[[ inputs.skip_label ]]", sentinel))
+        assert argv[0] == "gitlab-security-agent", argv
+        parsed.append(cli._parse_args(argv[1:]))
+
+    assert [args.skip_label for args in parsed] == [sentinel], (
+        "{}: {} does not pass the skip_label input to the agent".format(
+            path.name, name))
+
+
+def test_the_corpus_job_names_the_account_it_charges():
+    """`--provider` became required an hour before this line was found missing.
+
+    Omitting it used to select the paid path silently, and this job is 48
+    reviews — the one place where the paid path is the right answer, so it has
+    to say so. `.gitlab-ci.yml` was left without the argument, which meant the
+    job exited on argparse having measured nothing, and nothing in `tests/`
+    reads `.gitlab-ci.yml`.
+
+    Checked against the tool's real parser rather than by looking for the
+    string: `--provider` is there in spellings the parser rejects, and the
+    failure mode being guarded against is a command line that does not run.
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    from pair_corpus import _build_parser
+
+    body = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8"))
+    job = body["eval-corpus"]
+    variables = {name: str(value)
+                 for name, value in (job.get("variables") or {}).items()}
+    commands = [line for line in job["script"] if "pair_corpus.py" in line]
+    assert len(commands) == 1, commands
+
+    argv = [re.sub(r"\$(\w+)", lambda m: variables.get(m.group(1), m.group(0)), word)
+            for word in shlex.split(commands[0])]
+    assert argv[0] == "python3" and argv[1].endswith("pair_corpus.py"), argv
+
+    args = _build_parser().parse_args(argv[2:])
+
+    assert args.provider == "anthropic-api"
+    assert args.cases == "corpus/"
+
+
+def test_the_provider_is_what_that_command_would_die_without():
+    """The control for the test above.
+
+    An assertion that a command line parses proves nothing unless something
+    could have made it fail. Strip the one argument and the same line exits
+    non-zero before a single review runs, which is what the job did.
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    from pair_corpus import _build_parser
+
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(
+            ["corpus/", "--concurrency", "1", "--json", "corpus-result.json"])

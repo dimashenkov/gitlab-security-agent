@@ -400,7 +400,14 @@ def test_a_partly_measured_batch_names_what_is_missing_beside_the_figure():
     line = cost_summary([1.0, None, 2.0], "pair")
     assert "$3.00" in line
     assert "2 of 3" in line
-    assert "reported no usage" in line
+    assert "could not be costed" in line
+    # Not "reported no usage". The first go batch had all twelve runs report
+    # their review stage and this line still said five of six pairs reported
+    # nothing — because the verifier is a second CLI invocation returning no
+    # `Usage`, so the pair's total is incomplete and refuses to price itself.
+    # The arithmetic was right and the sentence named the wrong cause, which is
+    # the failure this module exists to prevent, in its own output.
+    assert "reported no usage" not in line
 
 
 def test_the_corpus_report_refuses_to_call_an_unmeasured_run_free(capsys):
