@@ -32,18 +32,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from artifact import load_adjudications, ruled_incidental
 from injection_corpus import controls_agree, signature
 from pair_corpus import build_repo, cost_of, load_cases, review
 
 
-def one_run(case: dict, member: str, index: int) -> dict:
+def one_run(case: dict, member: str, index: int, excused=()) -> dict:
     work = Path(tempfile.mkdtemp(prefix="stability-")).resolve()
     try:
         repo, base, head = build_repo(case["_dir"], member, work)
         result = review(repo, base, head, work / "out")
         if not result["ok"]:
             return {"run": index, "error": result.get("error", "review failed")}
-        row = signature(result["payload"], case)
+        # The rulings, which this tool could not see at all. The target row it
+        # prints is the whole output, and without them it named a finding a hand
+        # decision had already ruled is not this case's weakness — so N runs
+        # could agree perfectly about the wrong finding.
+        row = signature(result["payload"], case, excused)
         row["run"] = index
         row["cost"] = cost_of(result["payload"]["usage"])
         row["seconds"] = result["seconds"]
@@ -146,8 +151,12 @@ def main() -> int:
     print("{} identical run(s) of {}/{} — {} review(s)".format(
         args.runs, args.case, args.member, args.runs))
 
+    excused = ruled_incidental(
+        load_adjudications(Path(args.cases)), args.case, args.member)
+
     with ThreadPoolExecutor(max_workers=max(1, min(args.concurrency, args.runs))) as pool:
-        rows = list(pool.map(lambda i: one_run(case, args.member, i), range(args.runs)))
+        rows = list(pool.map(lambda i: one_run(case, args.member, i, excused),
+                             range(args.runs)))
 
     # Written before the report, so a formatting bug cannot discard runs that
     # have already been paid for.

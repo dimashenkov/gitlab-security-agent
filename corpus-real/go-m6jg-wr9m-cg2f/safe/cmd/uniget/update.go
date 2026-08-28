@@ -1,0 +1,163 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+
+	"github.com/google/safearchive/tar"
+	"github.com/pterm/pterm"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"gitlab.com/uniget-org/cli/pkg/archive"
+	"gitlab.com/uniget-org/cli/pkg/containers"
+	"gitlab.com/uniget-org/cli/pkg/logging"
+	"gitlab.com/uniget-org/cli/pkg/security"
+	"gitlab.com/uniget-org/cli/pkg/tool"
+)
+
+var quiet bool
+
+func initUpdateCmd() {
+	updateCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Do not print new tools")
+
+	rootCmd.AddCommand(updateCmd)
+}
+
+var updateCmd = &cobra.Command{
+	Use:     "update",
+	Aliases: []string{},
+	Short:   "Update tool manifest",
+	Long:    header + "\nUpdate tool manifest",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) (err error) {
+		assertMetadataFileExists()
+		assertMetadataIsLoaded()
+		err = loadMetadata()
+		if err != nil {
+			return fmt.Errorf("error loading metadata: %s", err)
+		}
+		oldTools := tools
+
+		err = downloadMetadata()
+		if err != nil {
+			return fmt.Errorf("error downloading metadata: %s", err)
+		}
+
+		err = loadMetadata()
+		if err != nil {
+			return fmt.Errorf("error loading metadata: %s", err)
+		}
+
+		newUnigetVersion := ""
+		if !quiet && len(oldTools.Tools) > 0 {
+			for _, tool := range tools.Tools {
+				oldTool, _ := oldTools.GetByName(tool.Name)
+
+				if tool.Name == "uniget" && tool.Version > version {
+					newUnigetVersion = tool.Version
+				}
+
+				if oldTool == nil {
+					logging.Info.Printfln("New %s %s", tool.Name, tool.Version)
+
+				} else if tool.Version != oldTool.Version {
+					logging.Info.Printfln("Update %s to %s", tool.Name, tool.Version)
+				}
+			}
+		}
+
+		if len(newUnigetVersion) > 0 {
+			prefix := pterm.NewStyle(pterm.FgBlack, pterm.BgYellow)
+			suffix := pterm.NewStyle(pterm.FgWhite)
+			prefix.Println()
+			prefix.Print(" NEWS  ")
+			suffix.Printfln(" Update to uniget %s by running 'uniget self-upgrade'", newUnigetVersion)
+		}
+
+		return nil
+	},
+}
+
+func downloadMetadata() error {
+	if metadataDownloaded {
+		logging.Debugf("Metadata already downloaded, skipping download")
+		return nil
+	}
+
+	assertCacheDirectory()
+	t, err := containers.FindToolRef([]string{registry}, []string{imageRepository}, "metadata", metadataImageTag)
+	if err != nil {
+		return fmt.Errorf("error finding metadata: %s", err)
+	}
+	rc := containers.GetRegclient()
+	defer func() {
+		err := rc.Close(context.Background(), t.GetRef())
+		if err != nil {
+			logging.Warning.Printfln("error closing registry client: %s", err)
+		}
+	}()
+
+	logging.Debugf("Changing directory to %s", viper.GetString("prefix")+"/"+cacheDirectory)
+	err = os.Chdir(viper.GetString("prefix") + "/" + cacheDirectory)
+	if err != nil {
+		return fmt.Errorf("error changing directory to %s: %s", viper.GetString("prefix")+"/"+cacheDirectory, err)
+	}
+
+	progressReader := createProgressReader("Downloading metadata")
+	logging.Debugf("Extracting archive to %s", viper.GetString("prefix")+"/"+cacheDirectory)
+	err = containers.GetFirstLayerFromRegistry(context.Background(), rc, t.GetRef(), progressReader, func(reader io.ReadCloser) error {
+		err := archive.ProcessTarContents(reader, func(reader *tar.Reader, header *tar.Header) error {
+			err := archive.CallbackExtractTarItem(reader, header)
+			if err != nil {
+				return fmt.Errorf("error extracting tar item: %s", err)
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("error processing tar contents: %s", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("error getting first layer from registry: %s", err)
+	}
+
+	metadataDownloaded = true
+	metadataLoaded = false
+
+	return nil
+}
+
+func loadMetadata() (err error) {
+	if metadataLoaded {
+		logging.Debugf("Metadata already loaded, skipping load")
+		return nil
+	}
+
+	if len(os.Getenv("UNIGET_IGNORE_METADATA_SIGNATURE")) > 0 {
+		_, err = security.VerifySigstoreBundle(
+			viper.GetString("prefix")+"/"+metadataFile,
+			viper.GetString("prefix")+"/"+metadataFile+".sigstore.json",
+			"https://token.actions.githubusercontent.com",
+			"",
+			"",
+			"https://github\\.com/uniget-org/tools/\\.github/workflows/[^.]+\\.yml@refs/heads/main",
+		)
+		if err != nil {
+			return fmt.Errorf("error verifying sigstore bundle for metadata: %s", err)
+		}
+	}
+
+	tools, err = tool.LoadFromFile(viper.GetString("prefix") + "/" + metadataFile)
+	if err != nil {
+		return fmt.Errorf("failed to load metadata from file %s: %s", viper.GetString("prefix")+"/"+metadataFile, err)
+	}
+
+	metadataLoaded = true
+
+	return nil
+}

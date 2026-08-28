@@ -61,14 +61,22 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     from .suppress import load as load_rules
     from .verify import verify_candidates
 
-    if _skip_requested(cfg, args):
-        return EXIT_OK
-
-    root = Path(args.repo or ".").resolve()
     # `--changed-only` is a diff review with a name a person would reach for.
     # An explicit `--mode` still wins, so the two cannot disagree silently.
+    # Resolved before the skip so a skipped run can still say which review it
+    # was that did not happen; nothing here touches git.
     mode = args.mode or ("diff" if args.changed_only else cfg.resolve_mode())
 
+    if _skip_requested(cfg, args):
+        # Not a bare `return EXIT_OK`. That wrote no artifact at all, so the
+        # note the *previous* run left on the merge request stayed up claiming
+        # its verdict — a label meaning "do not review this" read afterwards as
+        # a review that found nothing. Exactly the defect `_nothing_to_review`
+        # was written for on the empty-diff path, on a path that never got the
+        # same treatment.
+        return _nothing_to_review(cfg, args, mode, _skipped_summary(args.skip_label))
+
+    root = Path(args.repo or ".").resolve()
     base, head = _resolve_range(cfg, root, mode, args)
     workspace = Workspace(root=root, excludes=cfg.excludes, diff_base=base,
                           diff_head=head, scope=cfg.scope,
@@ -107,7 +115,18 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
             # comment that found it. An empty diff is a real result and gets a
             # real artifact.
             log.info("no reviewable files changed — writing an empty result")
-            return _nothing_to_review(cfg, args, mode, base, head)
+            # Which filter emptied it, asked of the unfiltered list. The two are
+            # applied together inside `changed_files`, so from its result alone
+            # the report could only guess — and it guessed "excludes" at every
+            # reader, including the one whose `--path` did it.
+            every = [path for path, _ in workspace.every_changed_file()]
+            excluded = [p for p in every if workspace.is_excluded(p)]
+            out_of_scope = [p for p in every
+                            if not workspace.is_excluded(p)
+                            and not workspace.in_scope(p)]
+            return _nothing_to_review(
+                cfg, args, mode,
+                _nothing_reviewable_summary(excluded, out_of_scope, cfg.scope))
         log.info("reviewing %d changed file(s) in %s..%s",
                  len(changed), _abbrev(base), _abbrev(head))
     else:
@@ -276,14 +295,20 @@ def _folded(name: str, title: str):
 
 
 def _nothing_to_review(cfg: Config, args: argparse.Namespace, mode: str,
-                       base: str, head: str) -> int:
-    """A completed review of a change with nothing reviewable in it.
+                       summary: str) -> int:
+    """A run that examined nothing, written down like every other run.
 
-    Complete, because it is: every changed file was excluded by configuration,
-    and that is an answer rather than a failure. It gets an artifact and a
-    posted note for the same reason every other run does — so that the absence
-    of a comment always means something went wrong, and the presence of one
-    always describes this run rather than the last.
+    Three things reach here: a change whose every file the excludes hid, one
+    whose every file the `--path` scope put outside this run's remit, and a
+    merge request labelled to skip the review. None of them is a failure, and
+    none of them is a statement about the code — so each gets an artifact and a
+    posted note for the same reason every other run does: the absence of a
+    comment always means something went wrong, and the presence of one always
+    describes this run rather than the last.
+
+    The caller supplies the sentence because only the caller knows which of the
+    three happened. It used to be written here, one sentence for all of them,
+    and it named the excludes — see `_nothing_reviewable_summary`.
     """
     from .agent import _provenance
     from .gate import decide
@@ -292,10 +317,7 @@ def _nothing_to_review(cfg: Config, args: argparse.Namespace, mode: str,
 
     outcome = ScanOutcome(mode=mode, model=cfg.model)
     outcome.provenance = _provenance(cfg)
-    outcome.summary = (
-        "Every file in this change is excluded by configuration, so there was "
-        "nothing to review. This is not a statement about the code."
-    )
+    outcome.summary = summary
     decision = decide(cfg, outcome)
     try:
         paths = write_artifacts(cfg, outcome, decision)
@@ -311,6 +333,58 @@ def _nothing_to_review(cfg: Config, args: argparse.Namespace, mode: str,
 
         publish(cfg.gitlab, render_markdown(cfg, outcome, decision))
     return decision.exit_code
+
+
+def _nothing_reviewable_summary(excluded: Sequence[str],
+                                out_of_scope: Sequence[str],
+                                scope: Sequence[str]) -> str:
+    """Why this change had nothing to review: the excludes, the scope, or both.
+
+    One sentence used to cover every reading — "Every file in this change is
+    excluded by configuration" — and `changed_files()` applies `is_excluded`
+    **and** `in_scope`. So `--path lib` on a change that only touched `app/`
+    arrived at that sentence and sent the reader into their exclude patterns to
+    hunt for a rule that was never involved. The two filters are the operator's
+    and they are set in different places; a report that mixes them up costs a
+    debugging session and teaches the reader to distrust the next sentence too.
+
+    No mention of a filter that did not apply. A change with nothing in the
+    range at all is the fourth reading and reaches here as well, and blaming
+    configuration for it is the same mistake in the other direction.
+    """
+    tail = " This is not a statement about the code."
+    where = " (--path {})".format(" ".join(scope)) if scope else ""
+
+    if excluded and out_of_scope:
+        return (
+            "Nothing in this change was reviewable: {} file(s) are excluded by "
+            "configuration and {} file(s) are outside the reviewed scope{}."
+            .format(len(excluded), len(out_of_scope), where) + tail
+        )
+    if out_of_scope:
+        return (
+            "Every file in this change is outside the reviewed scope{}, so "
+            "there was nothing to review. The exclude rules did not do this."
+            .format(where) + tail
+        )
+    if excluded:
+        return (
+            "Every file in this change is excluded by configuration, so there "
+            "was nothing to review." + tail
+        )
+    return (
+        "This change adds or modifies no file, so there was nothing to "
+        "review." + tail
+    )
+
+
+def _skipped_summary(label: str) -> str:
+    """The note a skipped merge request gets. Not a verdict, and it says so."""
+    return (
+        "No security review was run: this merge request carries the {!r} label, "
+        "which switches the review off. Nothing was examined, so this is not a "
+        "statement about the code.".format(label)
+    )
 
 
 def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,

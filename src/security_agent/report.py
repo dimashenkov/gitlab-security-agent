@@ -716,6 +716,15 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
         ],
         "coverage": {
             "files_examined": sorted(outcome.files_examined),
+            # What actually reached the model, `(path, channel)`, and the only
+            # record that any of the change was inspected at all. The gate has
+            # read it in-process since the six-way exit-0 hole; it was never
+            # written down, so nothing *reading the artifact* could tell a
+            # review from a run that never got anything to read. `reusable`
+            # now needs it — a skipped run writes a complete artifact with an
+            # exit code of 0, and without this it was a cacheable clean bill
+            # of health for code nobody looked at.
+            "exposures": sorted(list(e) for e in outcome.exposures),
             "turns": outcome.turns,
             "tool_calls": [
                 {"turn": t.turn, "tool": t.name, "summary": t.summary, "rejected": t.is_error}

@@ -78,8 +78,12 @@ spec:
     verify_votes:
       default: '1'
       description: >-
-        Independent verifiers per finding. Critical and high findings always get
-        at least two, regardless of this value.
+        Independent verifiers per finding. Anything that could end with the
+        merge blocked gets at least three, whatever this is set to, and the
+        panel is always an odd number so a majority decides rather than a
+        single hedge. Note "could end blocked", not "is rated high": a medium
+        finding under a high threshold can be corrected upward by its own
+        verifier and block on that alone, so it is sized like one.
     max_turns:
       default: '60'
       description: Ceiling on agent turns; raise for large merge requests.
@@ -126,8 +130,14 @@ spec:
     # Merge request pipelines only. On a branch pipeline there is no merge
     # request to comment on and no reliable base to diff against; a repo-wide
     # review is a separate, scheduled job (see `ai-security-review-full` below).
-    - if: $CI_MERGE_REQUEST_IID && $CI_MERGE_REQUEST_LABELS =~ /$[[ inputs.skip_label ]]/
-      when: never
+    #
+    # The skip label is *not* a rule here. `when: never` meant a labelled merge
+    # request produced no job, no artifact and no note — and the note from the
+    # run before the label went on stayed up, still claiming its verdict. The
+    # agent honours the same label itself (`--skip-label` below), exits 0
+    # without contacting the model, and writes an artifact saying the review
+    # was skipped. A skip costs runner seconds and no tokens; what it buys is a
+    # record that the review did not happen.
     - if: $CI_MERGE_REQUEST_IID
 
   script:

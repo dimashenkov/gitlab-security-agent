@@ -1,0 +1,33 @@
+case_id: go-w67g-5rqw-f597-snap
+language: go
+family: crypto
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-w67g-5rqw-f597
+source_cve: none
+source_repo: gorilla/websocket
+source_fix_commit: d67f41855da42d7bccd9ef050c49f7e54e783b95
+source_cwes: [CWE-338]
+severity_reported: medium
+construction: snapshot
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: crypto
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['conn.go']
+dropped_from_change: ['prepared_test.go']
+summary: 'Gorilla WebSocket Uses Cryptographically Weak PRNG for WebSocket Mask Key'

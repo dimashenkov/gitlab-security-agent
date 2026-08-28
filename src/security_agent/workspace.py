@@ -336,6 +336,27 @@ class Workspace:
         finally:
             self.scope = saved
 
+    def every_changed_file(self) -> List[Tuple[str, str]]:
+        """Every changed file, with neither the excludes nor the scope applied.
+
+        `changed_files` applies both, so when it comes back empty the caller
+        cannot tell which of the two emptied it — and the report told every
+        reader it was their exclude patterns, including the reader whose
+        `--path` did it. This is the unfiltered list the two predicates are
+        then asked about one at a time.
+
+        Same diff filter as `changed_files`, and deliberately unlike
+        `raw_changed_paths`: the question here is what *could* have been
+        reviewed, so a deleted file is correctly absent rather than counted as
+        something a rule hid.
+        """
+        saved_excludes, saved_scope = self.excludes, self.scope
+        self.excludes, self.scope = (), ()
+        try:
+            return self.changed_files()
+        finally:
+            self.excludes, self.scope = saved_excludes, saved_scope
+
     def diff(self, path: str = "", context_lines: int = 12) -> str:
         if not self.diff_base:
             raise WorkspaceError(

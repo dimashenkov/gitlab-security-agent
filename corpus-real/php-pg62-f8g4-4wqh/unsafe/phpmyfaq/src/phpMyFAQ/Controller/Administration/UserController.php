@@ -1,0 +1,183 @@
+<?php
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+declare(strict_types=1);
+
+namespace phpMyFAQ\Controller\Administration;
+
+use phpMyFAQ\Core\Exception;
+use phpMyFAQ\Enums\PermissionType;
+use phpMyFAQ\Filter;
+use phpMyFAQ\Pagination;
+use phpMyFAQ\Session\Token;
+use phpMyFAQ\Twig\Extensions\PermissionTranslationTwigExtension;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Routing\Attribute\Route;
+use Twig\Error\LoaderError;
+use Twig\Extension\AttributeExtension;
+
+final class UserController extends AbstractAdministrationController
+{
+
+
+
+
+
+    #[Route(path: '/user', name: 'admin.user', methods: ['GET'])]
+    public function index(Request $request): Response
+    {
+        $this->userHasPermission(PermissionType::USER_ADD);
+        $this->userHasPermission(PermissionType::USER_DELETE);
+        $this->userHasPermission(PermissionType::USER_EDIT);
+
+        $this->addExtension(new AttributeExtension(PermissionTranslationTwigExtension::class));
+        return $this->render('@admin/user/user.twig', [
+            ...$this->getHeader($request),
+            ...$this->getFooter(),
+            ...$this->getBaseTemplateVars(),
+        ]);
+    }
+
+
+
+
+
+
+    #[Route(path: '/user/edit/:userId', name: 'admin.user.edit', methods: ['GET'])]
+    public function edit(Request $request): Response
+    {
+        $this->userHasPermission(PermissionType::USER_ADD);
+        $this->userHasPermission(PermissionType::USER_DELETE);
+        $this->userHasPermission(PermissionType::USER_EDIT);
+
+        $userId = (int) Filter::filterVar($request->attributes->get('userId'), FILTER_VALIDATE_INT);
+
+        $this->addExtension(new AttributeExtension(PermissionTranslationTwigExtension::class));
+        return $this->render('@admin/user/user.twig', [
+            ...$this->getHeader($request),
+            ...$this->getFooter(),
+            ...$this->getBaseTemplateVars(),
+            'userId' => $userId,
+        ]);
+    }
+
+
+
+
+
+
+    #[Route(path: '/user/list', name: 'admin.user.list', methods: ['GET'])]
+    public function list(Request $request): Response
+    {
+        $this->userHasPermission(PermissionType::USER_ADD);
+        $this->userHasPermission(PermissionType::USER_DELETE);
+        $this->userHasPermission(PermissionType::USER_EDIT);
+
+        $user = $this->container->get(id: 'phpmyfaq.user');
+        $allUsers = $user->getAllUsers(false);
+        $numUsers = is_countable($allUsers) ? count($allUsers) : 0;
+
+        $page = Filter::filterVar($request->query->get('page'), FILTER_VALIDATE_INT, 0);
+        $perPage = 10;
+        $lastPage = $page * $perPage;
+        $firstPage = $lastPage - $perPage;
+
+
+        $options = [
+            'baseUrl' => sprintf('%sadmin/user/list?page=%d', $this->configuration->getDefaultUrl(), $page),
+            'total' => $numUsers,
+            'perPage' => $perPage,
+            'pageParamName' => 'page',
+        ];
+        $pagination = new Pagination($options);
+
+        $counter = 0;
+        $displayedCounter = 0;
+        $users = [];
+        foreach ($allUsers as $allUser) {
+            $user->getUserById($allUser, true);
+
+            if ($displayedCounter >= $perPage) {
+                continue;
+            }
+
+            ++$counter;
+            if ($counter <= $firstPage) {
+                continue;
+            }
+
+            ++$displayedCounter;
+
+            $tempUser = [
+                'display_name' => $user->getUserData('display_name'),
+                'id' => $user->getUserId(),
+                'email' => $user->getUserData('email'),
+                'status' => $user->getStatus(),
+                'isSuperAdmin' => $user->isSuperAdmin(),
+                'isVisible' => $user->getUserData('is_visible'),
+                'login' => $user->getLogin(),
+            ];
+
+            $users[] = $tempUser;
+        }
+
+        return $this->render('@admin/user/user-list.twig', [
+            ...$this->getHeader($request),
+            ...$this->getFooter(),
+            ...$this->getBaseTemplateVars(),
+            'perPage' => $perPage,
+            'numUsers' => $numUsers,
+            'pagination' => $pagination->render(),
+            'users' => $users,
+            'userIsSuperAdmin' => $this->currentUser->isSuperAdmin(),
+        ]);
+    }
+
+
+
+
+
+    private function getBaseTemplateVars(): array
+    {
+        $currentUserId = $this->currentUser->getUserId();
+        $session = $this->container->get(id: 'session');
+        $user = $this->container->get(id: 'phpmyfaq.user');
+        return [
+            'permissionAddUser' => $this->currentUser->perm->hasPermission(
+                $currentUserId,
+                PermissionType::USER_ADD->value,
+            ),
+            'permissionDeleteUser' => $this->currentUser->perm->hasPermission(
+                $currentUserId,
+                PermissionType::USER_DELETE->value,
+            ),
+            'permissionEditUser' => $this->currentUser->perm->hasPermission(
+                $currentUserId,
+                PermissionType::USER_EDIT->value,
+            ),
+            'csrfToken_updateUserData' => Token::getInstance($session)->getTokenString('update-user-data'),
+            'csrfToken_updateUserRights' => Token::getInstance($session)->getTokenString('update-user-rights'),
+            'csrfToken_activateUser' => Token::getInstance($session)->getTokenString('activate-user'),
+            'csrfToken_deleteUser' => Token::getInstance($session)->getTokenString('delete-user'),
+            'csrfToken_addUser' => Token::getInstance($session)->getTokenString('add-user'),
+            'csrfToken_overwritePassword' => Token::getInstance($session)->getTokenString('overwrite-password'),
+            'userRights' => $user->perm->getAllRightsData(),
+            'userIsSuperAdmin' => $this->currentUser->isSuperAdmin(),
+        ];
+    }
+}

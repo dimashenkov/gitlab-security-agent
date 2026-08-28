@@ -121,8 +121,10 @@ self-review:
     paths:
       - .security-scan/
   rules:
-    - if: $CI_MERGE_REQUEST_LABELS =~ /skip-ai-security/
-      when: never
+    # No `when: never` on the skip label. It produced no job, no artifact and
+    # no note, so the note left by the run before the label went on stayed up
+    # claiming its verdict. The agent honours the label itself, exits 0 without
+    # contacting the model, and records that the review was skipped.
     - if: $CI_MERGE_REQUEST_IID
     # Commits that reach the default branch without a merge request. This
     # repository has none, so for two months the job above never fired and the

@@ -1,0 +1,81 @@
+<?php namespace Backend\Controllers;
+
+use Backend;
+use Redirect;
+use BackendMenu;
+use Backend\Classes\Controller;
+use Backend\Widgets\ReportContainer;
+
+
+
+
+
+
+
+
+class Index extends Controller
+{
+    use \Backend\Traits\InspectableContainer;
+
+
+
+
+
+    public $requiredPermissions = [];
+
+
+
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        BackendMenu::setContextOwner('Winter.Backend');
+
+        $this->addCss('/modules/backend/assets/css/dashboard/dashboard.css', 'core');
+    }
+
+    public function index()
+    {
+        if ($redirect = $this->checkPermissionRedirect()) {
+            return $redirect;
+        }
+
+        $this->initReportContainer();
+
+        $this->pageTitle = 'backend::lang.dashboard.menu_label';
+
+        BackendMenu::setContextMainMenu('dashboard');
+    }
+
+    public function index_onInitReportContainer()
+    {
+        $this->initReportContainer();
+
+        return ['#dashReportContainer' => $this->widget->reportContainer->render()];
+    }
+
+
+
+
+
+
+    protected function initReportContainer()
+    {
+        new ReportContainer($this, 'config_dashboard.yaml');
+    }
+
+
+
+
+
+    protected function checkPermissionRedirect()
+    {
+        if (!$this->user->hasAccess('backend.access_dashboard')) {
+            if ($first = array_first(BackendMenu::listMainMenuItems())) {
+                return Redirect::intended($first->url);
+            }
+            return Backend::redirect('backend/myaccount');
+        }
+    }
+}

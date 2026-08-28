@@ -6,7 +6,11 @@ repository under review, and validation must reject a threshold typo loudly
 instead of quietly turning the gate off.
 """
 
+import re
+from pathlib import Path
+
 import pytest
+import yaml
 
 from security_agent.config import Config, ConfigError, GitLabContext
 
@@ -194,3 +198,51 @@ class TestModeResolution:
     def test_an_explicit_mode_is_respected(self):
         cfg = Config(mode="repo", gitlab=GitLabContext(mr_iid="42"))
         assert cfg.resolve_mode() == "repo"
+
+
+class TestTheTemplateAndTheCodeAgreeOnDefaults:
+    """`templates/security-scan.yml` is what a user copies into their project.
+
+    Every `SECURITY_SCAN_*` variable in it is wired to an input with a default,
+    and until now that default was prose as far as anything here was concerned:
+    nothing read the template, so a default changed in `config.py` left it
+    telling users a number no longer true. The verifier input's description was
+    found saying "at least two" when the code had said three for a while —
+    the same drift, one line up from the default.
+
+    Set every variable to the template's own default, and the Config that comes
+    out must be the one you get with nothing set at all. That runs the values
+    through the real parser rather than comparing two literals, so a default
+    that stops parsing is caught as well as one that stops matching.
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+    WIRING = re.compile(
+        r"^\s*(SECURITY_SCAN_[A-Z_]+):\s*\$\[\[\s*inputs\.([a-z_]+)\s*\]\]",
+        re.M)
+
+    def _template(self):
+        text = (self.ROOT / "templates" / "security-scan.yml").read_text(
+            encoding="utf-8")
+        inputs = (yaml.safe_load(text).get("spec") or {}).get("inputs") or {}
+        return text, inputs
+
+    def test_the_wiring_is_found_at_all(self):
+        """Guards the test below. A regex that matches nothing passes it, and
+        an assertion over an empty loop is the vacuous-test failure this
+        repository has produced four times."""
+        text, inputs = self._template()
+        wired = {name for _var, name in self.WIRING.findall(text)}
+        assert len(wired) >= 6, wired
+        assert wired <= set(inputs), wired - set(inputs)
+
+    def test_the_templates_defaults_produce_the_codes_defaults(self, monkeypatch):
+        text, inputs = self._template()
+        baseline = Config.from_env()
+
+        for variable, name in self.WIRING.findall(text):
+            default = (inputs[name] or {}).get("default")
+            assert default is not None, "{} has no default".format(name)
+            monkeypatch.setenv(variable, str(default))
+
+        assert Config.from_env() == baseline

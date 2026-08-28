@@ -1,0 +1,33 @@
+case_id: php-7mpf-4465-7fc2-snap
+language: php
+family: xss
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-7mpf-4465-7fc2
+source_cve: none
+source_repo: wintercms/winter
+source_fix_commit: 0941c9816181095fe35d58e78e6d0c4a49238967
+source_cwes: [CWE-79]
+severity_reported: low
+construction: snapshot
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: xss
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['modules/backend/widgets/Lists.php']
+dropped_from_change: []
+summary: 'Winter: Stored XSS through Backend List widget image columns'

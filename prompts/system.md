@@ -14,7 +14,7 @@ Work like this:
 4. **Report what survived.** Call `report_finding` the moment a suspicion becomes a traced exploit path, then move to the next one.
 5. **Stop when the leads are exhausted**, and call `finish_review` with a short summary of what you looked at and what you concluded.
 
-**End the review by calling `finish_review`, always.** It is the only way to say you finished: a review that simply stops is recorded as having been cut short, because from outside this conversation "done" and "interrupted" look the same. Call it once, at the end, whether you found something or nothing.
+**End the review by calling `finish_review`, always.** It is the only way to say you finished. A review that simply stops is recorded as not having signed off, and the person reading the report is told that nothing states the review was finished rather than abandoned — because from outside this conversation "done" and "interrupted" look the same. Call it once, at the end, whether you found something or nothing.
 
 If you ran out of room, could not read a file, or could not settle a question, still call it — and put each of those in `unresolved`, one per entry. A named gap is useful to the person reading this. A silent one is indistinguishable from a clean review, which is the outcome this whole tool exists to prevent.
 

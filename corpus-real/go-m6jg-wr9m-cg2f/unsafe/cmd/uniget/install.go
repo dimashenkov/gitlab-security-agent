@@ -1,0 +1,561 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"gitlab.com/uniget-org/cli/pkg/containers"
+	"gitlab.com/uniget-org/cli/pkg/logging"
+	"gitlab.com/uniget-org/cli/pkg/tool"
+)
+
+var tagsMode bool
+var filename string
+var skipDependencies bool
+var skipConflicts bool
+var check bool
+var dryRun bool
+var reinstall bool
+var pathToTarMappings map[string]string
+
+func initInstallCmd() {
+	installCmd.Flags().BoolVar(&tagsMode, "tags", false, "Install tool(s) matching tag")
+	installCmd.Flags().StringVar(&filename, "file", "", "Read tools from file")
+	installCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show tool(s) planned for installation")
+	installCmd.Flags().BoolVar(&skipDependencies, "skip-deps", false, "Skip dependencies")
+	installCmd.Flags().BoolVar(&skipConflicts, "skip-conflicts", false, "Skip conflicting tools")
+	installCmd.Flags().BoolVar(&check, "check", false, "Abort after checking versions")
+	installCmd.Flags().BoolVarP(&reinstall, "reinstall", "r", false, "Reinstall tool(s)")
+	installCmd.Flags().StringToStringVar(&pathToTarMappings, "path-to-tar-mappings", nil, "Map paths in tar file to target paths (for debugging purposes)")
+	installCmd.MarkFlagsMutuallyExclusive("tags", "file")
+	installCmd.MarkFlagsMutuallyExclusive("check", "dry-run")
+	err := installCmd.Flags().MarkHidden("path-to-tar-mappings")
+	if err != nil {
+		logging.Error.Printfln("Unable to mark path-to-tar-mappings flag as hidden: %s", err)
+	}
+
+	rootCmd.AddCommand(installCmd)
+}
+
+var installCmd = &cobra.Command{
+	Use: "install [tool...]",
+	Aliases: []string{
+		"i",
+	},
+	Short: "Install tools",
+	Long:  header + "\nInstall and update tools",
+	Args:  cobra.OnlyValidArgs,
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return tools.GetNames(), cobra.ShellCompDirectiveNoFileComp
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if viper.GetBool("autoupdate") {
+			err := downloadMetadata()
+			if err != nil {
+				return fmt.Errorf("error downloading metadata: %s", err)
+			}
+		}
+		assertMetadataFileExists()
+		assertMetadataIsLoaded()
+
+		var requestedTools tool.Tools
+
+
+		if tagsMode {
+			logging.Debugf("Adding tools matching tags to requested tools")
+			requestedTools = tools.GetByTags(args)
+
+		} else if filename != "" {
+			logging.Debugf("Adding tools from file %s to requested tools", filename)
+			data, err := os.ReadFile(filename)
+			if err != nil {
+				return fmt.Errorf("unable to read file %s: %s", filename, err)
+			}
+			for line := range strings.SplitSeq(string(data), "\n") {
+				if len(line) == 0 {
+					continue
+				} else if strings.HasPrefix(line, "#") {
+					continue
+				}
+
+				logging.Debugf("Adding %s to requested tools", line)
+				tool, err := tools.GetByName(line)
+				if err != nil {
+					logging.Warning.Printfln("Unable to find tool %s: %s", line, err)
+					continue
+				}
+				requestedTools.Tools = append(requestedTools.Tools, *tool)
+			}
+
+		} else {
+			logging.Debugf("Adding %s to requested tools", strings.Join(args, ","))
+			for _, toolName := range args {
+				tool, err := tools.GetByName(toolName)
+				if err != nil {
+					return fmt.Errorf("unable to find tool %s: %s", toolName, err)
+				}
+				requestedTools.Tools = append(requestedTools.Tools, *tool)
+			}
+		}
+		logging.Debugf("Requested %d tool(s)", len(requestedTools.Tools))
+
+		return installTools(cmd.OutOrStdout(), requestedTools, check, dryRun, reinstall, skipDependencies, skipConflicts)
+	},
+}
+
+func findInstalledTools(tools tool.Tools) (tool.Tools, error) {
+	var requestedTools tool.Tools
+	for index, tool := range tools.Tools {
+		logging.Debugf("Getting status for requested tool %s", tool.Name)
+
+		err := tools.Tools[index].UpdateStatus(viper.GetString("prefix"), viper.GetString("target"), cacheDirectory, arch, altArch)
+		if err != nil {
+			return requestedTools, fmt.Errorf("failed to update status for tool %s: %s", tool.Name, err)
+		}
+
+		if tools.Tools[index].IsInstalled() {
+			logging.Debugf("Adding %s to requested tools", tool.Name)
+			requestedTools.Tools = append(requestedTools.Tools, tool)
+		}
+	}
+
+	return requestedTools, nil
+}
+
+func installTools(w io.Writer, requestedTools tool.Tools, check bool, plan bool, reinstall bool, skipDependencies bool, skipConflicts bool) error {
+	var plannedTools tool.Tools
+
+
+
+	for _, tool := range requestedTools.Tools {
+		err := tools.ResolveDependencies(&plannedTools, tool.Name)
+		if err != nil {
+			return fmt.Errorf("unable to resolve dependencies for %s: %s", tool.Name, err)
+		}
+	}
+	for _, requestedTool := range requestedTools.Tools {
+		tool, err := plannedTools.GetByName(requestedTool.Name)
+		if err != nil {
+			return fmt.Errorf("unable to find %s in planned tools", requestedTool.Name)
+		}
+		tool.Status.IsRequested = true
+	}
+	logging.Debugf("Planned %d tool(s)", len(plannedTools.Tools))
+
+	renamedTools := make(map[string]string, 0)
+	removedTools := make(map[string]string, 0)
+	for _, plannedTool := range plannedTools.Tools {
+		if len(plannedTool.Lifecycle.RenamedTo) > 0 {
+			renamedTools[plannedTool.Name] = plannedTool.Lifecycle.RenamedTo
+
+		} else if len(plannedTool.Lifecycle.RemovedWithReason) > 0 {
+			removedTools[plannedTool.Name] = plannedTool.Lifecycle.RemovedWithReason
+		}
+	}
+	if len(renamedTools) > 0 {
+		for oldName, newName := range renamedTools {
+			logging.Warning.Printfln("%s was renamed. Please uninstall %s and install %s manually and try again.", oldName, oldName, newName)
+		}
+	}
+	if len(removedTools) > 0 {
+		for oldName, reason := range removedTools {
+			logging.Warning.Printfln("%s was removed: %s. Please uninstall %s manually and try again.", oldName, reason, oldName)
+		}
+	}
+	if len(renamedTools) > 0 || len(removedTools) > 0 {
+		return fmt.Errorf("renamed or removed tools require your attention")
+	}
+
+
+	for index, tool := range plannedTools.Tools {
+		if skipDependencies && !tool.Status.IsRequested {
+			continue
+		}
+
+		logging.Debugf("Getting status for requested tool %s", tool.Name)
+		err := plannedTools.Tools[index].UpdateStatus(viper.GetString("prefix"), viper.GetString("target"), cacheDirectory, arch, altArch)
+		if err != nil {
+			return fmt.Errorf("failed to update status for tool %s: %s", plannedTools.Tools[index].Name, err)
+		}
+	}
+
+
+	var conflictsDetected = false
+	var conflictsWithInstalled tool.Tools
+	var conflictsBetweenPlanned tool.Tools
+	for index, tool := range plannedTools.Tools {
+		if !tool.Status.BinaryPresent && len(tool.ConflictsWith) > 0 {
+			for _, conflict := range tool.ConflictsWith {
+				conflictTool, err := plannedTools.GetByName(conflict)
+				if err != nil {
+					continue
+				}
+				if plannedTools.Contains(conflict) {
+					if conflictTool.Status.BinaryPresent {
+						conflictsWithInstalled.Tools = append(conflictsWithInstalled.Tools, tool)
+					} else {
+						conflictsBetweenPlanned.Tools = append(conflictsBetweenPlanned.Tools, tool)
+					}
+					conflictsDetected = true
+
+					if skipConflicts {
+						plannedTools.Tools[index].Status.SkipDueToConflicts = true
+					}
+				}
+			}
+		}
+	}
+	if conflictsDetected {
+		plannedTools.ListWithStatus(w)
+	}
+	if len(conflictsWithInstalled.Tools) > 0 {
+		logging.Error.Printfln("Conflicts with installed tools:")
+		for _, conflict := range conflictsWithInstalled.Tools {
+			logging.Error.Printfln("  %s conflicts with %s", conflict.Name, strings.Join(conflict.ConflictsWith, ", "))
+		}
+		conflictsDetected = true
+	}
+	if len(conflictsBetweenPlanned.Tools) > 0 {
+		logging.Error.Printfln("Conflicts between planned tools:")
+		for _, conflict := range conflictsBetweenPlanned.Tools {
+			logging.Error.Printfln("  %s conflicts with %s", conflict.Name, strings.Join(conflict.ConflictsWith, ", "))
+		}
+		conflictsDetected = true
+	}
+	if conflictsDetected && !skipConflicts {
+		return fmt.Errorf("conflicts detected")
+	}
+
+
+	if plan || check {
+
+
+
+		if !conflictsDetected {
+			plannedTools.ListWithStatus(w)
+		}
+	}
+	if check {
+		for _, tool := range plannedTools.Tools {
+			if !tool.Status.BinaryPresent || !tool.Status.VersionMatches {
+				return fmt.Errorf("found missing or outdated tool")
+			}
+		}
+	}
+	if plan || check {
+		return nil
+	}
+
+
+	if len(pathToTarMappings) > 0 {
+		logging.Debugf("Using path-to-tar-mappings for installation: %+v", pathToTarMappings)
+	}
+
+
+	assertWritableTarget()
+	assertLibDirectory()
+	err := runPreInstallHooks(plannedTools.GetNames()...)
+	if err != nil {
+		return fmt.Errorf("unable to run pre-install hooks: %s", err)
+	}
+	var postHookTools tool.Tools
+	for _, plannedTool := range plannedTools.Tools {
+
+		if plannedTool.Status.VersionMatches && !reinstall {
+
+			continue
+		}
+		if plannedTool.Status.SkipDueToConflicts {
+			logging.Skip.Printfln("Skipping %s because it conflicts with another tool.", plannedTool.Name)
+			continue
+		}
+		if skipDependencies && !plannedTool.Status.IsRequested {
+			logging.Skip.Printfln("Skipping %s because it is a dependency (--skip-deps was specified)", plannedTool.Name)
+			continue
+		}
+
+		if plannedTool.IsInstalled() {
+			err := uninstallTool(plannedTool.Name)
+			if err != nil {
+				logging.Warning.Printfln("Unable to uninstall %s: %s", plannedTool.Name, err)
+				continue
+			}
+			err = printToolUpdate(w, plannedTool.Name)
+			if err != nil {
+				logging.Warning.Printfln("Unable to print tool update: %s", err)
+				continue
+			}
+		}
+
+		if !skipDependencies {
+			for _, depName := range plannedTool.RuntimeDependencies {
+				dep, err := plannedTools.GetByName(depName)
+				if err != nil {
+					logging.Error.Printfln("Unable to find dependency %s", depName)
+					return fmt.Errorf("unable to find dependency %s", depName)
+				}
+
+				err = dep.GetBinaryStatus()
+				if err != nil {
+					logging.Error.Printfln("Unable to get binary status of dependency %s: %s", depName, err)
+					return fmt.Errorf("unable to get binary status of dependency %s: %s", depName, err)
+				}
+				err = dep.GetMarkerFileStatus(viper.GetString("prefix") + "/" + cacheDirectory)
+				if err != nil {
+					logging.Error.Printfln("Unable to get marker file status of dependency %s: %s", depName, err)
+					return fmt.Errorf("unable to get marker file status of dependency %s: %s", depName, err)
+				}
+				err = dep.GetVersionStatus()
+				if err != nil {
+					logging.Error.Printfln("Unable to get version status of dependency %s: %s", depName, err)
+					return fmt.Errorf("unable to get version status of dependency %s: %s", depName, err)
+				}
+
+				if dep.Status.BinaryPresent || dep.Status.MarkerFilePresent {
+					continue
+				}
+				logging.Error.Printfln("Dependency %s is missing", depName)
+				return fmt.Errorf("dependency %s is missing", depName)
+			}
+		}
+
+		assertDirectory(viper.GetString("prefix") + "/" + viper.GetString("target"))
+
+
+		installDir := viper.GetString("prefix")
+		if len(installDir) == 0 {
+			installDir = "/"
+		}
+		err := os.Chdir(installDir)
+		if err != nil {
+			return fmt.Errorf("error changing directory to %s: %s", installDir, err)
+		}
+		dir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("error getting working directory")
+		}
+		logging.Debugf("Current directory: %s", dir)
+
+		progressReader := createProgressReader("Downloading and installing " + plannedTool.Name)
+		if progressReader.IsQuiet() {
+			logging.Info.Printfln("Installing %s %s", plannedTool.Name, plannedTool.Version)
+		}
+
+		var pathToTar string
+		var layer io.ReadCloser
+		var installedFiles []string
+		installTool := func(plannedTool tool.Tool, layer io.ReadCloser) error {
+			installedFiles, err = plannedTool.Install(w, layer, pathRewriteRules, createPatchFileCallback(plannedTool))
+			if err != nil {
+				logging.Error.Printfln("Unable to install %s: %s", plannedTool.Name, err)
+				logging.Warning.Printfln("Removing partial installation")
+				err = uninstallFiles(installedFiles)
+				if err != nil {
+					logging.Warning.Printfln("Unable to remove partial installation: %s", err)
+				}
+				return fmt.Errorf("unable to install %s: %s", plannedTool.Name, err)
+			}
+
+			return nil
+		}
+		pathToTar, ok := pathToTarMappings[plannedTool.Name]
+		installSuccessful := true
+		if ok {
+			logging.Debugf("Using tar file mappings for installation")
+			var fileInfo os.FileInfo
+			if fileInfo, err = os.Stat(pathToTar); os.IsNotExist(err) {
+				return fmt.Errorf("tar file %s does not exist", pathToTar)
+			}
+			layer, err = os.Open(pathToTar)
+			if err != nil {
+				return fmt.Errorf("unable to read tar file %s: %s", pathToTar, err)
+			}
+			//nolint:errcheck
+			defer layer.Close()
+
+			progressReader.SetTotal(fileInfo.Size())
+			progressReader.SetReader(layer)
+			err = installTool(plannedTool, progressReader)
+			if err != nil {
+				installSuccessful = false
+			}
+
+		} else {
+			logging.Debugf("Using default behaviour for installation")
+			registries, repositories := plannedTool.GetSourcesWithFallback(registry, imageRepository)
+			ref, err := containers.FindToolRef(registries, repositories, plannedTool.Name, "main")
+			if err != nil {
+				return fmt.Errorf("error finding tool %s:%s: %s", plannedTool.Name, plannedTool.Version, err)
+			}
+
+			logging.Debugf("Getting image %s", ref)
+			err = toolCache.Get(ref, progressReader, func(reader io.ReadCloser) error { return nil })
+			if err != nil {
+				return fmt.Errorf("unable to get image: %s", err)
+			}
+			err = toolCache.Get(ref, progressReader, func(reader io.ReadCloser) error {
+				err := installTool(plannedTool, reader)
+				if err != nil {
+					installSuccessful = false
+					return fmt.Errorf("unable to install %s: %s", plannedTool.Name, err)
+				}
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("unable to install from image: %s", err)
+			}
+		}
+		if !installSuccessful {
+			continue
+		}
+
+		logging.Debugf("Installed files: %d", len(installedFiles))
+		logging.Tracef("Installed files: %v", installedFiles)
+		err = writeInstalledFiles(&plannedTool, installedFiles)
+		if err != nil {
+			logging.Error.Printfln("Unable to write installed files: %s", err)
+		}
+		plannedToolJson, err := json.MarshalIndent(plannedTool, "", "  ")
+		if err != nil {
+			logging.Error.Printfln("Unable to marshal tool: %s", err)
+		}
+		manifestFilename := viper.GetString("prefix") + "/" + libDirectory + "/manifests/" + plannedTool.Name + ".json"
+		err = os.WriteFile(manifestFilename, []byte(plannedToolJson), 0644)
+		if err != nil {
+			logging.Error.Printfln("Unable to write manifest file: %s", err)
+		}
+		logging.Success.Printfln("%s %s", plannedTool.Name, plannedTool.Version)
+
+		err = printToolUsage(w, plannedTool.Name)
+		if err != nil {
+			logging.Warning.Printfln("Unable to print tool usage: %s", err)
+			continue
+		}
+
+		err = plannedTool.CreateMarkerFile(viper.GetString("prefix") + "/" + cacheDirectory)
+		if err != nil {
+			logging.Warning.Printfln("Unable to create marker file: %s", err)
+			continue
+		}
+
+		postHookTools.Tools = append(postHookTools.Tools, plannedTool)
+	}
+
+	err = installProfileDShim()
+	if err != nil {
+		return fmt.Errorf("unable to install profile.d shim: %s", err)
+	}
+
+	if len(postHookTools.Tools) > 0 {
+		err = runPostInstallHooks(postHookTools.GetNames()...)
+		if err != nil {
+			return fmt.Errorf("unable to run post-install hooks: %s", err)
+		}
+	}
+
+	return nil
+}
+
+func createPatchFileCallback(tool tool.Tool) func(path string) string {
+	var patchFile = func(templatePath string) string {
+		if strings.HasSuffix(templatePath, ".go-template") {
+		} else {
+			logging.Debugf("Skipping file %s. Will not patch.", templatePath)
+			return templatePath
+		}
+
+		curDir, err := os.Getwd()
+		if err != nil {
+			logging.Error.Printfln("Unable to get current directory: %s", err)
+			return templatePath
+		}
+		fullTemplatePath := filepath.Join(curDir, templatePath)
+
+		values := make(map[string]any)
+		values["Target"] = viper.GetString("target")
+		values["RelativeTarget"] = viper.GetString("target")
+		values["Prefix"] = viper.GetString("prefix")
+		values["Name"] = tool.Name
+		values["Version"] = tool.Version
+
+		if viper.GetBool("user") {
+			values["Target"] = viper.GetString("prefix") + "/" + viper.GetString("target")
+		}
+
+		if len(tool.RuntimeDependencies) > 0 {
+			for _, depName := range tool.RuntimeDependencies {
+				depTool, err := tools.GetByName(depName)
+				if err != nil {
+					logging.Warning.Printfln("Unable to find dependency %s: %s", depName, err)
+				}
+				camelCaseDepName := depTool.GetCamelCaseName()
+				values[fmt.Sprintf("%sVersion", camelCaseDepName)] = depTool.Version
+			}
+		}
+		logging.Debugf("Patching file %s with values: %+v", fullTemplatePath, values)
+
+		filePath := strings.TrimSuffix(fullTemplatePath, ".go-template")
+		logging.Debugf("Patching file %s <- %s", filePath, fullTemplatePath)
+		logging.Debugf("values = %v", values)
+
+		templathPathInfo, err := os.Stat(fullTemplatePath)
+		if err != nil {
+			logging.Error.Printfln("Unable to get file info: %s", err)
+			return templatePath
+		}
+
+		file, err := os.Create(filePath)
+		if err != nil {
+			logging.Error.Printfln("Unable to create file: %s", err)
+			return templatePath
+		}
+		defer func() {
+			err := file.Close()
+			if err != nil {
+				logging.Warning.Printfln("Unable to close file: %s", err)
+			}
+		}()
+		if stat, ok := templathPathInfo.Sys().(*syscall.Stat_t); ok {
+			err = file.Chown(int(stat.Uid), int(stat.Gid))
+			if err != nil {
+				logging.Error.Printfln("Unable to set file ownership: %s", err)
+				return templatePath
+			}
+		}
+		err = file.Chmod(templathPathInfo.Mode())
+		if err != nil {
+			logging.Error.Printfln("Unable to set file permissions: %s", err)
+			return templatePath
+		}
+
+		tmpl, err := template.ParseFiles(fullTemplatePath)
+		if err != nil {
+			logging.Error.Printfln("Unable to parse template file: %s", err)
+			return templatePath
+		}
+		err = tmpl.Execute(file, values)
+		if err != nil {
+			logging.Error.Printfln("Unable to execute template: %s", err)
+			return templatePath
+		}
+
+		err = os.Remove(fullTemplatePath)
+		if err != nil {
+			logging.Error.Printfln("Unable to remove template file: %s", err)
+			return templatePath
+		}
+
+		return filePath
+	}
+
+	return patchFile
+}

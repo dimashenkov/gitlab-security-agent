@@ -1,0 +1,258 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+''
+
+from typing import Optional, Tuple, Union, cast
+
+from .asn1 import ASN1DecodeError, ObjectIdentifier, der_encode, der_decode
+from .crypto import DSAPrivateKey, DSAPublicKey
+from .misc import all_ints
+from .packet import MPInt, String, SSHPacket
+from .public_key import SSHKey, SSHOpenSSHCertificateV01, KeyExportError
+from .public_key import register_public_key_alg, register_certificate_alg
+from .public_key import register_x509_certificate_alg
+
+
+_PrivateKeyArgs = Tuple[int, int, int, int, int]
+_PublicKeyArgs = Tuple[int, int, int, int]
+
+
+class _DSAKey(SSHKey):
+    ''
+
+    _key: Union[DSAPrivateKey, DSAPublicKey]
+
+    algorithm = b'ssh-dss'
+    default_x509_hash = 'sha256'
+    pem_name = b'DSA'
+    pkcs8_oid = ObjectIdentifier('1.2.840.10040.4.1')
+    sig_algorithms = (algorithm,)
+    x509_algorithms = (b'x509v3-' + algorithm,)
+    all_sig_algorithms = set(sig_algorithms)
+
+    def __eq__(self, other: object) -> bool:
+
+        # pylint: disable=protected-access
+
+        return (isinstance(other, type(self)) and
+                self._key.p == other._key.p and
+                self._key.q == other._key.q and
+                self._key.g == other._key.g and
+                self._key.y == other._key.y and
+                self._key.x == other._key.x)
+
+    def __hash__(self) -> int:
+        return hash((self._key.p, self._key.q, self._key.g,
+                     self._key.y, self._key.x))
+
+    @classmethod
+    def generate(cls, algorithm: bytes) -> '_DSAKey': # type: ignore
+        ''
+
+        # pylint: disable=arguments-differ,unused-argument
+
+        return cls(DSAPrivateKey.generate(key_size=1024))
+
+    @classmethod
+    def make_private(cls, key_params: object) -> SSHKey:
+        ''
+
+        p, q, g, y, x = cast(_PrivateKeyArgs, key_params)
+
+        return cls(DSAPrivateKey.construct(p, q, g, y, x))
+
+    @classmethod
+    def make_public(cls, key_params: object) -> SSHKey:
+        ''
+
+        p, q, g, y = cast(_PublicKeyArgs, key_params)
+
+        return cls(DSAPublicKey.construct(p, q, g, y))
+
+    @classmethod
+    def decode_pkcs1_private(cls, key_data: object) -> \
+            Optional[_PrivateKeyArgs]:
+        ''
+
+        if (isinstance(key_data, tuple) and len(key_data) == 6 and
+                all_ints(key_data) and key_data[0] == 0):
+            return cast(_PrivateKeyArgs, key_data[1:])
+        else:
+            return None
+
+    @classmethod
+    def decode_pkcs1_public(cls, key_data: object) -> \
+            Optional[_PublicKeyArgs]:
+        ''
+
+        if (isinstance(key_data, tuple) and len(key_data) == 4 and
+                all_ints(key_data)):
+            y, p, q, g = key_data
+            return p, q, g, y
+        else:
+            return None
+
+    @classmethod
+    def decode_pkcs8_private(cls, alg_params: object,
+                             data: bytes) -> Optional[_PrivateKeyArgs]:
+        ''
+
+        try:
+            x = der_decode(data)
+        except ASN1DecodeError:
+            return None
+
+        if (isinstance(alg_params, tuple) and len(alg_params) == 3 and
+                all_ints(alg_params) and isinstance(x, int)):
+            p, q, g = alg_params
+            y: int = pow(g, x, p)
+            return p, q, g, y, x
+        else:
+            return None
+
+    @classmethod
+    def decode_pkcs8_public(cls, alg_params: object,
+                            data: bytes) -> Optional[_PublicKeyArgs]:
+        ''
+
+        try:
+            y = der_decode(data)
+        except ASN1DecodeError:
+            return None
+
+        if (isinstance(alg_params, tuple) and len(alg_params) == 3 and
+                all_ints(alg_params) and isinstance(y, int)):
+            p, q, g = alg_params
+            return p, q, g, y
+        else:
+            return None
+
+    @classmethod
+    def decode_ssh_private(cls, packet: SSHPacket) -> _PrivateKeyArgs:
+        ''
+
+        p = packet.get_mpint()
+        q = packet.get_mpint()
+        g = packet.get_mpint()
+        y = packet.get_mpint()
+        x = packet.get_mpint()
+
+        return p, q, g, y, x
+
+    @classmethod
+    def decode_ssh_public(cls, packet: SSHPacket) -> _PublicKeyArgs:
+        ''
+
+        p = packet.get_mpint()
+        q = packet.get_mpint()
+        g = packet.get_mpint()
+        y = packet.get_mpint()
+
+        return p, q, g, y
+
+    def encode_pkcs1_private(self) -> object:
+        ''
+
+        if not self._key.x:
+            raise KeyExportError('Key is not private')
+
+        return (0, self._key.p, self._key.q, self._key.g,
+                self._key.y, self._key.x)
+
+    def encode_pkcs1_public(self) -> object:
+        ''
+
+        return (self._key.y, self._key.p, self._key.q, self._key.g)
+
+    def encode_pkcs8_private(self) -> Tuple[object, object]:
+        ''
+
+        if not self._key.x:
+            raise KeyExportError('Key is not private')
+
+        return (self._key.p, self._key.q, self._key.g), der_encode(self._key.x)
+
+    def encode_pkcs8_public(self) -> Tuple[object, object]:
+        ''
+
+        return (self._key.p, self._key.q, self._key.g), der_encode(self._key.y)
+
+    def encode_ssh_private(self) -> bytes:
+        ''
+
+        if not self._key.x:
+            raise KeyExportError('Key is not private')
+
+        return b''.join((MPInt(self._key.p), MPInt(self._key.q),
+                         MPInt(self._key.g), MPInt(self._key.y),
+                         MPInt(self._key.x)))
+
+    def encode_ssh_public(self) -> bytes:
+        ''
+
+        return b''.join((MPInt(self._key.p), MPInt(self._key.q),
+                         MPInt(self._key.g), MPInt(self._key.y)))
+
+    def encode_agent_cert_private(self) -> bytes:
+        ''
+
+        if not self._key.x:
+            raise KeyExportError('Key is not private')
+
+        return MPInt(self._key.x)
+
+    def sign_ssh(self, data: bytes, sig_algorithm: bytes) -> bytes:
+        ''
+
+        # pylint: disable=unused-argument
+
+        if not self._key.x:
+            raise ValueError('Private key needed for signing')
+
+        sig = der_decode(self._key.sign(data, 'sha1'))
+        r, s = cast(Tuple[int, int], sig)
+        return String(r.to_bytes(20, 'big') + s.to_bytes(20, 'big'))
+
+    def verify_ssh(self, data: bytes, sig_algorithm: bytes,
+                   packet: SSHPacket) -> bool:
+        ''
+
+        # pylint: disable=unused-argument
+
+        sig = packet.get_string()
+        packet.check_end()
+
+        if len(sig) != 40:
+            return False
+
+        r = int.from_bytes(sig[:20], 'big')
+        s = int.from_bytes(sig[20:], 'big')
+
+        return self._key.verify(data, der_encode((r, s)), 'sha1')
+
+
+register_public_key_alg(b'ssh-dss', _DSAKey, False)
+
+register_certificate_alg(1, b'ssh-dss', b'ssh-dss-cert-v01@openssh.com',
+                         _DSAKey, SSHOpenSSHCertificateV01, False)
+
+for alg in _DSAKey.x509_algorithms:
+    register_x509_certificate_alg(alg, False)

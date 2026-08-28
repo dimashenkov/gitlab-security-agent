@@ -324,7 +324,17 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
         # the run again.
         result["members"] = {
             member: dict(
-                signature(members[member]["payload"], case),
+                # The same excusals the scorer above used, and only those. A
+                # ruling that reached `hits_target` and not this left the two
+                # contradicting each other inside one result: the safe member
+                # scored as not persisting while the row beside it still named
+                # the excused finding as the case's target — which is the field
+                # `stability.py` prints and `controls_agree` compares. Only the
+                # safe member, because that is where `hits_target` applies them;
+                # excusing in the unsafe member here would make the stored row
+                # disagree with `unsafe_target_recall` in the other direction.
+                signature(members[member]["payload"], case,
+                          excused=excused if member == "safe" else ()),
                 seconds=members[member]["seconds"],
                 cost=cost_of(members[member]["payload"]["usage"]),
                 usage=members[member]["payload"].get("usage", {}),

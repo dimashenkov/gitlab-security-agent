@@ -4,8 +4,17 @@
 # reasons, and the second is the one that matters: a job that installs from PyPI
 # on every merge request adds a minute to every review, and it resolves and
 # executes third-party package code inside a job that holds an Anthropic API key
-# and a GitLab token. Pinning that surface into a reviewed, rebuilt image is a
+# and a GitLab token. Resolving that surface once, into a reviewed image, is a
 # smaller target than resolving it fresh against a live index each time.
+#
+# It is bounded, not pinned, and the word matters. `python:3.12-slim` is a
+# mutable tag, `apt-get` below installs from live Debian, and `requirements.txt`
+# holds ranges rather than exact versions — so two builds of this file a month
+# apart contain different code. What the image buys is that the resolution
+# happens at build time, under review, instead of inside a job holding two
+# secrets. Claiming more than that would be claiming a reproducibility nothing
+# here provides; digest-pinning the base and hash-pinning the requirements is
+# what would make the stronger claim true.
 
 FROM python:3.12-slim AS base
 

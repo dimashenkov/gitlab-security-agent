@@ -178,7 +178,11 @@ class ClaudeCodeVerifier:
                 "{}".format(self.cfg.verify_max_findings)))
         if metrics is not None:
             metrics.verification_skipped += len(informational)
-            metrics.verified += len(gating)
+            # `to_verify`, not `gating` — the same self-contradicting artifact
+            # the API path had: counting everything past the
+            # SECURITY_SCAN_VERIFY_MAX cut as verified, while those candidates
+            # carry a reason saying nobody checked them.
+            metrics.verified += len(to_verify)
         if not to_verify:
             return
 

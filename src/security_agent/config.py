@@ -12,9 +12,15 @@ from urllib.parse import quote
 from .models import CONFIDENCE_ORDER, SEVERITY_ORDER
 
 # Paths that cost tokens without carrying signal. Lockfiles and vendored trees
-# are dependency data rather than reviewable logic (supply-chain risk is caught
-# from the manifest instead); minified and generated output is not something a
-# reviewer can act on.
+# are dependency data rather than reviewable logic; minified and generated
+# output is not something a reviewer can act on.
+#
+# This used to add "supply-chain risk is caught from the manifest instead",
+# which nothing delivers. Manifests are not excluded, so the model *may* read
+# one — but no tool, prompt instruction or gate makes a dependency change get
+# looked at, and a bumped version in a lockfile that the manifest does not
+# mention is invisible. The exclusion is a token decision; it is not coverage
+# moved somewhere else. `LIMITATIONS.md` says so where readers look.
 DEFAULT_EXCLUDES: Sequence[str] = (
     "*.lock", "*.min.js", "*.min.css", "*.map", "*.snap",
     "*.svg", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.pdf",

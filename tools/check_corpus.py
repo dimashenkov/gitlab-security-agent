@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from artifact import target_categories, target_paths
+from strip_comments import STRIPPED, UNCHANGED, strip_comments_report
 
 from security_agent.vocabulary import VocabularyError, categories
 
@@ -141,6 +142,47 @@ def check_case(case_dir: Path, vocabulary: set) -> list:
         problems.append(
             "the two members are byte-identical: there is no difference to "
             "discriminate, and every run scores the same on both")
+
+    # A file the stripper could not read still carries the maintainer's prose,
+    # and inside `change/` that prose is on the reviewed side of a fix — which
+    # is the answer key this corpus exists to remove. It is refused rather than
+    # patched, deliberately (`strip_comments.py`), and refusing loudly is only
+    # safe if something downstream then refuses to ship it. Nothing did.
+    #
+    # Harvested cases only, and the line is `source_advisory`. A hand-written
+    # case has no maintainer: its author wrote both members and can make the
+    # prose identical between them, which `corpus/ts-xss-01` does — the same
+    # two comment lines on each side, saying nothing about the fix, so there is
+    # no side to read off them. It is a `.tsx` file the stripper declines for
+    # its own safety, and failing it here would be failing a case for a
+    # property it does not have.
+    #
+    # Two cases reached the corpus this way. `js-w93q-cq9w-58p7` held a file
+    # with JSX in it, the stripper declined, and the safe member arrived with
+    # 14 comment lines against the unsafe member's 13 — caught, but only
+    # because the leak happened to be in comment syntax. `py-mv8m-v9v6-5f94`
+    # held a `.rst` whose note says the fix "disables ssh host key checking …
+    # does not apply it in local environments, starting with kas 5.4", and
+    # nothing saw it: `corpus_adversary.py` counts comment lines, and reStructured
+    # Text has no comment marker it counts. The cue was invisible by
+    # construction, which is the worst kind to rely on a symptom for.
+    for member in ("safe", "unsafe") if spec.get("source_advisory") else ():
+        change = case_dir / member / "change"
+        for path in sorted(change.rglob("*")) if change.is_dir() else ():
+            if not path.is_file():
+                continue
+            try:
+                body = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                problems.append("{} cannot be read as text, so nothing has "
+                                "stripped it".format(path.relative_to(case_dir)))
+                continue
+            _text, status = strip_comments_report(body, path.suffix)
+            if status not in (STRIPPED, UNCHANGED):
+                problems.append(
+                    "{} was not stripped ({}) and is in the reviewed change, "
+                    "so the maintainer's prose about the fix is on the safe "
+                    "side".format(path.relative_to(case_dir), status))
 
     for path in sorted(case_dir.rglob("*")):
         if not path.is_file() or path.name == "case.yml":

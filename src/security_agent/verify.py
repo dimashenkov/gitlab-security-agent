@@ -175,7 +175,6 @@ def verify_candidates(
         )
     if metrics is not None:
         metrics.verification_skipped += len(informational)
-        metrics.verified += len(candidates)
     if informational:
         log.info(
             "skipping verification for %d finding(s) that cannot block; verifying %d",
@@ -189,6 +188,12 @@ def verify_candidates(
                                       diff_available=bool(ws.diff_base))
 
     to_verify = candidates[: cfg.verify_max_findings]
+    # Counted here and not above the cut: counting every candidate made the
+    # artifact contradict itself on any run over SECURITY_SCAN_VERIFY_MAX —
+    # `verification.verified` included findings whose own reason said "not
+    # verified — beyond the SECURITY_SCAN_VERIFY_MAX limit".
+    if metrics is not None:
+        metrics.verified += len(to_verify)
     if len(candidates) > len(to_verify):
         log.warning(
             "verifying only the first %d of %d findings (SECURITY_SCAN_VERIFY_MAX); "

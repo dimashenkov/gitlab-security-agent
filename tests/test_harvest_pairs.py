@@ -21,6 +21,7 @@ import filecmp
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -367,15 +368,48 @@ def test_a_snapshot_case_always_has_a_baseline():
     if not root.is_dir():
         pytest.skip("corpus-real is not present")
 
+    # Imported, not written out again. This test walked the tree correctly
+    # while the guard in `harvest()` used `glob("*")` and saw only top-level
+    # children — so the guard deleted 38 of the 39 snapshot cases this test was
+    # happily reading, and neither ever contradicted the other. Two expressions
+    # for one rule is how a guard goes wrong with the suite still green.
+    from harvest_pairs import baseline_files
+
     offenders = []
     for manifest in sorted(root.glob("*-snap/case.yml")):
         case = manifest.parent
         for member in ("safe", "unsafe"):
-            baseline = [p for p in (case / member).rglob("*")
-                        if p.is_file() and "change" not in p.relative_to(case / member).parts]
-            if not baseline:
+            if not baseline_files(case / member):
                 offenders.append("{}/{}".format(case.name, member))
     assert not offenders, offenders
+
+
+def test_the_guard_rejects_a_snapshot_whose_baseline_is_actually_empty():
+    """The other half, so sharing the expression cannot make it vacuous.
+
+    A rule enforced and checked by one function is only safe if that function
+    still says no to something. Nested baselines pass; a member holding
+    nothing but its change does not.
+    """
+    from harvest_pairs import baseline_files
+
+    root = Path(__file__).resolve().parents[1] / "corpus-real"
+    if not root.is_dir():
+        pytest.skip("corpus-real is not present")
+
+    case = next(iter(sorted(root.glob("*-snap/case.yml")))).parent
+    assert baseline_files(case / "safe"), "no case to read"
+
+    empty = Path(tempfile.mkdtemp()) / "member"
+    (empty / "change" / "src" / "deep").mkdir(parents=True)
+    (empty / "change" / "src" / "deep" / "a.py").write_text("x = 1\n")
+    assert baseline_files(empty) == []
+
+    # And a baseline nested as deeply as the change is still a baseline — the
+    # naive walk that fixes the first bug counts `change/src/a.py` as one.
+    (empty / "src" / "deep").mkdir(parents=True)
+    (empty / "src" / "deep" / "b.py").write_text("y = 2\n")
+    assert [p.name for p in baseline_files(empty)] == ["b.py"]
 
 
 def test_every_case_has_content_on_both_sides_of_the_change():

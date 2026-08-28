@@ -181,8 +181,8 @@ class Finding:
         or starting anywhere inside the same block.
         """
         seen, out = set(), []
-        for collapsed in _quoted_lines(self.evidence):
-            if collapsed not in seen and _distinctive(collapsed):
+        for collapsed in quoted_lines(self.evidence):
+            if collapsed not in seen and distinctive(collapsed):
                 seen.add(collapsed)
                 out.append(collapsed)
         return out
@@ -212,7 +212,7 @@ class Finding:
         """
         values = [_digest(self.category, self.file, a) for a in self.anchors]
         return values or [
-            _digest(self.category, self.file, "\n".join(_quoted_lines(self.evidence)))]
+            _digest(self.category, self.file, "\n".join(quoted_lines(self.evidence)))]
 
 
 # Lines that carry no identity. Length alone is not the test — `if err != nil {`
@@ -229,12 +229,18 @@ _BOILERPLATE = frozenset({
 })
 
 
-def _quoted_lines(evidence: str) -> List[str]:
+def quoted_lines(evidence: str) -> List[str]:
     """The quoted code, one normalised line at a time, diff markers removed.
 
     Shared by `anchors` and by the fallback fingerprint so the two cannot drift:
     the fallback exists precisely for the quote `anchors` returns nothing for,
     and a second copy of this normalisation would decide that differently.
+
+    Public, and named without an underscore, because the drift it was written to
+    prevent happened anyway one directory over: `tools/artifact.py` had its own
+    copy of this normalisation and its own weaker idea of which lines count, so
+    the scorer merged findings the agent that produced them keeps apart. It
+    imports these two now.
     """
     out = []
     for line in evidence.splitlines():
@@ -244,7 +250,7 @@ def _quoted_lines(evidence: str) -> List[str]:
     return out
 
 
-def _distinctive(line: str) -> bool:
+def distinctive(line: str) -> bool:
     """Is this line specific enough to identify one finding?
 
     An anchor is used to decide whether an accepted risk still applies. A line

@@ -1,0 +1,33 @@
+case_id: py-2wxc-x7rj-hg8f
+language: python
+family: path-traversal
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-2wxc-x7rj-hg8f
+source_cve: CVE-2026-54591
+source_repo: ronf/asyncssh
+source_fix_commit: d730803b8e4e94c20c7580d90f94d1e05f9f58de
+source_cwes: [CWE-22]
+severity_reported: high
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: path-traversal
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['asyncssh/scp.py']
+dropped_from_change: ['tests/test_sftp.py']
+summary: 'asyncssh has SCP Path Traversal to Arbitrary File Write'

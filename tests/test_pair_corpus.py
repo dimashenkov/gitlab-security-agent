@@ -318,6 +318,73 @@ def test_the_ruling_is_read_from_the_file_and_not_merely_written_in_it():
     assert ruled_incidental([], "one", "safe") == []
 
 
+def test_a_ruling_reaches_the_stored_row_and_not_only_the_score():
+    """The two halves of one result contradicted each other.
+
+    `hits_target` gained `excused` and `signature` did not, so for
+    `rb-g65v-27r3-5p6m` — the case the ruling was written for —
+    `safe_target_persistence` came out False while the row stored beside it
+    still named the excused finding as the case's target. That row is what
+    `stability.py` prints and what `controls_agree` compares.
+    """
+    from artifact import signature
+    from pair_corpus import hits_target
+
+    payload = {"complete": True, "verdict": {"blocking_fingerprints": []},
+               "findings": [LESSER_FINDING]}
+    excused = ["aa11bb22cc33dd44"]
+
+    assert hits_target(payload, TRAVERSAL_CASE, excused=excused) is False
+    assert signature(payload, TRAVERSAL_CASE, excused=excused)["target"] is None
+
+
+def test_excusing_one_finding_does_not_blind_the_row_to_the_one_beside_it():
+    """A ruling names a finding, not a neighbourhood. The genuine arbitrary
+    read in the same file is still this case's target and still has to be the
+    row a person reads."""
+    from artifact import signature
+
+    payload = {"complete": True, "verdict": {"blocking_fingerprints": []},
+               "findings": [LESSER_FINDING, REAL_FINDING]}
+
+    row = signature(payload, TRAVERSAL_CASE, excused=["aa11bb22cc33dd44"])
+    assert row["target"]["fingerprint"] == "ffee0099aabbccdd"
+
+
+def test_the_runner_stores_the_row_it_scored_with(tmp_path, monkeypatch):
+    """The whole chain, because the two calls are eight lines apart and each one
+    on its own looked right. Reviews are faked here: this is about which
+    rulings `run_case` hands to which of its two readers, and that question
+    costs nothing to answer."""
+    import pair_corpus
+
+    case_dir = tmp_path / "one"
+    (case_dir / "safe").mkdir(parents=True)
+    (case_dir / "unsafe").mkdir()
+    usage = dict.fromkeys(("input_tokens", "output_tokens",
+                           "cache_read_tokens", "cache_write_tokens"), 0)
+    payload = {"complete": True, "usage": usage, "findings": [LESSER_FINDING],
+               "verdict": {"exit_code": 0, "blocking_fingerprints": []}}
+    monkeypatch.setattr(pair_corpus, "build_repo",
+                        lambda *a, **k: (tmp_path, "base", "head"))
+    monkeypatch.setattr(pair_corpus, "review", lambda *a, **k: {
+        "ok": True, "seconds": 0.0, "exit_code": 0, "payload": payload})
+
+    row = pair_corpus.run_case(
+        dict(TRAVERSAL_CASE, _dir=case_dir),
+        adjudications=[{"case_id": "one", "member": "safe",
+                        "fingerprint": "aa11bb22cc33dd44", "incidental": True}])
+
+    assert row["safe_target_persistence"] is False
+    assert row["members"]["safe"]["target"] is None
+    # The unsafe member is scored without the safe member's excusals, and the
+    # row has to say the same thing the score does — the ruling is about a
+    # finding in the fixed code, not about the weakness being found in the
+    # broken one.
+    assert row["unsafe_target_recall"] is True
+    assert row["members"]["unsafe"]["target"]["fingerprint"] == "aa11bb22cc33dd44"
+
+
 def test_a_safe_finding_nobody_ruled_on_still_fails_the_pair():
     """The floor. Every safe finding excused by default would make the safe
     member unable to fail, which is the half of the pair that catches a tool
@@ -407,17 +474,28 @@ def test_a_filename_with_a_pipe_does_not_fake_a_disagreement():
 
 def test_an_old_pipe_joined_artifact_still_compares():
     """Artifacts written before the change must not read as disagreeing with
-    ones written after it."""
+    ones written after it.
+
+    Three stored shapes now, from three versions of this field: the
+    `|`-joined string, the (category, file, anchor) triple, and the pair the
+    anchor was dropped from. Every batch in `measurements/` is written in one
+    of the first two, and they are what a new run gets compared against.
+    """
     import sys as _sys
     from pathlib import Path as _Path
 
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "tools"))
     from artifact import controls_agree
 
-    old = {"exit_code": 1, "blocking": ["injection|app/views.py|x = 1"], "target": None}
-    new = {"exit_code": 1, "blocking": [["injection", "app/views.py", "x = 1"]],
-           "target": None}
-    assert controls_agree(old, new)
+    joined = {"exit_code": 1, "blocking": ["injection|app/views.py|x = 1"],
+              "target": None}
+    triple = {"exit_code": 1, "blocking": [["injection", "app/views.py", "x = 1"]],
+              "target": None}
+    pair = {"exit_code": 1, "blocking": [["injection", "app/views.py"]],
+            "target": None}
+    assert controls_agree(joined, triple)
+    assert controls_agree(triple, pair)
+    assert controls_agree(joined, pair)
 
 
 def test_a_null_verification_is_not_a_crash():

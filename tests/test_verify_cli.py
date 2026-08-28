@@ -567,3 +567,17 @@ class TestFindingsThatAreNotSentToAPanel:
         assert candidates[0].votes and candidates[0].votes[0].error == ""
         assert candidates[1].votes == []
         assert "SECURITY_SCAN_VERIFY_MAX" in candidates[1].verdict_reason
+
+    def test_a_finding_past_the_maximum_is_not_counted_as_verified(
+            self, cfg, ws, budget, fake_cli):
+        """The count and the sentence have to agree. They did not: `verified`
+        included the findings whose own reason says nobody checked them, so the
+        artifact contradicted itself on every run over the limit."""
+        cfg.verify_max_findings = 1
+        metrics = StageMetrics()
+        candidates = [make_candidate(title="finding {}".format(n)) for n in range(3)]
+
+        run(cfg, ws, candidates, budget, fake_cli(verdict=CONFIRMED), metrics=metrics)
+
+        assert metrics.verified == 1
+        assert metrics.verified == sum(1 for c in candidates if c.votes)

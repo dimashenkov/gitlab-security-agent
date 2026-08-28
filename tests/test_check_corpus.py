@@ -163,3 +163,68 @@ def test_the_real_corpus_passes():
     broken = {m.parent.name: check_case(m.parent, vocabulary)
               for m in manifests if check_case(m.parent, vocabulary)}
     assert not broken, broken
+
+
+# ------------------------- prose the stripper could not reach
+
+# Both changed files are named, so the manifest rule below is satisfied and
+# the only thing left to fire is the one under test.
+WITH_DOC = ("expected_category: injection\n"
+            "expected_file: ['app/views.py', 'docs/guide.rst']\n")
+ADVISORY = "source_advisory: GHSA-xxxx-yyyy-zzzz\n"
+HARVESTED = WITH_DOC + ADVISORY
+
+
+def test_a_file_the_stripper_refused_inside_the_change_is_caught(tmp_path):
+    """The maintainer's explanation of the fix, on the reviewed side.
+
+    `strip_comments.py` refuses a file it cannot scan safely rather than
+    mangling it, and says so — deliberately, because "a case with one
+    unstripped file is a case with a flaw someone can see". Nothing downstream
+    then refused to ship it, so the loud failure became a silent one.
+
+    Two got through. `js-w93q-cq9w-58p7` held JSX, and was caught only because
+    the leftover prose happened to be in comment syntax, which the comment
+    counts noticed. `py-mv8m-v9v6-5f94` held a `.rst` whose note says the fix
+    "disables ssh host key checking … does not apply it in local environments,
+    starting with kas 5.4" — and nothing saw it, because reStructured Text has
+    no comment marker `corpus_adversary.py` counts. Relying on a symptom that
+    the leaking format does not produce is not a check.
+    """
+    case = build(tmp_path, HARVESTED,
+                 {"app/views.py": "safe code\n",
+                  "docs/guide.rst": "The fix disables host key checking.\n"},
+                 {"app/views.py": "unsafe code\n",
+                  "docs/guide.rst": "Nothing here.\n"})
+    problems = check_case(case, VOCABULARY)
+    assert any("guide.rst" in p and "not stripped" in p for p in problems), problems
+
+
+def test_the_same_file_as_context_rather_than_change_is_not_caught(tmp_path):
+    """The reviewer opens the change. A baseline file is surroundings, and
+    surroundings the fix did not touch carry no explanation of it."""
+    case = build(tmp_path, MANIFEST + ADVISORY,
+                 {"app/views.py": "safe code\n"},
+                 {"app/views.py": "unsafe code\n"})
+    for member in ("safe", "unsafe"):
+        doc = case / member / "docs" / "guide.rst"
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text("Unrelated prose.\n")
+    assert check_case(case, VOCABULARY) == []
+
+
+def test_a_hand_written_case_is_not_failed_for_a_maintainer_it_does_not_have(tmp_path):
+    """`corpus/ts-xss-01` is a `.tsx` file, which the stripper declines for its
+    own safety — a wrong guess about JSX text eats a line of code.
+
+    Its author wrote both members and made the two comment lines identical, so
+    there is no side to read off them. Failing it here would fail a case for a
+    property it does not have, and the property the rule is about is somebody
+    else's prose about somebody else's fix. `source_advisory` is the line.
+    """
+    case = build(tmp_path, WITH_DOC,
+                 {"app/views.py": "safe code\n",
+                  "docs/guide.rst": "The fix disables host key checking.\n"},
+                 {"app/views.py": "unsafe code\n",
+                  "docs/guide.rst": "Nothing here.\n"})
+    assert check_case(case, VOCABULARY) == []

@@ -102,14 +102,25 @@ def import_lines(member: Path) -> int:
 #
 # **Between-member.** A property that only exists by comparison — the safe
 # member being larger, because a fix adds code. Nothing in the pipeline ever
-# sees both members: `pair_corpus.py` runs two independent reviews, each shown
-# one member and no reference to the other. This cue is unavailable to the
-# thing being measured, so it is reported and not gated on.
+# shows a reviewer both: `pair_corpus.py` runs two independent reviews, each
+# given one member and no reference to the other. So the *comparison* is
+# unavailable, and these are reported rather than gated on.
 #
-# The distinction is not a licence to ignore the second kind. It matters for a
-# human grading by hand, for anything training on pairs, and for a future
-# harness that batches both members into one prompt. It is recorded so that the
-# day one of those exists, the size of the problem is already known.
+# Narrower than it used to read, and the narrowing is the honest part. The old
+# wording said the cue "is unavailable to the thing being measured", which
+# claims more than the pipeline delivers. A model shown one member alone can
+# still read patch-like surface — a freshly added validation block, a
+# normalisation helper, a defensive early return that nothing else in the file
+# resembles — as "this is the fixed side", with nothing to compare against.
+# That is a within-member reading of a property we happen to measure by
+# comparison, and no rule here catches it.
+#
+# It is not gated on because gating needs a threshold, and a threshold needs a
+# number: whether a model can pick the safe member from one side alone is a
+# question only paid runs answer. Until then the figures are recorded, and the
+# claim attached to them says what it can support. They also matter for a human
+# grading by hand, for anything training on pairs, and for a future harness
+# that batches both members into one prompt.
 WITHIN_MEMBER = {
     "more comment lines": comment_lines,
 }

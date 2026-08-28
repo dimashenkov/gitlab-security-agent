@@ -67,6 +67,15 @@ def run_semgrep(repo: Path, targets: list) -> dict:
     if not proc.stdout.strip():
         return {"ok": False, "error": (proc.stderr.strip().splitlines()
                                        or ["no output"])[-1][:120]}
+    # Semgrep exits non-zero when rules or targets failed and still prints the
+    # JSON for whatever it did manage to scan. Judging success on "stdout was
+    # non-empty" scored a scan that SKIPPED FILES as a completed scan that found
+    # nothing in them — a miss the other tool never had the chance to make, in
+    # the one direction a comparison must never fail in.
+    if proc.returncode != 0:
+        return {"ok": False, "error": "semgrep exit {}: {}".format(
+            proc.returncode, (proc.stderr.strip().splitlines()
+                              or ["scan incomplete"])[-1][:100])}
     payload = json.loads(proc.stdout)
     hits = [r for r in payload.get("results", [])
             if any(str(r.get("path", "")).endswith(p) for p in targets)]
@@ -94,7 +103,10 @@ def run_codeql(repo: Path, targets: list, language: str) -> dict:
          "codeql/{}-queries:codeql-suites/{}-security-extended.qls".format(lang, lang),
          "--format", "sarif-latest", "--output", str(sarif)],
         capture_output=True, text=True, check=False)
-    if not sarif.is_file():
+    # `analyze` is checked the same way `create` already is. Testing only for
+    # the file accepted a SARIF that a failed analyze had left behind — queries
+    # that never ran read as queries that ran and found nothing.
+    if scan.returncode != 0 or not sarif.is_file():
         return {"ok": False,
                 "error": (scan.stderr.strip().splitlines() or ["analyze failed"])[-1][:120]}
     payload = json.loads(sarif.read_text())

@@ -106,6 +106,45 @@ class TestRejectsHallucinations:
         assert session.candidates == []
 
 
+class TestEveryRejectionReachesTheCounters:
+    """The `citations` block of the artifact, against what actually happened.
+
+    The counters were incremented only on the retry path, so the last attempt —
+    the one where the claim is given up on — was invisible. Every dropped claim
+    was undercounted by exactly one, and the interesting case, a claim abandoned
+    after MAX_CITATION_ATTEMPTS, read like a claim that was nudged once and
+    never came back.
+    """
+
+    def test_a_dropped_path_claim_is_counted_on_every_attempt(self, ws, session):
+        for _ in range(MAX_CITATION_ATTEMPTS):
+            report(ws, session, file="app/imaginary.py")
+        assert session.rejected[0].reason == "unknown-path"
+        assert session.metrics.citations_rejected_unknown_path == MAX_CITATION_ATTEMPTS
+
+    def test_a_dropped_evidence_claim_is_counted_on_every_attempt(self, ws, session):
+        for _ in range(MAX_CITATION_ATTEMPTS):
+            report(ws, session, evidence='os.system("rm -rf /" + user_input)')
+        assert session.rejected[0].reason == "evidence-not-found"
+        assert session.metrics.citations_rejected_not_found == MAX_CITATION_ATTEMPTS
+
+    def test_the_counters_account_for_every_refusal(self, ws, session):
+        # Stated without a literal: however many times report_finding refuses,
+        # the artifact has to show that many rejections. A drop is a rejection.
+        attempts = 0
+        for _ in range(MAX_CITATION_ATTEMPTS):
+            report(ws, session, file="app/imaginary.py")
+            report(ws, session, evidence='os.system("rm -rf /" + user_input)')
+            attempts += 2
+
+        counted = (session.metrics.citations_rejected_unknown_path
+                   + session.metrics.citations_rejected_not_found
+                   + session.metrics.citations_rejected_ambiguous
+                   + session.metrics.citations_rejected_too_short)
+        assert counted == attempts
+        assert session.candidates == []
+
+
 class TestDeduplication:
     def test_the_same_finding_twice_is_recorded_once(self, ws, session):
         report(ws, session, evidence=REAL_EVIDENCE)

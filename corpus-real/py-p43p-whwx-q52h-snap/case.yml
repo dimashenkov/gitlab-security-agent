@@ -1,0 +1,33 @@
+case_id: py-p43p-whwx-q52h-snap
+language: python
+family: dos
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-p43p-whwx-q52h
+source_cve: CVE-2026-54338
+source_repo: jupyterhub/jupyterhub
+source_fix_commit: d6dc595f84b7509969686da31d87d6d69e7fce0a
+source_cwes: [CWE-400]
+severity_reported: medium
+construction: snapshot
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: dos
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['jupyterhub/auth.py', 'jupyterhub/handlers/base.py', 'jupyterhub/handlers/login.py']
+dropped_from_change: []
+summary: 'JupyterHub has Unauthenticated Denial of Service via Unbounded Username Logging on Failed Login'

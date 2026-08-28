@@ -6,6 +6,7 @@ runner acts on. The exit code is the product — everything else is explanation.
 """
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -215,6 +216,16 @@ class TestFlagOverrides:
 
 
 class TestSkipHatches:
+    """The label switches the review off. It must not switch the record off.
+
+    A skip used to `return EXIT_OK` before anything was written, and the CI
+    template kept the job from starting at all. So the only trace of a skipped
+    review was the pipeline graph — and the note from the run *before* the
+    label went on stayed on the merge request, still claiming its verdict. A
+    label meaning "do not review this" then read as a review that found
+    nothing, which is the one sentence this project exists to prevent.
+    """
+
     def test_the_skip_label_skips_the_review(self, git_repo, monkeypatch, tmp_path):
         monkeypatch.setenv("CI_MERGE_REQUEST_IID", "42")
         monkeypatch.setenv("CI_MERGE_REQUEST_LABELS", "urgent,skip-ai-security")
@@ -223,10 +234,183 @@ class TestSkipHatches:
         assert run(git_repo, "--output-dir", str(tmp_path / "out")) == EXIT_OK
         assert client.requests == []
 
+    def test_a_skipped_review_still_leaves_an_artifact(
+        self, git_repo, monkeypatch, tmp_path
+    ):
+        out = tmp_path / "out"
+        monkeypatch.setenv("CI_MERGE_REQUEST_IID", "42")
+        monkeypatch.setenv("CI_MERGE_REQUEST_LABELS", "urgent,skip-ai-security")
+        install_client(monkeypatch, [])
+
+        assert run(git_repo, "--output-dir", str(out)) == EXIT_OK
+
+        assert (out / "report.md").is_file(), "a skipped review left no record"
+        payload = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        assert payload["findings"] == []
+        # The label is named, so the reader knows why nothing was looked at and
+        # who can undo it. And the summary must not read as a clean review.
+        assert "skip-ai-security" in payload["summary"]
+        assert "Nothing was examined" in payload["summary"]
+
+    def test_a_skipped_review_overwrites_the_earlier_verdict(
+        self, git_repo, monkeypatch, tmp_path
+    ):
+        """The stale-note failure, on disk rather than on the merge request.
+
+        The previous run's artifact is what the widget exposes and what
+        `--reuse` reads. A skip that writes nothing leaves it in place, so the
+        finding from before the label went on is still the answer on file.
+        """
+        out = tmp_path / "out"
+        install_client(
+            monkeypatch,
+            [FakeResponse([tool_use("report_finding", FINDING_ARGS, id="t1")],
+                          stop_reason="tool_use"),
+             FakeResponse([text("One finding.")], stop_reason="end_turn")],
+            [verdict_response(VERDICT_CONFIRMED)] * 2,
+        )
+        assert run(git_repo, "--output-dir", str(out)) == EXIT_FINDINGS
+
+        monkeypatch.setenv("CI_MERGE_REQUEST_IID", "42")
+        monkeypatch.setenv("CI_MERGE_REQUEST_LABELS", "skip-ai-security")
+        install_client(monkeypatch, [])
+        assert run(git_repo, "--output-dir", str(out)) == EXIT_OK
+
+        payload = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        assert payload["counts"]["blocking"] == 0
+        assert "SQL injection in get_user" not in (out / "report.md").read_text(
+            encoding="utf-8")
+
+    def test_a_skipped_review_posts_the_note_that_says_so(
+        self, git_repo, monkeypatch, tmp_path
+    ):
+        """Same reason: the comment on the merge request has to describe this
+        run. Silence there is indistinguishable from the last run's verdict."""
+        from security_agent import forge
+
+        posted = []
+        monkeypatch.setattr(forge, "publish",
+                            lambda ctx, body: posted.append(body))
+        monkeypatch.setenv("CI_MERGE_REQUEST_IID", "42")
+        monkeypatch.setenv("CI_MERGE_REQUEST_LABELS", "skip-ai-security")
+        install_client(monkeypatch, [])
+
+        code = cli.main(["--repo", str(git_repo), "--mode", "repo",
+                         "--output-dir", str(tmp_path / "out")])
+
+        assert code == EXIT_OK
+        assert len(posted) == 1, "a skipped review posted nothing"
+        assert "skip-ai-security" in posted[0]
+
     def test_an_unrelated_label_does_not_skip(self, git_repo, monkeypatch, tmp_path):
         monkeypatch.setenv("CI_MERGE_REQUEST_LABELS", "urgent")
         install_client(monkeypatch, [FakeResponse([text("Nothing.")], stop_reason="end_turn")])
         assert run(git_repo, "--output-dir", str(tmp_path / "out")) == EXIT_OK
+
+
+def _git(root, *args):
+    subprocess.run(("git", "-C", str(root), *args), check=True, capture_output=True)
+
+
+@pytest.fixture
+def diff_repo(tmp_path):
+    """A repository with a base commit, so a real range can be reviewed."""
+    root = tmp_path / "repo"
+    (root / "app").mkdir(parents=True)
+    (root / "lib").mkdir()
+    subprocess.run(("git", "init", "-q", "-b", "main", str(root)), check=True,
+                   capture_output=True)
+    _git(root, "config", "user.email", "t@example.com")
+    _git(root, "config", "user.name", "T")
+    (root / "app" / "views.py").write_text("def get_user(uid):\n    return uid\n")
+    (root / "lib" / "util.py").write_text("VALUE = 1\n")
+    (root / "package-lock.json").write_text('{"lockfileVersion": 3}\n')
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "base")
+    return root
+
+
+def change(root, files):
+    """Commit `files`, and return the revision to review that commit against."""
+    base = subprocess.run(("git", "-C", str(root), "rev-parse", "HEAD"),
+                          capture_output=True, text=True, check=True).stdout.strip()
+    for name, body in files.items():
+        (root / name).write_text(body, encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "change")
+    return base
+
+
+def summary_of(root, base, monkeypatch, out, *args):
+    """Review a range that has nothing in it, and return what the reader sees."""
+    client = install_client(monkeypatch, [])
+    code = cli.main(["--repo", str(root), "--mode", "diff", "--base", base,
+                     "--no-comment", "--output-dir", str(out), *args])
+
+    assert code == EXIT_OK
+    assert client.requests == [], "an empty review still called the model"
+    return json.loads((out / "findings.json").read_text(encoding="utf-8"))["summary"]
+
+
+class TestNothingReviewable:
+    """Which filter emptied the review, said in the words of that filter.
+
+    `changed_files()` applies the excludes **and** the `--path` scope, and every
+    way of arriving at an empty list produced the same sentence: "Every file in
+    this change is excluded by configuration". So `--path lib` on a change that
+    touched only `app/` sent its reader to hunt through exclude patterns for a
+    rule that was never involved — and the two are configured in different
+    places, by different people, for different reasons.
+    """
+
+    def test_a_scoped_out_change_does_not_blame_the_exclude_rules(
+        self, diff_repo, monkeypatch, tmp_path
+    ):
+        base = change(diff_repo, {"app/views.py": "def get_user(uid):\n    return 1\n"})
+
+        summary = summary_of(diff_repo, base, monkeypatch, tmp_path / "out",
+                             "--path", "lib")
+
+        assert "excluded by configuration" not in summary
+        assert "outside the reviewed scope" in summary
+        # The pattern that did it, so the reader can check it rather than guess.
+        assert "--path lib" in summary
+
+    def test_an_excluded_change_still_says_excluded(
+        self, diff_repo, monkeypatch, tmp_path
+    ):
+        base = change(diff_repo, {"package-lock.json": '{"lockfileVersion": 4}\n'})
+
+        summary = summary_of(diff_repo, base, monkeypatch, tmp_path / "out")
+
+        assert "excluded by configuration" in summary
+        assert "scope" not in summary
+
+    def test_a_mixed_change_says_how_much_each_filter_took(
+        self, diff_repo, monkeypatch, tmp_path
+    ):
+        """Neither sentence alone is true here, and picking one hides a file."""
+        base = change(diff_repo, {
+            "app/views.py": "def get_user(uid):\n    return 1\n",
+            "package-lock.json": '{"lockfileVersion": 4}\n',
+        })
+
+        summary = summary_of(diff_repo, base, monkeypatch, tmp_path / "out",
+                             "--path", "lib")
+
+        assert "1 file(s) are excluded by configuration" in summary
+        assert "1 file(s) are outside the reviewed scope" in summary
+
+    def test_an_empty_range_blames_no_configuration_at_all(
+        self, diff_repo, monkeypatch, tmp_path
+    ):
+        """Nothing changed, so nothing hid anything. Telling this reader their
+        excludes did it is the same mistake pointing the other way."""
+        summary = summary_of(diff_repo, "HEAD", monkeypatch, tmp_path / "out")
+
+        assert "excluded by configuration" not in summary
+        assert "scope" not in summary
+        assert "adds or modifies no file" in summary
 
 
 class TestCredentials:

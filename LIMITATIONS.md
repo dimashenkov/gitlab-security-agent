@@ -129,6 +129,7 @@ the evidence available:
 | Review stops early | No findings, exit 2 | Exit 2 is never 0; the report header says it did not complete |
 | Two runs disagree on the same code | A merge blocked yesterday passes today | Not measured on real code. Suppressions are matched on quoted code, not wording, so an accepted risk survives rewording |
 | A finding's category is one you did not expect | It is skipped by category filters | The vocabulary is fixed in the schema; open redirect, notably, has no name in it |
+| A dependency change | Not reviewed. `*.lock` is excluded by default, and nothing makes the manifest get read instead | None. The exclusion was a token decision, and for a while the code claimed the coverage had moved to the manifest — it had not. A bumped version that only a lockfile records is invisible to this tool. Use a dependency scanner alongside it |
 
 ## What is sent where
 

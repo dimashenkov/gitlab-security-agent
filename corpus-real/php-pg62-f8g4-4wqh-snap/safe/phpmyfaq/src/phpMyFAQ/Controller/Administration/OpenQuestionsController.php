@@ -1,0 +1,68 @@
+<?php
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+declare(strict_types=1);
+
+namespace phpMyFAQ\Controller\Administration;
+
+use phpMyFAQ\Core\Exception;
+use phpMyFAQ\Enums\PermissionType;
+use phpMyFAQ\Session\Token;
+use phpMyFAQ\Translation;
+use phpMyFAQ\Twig\Extensions\CategoryNameTwigExtension;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Routing\Attribute\Route;
+use Twig\Error\LoaderError;
+use Twig\Extension\AttributeExtension;
+use Twig\Extra\Intl\IntlExtension;
+
+final class OpenQuestionsController extends AbstractAdministrationController
+{
+
+
+
+
+    #[Route(path: '/question')]
+    public function index(Request $request): Response
+    {
+        $this->userHasPermission(PermissionType::QUESTION_DELETE);
+
+        $session = $this->container->get(id: 'session');
+        $question = $this->container->get(id: 'phpmyfaq.question');
+
+        $this->addExtension(new IntlExtension());
+        $this->addExtension(new AttributeExtension(CategoryNameTwigExtension::class));
+        return $this->render('@admin/content/open-questions.twig', [
+            ...$this->getHeader($request),
+            ...$this->getFooter(),
+            'msgOpenQuestions' => Translation::get(key: 'msgOpenQuestions'),
+            'csrfTokenDeleteQuestion' => Token::getInstance($session)->getTokenString('delete-questions'),
+            'currentLocale' => $this->configuration->getLanguage()->getLanguage(),
+            'msgQuestion' => Translation::get(key: 'msgQuestion'),
+            'msgVisibility' => Translation::get(key: 'ad_entry_visibility'),
+            'questions' => $question->getAll(),
+            'yes' => Translation::get(key: 'ad_gen_yes'),
+            'no' => Translation::get(key: 'ad_gen_no'),
+            'enableCloseQuestion' => $this->configuration->get(item: 'records.enableCloseQuestion'),
+            'msg2answerFAQ' => Translation::get(key: 'msg2answerFAQ'),
+            'msgTakeQuestion' => Translation::get(key: 'ad_ques_take'),
+            'csrfTokenToggleVisibility' => Token::getInstance($session)->getTokenString('toggle-question-visibility'),
+            'msgDeleteAllOpenQuestions' => Translation::get(key: 'msgDelete'),
+        ]);
+    }
+}

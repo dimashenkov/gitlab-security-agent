@@ -112,11 +112,27 @@ def digest(identity: Dict[str, Any]) -> str:
 def reusable(previous: Dict[str, Any], current: Dict[str, Any]) -> bool:
     """Would the earlier artifact answer the current question?
 
-    Only when the identity matches **and** the earlier run finished. An
+    Three conditions, and the third was missing.
+
+    The identity must match, and the earlier run must have finished — an
     incomplete run is not a cheaper result, it is an absent one, and caching it
     as an answer is the same confusion that turned three reviews which never
     ran into a 2-of-6 recall figure.
+
+    And some part of the change must have reached the reviewer. A run stopped
+    by the skip label writes a finished artifact with an exit code of 0 and no
+    exposures at all; remove the label and run again with `--reuse`, and the
+    identity still matches, so the skip was served back as a clean review of
+    code nobody had looked at. "Did not check" reading as "checked and clean"
+    is the one confusion this whole tool exists to prevent, and `complete`
+    alone cannot tell them apart — a skip completes.
+
+    An artifact written before exposures were recorded has none either, so it
+    stops being reusable and the next run is paid for. That is the direction to
+    fail in: the cost of being wrong here is a stale all-clear.
     """
     if not previous.get("complete"):
+        return False
+    if not (previous.get("coverage") or {}).get("exposures"):
         return False
     return digest(previous.get("identity") or {}) == digest(current)

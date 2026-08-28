@@ -592,6 +592,30 @@ def category_of(cwes: list) -> List[str]:
     return found
 
 
+def baseline_files(member_dir: Path) -> List[Path]:
+    """Every file a member holds outside its `change/` directory.
+
+    One definition, because there were two and only one of them was right.
+    `tests/test_harvest_pairs.py` walked the tree correctly and the guard below
+    used `glob("*")`, which lists top-level children only — and context files
+    keep their repository-relative paths, so a baseline is `server/cors.go` and
+    every top-level child is a directory. The guard therefore judged every
+    snapshot's baseline empty and deleted it; the test, reading the same cases,
+    said they were fine. Applied to the 39 snapshot cases in `corpus-real/`,
+    the old expression rejects 38 of them.
+
+    Two expressions for one rule, one enforcing and one checking, is how a
+    guard goes wrong without a single test turning red. The test now imports
+    this.
+
+    `parts[0]`, not `"change" in parts`: a repository with its own directory
+    named `change` somewhere down a path has baseline files under it, and they
+    are baseline files.
+    """
+    return [p for p in member_dir.rglob("*")
+            if p.is_file() and p.relative_to(member_dir).parts[0] != "change"]
+
+
 def harvest(item: dict, out: Path, max_files: int, max_lines: int,
             construction: str = REGRESSION) -> dict:
     work = Path(tempfile.mkdtemp(prefix="harvest-")).resolve()
@@ -671,8 +695,7 @@ def harvest(item: dict, out: Path, max_files: int, max_lines: int,
             # leaving no sibling to hold. Nothing to salvage: the construction
             # needs a baseline for both members to add to.
             empty = [m for m in ("safe", "unsafe")
-                     if not any(p.is_file() for p in (case_dir / m).glob("*")
-                                if p.parent.name != "change")]
+                     if not baseline_files(case_dir / m)]
             if empty or not context:
                 shutil.rmtree(case_dir)
                 verdict["skipped"] = (

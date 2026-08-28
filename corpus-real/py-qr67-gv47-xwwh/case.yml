@@ -1,0 +1,33 @@
+case_id: py-qr67-gv47-xwwh
+language: python
+family: path-traversal
+framework: ''
+# Harvested from a published advisory, not written by hand. Ground
+# truth is the maintainers' own fix; this file lives outside the
+# built repository, so the agent never sees it.
+source_advisory: GHSA-qr67-gv47-xwwh
+source_cve: CVE-2026-54590
+source_repo: ronf/asyncssh
+source_fix_commit: 3d515ba9ba0cd9990d248bdf62bcf05d51261a88
+source_cwes: [CWE-22, CWE-639]
+severity_reported: medium
+construction: regression
+# regression: the two members review the same lines in opposite
+#   directions — safe adds the maintainers' fix, unsafe reverts it.
+#   Exactly symmetric, but every unsafe member deletes something, so
+#   direction predicts the answer and a removed-control rule scores
+#   well here without recognising anything.
+# snapshot: both members add an implementation from a shared
+#   baseline, one fixed and one not. Direction carries no answer.
+# Never score the two constructions together.
+decisive_control: the change the maintainers shipped as the fix
+expected_category: ['path-traversal', 'authn-authz']
+# Every file the fix touched, not the first one. A fix is not obliged
+# to fit in one file, and naming only the first counted a finding in
+# the others as the wrong place — Winter's CSRF fix normalises a name
+# in BackendController.php and rejects the bad ones in Controller.php.
+# Repository-relative, because `Controller.php` alone would also match
+# `BackendController.php`.
+expected_file: ['asyncssh/config.py']
+dropped_from_change: ['tests/test_config.py']
+summary: 'asyncssh has an incomplete fix for CVE-2026-45309 — AuthorizedKeysFile %u still escapes the intended directory via a leading ~ (and weakly via ${ENV}) username substitution'

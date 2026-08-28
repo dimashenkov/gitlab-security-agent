@@ -41,6 +41,10 @@ def make_finding(**overrides) -> Finding:
 def make_outcome(candidates=(), **overrides) -> ScanOutcome:
     outcome = ScanOutcome(mode="diff", model="claude-opus-5")
     outcome.reported = list(candidates)
+    # A run that looked at something, because that is what every case here is
+    # about. `exposures=[]` is a run that read nothing, and it has its own
+    # verdict on screen now — pass it explicitly to test that.
+    outcome.exposures = [("app/views.py", "get_diff")]
     for key, value in overrides.items():
         setattr(outcome, key, value)
     return outcome
@@ -80,6 +84,22 @@ def test_clean_run_says_so_without_a_findings_block():
     assert "PASSED" in text
     # "reported", not a claim about the code. The agent read what it read.
     assert "No findings reported." in text
+
+
+def test_a_run_that_read_nothing_does_not_say_passed(mocked=None):
+    """Nothing reached the reviewer, so there is nothing to have passed.
+
+    The skip label, an all-excluded change, an empty range and a `--path` that
+    matched no file all end the same way — complete, nothing reported, exit 0 —
+    and the biggest word on the screen was a green PASSED over code no one had
+    opened. The exit code is right: the tool did what it was told. The word was
+    not, and the word is what a person glancing at a pipeline log reads.
+    """
+    text = terminal.render(
+        make_outcome(exposures=[]),
+        Decision(exit_code=0, reason="every file in this change is excluded"))
+    assert "NOT REVIEWED" in text
+    assert "PASSED" not in text
 
 
 def test_an_empty_finding_list_from_an_incomplete_run_is_not_green():

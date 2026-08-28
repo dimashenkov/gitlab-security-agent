@@ -392,7 +392,10 @@ approval, an entry added by the merge request under review takes effect from the
 next one onward.
 
 **Other escape hatches:** the `skip-ai-security` label on a merge request skips
-the job entirely, and `SECURITY_SCAN_FAIL_ON=none` reports without blocking.
+the review, and `SECURITY_SCAN_FAIL_ON=none` reports without blocking. A skipped
+review still runs the job and still writes an artifact and a note saying it was
+skipped — nothing is sent to the model, and no earlier run's verdict is left
+standing as if it were this one's.
 
 ---
 

@@ -39,9 +39,13 @@ def identity(cfg=None, **overrides) -> dict:
                            provenance(**overrides.pop("prov", {})))
 
 
-def artifact(identity_value, complete=True, exit_code=1) -> dict:
+def artifact(identity_value, complete=True, exit_code=1, exposures=None) -> dict:
+    """A finished review's artifact. It has exposures because a review has
+    them — `gate._reviewed_nothing` will not let a run with none exit 0."""
     return {"complete": complete, "identity": identity_value,
-            "verdict": {"exit_code": exit_code}}
+            "verdict": {"exit_code": exit_code},
+            "coverage": {"exposures": [["app/views.py", "get_diff"]]
+                         if exposures is None else exposures}}
 
 
 # ------------------------------------------------------------ what it covers
@@ -123,6 +127,29 @@ def test_an_incomplete_artifact_is_never_reused():
 def test_an_artifact_with_no_identity_is_never_reused():
     """Older artifacts predate the field. Absent is not the same as matching."""
     assert reusable({"complete": True}, identity()) is False
+
+
+def test_an_artifact_from_a_run_that_examined_nothing_is_never_reused():
+    """`complete` cannot tell a review from a run that never read anything.
+
+    A run stopped by the skip label finishes, exits 0, and writes an artifact
+    with no exposures at all — nothing reached the reviewer. Served back out of
+    the cache it becomes a clean bill of health for code nobody looked at, and
+    "did not check" reading as "checked and clean" is the one confusion this
+    tool exists to prevent.
+
+    Today that particular route is blocked by an accident: the skip records an
+    empty revision, so its identity cannot match a real run's. This is the rule
+    that makes it safe on purpose, and it stays true if the skip is ever taught
+    to record which commits it declined to review — which a reader would want.
+
+    An artifact written before exposures were recorded also has none, so it
+    stops being reusable and the next run is paid for. That is the direction to
+    fail in: the cost of being wrong the other way is a stale all-clear.
+    """
+    before = identity()
+    assert reusable(artifact(before, exposures=[]), identity()) is False
+    assert reusable(artifact(before), identity()) is True
 
 
 def test_the_served_model_is_not_part_of_the_key():

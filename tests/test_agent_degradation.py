@@ -287,3 +287,25 @@ class TestStopReasonsAreDistinguishable:
 
         missing = [s for s in INCOMPLETE_STOPS if s not in STOP_EXPLANATIONS]
         assert not missing, missing
+
+    def test_every_reason_a_reader_can_meet_has_one_and_not_just_the_listed_ones(self):
+        """The test above iterates `INCOMPLETE_STOPS`, and not every stop
+        reason is in it.
+
+        `STOP_INCONCLUSIVE` is the one that is not: it is handled apart, as
+        `gate.NEVER_FORGIVEN`, so it never appears in that tuple. Its sentence
+        was missing for a while, the two readers fell back to "the review did
+        not complete", and it was added — but the test above passes with or
+        without it, because the loop never asks about it. A control whose test
+        passes for an unrelated reason is not a control.
+
+        This enumerates the module's own `STOP_*` constants instead, so a
+        reason added tomorrow is covered by having been named.
+        """
+        from security_agent import models
+        from security_agent.models import STOP_COMPLETED, STOP_EXPLANATIONS
+
+        reasons = {value for name, value in vars(models).items()
+                   if name.startswith("STOP_") and isinstance(value, str)}
+        missing = sorted(reasons - {STOP_COMPLETED} - set(STOP_EXPLANATIONS))
+        assert not missing, missing

@@ -12,6 +12,7 @@ from security_agent.models import (
     VERDICT_CONFIRMED,
     VERDICT_REFUTED,
     VERDICT_UNCERTAIN,
+    StageMetrics,
     Usage,
     Vote,
 )
@@ -675,6 +676,58 @@ class TestConcurrentVerification:
 
 class _StubWorkspace:
     diff_base = ""
+
+
+class TestTheVerifiedCountMatchesWhatWasVerified:
+    """`verification.verified` in the artifact, against the findings' own reasons.
+
+    Counted above the SECURITY_SCAN_VERIFY_MAX cut, it counted arrivals rather
+    than verifications: on any run over the limit the artifact said N verified
+    while N-of-those carried the reason "not verified — beyond the
+    SECURITY_SCAN_VERIFY_MAX limit". One artifact, two answers.
+    """
+
+    def _patch(self, monkeypatch):
+        import security_agent.verify as verify
+
+        def fake_vote(cfg, ws, client, system, tools, candidate, vote_index):
+            return Vote(verdict=VERDICT_CONFIRMED, reasoning="r"), Usage()
+
+        monkeypatch.setattr(verify, "_one_vote", fake_vote)
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        monkeypatch.setattr(verify, "verifier_tool_definitions",
+                            lambda schema, diff_available: [])
+        return verify
+
+    def test_findings_past_the_limit_are_not_counted_as_verified(self, config, monkeypatch):
+        verify = self._patch(monkeypatch)
+        config.verify_max_findings = 1
+        metrics = StageMetrics()
+
+        candidates = [make_candidate(severity="high", title="finding {}".format(i))
+                      for i in range(3)]
+        verify.verify_candidates(config, _StubWorkspace(), object(), candidates,
+                                 metrics=metrics)
+
+        assert metrics.verified == 1
+
+    def test_no_finding_is_both_counted_and_told_it_was_not_verified(
+            self, config, monkeypatch):
+        # The contradiction itself, asserted without naming a number: whatever
+        # `verified` says, it may not exceed the findings that actually got a
+        # panel. Anything else is a report arguing with itself.
+        verify = self._patch(monkeypatch)
+        config.verify_max_findings = 2
+        metrics = StageMetrics()
+
+        candidates = [make_candidate(severity="high", title="finding {}".format(i))
+                      for i in range(5)]
+        verify.verify_candidates(config, _StubWorkspace(), object(), candidates,
+                                 metrics=metrics)
+
+        assert metrics.verified == sum(1 for c in candidates if c.votes)
+        assert all(not c.votes for c in candidates
+                   if "not verified" in (c.verdict_reason or ""))
 
 
 class TestConfidenceMovesBothWays:

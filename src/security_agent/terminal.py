@@ -104,6 +104,15 @@ def _banner(s: Style, outcome: ScanOutcome, decision: Decision) -> List[str]:
         verdict, colour = "MERGE BLOCKED", "1;31"
     elif outcome.reported:
         verdict, colour = "PASSED WITH FINDINGS", "1;33"
+    elif not outcome.exposures:
+        # Nothing reached the reviewer, so there is nothing to have passed.
+        # The skip label, an all-excluded change, an empty range and a scope
+        # that matched no file all end here: complete, nothing reported, exit
+        # 0 — and the loudest line on the screen used to be a green PASSED
+        # over code no one had read. The exit code is right, because the tool
+        # did what it was told; the word was not. Grey, because this is
+        # neither good news nor bad, and the reason is one line below.
+        verdict, colour = "NOT REVIEWED", "1;37"
     else:
         verdict, colour = "PASSED", "1;32"
 

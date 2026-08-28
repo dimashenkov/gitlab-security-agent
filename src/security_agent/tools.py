@@ -677,6 +677,12 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
         rel_path = ws.repo_path(finding.file)
         file_text = ws.raw_text(finding.file)
     except WorkspaceError as exc:
+        # Counted on both paths: the drop is a rejection too, and the loudest
+        # one. Incrementing only on the retry path made a claim abandoned after
+        # MAX_CITATION_ATTEMPTS look in the artifact like a claim that was
+        # nudged once and then never came back — every dropped claim
+        # undercounted by exactly one.
+        session.metrics.citations_rejected_unknown_path += 1
         if final_attempt:
             session.rejected.append(RejectedClaim(
                 title=finding.title, file=finding.file,
@@ -687,7 +693,6 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
                 "dropped: unknown path {}".format(finding.file),
                 is_error=True,
             )
-        session.metrics.citations_rejected_unknown_path += 1
         return ToolResult(
             "Not recorded — no readable file {!r} in this repository ({}).{} "
             "Findings must cite a real repository-relative path. Check the path "
@@ -704,6 +709,10 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
     except EvidenceProblem as exc:
         located, problem = None, str(exc)
     if located is None:
+        # Same undercount as the path branch above: a claim dropped after
+        # MAX_CITATION_ATTEMPTS never reached the counter, so the `citations`
+        # block scored the final failure as if it had not happened.
+        session.metrics.note_citation_rejection(problem)
         if final_attempt:
             session.rejected.append(RejectedClaim(
                 title=finding.title, file=rel_path,
@@ -716,7 +725,6 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
                 "dropped: {}".format(problem[:60]),
                 is_error=True,
             )
-        session.metrics.note_citation_rejection(problem)
         window, start, stop = excerpt(file_text, finding.line, radius=20)
         return ToolResult(
             "Not recorded — {} in {}. Evidence must be copied verbatim from the "
