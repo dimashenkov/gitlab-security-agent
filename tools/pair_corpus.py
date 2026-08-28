@@ -54,8 +54,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from artifact import case_digest, signature
 from artifact import is_target as _is_target
-from artifact import signature
 
 from security_agent.config import MODEL_PRICING
 from security_agent.models import Usage
@@ -301,7 +301,18 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
     # (/var -> /private/var) and the report writer refuses to write through one.
     work = Path(tempfile.mkdtemp(prefix="pair-{}-".format(case["case_id"]))).resolve()
     result = {"case_id": case["case_id"], "language": case.get("language", "?"),
-              "family": case.get("family", "?")}
+              "family": case.get("family", "?"),
+              # Which version of the case this result is about.
+              #
+              # Nothing recorded it, so a result stayed attached to a case id
+              # through any change to the case — and one case had its weakness
+              # deleted by a bug in the comment stripper and then repaired,
+              # which means a recorded failure for it was a failure at reviewing
+              # code that no longer exists. `baseline.py` digests the whole
+              # corpus tree, which is the right question for "are these two
+              # numbers comparable" and the wrong one here: it would let an edit
+              # to one case invalidate the results of the other forty-six.
+              "case_digest": case_digest(case["_dir"])}
     try:
         members = {}
         for member in ("safe", "unsafe"):

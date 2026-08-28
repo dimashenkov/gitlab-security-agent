@@ -34,6 +34,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from artifact import case_digest
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "security_agent"
 TESTS = ROOT / "tests"
@@ -341,7 +345,17 @@ def probe_use(args) -> Result:
     # disagree make the case unresolved and say so, which is this project's
     # own rule that being unable to tell is a third answer and not a verdict.
     # No two files disagree today; this is what happens when they do.
+    #
+    # A verdict counts only when the row says which version of the case it is
+    # about and that version is the current one. One case had its weakness
+    # deleted by a bug and then repaired, so a recorded failure for it was a
+    # failure at reviewing code that no longer exists — and nothing in a batch
+    # said so. Rows written before `case_digest` existed are neither counted
+    # nor thrown away silently: they are reported as what they are, results
+    # about a version nobody recorded.
+    current = {name: case_digest(ROOT / "corpus-real" / name) for name in cases}
     verdicts: Dict[str, set] = {}
+    undated: Dict[str, int] = {}
     for path in sorted((ROOT / "measurements").glob("*.json")):
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
@@ -367,6 +381,15 @@ def probe_use(args) -> Result:
                 # avoid, and it would also make a case that later passes look
                 # like a disagreement.
                 continue
+            digest = row.get("case_digest")
+            if digest != current.get(case_id):
+                # Either the case has changed since, or the run predates any
+                # record of which version it saw. Both mean the same thing for
+                # this count and neither is a verdict about the case as it
+                # stands, but the second is worth naming rather than dropping.
+                if not digest:
+                    undated[case_id] = undated.get(case_id, 0) + 1
+                continue
             # `is True`, not `bool(...)`. A pair passed when the scorer said
             # so, and `bool("false")` is true — a tracker that reads the string
             # "false" as a pass can be told the work is done by a typo.
@@ -376,7 +399,11 @@ def probe_use(args) -> Result:
     run = [c for c in cases if c in verdicts]
     split = [c for c in run if len(verdicts[c]) > 1]
     passing = [c for c in run if verdicts[c] == {True}]
+    stale = sorted(set(undated) - set(verdicts))
     beside = " (+{} snapshot)".format(snapshots) if snapshots else ""
+    if stale:
+        beside = ", {} from an unrecorded corpus version{}".format(
+            len(stale), beside)
     if split:
         beside = ", {} unresolved: {}{}".format(
             len(split), ", ".join(sorted(split)[:2]), beside)

@@ -14,6 +14,9 @@ reads an artifact and answers questions about it.
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 MIN_ANCHOR_CHARS = 8
 
 
@@ -135,6 +138,29 @@ def target_categories(case: dict) -> list:
     return [str(c) for c in (want or []) if c]
 
 
+def case_digest(case_dir) -> str:
+    """One hash over a single case — its manifest and both its members.
+
+    Per case rather than per corpus. `baseline.py` digests the whole tree,
+    because its question is whether two whole runs are comparable; the question
+    here is narrower and asked of one row at a time: is this result about the
+    case as it is now? Digesting the tree would answer no for forty-six
+    untouched cases every time a forty-seventh was edited.
+
+    Paths as well as contents, for the same reason `baseline.py` gives: moving
+    a file between members changes what the agent is handed, and a
+    content-only digest would call that the same case.
+    """
+    sha = hashlib.sha256()
+    root = Path(case_dir)
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        sha.update(str(path.relative_to(root)).encode("utf-8"))
+        sha.update(b"\0")
+        sha.update(path.read_bytes())
+        sha.update(b"\0")
+    return sha.hexdigest()[:16]
+
+
 def is_target(finding: dict, case: dict) -> bool:
     """Is this finding the weakness the case is about?
 
@@ -193,6 +219,18 @@ def signature(payload: dict, case: dict) -> dict:
     verdict = payload.get("verdict", {})
     return {
         "complete": bool(payload.get("complete")),
+        # Whether the review signed off with `finish_review` or merely stopped
+        # talking. The last blocking finding of the repository audit is that
+        # the Messages API path treats `end_turn` as completion, contradicting
+        # the prompt's stated sole completion signal — and it was left last on
+        # purpose, because tightening it may invalidate paid runs and this rate
+        # is the evidence for how often it would.
+        #
+        # The artifact has carried it since the audit. This summary did not, and
+        # `--keep-artifacts` keeps only the runs that failed, so every clean run
+        # threw the evidence away. Two batches were paid for and neither can
+        # answer the question they were the reason to ask.
+        "finished_explicitly": bool(payload.get("finished_explicitly")),
         "stop_reason": payload.get("stop_reason", ""),
         # The only field that says which limit burned. Dropping it is what made
         # four incomplete runs undiagnosable without paying for them again.

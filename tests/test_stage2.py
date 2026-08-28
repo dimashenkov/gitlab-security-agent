@@ -22,6 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 import stage2
+from artifact import case_digest
 from stage2 import DONE, PARTIAL, TODO, probe_use
 
 
@@ -39,6 +40,19 @@ def case(root: Path, case_id: str, construction: str = "regression") -> None:
 
 
 def batch(root: Path, name: str, rows, mtime: float = 0.0) -> None:
+    """Rows are stamped with the digest of the case they name.
+
+    A row without one is a result about a version of the case nobody recorded,
+    which is a state the tracker reports rather than counts — so a fixture that
+    left it out would be testing that path in every test by accident. Pass
+    `case_digest` explicitly to test it on purpose.
+    """
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict) and "case_digest" not in row:
+                directory = root / "corpus-real" / str(row.get("case_id"))
+                if directory.is_dir():
+                    row["case_digest"] = case_digest(directory)
     measurements = root / "measurements"
     measurements.mkdir(exist_ok=True)
     path = measurements / name
@@ -135,6 +149,54 @@ def test_ordering_cannot_be_changed_by_touching_a_file(root):
 
     os.utime(root / "measurements" / "b.json", (9_999, 9_999))
     assert probe_use(Args()) == before
+
+
+def test_a_result_about_an_older_version_of_the_case_does_not_count(root):
+    """`rb-mx5j-mp4f-g8jg` had its weakness deleted by a bug in the comment
+    stripper and then repaired. Its recorded failure was a failure at reviewing
+    code that no longer exists, and nothing in the batch said which version it
+    had seen — so the number went on standing for a question nobody had asked
+    of the case as it is.
+    """
+    case(root, "one")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True,
+                            "case_digest": "0000000000000000"}])
+
+    result = probe_use(Args())
+    assert result.state == TODO
+    assert "0/1" in result.detail
+
+
+def test_a_result_from_before_the_version_was_recorded_is_named_not_dropped(root):
+    """It is not a verdict about the case as it stands, and it is also not
+    nothing: somebody paid for it. Reported as what it is."""
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True,
+                            "case_digest": None},
+                           {"case_id": "two", "pair_success": True}])
+
+    result = probe_use(Args())
+    assert result.state == PARTIAL
+    assert "1/2 run" in result.detail
+    assert "1 from an unrecorded corpus version" in result.detail
+
+
+def test_a_case_edited_after_its_run_stops_counting(root):
+    """The digest is over the case's own files, so editing one case must not
+    invalidate the results of the others."""
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True},
+                           {"case_id": "two", "pair_success": True}])
+    assert probe_use(Args()).state == DONE
+
+    (root / "corpus-real" / "one" / "case.yml").write_text(
+        "case_id: one\nconstruction: regression\n# edited\n", encoding="utf-8")
+
+    result = probe_use(Args())
+    assert result.state == PARTIAL
+    assert "1/2 run" in result.detail
 
 
 def test_a_run_that_did_not_finish_is_not_a_failed_pair(root):
