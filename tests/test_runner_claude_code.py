@@ -35,12 +35,14 @@ from security_agent.config import Config, GitLabContext
 from security_agent.models import (
     STOP_COMPLETED,
     STOP_ERROR,
+    STOP_INCONCLUSIVE,
     STOP_TIME_LIMIT,
     STOP_TRANSPORT,
     Revision,
 )
 from security_agent.runner_claude_code import (
     DENIED_TOOLS,
+    NO_BUILTIN_TOOLS,
     TOOL_PREFIX,
     ClaudeCodeRunner,
     Handoff,
@@ -99,10 +101,54 @@ class TestConfinement:
         for tool in ("Bash", "Write", "Edit", "Read", "WebFetch"):
             assert tool in denied
 
+    def test_the_built_in_tools_are_not_in_the_session_at_all(self):
+        """The boundary, with the two lists above as defence in depth.
+
+        An allowlist says what may be used and a denylist says what may not,
+        and both leave the tool existing and reachable by anything that gets
+        past a permission check. `--tools ""` is the CLI's own documented way
+        of shipping none of them: "Use \"\" to disable all tools".
+
+        Checked against the real CLI rather than reasoned about, because the
+        flag selects from the *built-in* set and being wrong about that means
+        every review runs with no tools and reports nothing found — a clean
+        sheet produced by a review that could not look. A one-tool MCP server
+        returning a nonce the model cannot invent answered with that nonce both
+        with the flag and without it.
+        """
+        command = _command()
+
+        assert "--tools" in command
+        assert command[command.index("--tools") + 1] == NO_BUILTIN_TOOLS
+
+    def test_the_empty_tool_set_cannot_swallow_the_flag_after_it(self):
+        """`--tools` is variadic: it consumes arguments until the next flag.
+
+        So `--tools "" --mcp-config x` gives it `[""]`, and moving it so that a
+        bare value follows would hand that value to `--tools` instead — leaving
+        the built-in set enabled and the option that lost its value silently
+        unset. Nothing about the command would look wrong.
+        """
+        command = _command()
+        after = command[command.index("--tools") + 2]
+
+        assert after.startswith("-"), (
+            "the element after the empty tool set is {!r}, which --tools "
+            "would consume".format(after))
+
     def test_other_mcp_servers_on_this_machine_are_ignored(self):
         """Without `--strict-mcp-config` the developer's own servers join the
         session, which is a set of tools our prompt never described."""
         assert "--strict-mcp-config" in _command()
+
+    def test_our_own_tools_survive_the_empty_built_in_set(self):
+        """Disabling the built-ins must not disable ours, and the two flags
+        that say so must stay together: `--tools ""` without `--allowedTools`
+        naming our prefix is a session with no tools at all."""
+        command = _command()
+
+        assert command[command.index("--tools") + 1] == NO_BUILTIN_TOOLS
+        assert command[command.index("--allowedTools") + 1] == TOOL_PREFIX + "*"
 
     def test_the_system_prompt_replaces_rather_than_appends(self):
         """`--append-system-prompt` would leave the CLI's default contract
@@ -369,6 +415,74 @@ class TestCompletionNeedsBothHalves:
         assert session is None
         assert stop_reason == STOP_ERROR
         assert "cannot accept" in detail
+
+    def _signed_off_session(self, handoff, revision=REVISION):
+        """A run that did everything right: the child signed off, no findings.
+
+        The only combination that reaches the profile check — after the budget
+        check and after the sign-off check, so every other reason to stop has
+        already been ruled out.
+        """
+        from security_agent.session_document import write_session
+        from security_agent.tools import Session
+
+        session = Session()
+        session.finished = True
+        # A sign-off shorter than `MIN_SUMMARY_CHARS` is refused by the
+        # document reader, because `finish_review` refuses one too — a document
+        # holding it was not written by that tool. Read the length from there
+        # rather than typing a long enough string, so that raising the floor
+        # does not silently turn these tests into tests of that refusal.
+        from security_agent.session_document import MIN_SUMMARY_CHARS
+
+        session.final_summary = "Reviewed the change against the diff. " * (
+            MIN_SUMMARY_CHARS // 38 + 1)
+        write_session(handoff.session_document, session,
+                      run_id=handoff.run_id, revision=revision,
+                      config_digest="digest-123")
+
+    def test_a_probe_that_signed_off_with_nothing_found_is_still_inconclusive(
+            self, cfg, tmp_path, git_repo):
+        """The regression this branch exists for, which shipped once already.
+
+        `probe` is six turns and no verifiers. It stops early most of the time,
+        so what it finds is a lead and what it does not find is not evidence.
+        A probe that happens to sign off having seen nothing must not be a
+        clean review — and once was, because `Profile.conclusive` was read
+        nowhere outside `budget.py`.
+
+        The gate half of the fix has a test. The runner half — the lines that
+        turn a conclusive-looking run into `STOP_INCONCLUSIVE` — had none, so
+        deleting them left the whole suite green and put the regression back.
+        """
+        budget = RunBudget(profile=PROFILES["probe"], turns_enforced=False)
+        subject = self._runner(cfg, budget, tmp_path, git_repo)
+        handoff = Handoff(tmp_path / "handoff", subject.run_id, "digest-123")
+        self._signed_off_session(handoff)
+
+        session, stop_reason, detail = subject._collect(
+            handoff, runner._parse_terminal(
+                0, json.dumps({"subtype": "success"}), ""), REVISION)
+
+        assert session is not None, "the document was readable"
+        assert stop_reason == STOP_INCONCLUSIVE
+        assert stop_reason != STOP_COMPLETED
+        assert "probe" in detail or "conclude" in detail, detail
+
+    def test_the_same_run_on_a_conclusive_profile_does_complete(
+            self, cfg, budget, tmp_path, git_repo):
+        """The other half, so the test above is not passing because the fixture
+        never completes anything. Same document, same terminal object, and the
+        only difference is the profile."""
+        subject = self._runner(cfg, budget, tmp_path, git_repo)
+        handoff = Handoff(tmp_path / "handoff", subject.run_id, "digest-123")
+        self._signed_off_session(handoff)
+
+        _session, stop_reason, _detail = subject._collect(
+            handoff, runner._parse_terminal(
+                0, json.dumps({"subtype": "success"}), ""), REVISION)
+
+        assert stop_reason == STOP_COMPLETED
 
     def test_the_crash_trace_is_carried_into_the_detail(
             self, cfg, budget, tmp_path, git_repo):

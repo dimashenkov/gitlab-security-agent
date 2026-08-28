@@ -121,6 +121,42 @@ def policy_excluded(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
 NEVER_FORGIVEN = frozenset({STOP_INCONCLUSIVE})
 
 
+def _reviewed_nothing(outcome: ScanOutcome) -> bool:
+    """Did this run open no part of the change at all?
+
+    The difference between a review that stopped early and a review that never
+    started, which `fail_on_incomplete` was treating as one thing.
+
+    That flag is a policy about *partial* coverage: the agent read six of ten
+    files, the operator knows which six, and letting the pipeline through while
+    the limits are tuned is their call about their own risk. It says so, and
+    that reasoning is sound for every ending where work happened — a turn
+    limit, a budget that ran out mid-search, a truncated diff.
+
+    It is not sound when nothing happened. The CLI failing to start, the MCP
+    server never coming up, a terminal object that will not parse: there is no
+    partial coverage to weigh, and "no blocking findings" over a review that
+    opened no file is the sentence this whole product exists to prevent. Six of
+    the eight ways the local runner can fail reached exit 0 through that flag.
+
+    Read from coverage accounting rather than from the stop reason, because a
+    set of stop reasons can only be right about the endings somebody thought to
+    add to it — and this repository has now been caught four times by a check
+    that knew a list of spellings. Whether a file was opened is a fact about
+    the run, and it stays true for endings nobody has invented yet.
+
+    Three signs of work, not one. A file opened is the obvious one; a tool call
+    covers listing the change or searching for a caller, which is a review
+    doing its job without having opened anything yet; and a reported finding is
+    the strongest of all, because nothing can report a weakness in code it did
+    not read. A rule resting on the first alone would have called a truncated
+    review with findings in it absent, and a rule that fires on real work is a
+    rule that gets switched off.
+    """
+    return not (outcome.coverage.examined or outcome.tool_calls
+                or outcome.reported)
+
+
 def _partial(outcome: ScanOutcome) -> bool:
     """Did this run fail to cover the change it claims to have reviewed?
 
@@ -189,6 +225,17 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
                 "profile, not a policy about partial reviews.".format(
                     STOP_EXPLANATIONS.get(outcome.stop_reason,
                                           "the review could not conclude"))),
+        )
+
+    if _partial(outcome) and _reviewed_nothing(outcome):
+        explanation = _why_partial(outcome)
+        detail = " ({})".format(outcome.stop_detail) if outcome.stop_detail else ""
+        return Decision(
+            exit_code=EXIT_ERROR,
+            reason=(
+                "{}{}, and it opened no part of the change. That is not a "
+                "partial review to weigh — it is an absent one, and no setting "
+                "makes it a pass.".format(explanation, detail)),
         )
 
     if _partial(outcome) and cfg.fail_on_incomplete:

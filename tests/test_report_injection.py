@@ -241,6 +241,12 @@ def test_an_incomplete_review_cannot_get_a_green_tick_when_the_gate_is_off():
     """
     outcome = ScanOutcome(mode="diff", model="claude-opus-5")
     outcome.stop_reason = "context_exhausted"
+    # Running out of context means it read a great deal, so this is a review
+    # that stopped early rather than one that never started — a distinction the
+    # gate now makes, and one this fixture has to state, since an outcome with
+    # no coverage at all is the second and exits 2 whatever the flag says.
+    outcome.coverage.changed = ["app/views.py", "app/models.py"]
+    outcome.coverage.examined = ["app/views.py"]
     cfg = Config(post_comment=False, fail_on_incomplete=False)
     decision = decide(cfg, outcome)
 

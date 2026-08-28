@@ -90,6 +90,13 @@ TOOL_PREFIX = "mcp__{}__".format(SERVER_KEY)
 # when a new built-in appears that nobody added to either. Refusing by name
 # means a tool added upstream is not silently available; refusing by omission
 # means it is.
+# What `--tools` is given so the CLI ships no built-in tools into the session.
+# Its own help: "Use \"\" to disable all tools, \"default\" to use all tools, or
+# specify tool names". Named rather than written inline so that a test can
+# assert on the same value the runner passes, and so that changing it is a
+# visible edit rather than a deleted pair of quotation marks.
+NO_BUILTIN_TOOLS = ""
+
 DENIED_TOOLS: Tuple[str, ...] = (
     "Bash", "Edit", "Write", "NotebookEdit", "Read", "Glob", "Grep",
     "WebFetch", "WebSearch", "Task", "TodoWrite", "KillShell", "BashOutput",
@@ -134,6 +141,22 @@ def build_command(
       other MCP server configured on this machine is ignored. Without the
       second flag the developer's own servers join the session, which is a set
       of tools our prompt never described.
+    * `--tools ""` — the built-in set is not present at all. This is the
+      boundary; the two lists below are defence in depth. An allowlist says
+      what may be used and a denylist says what may not, and both leave the
+      tool existing and reachable by anything that can get past a permission
+      check. `--tools ""` is documented by the CLI itself as disabling all
+      tools, and it selects from the *built-in* set only, so ours survive: a
+      one-tool MCP server returning a nonce the model cannot invent answered
+      with that nonce both with the flag and without it, on 2026-08-28. It was
+      checked rather than reasoned about because being wrong means every
+      review runs with no tools at all and reports nothing found — a clean
+      sheet produced by a review that could not look.
+
+      It is placed so the token after it begins with `-`. The option is
+      variadic, so it consumes arguments until the next flag, and putting a
+      bare value after it would hand that value to `--tools` instead.
+
     * `--allowedTools` naming only our prefix, and `--disallowedTools` naming
       every built-in. Two statements of one intention, because they fail
       differently: a built-in added upstream is outside the allowlist and would
@@ -151,6 +174,9 @@ def build_command(
         executable,
         "--print",
         "--output-format", "json",
+        # The next element must begin with `-`. See the docstring: `--tools` is
+        # variadic and would otherwise eat it.
+        "--tools", NO_BUILTIN_TOOLS,
         "--mcp-config", str(mcp_config),
         "--strict-mcp-config",
         "--allowedTools", TOOL_PREFIX + "*",

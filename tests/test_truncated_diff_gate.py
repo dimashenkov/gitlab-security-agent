@@ -66,6 +66,12 @@ def outcome_for(ws: Workspace) -> ScanOutcome:
     outcome = ScanOutcome(mode="diff")
     ws.diff()
     outcome.coverage.diff_truncated = ws.diff_truncated
+    # A truncated review is one that read the first part of a large change, so
+    # it opened something. Recorded here because the gate now separates a
+    # review that stopped early from one that never started, and a fixture
+    # leaving coverage empty describes the second while meaning the first.
+    outcome.coverage.changed = ["big/one.py", "big/two.py"]
+    outcome.coverage.examined = ["big/one.py"]
     return outcome
 
 
