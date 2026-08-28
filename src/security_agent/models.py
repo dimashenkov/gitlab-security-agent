@@ -570,6 +570,39 @@ class Usage:
         """
         return self.requests > 0 or self.counted > 0
 
+    # The four names the Claude Code CLI writes. Read off its own session
+    # transcripts under `~/.claude/projects/`, which are the same binary's
+    # record and cost nothing to look at: 1729 usage blocks, every one of them
+    # spelled this way — the Messages API spelling, not the camelCase of the
+    # neighbouring `modelUsage`.
+    CLI_FIELDS = ("input_tokens", "output_tokens",
+                  "cache_creation_input_tokens", "cache_read_input_tokens")
+
+    @classmethod
+    def from_provider(cls, block: Any) -> "Usage":
+        """One run's usage as a provider reported it, or a recorded gap.
+
+        All four names or none. A block carrying only some of them is not read
+        partially: the two plain counts without the two cache counts is an
+        understated cost that reads as measured, and this whole class exists
+        because a figure that reads as measured and is not is worse than an
+        admitted absence. So an unexpected shape — a spelling nobody
+        anticipated, a truncated document, a future field set — produces "this
+        runner reported nothing", which is true, rather than a number that is
+        not.
+
+        `requests=1`, because a provider that reports per run reports once.
+        """
+        if not isinstance(block, dict):
+            return cls.unreported_stage()
+        values = [block.get(name) for name in cls.CLI_FIELDS]
+        if any(not isinstance(v, (int, float)) or isinstance(v, bool)
+               for v in values):
+            return cls.unreported_stage()
+        return cls(input_tokens=int(values[0]), output_tokens=int(values[1]),
+                   cache_write_tokens=int(values[2]),
+                   cache_read_tokens=int(values[3]), requests=1)
+
     @property
     def recorded(self) -> bool:
         """Has anything at all been written into this accumulator?

@@ -589,6 +589,17 @@ AUTH_FAILURE_ENDING = {
     "payload": {"type": "result", "subtype": "success", "is_error": True,
                 "result": "Invalid API key - please run /login"},
 }
+# The success ending plus the usage block the CLI sends. Its four names were
+# read off the binary's own session transcripts, not guessed between the two
+# documented spellings.
+REPORTED_USAGE_ENDING = {
+    "kind": "json", "exit": 0,
+    "payload": {"type": "result", "subtype": "success", "is_error": False,
+                "result": "done",
+                "usage": {"input_tokens": 4421, "output_tokens": 7478,
+                          "cache_creation_input_tokens": 41134,
+                          "cache_read_input_tokens": 158506}},
+}
 EXECUTION_ERROR_ENDING = {"kind": "json", "exit": 1,
                           "payload": {"type": "result",
                                       "subtype": "error_during_execution"}}
@@ -1268,6 +1279,41 @@ class TestTheConfinementFlagsDoSomething:
                        for entry in transcript), (
             "the foreign tool was still excluded, so the test above is not "
             "measuring the flag")
+
+
+class TestTheRunnerRecordsWhatTheCliSaidItUsed:
+    """The terminal object's `usage` was parsed and read by nobody.
+
+    `CliResult.usage` was populated from the day it was added and no caller
+    ever took it, so `ScanOutcome.usage` stayed a virgin `Usage` on this path
+    and the artifact wrote five zeros for every run. Five batches were paid for
+    and none of them can say what they cost.
+
+    Driven through the real runner and out into a real artifact, because that
+    is the hop that was missing — the parsing worked all along.
+    """
+
+    def test_the_figures_reach_the_artifact(
+            self, cfg, workspace, revision, tmp_path):
+        cli = run_cli(cfg, workspace, revision, tmp_path, "usage_reported",
+                      script(call(*READ), call(*FINISH), ending=REPORTED_USAGE_ENDING))
+
+        usage = cli.artifact["usage"]
+        assert usage["input_tokens"] == 4421
+        assert usage["cache_read_tokens"] == 158506
+        assert usage["reported"] is True
+
+    def test_a_terminal_object_with_no_usage_is_a_gap_and_not_a_zero(
+            self, cfg, workspace, revision, tmp_path):
+        """What every stored batch actually looks like, and it must not read
+        as a run that cost nothing."""
+        cli = run_cli(cfg, workspace, revision, tmp_path, "usage_absent",
+                      script(call(*READ), call(*FINISH), ending=SUCCESS_ENDING))
+
+        usage = cli.artifact["usage"]
+        assert usage["reported"] is False
+        assert usage["input_tokens"] is None
+        assert usage["complete"] is False
 
 
 class TestPartialFinding:

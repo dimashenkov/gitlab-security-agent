@@ -527,3 +527,70 @@ def test_a_stage_that_ran_and_recorded_nothing_at_all_is_still_a_gap():
     total = outcome.total_usage()
     assert total.complete is False
     assert total.unreported_stages == 1
+
+
+# ------------------------ the block the CLI actually sends
+
+
+CLI_BLOCK = {"input_tokens": 4421, "output_tokens": 7478,
+             "cache_creation_input_tokens": 41134,
+             "cache_read_input_tokens": 158506}
+
+
+def test_the_block_the_cli_sends_is_read_whole():
+    """Parsed for a fortnight and read by nobody.
+
+    `CliResult.usage` held this from the day it was added and nothing ever
+    took it, which is why all 38 stored member runs wrote five zeros. The four
+    names come from the CLI's own session transcripts under
+    `~/.claude/projects/` — 1729 blocks, every one the Messages API spelling —
+    rather than from a guess about which of two documented spellings it uses.
+    """
+    usage = Usage.from_provider(CLI_BLOCK)
+
+    assert usage.reported is True
+    assert usage.complete is True
+    assert usage.requests == 1
+    assert usage.input_tokens == 4421
+    assert usage.output_tokens == 7478
+    # The two that a partial read would have dropped, and they are the large
+    # ones: 200k of cache against 12k of plain tokens here.
+    assert usage.cache_write_tokens == 41134
+    assert usage.cache_read_tokens == 158506
+
+
+@pytest.mark.parametrize("block", [
+    {k: v for k, v in CLI_BLOCK.items() if k != "cache_read_input_tokens"},
+    {k: v for k, v in CLI_BLOCK.items() if k != "cache_creation_input_tokens"},
+    {"inputTokens": 4421, "outputTokens": 7478,
+     "cacheCreationInputTokens": 41134, "cacheReadInputTokens": 158506},
+    {"input_tokens": 4421, "output_tokens": None,
+     "cache_creation_input_tokens": 41134, "cache_read_input_tokens": 158506},
+    "not a block", None, {},
+])
+def test_a_shape_it_cannot_read_whole_is_a_gap_and_never_a_part(block):
+    """All four or none, and the reason is the whole point of this module.
+
+    Reading the two plain counts without the two cache counts understates the
+    cost by most of it — 12k against 200k in the block above — and an
+    understated figure reads as measured. So an unexpected shape produces
+    "this runner reported nothing", which is true, rather than a number that
+    is not. The camelCase case is the one that would have happened had the
+    spelling been guessed from the neighbouring `modelUsage`.
+    """
+    usage = Usage.from_provider(block)
+
+    assert usage.reported is False
+    assert usage.complete is False
+    assert usage.counted == 0
+    assert usage.cost_usd(3.0, 15.0) is None
+
+
+def test_a_run_that_genuinely_used_nothing_is_still_a_report():
+    """The boundary in the other direction: four names carrying zero is a
+    provider saying zero, which is not the same as a provider saying nothing."""
+    usage = Usage.from_provider({name: 0 for name in Usage.CLI_FIELDS})
+
+    assert usage.reported is True
+    assert usage.complete is True
+    assert usage.cost_usd(3.0, 15.0) == 0.0

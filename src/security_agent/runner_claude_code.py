@@ -73,6 +73,7 @@ from .models import (
     STOP_TRANSPORT,
     Revision,
     ScanOutcome,
+    Usage,
 )
 from .session_document import SessionDocumentError, read_session
 from .tools import Session
@@ -524,6 +525,18 @@ class ClaudeCodeRunner:
         if isinstance(cost, (int, float)):
             outcome.provenance.reported_cost_usd = float(cost)
 
+        # What it says it used. Parsed for a fortnight and read by nobody, so
+        # every run through this runner wrote five zeros where the truth was
+        # "this runner reported nothing" — the project's own absent-is-not-zero
+        # rule broken inside the record that rule is about.
+        #
+        # Assigned rather than merged: this is the review stage's usage, and it
+        # arrives once, whole, at the end of the run. `total_usage` still notes
+        # a gap for any stage that ran without reporting, so a block the CLI
+        # did not send, or sent in a shape `from_provider` will not read, ends
+        # up as an admitted absence rather than a zero.
+        outcome.usage = result.reported_usage
+
         session, stop_reason, stop_detail = self._collect(handoff, result, revision)
         if session is not None:
             _apply_session(outcome, session)
@@ -786,17 +799,20 @@ class CliResult:
         # added them; only four of the 38 carry `provenance.provider`, which
         # postdates the rest, so the artifacts alone do not establish it.)
         #
-        # Not wired up here, because the key names inside this block have not
-        # been read off the real binary. The documentation gives the Messages
-        # API spelling (`input_tokens`, `output_tokens`,
-        # `cache_creation_input_tokens`, `cache_read_input_tokens`) and the
-        # TypeScript SDK gives a camelCase one for the neighbouring
-        # `modelUsage`, and picking wrong records the two plain counts and
-        # silently drops the two cache counts — an understated cost that reads
-        # as measured, which is worse than the absence the artifact now states.
-        # One `claude -p` of two tokens settles it; until then the artifact
-        # says "not reported", which is true.
+        # Now wired, on evidence rather than on a guess. The names were read
+        # off this binary's own session transcripts under
+        # `~/.claude/projects/` — 1729 usage blocks, all of them the Messages
+        # API spelling, not the camelCase of the neighbouring `modelUsage`.
+        #
+        # `Usage.from_provider` still takes all four or none. What the
+        # transcripts establish is what the CLI writes *there*; the terminal
+        # object this parses is a different document by the same program, and
+        # "very probably the same shape" is not the same as read. If it is not,
+        # the block fails the check and the artifact says "not reported" —
+        # which is what it said before this change, so the worst case here is
+        # the status quo and never an understated figure.
         self.usage = usage or {}
+        self.reported_usage = Usage.from_provider(usage)
         # Kept whole for the artifact's telemetry half. Never read to decide.
         self.payload = payload or {}
 
