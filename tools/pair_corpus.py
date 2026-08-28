@@ -42,6 +42,7 @@ import tempfile
 import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -286,7 +287,15 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
               # corpus tree, which is the right question for "are these two
               # numbers comparable" and the wrong one here: it would let an edit
               # to one case invalidate the results of the other forty-six.
-              "case_digest": case_digest(case["_dir"])}
+              "case_digest": case_digest(case["_dir"]),
+              # When this ran, so a later run of the same case supersedes an
+              # earlier one. Without it the tracker had no order to take the
+              # latest by — filename order is not run order and modification
+              # time is not a record of anything — so two runs that disagreed
+              # left the case unresolved, and a case could never be *fixed* by
+              # running it again, only made worse. A re-run that cannot improve
+              # anything is a re-run nobody does.
+              "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     try:
         members = {}
         for member in ("safe", "unsafe"):

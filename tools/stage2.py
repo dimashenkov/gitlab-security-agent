@@ -2,11 +2,11 @@
 """Where stage 2 actually stands, read from the repository.
 
 A plan with tick-boxes is a plan that records opinion. This reads the state
-instead: does the symbol exist, does the test pass, what does the journal say.
+instead: does the symbol exist, does the test pass, what did the runs find.
 The rule it follows is the project's own — a number comes from an artifact or a
 run, never from judgement — and it applies to progress as much as to coverage.
 
-    tools/stage2.py            # everything cheap: symbols, files, journal
+    tools/stage2.py            # everything cheap: symbols, files, results
     tools/stage2.py --tests    # also run the targeted tests (slower, truthful)
     tools/stage2.py --full     # also run the whole suite
 
@@ -29,6 +29,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -123,29 +124,6 @@ def _from_tests(names: List[Path], run: bool, subject: str) -> Result:
             len(names)))
     passed, summary = verdict
     return Result(DONE if passed else BROKEN, summary)
-
-
-def _journal() -> dict:
-    """Reviews filed and findings still unjudged, straight from the journal."""
-    root = ROOT / "journal"
-    if not root.exists():
-        return {"reviews": 0, "unadjudicated": 0, "findings": 0, "resolved": 0}
-    reviews = unadjudicated = findings = resolved = 0
-    for verdict_file in sorted(root.glob("*/verdicts.yml")):
-        reviews += 1
-        try:
-            data = yaml.safe_load(verdict_file.read_text(encoding="utf-8")) or {}
-        except Exception:
-            continue
-        for entry in (data.get("findings") or []):
-            findings += 1
-            verdict = str(entry.get("verdict", "unadjudicated"))
-            if verdict == "unadjudicated":
-                unadjudicated += 1
-            elif entry.get("resolution"):
-                resolved += 1
-    return {"reviews": reviews, "unadjudicated": unadjudicated,
-            "findings": findings, "resolved": resolved}
 
 
 # ------------------------------------------------------------------- probes
@@ -311,6 +289,48 @@ def probe_scope(args) -> Result:
     return _from_tests([path], args.tests, "scope control")
 
 
+def _instant(value) -> Optional[datetime]:
+    """The moment a row says it ran, or None if it does not say usefully.
+
+    Compared as an instant and not as text. `2026-08-28T14:00:00+03:00` is
+    *earlier* than `2026-08-28T12:00:00+00:00`, and sorting the two strings
+    puts them the other way round — so a lexicographic `max` would let an
+    earlier run supersede a later one whenever the offsets differ.
+
+    A value that will not parse, or one carrying no timezone, is treated as no
+    time at all rather than as a time that sorts somewhere. A malformed string
+    must not be able to win an ordering.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+def _settle(seen: list) -> set:
+    """One case's verdicts, reduced to what stands now.
+
+    `seen` is `[(instant_or_None, passed)]`. The latest instant wins, so a
+    corrected re-run *fixes* a case instead of leaving it disagreeing with its
+    own past for ever — which is what the earlier rule did, and it meant a case
+    could only ever be made worse by running it again.
+
+    Two things it deliberately does not do. Rows with no time do not sort
+    anywhere, so they answer only when nothing dated does. And verdicts sharing
+    the latest instant are all returned: `pair_corpus` stamps whole seconds, so
+    a tie is reachable, and picking between two answers recorded at the same
+    moment would be inventing an order. A tie stays unresolved.
+    """
+    dated = [(when, ok) for when, ok in seen if when is not None]
+    if not dated:
+        return {ok for _when, ok in seen}
+    latest = max(when for when, _ok in dated)
+    return {ok for when, ok in dated if when == latest}
+
+
 def _pair_passed(row: dict, case_id: str) -> bool:
     """Did this pair discriminate, judged by the key in force now?
 
@@ -453,7 +473,13 @@ def probe_use(args) -> Result:
             # `is True`, not `bool(...)`, where the stored value is still used:
             # `bool("false")` is true, and a tracker that reads the string
             # "false" as a pass can be told the work is done by a typo.
-            verdicts.setdefault(case_id, set()).add(_pair_passed(row, case_id))
+            verdicts.setdefault(case_id, []).append(
+                (_instant(row.get("ran_at")), _pair_passed(row, case_id)))
+
+    # A later run supersedes an earlier one, by the time recorded *in the row*
+    # — not by filename order, which is not run order, and not by modification
+    # time, which a clone rewrites.
+    verdicts = {case_id: _settle(seen) for case_id, seen in verdicts.items()}
 
     run = [c for c in cases if c in verdicts]
     split = [c for c in run if len(verdicts[c]) > 1]
@@ -477,18 +503,119 @@ def probe_use(args) -> Result:
 
 
 def probe_fixes(args) -> Result:
-    j = _journal()
-    confirmed = j["findings"] - j["unadjudicated"]
-    if j["reviews"] == 0:
+    """Every failing pair has a fix, a recorded limitation, or a ruling.
+
+    Point 9 says there is no third state, and "the model simply did not catch
+    it" is a reason that gets written down rather than passed over.
+
+    Read from the pairs, because that is where a failure comes from now. It
+    read `journal/` — written only by `tools/review.sh`, the flow point 8
+    retired — so it said "nothing to reconcile yet" while two pairs sat failing
+    in `measurements/`. The same drift as the row above it and as point 8
+    itself: a check aimed at a source the current work does not produce.
+
+    Two outcomes, as the plan says and no more: the pair passes now — which
+    takes it off this list entirely — or `LIMITATIONS.md` names the case.
+
+    A ruling in `adjudications.yml` is deliberately *not* a third one, though
+    it was briefly counted as one. Every ruling is already applied before the
+    pair is judged: `_pair_passed` excuses what a ruling excuses, so a ruling
+    that resolved anything has moved the pair to passing and it is not here.
+    What is left is a case whose rulings were applied and which failed anyway —
+    `rb-g65v`'s says in as many words that it takes no effect — and a ruling
+    that says why one candidate excuse was rejected is not an account of why
+    the failure is acceptable. Counting it as one let the tracker report the
+    point done over a current, unexplained failure, which is the third state
+    point 9 exists to forbid.
+
+    What this narrowed, stated rather than glossed: the unit is the pair, not
+    the individual finding. The version that read `journal/` reconciled finding
+    by finding. That is a wider net, and it is not the net point 9 asks for —
+    the plan's unit is the failure, and a pair that preserved the decision did
+    not fail. It does mean an incidental finding inside a passing pair is not
+    surfaced here; by the project's own rule an incidental finding is only
+    adjudicated when it changes a score, and one that changed a score would
+    have moved the pair. The gap is real but empty in the cases we have.
+    """
+    failing = _failing_cases()
+    if not failing:
         return Result(TODO, "nothing to reconcile yet")
-    if confirmed == 0:
-        return Result(PARTIAL, "no judged findings yet")
+
     limitations = (ROOT / "LIMITATIONS.md").read_text(encoding="utf-8")
-    recorded = limitations.count("journal/")
-    if j["resolved"] + recorded < confirmed:
-        return Result(PARTIAL, "{} judged, {} resolved + {} in LIMITATIONS".format(
-            confirmed, j["resolved"], recorded))
-    return Result(DONE, "{} judged, all accounted for".format(confirmed))
+    # Bounded, not `in`. Every snapshot case is its regression twin's id with
+    # `-snap` on the end, so a plain substring test let a limitation written
+    # for `py-6x92-6vx4-5fwr-snap` silently account for `py-6x92-6vx4-5fwr` as
+    # well — two different pairs, one sentence, and the shorter one reads as
+    # explained without anybody having written about it.
+    unresolved = [case_id for case_id in failing
+                  if not re.search(r"(?<![\w-])" + re.escape(case_id)
+                                   + r"(?![\w-])", limitations)]
+    if unresolved:
+        return Result(PARTIAL, "{} failing pair(s) with no fix and no recorded "
+                               "limitation: {}".format(
+                                   len(unresolved), ", ".join(unresolved[:3])))
+    return Result(DONE, "every failing pair is accounted for")
+
+
+def _failing_cases() -> list:
+    """Cases whose latest counted result did not preserve the decision.
+
+    "Latest" by the same rule the count uses. It said so before it did so: the
+    function appended a case on the first failure it met and never took it off
+    again, so a case that had been re-run and fixed went on being demanded an
+    explanation for ever — while `probe_use` reported it passing. The two
+    probes have to settle a case the same way or the tracker contradicts
+    itself, and the direction it contradicted itself in was to keep asking
+    about work already done.
+    """
+    # The same exclusion the count applies. A case ruled unable to measure
+    # anything is not a failure — the ruling says so in as many words, "do not
+    # count it as a failure" — and point 8 already drops it from both sides of
+    # its fraction. Asking point 9 to explain a failure point 8 does not
+    # record is the tracker asking about something it has itself excluded.
+    excluded = malformed_cases(ROOT / "corpus-real")
+    seen: Dict[str, list] = {}
+    for path in sorted((ROOT / "measurements").glob("*.json")):
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        rows = body if isinstance(body, list) else (
+            body.get("results") if isinstance(body, dict) else [])
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or row.get("incomplete"):
+                continue
+            case_id = row.get("case_id")
+            if not isinstance(case_id, str) or not case_id:
+                continue
+            # Against the version of the case that exists now, by the same rule
+            # the count uses. Without this the Savon case was named as an
+            # unreconciled failure on the strength of two runs against the
+            # version whose weakness a bug in the comment stripper had deleted
+            # — a failure at reviewing code that no longer exists, asked to be
+            # explained.
+            if case_id in excluded:
+                continue
+            directory = ROOT / "corpus-real" / case_id
+            if not directory.is_dir():
+                continue
+            if row.get("case_digest") not in {case_digest(directory),
+                                              legacy_case_digest(directory)}:
+                continue
+            # No `safe_findings` filter. `_pair_passed` already decides what
+            # to do with a row that cannot be re-judged — it falls back to the
+            # stored boolean — and skipping those rows here while the count
+            # kept them meant a current legacy failure showed up under point 8
+            # and as "nothing to reconcile yet" under point 9. Both probes read
+            # a row the same way or the tracker disagrees with itself.
+            seen.setdefault(case_id, []).append(
+                (_instant(row.get("ran_at")), _pair_passed(row, case_id)))
+    # A case whose latest runs disagree is not settled as passing, so it is
+    # still owed an explanation.
+    return [case_id for case_id in sorted(seen)
+            if _settle(seen[case_id]) != {True}]
 
 
 def probe_suite(args) -> Result:
@@ -513,42 +640,65 @@ def probe_spend(args) -> Result:
 
     Now: a billed local run is BROKEN, a run whose login the CLI reported as a
     subscription is what DONE means, and a run that reported neither a cost nor
-    an auth method is named rather than counted either way."""
-    root = ROOT / "journal"
-    if not root.exists():
-        return Result(TODO, "no runs filed")
-    charged, silent, subscription = [], [], []
-    for artifact in sorted(root.glob("*/findings.json")):
+    an auth method is named rather than counted either way.
+
+    Read from `measurements/`, which is where the work lands. It read
+    `journal/` — a directory only `tools/review.sh` writes, and that is the
+    review-your-own-branch flow point 8 retired on 2026-08-27. So it answered
+    "no runs filed" over five paid batches and would have gone on answering it
+    however many more were run: a check pointed at a source the current work
+    does not produce, which is the drift point 8 itself had.
+    """
+    rows = []
+    for path in sorted((ROOT / "measurements").glob("*.json")):
         try:
-            data = json.loads(artifact.read_text(encoding="utf-8"))
-        except Exception:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, ValueError):
             continue
-        # From `provenance`, which is where the artifact keeps this. It used to
-        # read `provider_telemetry` or `run`, and no artifact has ever had
-        # either — so every file was skipped and the probe reported a clean
-        # sheet over a corpus it had not read one byte of. The container was
-        # named before the field existed and nothing ever connected the two.
-        prov = data.get("provenance") or {}
-        if prov.get("provider") != "claude-cli":
-            continue
-        name = artifact.parent.name
-        # Decided by the login, never by the figure. The CLI reports
-        # `total_cost_usd` on a subscription too — a two-token reply on a Max
-        # plan came back as $0.29 — so it is what the run *would* have cost,
-        # and a probe reading it as a bill would call every subscription run
-        # billed. The figure is recorded beside the verdict, not used as one.
-        if prov.get("auth_method") and prov.get("auth_method") != "claude.ai":
-            charged.append("{} ({})".format(name, prov["auth_method"]))
-            continue
-        if prov.get("auth_method") == "claude.ai" and prov.get("auth_subscription"):
-            subscription.append(name)
-        else:
-            # No auth method recorded: a run from before the CLI was asked, or
-            # one where it would not say. Named rather than counted either way
-            # — the old version read a missing cost as a zero and called that
-            # proof, which is this project's own absent-versus-zero rule broken
-            # inside the tool that checks it.
-            silent.append(name)
+        found = body if isinstance(body, list) else (
+            body.get("results") if isinstance(body, dict) else None)
+        if isinstance(found, list):
+            rows.extend(r for r in found if isinstance(r, dict))
+    if not rows:
+        return Result(TODO, "no runs filed")
+
+    charged, silent, subscription = [], [], []
+    for row in rows:
+        # From `provenance`, which is where a run records this. It used to read
+        # `provider_telemetry` or `run`, and no artifact has ever had either —
+        # so every file was skipped and the probe reported a clean sheet over a
+        # corpus it had not read one byte of. The container was named before
+        # the field existed and nothing ever connected the two.
+        members = row.get("members") or {}
+        # Each member separately. The safe and unsafe members are two separate
+        # executions of the CLI, and the login can differ between them — so
+        # taking the first member that named a provider and reporting the pair
+        # by it would hide a billed run behind a subscription one. Whichever
+        # member was paid for is the one this probe exists to name.
+        for member in ("unsafe", "safe"):
+            prov = (members.get(member) or {}).get("provenance") or {}
+            if prov.get("provider") != "claude-cli":
+                continue
+            name = "{} ({})".format(row.get("case_id") or "?", member)
+            # Decided by the login, never by the figure. The CLI reports
+            # `total_cost_usd` on a subscription too — a two-token reply on a
+            # Max plan came back as $0.29 — so it is what the run *would* have
+            # cost, and a probe reading it as a bill would call every
+            # subscription run billed. The figure is recorded beside the
+            # verdict, not used as one.
+            auth = prov.get("auth_method")
+            if auth and auth != "claude.ai":
+                charged.append("{} {}".format(name, auth))
+            elif auth == "claude.ai" and prov.get("auth_subscription"):
+                subscription.append(name)
+            else:
+                # No auth method recorded: a run from before the CLI was
+                # asked, or one where it would not say. Named rather than
+                # counted either way — the old version read a missing cost as
+                # a zero and called that proof, which is this project's own
+                # absent-versus-zero rule broken inside the tool that checks
+                # it.
+                silent.append(name)
 
     if charged:
         return Result(BROKEN, "{} local run(s) were billed: {}".format(
@@ -556,9 +706,13 @@ def probe_spend(args) -> Result:
     if not (subscription or silent):
         return Result(TODO, "no local run to read")
     if silent:
+        # Named, not just counted. A count says how many runs nobody can
+        # account for; it does not say which, and the answer to "which" is the
+        # only thing anyone can act on.
         return Result(PARTIAL, "{} run(s) on an established subscription, "
-                               "{} that recorded no auth method".format(
-                                   len(subscription), len(silent)))
+                               "{} that recorded no auth method: {}".format(
+                                   len(subscription), len(silent),
+                                   ", ".join(silent[:3])))
     return Result(DONE, "{} local run(s), each on an established "
                         "subscription".format(len(subscription)))
 
