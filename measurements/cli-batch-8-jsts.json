@@ -1,0 +1,1313 @@
+[
+  {
+    "case_id": "js-q4gh-4ffp-5cg8",
+    "language": "javascript",
+    "family": "sensitive-data-exposure",
+    "case_digest": "4faa659b1403d3d9",
+    "ran_at": "2026-08-29T05:24:00+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.621798
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 150.003363875,
+        "cost": 0.62085,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 16,
+          "output_tokens": 10465,
+          "cache_read_tokens": 157270,
+          "cache_write_tokens": 28051
+        },
+        "coverage": {
+          "changed": [
+            "js/app.js",
+            "js/node_helper.js",
+            "js/server_functions.js"
+          ],
+          "examined": [
+            "js/node_helper.js",
+            "js/server.js",
+            "js/server_functions.js",
+            "js/utils.js"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "js/app.js"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "4b9b5082f8e1c4fe",
+          "severity": "high",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "sensitive-data-exposure",
+            "js/node_helper.js",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.6901275
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 298.76808850000003,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 24,
+          "output_tokens": 10580,
+          "cache_read_tokens": 262035,
+          "cache_write_tokens": 29354
+        },
+        "coverage": {
+          "changed": [
+            "js/app.js",
+            "js/node_helper.js",
+            "js/server_functions.js"
+          ],
+          "examined": [
+            "js/defaults.js",
+            "js/ip_access_control.js",
+            "js/node_helper.js",
+            "js/server.js",
+            "js/server_functions.js",
+            "js/utils.js"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "js/app.js"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.037405820652976804,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "sensitive-data-exposure",
+        "file": "js/node_helper.js",
+        "severity": "high",
+        "title": "Removal of per-module secret allowlist lets any socket client substitute any SECRET_* env var",
+        "fingerprint": "4b9b5082f8e1c4fe",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 298.76808850000003
+  },
+  {
+    "case_id": "ts-34pm-923j-7wf8",
+    "language": "typescript",
+    "family": "xss",
+    "case_digest": "d85b5108c3b3926e",
+    "ran_at": "2026-08-29T05:24:00+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.9205295000000001
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 204.4804235,
+        "cost": 0.9195805,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 32,
+          "output_tokens": 13984,
+          "cache_read_tokens": 374801,
+          "cache_write_tokens": 38242
+        },
+        "coverage": {
+          "changed": [
+            "ui/src/components/layout/Markdown.vue",
+            "ui/src/utils/markdown_plugins/link.ts"
+          ],
+          "examined": [
+            "ui/src/components/layout/Markdown.vue",
+            "ui/src/components/layout/MarkdownTooltip.vue",
+            "ui/src/utils/markdown_plugins/link.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "a3a44f045505fde4",
+          "severity": "high",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "xss",
+            "ui/src/utils/markdown_plugins/link.ts",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.686296
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 299.45945612500003,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 24,
+          "output_tokens": 10395,
+          "cache_read_tokens": 222078,
+          "cache_write_tokens": 31431
+        },
+        "coverage": {
+          "changed": [
+            "ui/src/components/layout/Markdown.vue",
+            "ui/src/utils/markdown_plugins/link.ts"
+          ],
+          "examined": [
+            "ui/src/components/layout/Markdown.vue",
+            "ui/src/utils/markdown_plugins/link.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.008180084876068638,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "xss",
+        "file": "ui/src/utils/markdown_plugins/link.ts",
+        "severity": "high",
+        "title": "Removal of attribute allowlist in [[link]] plugin allows HTML/attribute injection (stored XSS)",
+        "fingerprint": "a3a44f045505fde4",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 299.45945612500003
+  },
+  {
+    "case_id": "ts-cqmq-8755-7xvh",
+    "language": "typescript",
+    "family": "unclassified",
+    "case_digest": "2bb138449d89b89e",
+    "ran_at": "2026-08-29T05:32:24+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.309265
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 63.99931237499999,
+        "cost": 0.308313,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 16,
+          "output_tokens": 4120,
+          "cache_read_tokens": 101886,
+          "cache_write_tokens": 15429
+        },
+        "coverage": {
+          "changed": [
+            "packages/core/src/lib/core/queries/resolvers.ts"
+          ],
+          "examined": [
+            "packages/core/src/lib/core/queries/output-field.ts",
+            "packages/core/src/lib/core/queries/resolvers.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "45a0d1fd1d60c3ca",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.4345015
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 96.9020220829999,
+        "cost": 0.4335475,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 24,
+          "output_tokens": 6467,
+          "cache_read_tokens": 181045,
+          "cache_write_tokens": 18123
+        },
+        "coverage": {
+          "changed": [
+            "packages/core/src/lib/core/queries/resolvers.ts"
+          ],
+          "examined": [
+            "packages/core/src/lib/core/queries/index.ts",
+            "packages/core/src/lib/core/queries/output-field.ts",
+            "packages/core/src/lib/core/queries/resolvers.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.001070090957731407,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "packages/core/src/lib/core/queries/resolvers.ts",
+        "severity": "low",
+        "title": "Negative `take` bypasses maxTake query limit in findMany",
+        "fingerprint": "45a0d1fd1d60c3ca",
+        "blocking": false
+      }
+    ],
+    "cost": 0.7418605,
+    "seconds": 96.9020220829999
+  },
+  {
+    "case_id": "ts-6wvw-vrw4-363w",
+    "language": "typescript",
+    "family": "dos",
+    "case_digest": "b100ad2347df1134",
+    "ran_at": "2026-08-29T05:31:29+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.35499300000000006
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 96.98825908300006,
+        "cost": 0.354035,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 20,
+          "output_tokens": 6190,
+          "cache_read_tokens": 115290,
+          "cache_write_tokens": 14154
+        },
+        "coverage": {
+          "changed": [
+            "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts"
+          ],
+          "examined": [
+            "packages/node-opcua-secure-channel/source/server/nonce_cache.ts",
+            "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "00fa6405b82c4d78",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.576102
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 121.55021145900002,
+        "cost": 0.575155,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 28,
+          "output_tokens": 7869,
+          "cache_read_tokens": 247060,
+          "cache_write_tokens": 25476
+        },
+        "coverage": {
+          "changed": [
+            "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts"
+          ],
+          "examined": [
+            "packages/node-opcua-secure-channel/source/server/nonce_cache.ts",
+            "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": -0.009067029866718552,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts",
+        "severity": "low",
+        "title": "Unbounded global nonce cache allows remote memory exhaustion",
+        "fingerprint": "00fa6405b82c4d78",
+        "blocking": false
+      }
+    ],
+    "cost": 0.92919,
+    "seconds": 121.55021145900002
+  },
+  {
+    "case_id": "ts-q7m3-rhxg-7vxr",
+    "language": "typescript",
+    "family": "path-traversal",
+    "case_digest": "41f9486a1e4fa269",
+    "ran_at": "2026-08-29T05:35:08+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.31379799999999997
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 93.06653945799997,
+        "cost": 0.312851,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 14,
+          "output_tokens": 6023,
+          "cache_read_tokens": 80752,
+          "cache_write_tokens": 12183
+        },
+        "coverage": {
+          "changed": [
+            "nodes/SqliteNode/v1/SqliteV1.node.ts"
+          ],
+          "examined": [
+            "nodes/SqliteNode/v1/SqliteV1.node.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.4058574999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 232.80395445800002,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 20,
+          "output_tokens": 7685,
+          "cache_read_tokens": 130293,
+          "cache_write_tokens": 14754
+        },
+        "coverage": {
+          "changed": [
+            "nodes/SqliteNode/v1/SqliteV1.node.ts"
+          ],
+          "examined": [
+            "nodes/SqliteNode/v1/SqliteV1.node.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [
+          {
+            "fingerprint": "a83b267464aefb50",
+            "title": "db_path accepts data expressions, allowing input-driven arbitrary SQLite file access",
+            "severity": "high",
+            "confidence": "medium",
+            "category": "path-traversal",
+            "file": "nodes/SqliteNode/v1/SqliteV1.node.ts",
+            "line": 115,
+            "impact": "broad_data_access",
+            "reachable_without_authentication": "unclear",
+            "requires_user_interaction": "no",
+            "severity_derivation": "broad_data_access \u2192 high",
+            "evidence": "\t\t\t\tplaceholder: '/path/to/database.sqlite',\n\t\t\t\tdescription: 'The path to the SQLite database file',\n\t\t\t\trequired: true,",
+            "description": "This change removes `noDataExpression: true` from the `db_path` property (it is still present on `query_type` directly below, so the removal is specific to the path parameter). In n8n, `noDataExpression: true` prevents a parameter from being bound to an expression that dereferences workflow item data; it pinned the database file location to a static, design-time constant chosen by the workflow author.\n\nWith it removed, `const dbPath = this.getNodeParameter('db_path', itemIndex, '') as string;` (line 193) resolves a per-item expression such as `{{ $json.path }}`, so values carried in the workflow item \u2014 which commonly originate from a webhook body, HTTP response, or other external source \u2014 now determine the file that is opened. There is no normalization, no base-directory containment check, and no allowlist between that value and the sinks:\n\n- line 211 `fs.mkdirSync(dir, { recursive: true })` creates arbitrary directory trees on the host at an input-derived path;\n- line 224 `const db = new Database(dbPath, bindings);` opens the file, creating it if absent;\n- the configured query then reads from or writes to whatever database was opened (`all`/`run`/`exec`, lines 82-94).\n\nThe consequence is that a `SELECT` node intended for one database can be redirected at `../` or an absolute path to any SQLite file readable by the n8n process \u2014 including n8n's own `~/.n8n/database.sqlite`, whose tables hold workflow credentials \u2014 and an `INSERT`/`CREATE` node can create and write files outside the intended directory. Previously the path was attacker-independent by construction; after this change its trustworthiness depends entirely on each workflow author sanitizing data before interpolating it, which the node does not enforce or document.\n\nConfidence is medium: every link from parameter resolution to the filesystem sink is read in this file, but whether a given deployment routes untrusted data into the expression depends on workflow configuration that lives outside this repository.",
+            "exploit_scenario": "A workflow uses a Webhook trigger followed by this SQLite node configured for per-tenant storage, with Database Path set to the expression `/data/tenants/{{ $json.tenant }}.sqlite` \u2014 a configuration only made possible by this change. An unauthenticated caller POSTs `{\"tenant\": \"../../../home/node/.n8n/database\"}` to the webhook URL. `getNodeParameter` resolves the path to `/home/node/.n8n/database.sqlite`, `new Database()` opens n8n's own credential store, and the node's `SELECT` query returns its rows into the workflow output, exposing stored credentials for every other integration on the instance. The same primitive with an `INSERT`/`CREATE` query writes attacker-chosen SQLite files to any directory the process can reach, with `fs.mkdirSync(dir, { recursive: true })` creating the parent directories first.",
+            "recommendation": "Restore `noDataExpression: true` on the `db_path` property so the database location cannot be driven by item data. If per-item paths are a deliberate feature, keep the flag off but constrain the resolved value before use: resolve it against a configured base directory and reject anything that escapes, e.g.\n\n```ts\nconst base = path.resolve(ALLOWED_DB_ROOT);\nconst resolved = path.resolve(base, dbPath);\nif (resolved !== base && !resolved.startsWith(base + path.sep)) {\n  throw new NodeOperationError(this.getNode(), 'Database path outside the permitted directory.');\n}\n```\n\nand apply that check before both the `fs.mkdirSync` call and `new Database(resolved, bindings)`.",
+            "verification": {
+              "verdict": "refuted",
+              "reason": "3/3 verifier(s) agreed \u2014 The diff's only change is deleting `noDataExpression: true` from the `db_path` property descriptor (nodes/SqliteNode/v1/SqliteV1.node.ts:115). `noDataExpression` is an n8n editor-UI hint that hides the expression toggle for a field; it is not enforced in `getNodeParameter`/`Expression.getParameterValue` at execution time, so a workflow whose JSON stores `db_path: \"=/data/{{$json.tenant}}.sqlite\"` (created via import or the public API) would have resolved the expression identically before this change. The removal therefore does not remove a runtime control, and the only actor who can point item data at this parameter is the trusted workflow author \u2014 who already holds strictly greater capability through the same unchanged field as a static literal path (`/home/node/.n8n/database.sqlite`) and through `use_custom_bindings` (SqliteV1.node.ts:64-67), which loads an attacker-chosen native `.node` binary into the process. No attacker-controlled source exists in this repository; the claimed source requires a hypothetical author-written expression, which is the same \"expressions on a filesystem path\" pattern n8n's own Read/Write Files node ships with. Searched: I looked for the containment control the reviewer says is missing \u2014 `path.resolve`, `normalize`, `startsWith`, a base-directory allowlist, or an `N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES`-style gate \u2014 with a repo-wide regex search; there are no matches, so no such check exists anywhere. I then looked for the control the reviewer says was removed: `search_code` for `noDataExpression` returns exactly one remaining occurrence (line 124, on `query_type`), confirming the deletion is real, but the repository contains only this single tracked file (`list_directory` at depth 6 shows `nodes/SqliteNode/v1/SqliteV1.node.ts` alone; no package.json, no node_modules, no n8n runtime), so runtime enforcement of `noDataExpression` cannot be read here \u2014 I am relying on n8n's implementation, where the flag is consumed by the editor's parameter input component and is not consulted during expression resolution. `git_log` shows only 'Corpus: baseline' and 'Corpus: add feature', i.e. the flag removal is the deliberate feature of this MR. Searching for callers/consumers of this node found none in-repo; the exploit depends entirely on a workflow definition that does not exist in this repository.",
+              "votes": [
+                {
+                  "verdict": "refuted",
+                  "reasoning": "The diff's only change is deleting `noDataExpression: true` from the `db_path` property descriptor (nodes/SqliteNode/v1/SqliteV1.node.ts:115). `noDataExpression` is an n8n editor-UI hint that hides the expression toggle for a field; it is not enforced in `getNodeParameter`/`Expression.getParameterValue` at execution time, so a workflow whose JSON stores `db_path: \"=/data/{{$json.tenant}}.sqlite\"` (created via import or the public API) would have resolved the expression identically before this change. The removal therefore does not remove a runtime control, and the only actor who can point item data at this parameter is the trusted workflow author \u2014 who already holds strictly greater capability through the same unchanged field as a static literal path (`/home/node/.n8n/database.sqlite`) and through `use_custom_bindings` (SqliteV1.node.ts:64-67), which loads an attacker-chosen native `.node` binary into the process. No attacker-controlled source exists in this repository; the claimed source requires a hypothetical author-written expression, which is the same \"expressions on a filesystem path\" pattern n8n's own Read/Write Files node ships with.",
+                  "corrected_impact": "",
+                  "corrected_confidence": "low",
+                  "error": ""
+                },
+                {
+                  "verdict": "refuted",
+                  "reasoning": "Working backwards from the sinks (`new Database(dbPath, bindings)` line 224 and `fs.mkdirSync` line 211), the only caller is `SqliteV1.execute()` and the only source of `dbPath` is `this.getNodeParameter('db_path', ...)` \u2014 i.e. the workflow definition itself, supplied at design time by the workflow author. That author could already point `db_path` at `/home/node/.n8n/database.sqlite` as a static string before this change, so \"arbitrary SQLite file access\" is not a new capability; the same file already lets the author set `use_custom_bindings` to an arbitrary path that is passed as `nativeBinding` (lines 62-70, unchanged, and never carrying `noDataExpression`), which loads an arbitrary native library \u2014 arbitrary author-chosen filesystem paths are this node's design premise, not a regression. `noDataExpression` in n8n is a node-description hint consumed by the editor UI to hide the expression toggle; it is not a runtime guard in the expression engine (n8n-workflow is not vendored here, so I could not read `Expression.getParameterValue` to prove it, but nothing in this repository enforces it either). For untrusted webhook data to reach the sink, a workflow author must deliberately interpolate `$json` into the path \u2014 a configuration that exists nowhere in this repository and is the author's composition choice, exactly as with n8n's own Read/Write-Files and HTTP Request nodes.",
+                  "corrected_impact": "",
+                  "corrected_confidence": "low",
+                  "error": ""
+                },
+                {
+                  "verdict": "refuted",
+                  "reasoning": "Working backwards from the sinks, the premise that \"previously the path was attacker-independent by construction\" is false in the very same file, unchanged by this diff: `query` (lines 128-136) and `use_custom_bindings` (lines 176-182) carry no `noDataExpression` in the baseline, are resolved per item (lines 194, 198) and reach strictly greater sinks \u2014 `db.exec(query)` (line 92) runs multi-statement SQL where SQLite `ATTACH DATABASE '/home/node/.n8n/database.sqlite'` already reads/writes any SQLite file, and `nativeBinding: opts.use_custom_bindings` (line 68) loads an arbitrary native `.node` library. So the claimed new capability (author interpolates webhook data \u2192 arbitrary SQLite file read/write) was already fully available before the change through parameters this MR does not touch, and the removal of the flag on `db_path` grants no new reach. Additionally, `noDataExpression` is an editor-UI affordance that hides the expression toggle, not a runtime-enforced control, and the only path by which untrusted item data reaches `db_path` requires a trusted, authenticated workflow author to deliberately build the path from `$json` \u2014 the node's stated purpose is to open an author-chosen local SQLite file with author-chosen SQL, so this is a capability/misconfiguration surface, not an injection defect in this code.",
+                  "corrected_impact": "",
+                  "corrected_confidence": "low",
+                  "error": ""
+                }
+              ],
+              "claimed_severity": "high",
+              "claimed_confidence": "medium",
+              "claimed_line": 116,
+              "evidence_located_line": 115,
+              "line_corrected": true,
+              "introduced_by_this_change": true,
+              "attributed_by": "deleted",
+              "removes_existing_control": false,
+              "path_verified": true
+            },
+            "suppressed_by": ""
+          }
+        ],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.003239241092086997,
+    "safe_findings": [],
+    "unsafe_findings": [],
+    "cost": null,
+    "seconds": 232.80395445800002
+  },
+  {
+    "case_id": "ts-m9mq-7m7q-xc6p",
+    "language": "typescript",
+    "family": "path-traversal",
+    "case_digest": "0dd2260f8a81e716",
+    "ran_at": "2026-08-29T05:35:05+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.9433224999999998
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 319.44276449999995,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 28,
+          "output_tokens": 14239,
+          "cache_read_tokens": 373217,
+          "cache_write_tokens": 39964
+        },
+        "coverage": {
+          "changed": [
+            "src/download.ts",
+            "src/state.ts",
+            "src/tools/session.ts"
+          ],
+          "examined": [
+            "src/browser.ts",
+            "src/download.ts",
+            "src/fence.ts",
+            "src/pathSafe.ts",
+            "src/state.ts",
+            "src/tools/edit.ts",
+            "src/tools/session.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "4b7acdbccf951a80",
+          "severity": "high",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 2
+        },
+        "blocking": [
+          [
+            "path-traversal",
+            "src/download.ts",
+            0
+          ],
+          [
+            "path-traversal",
+            "src/state.ts",
+            0
+          ]
+        ],
+        "reported": 3,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.6914695
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 249.0265035419999,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 18,
+          "output_tokens": 12099,
+          "cache_read_tokens": 185527,
+          "cache_write_tokens": 29519
+        },
+        "coverage": {
+          "changed": [
+            "src/download.ts",
+            "src/state.ts",
+            "src/tools/session.ts"
+          ],
+          "examined": [
+            "src/browser.ts",
+            "src/download.ts",
+            "src/fence.ts",
+            "src/pathSafe.ts",
+            "src/state.ts",
+            "src/tools/session.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [
+      {
+        "category": "ssrf",
+        "file": "src/download.ts",
+        "severity": "low",
+        "title": "Origin fence bypassed by redirect in browser_download fetch fallback",
+        "fingerprint": "e13562f489042b11",
+        "blocking": false
+      }
+    ],
+    "unsafe_incidental": [
+      {
+        "category": "ssrf",
+        "file": "src/download.ts",
+        "severity": "medium",
+        "title": "Removed origin-fence check in downloadUrl lets fetch fallback bypass the fence (SSRF)",
+        "fingerprint": "e13562f489042b11",
+        "blocking": false
+      }
+    ],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.052309283400919906,
+    "safe_findings": [
+      {
+        "category": "ssrf",
+        "file": "src/download.ts",
+        "severity": "low",
+        "title": "Origin fence bypassed by redirect in browser_download fetch fallback",
+        "fingerprint": "e13562f489042b11",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "path-traversal",
+        "file": "src/download.ts",
+        "severity": "high",
+        "title": "Removal of download-dir confinement allows arbitrary file write",
+        "fingerprint": "4b7acdbccf951a80",
+        "blocking": true
+      },
+      {
+        "category": "ssrf",
+        "file": "src/download.ts",
+        "severity": "medium",
+        "title": "Removed origin-fence check in downloadUrl lets fetch fallback bypass the fence (SSRF)",
+        "fingerprint": "e13562f489042b11",
+        "blocking": false
+      },
+      {
+        "category": "path-traversal",
+        "file": "src/state.ts",
+        "severity": "medium",
+        "title": "Removal of state-path confinement allows arbitrary file write/read",
+        "fingerprint": "7bcf0940ae4812cc",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 319.44276449999995
+  },
+  {
+    "case_id": "ts-v667-gc2r-2xm7",
+    "language": "typescript",
+    "family": "authn-authz",
+    "case_digest": "ae0c46e778b6cd5d",
+    "ran_at": "2026-08-29T05:40:34+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.7983085
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 230.911183875,
+        "cost": 0.7973525,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 24,
+          "output_tokens": 17075,
+          "cache_read_tokens": 202815,
+          "cache_write_tokens": 26895
+        },
+        "coverage": {
+          "changed": [
+            "back/loaders/express.ts"
+          ],
+          "examined": [
+            "back/loaders/app.ts",
+            "back/loaders/express.ts",
+            "back/loaders/sock.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": false,
+        "finished_explicitly": false,
+        "stop_reason": "error",
+        "stop_detail": "the CLI reported '(no subtype)' and exited 1. A process that failed and still printed a success object has not agreed with itself, and this runner does not choose the reassuring half.",
+        "exit_code": 2,
+        "blocked": true,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.3912405
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 106.33109816599995,
+        "cost": 0.313723,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 14,
+          "output_tokens": 7348,
+          "cache_read_tokens": 80686,
+          "cache_write_tokens": 8961
+        },
+        "coverage": {
+          "changed": [
+            "back/loaders/express.ts"
+          ],
+          "examined": [
+            "back/loaders/express.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "incomplete": [
+      "unsafe"
+    ],
+    "cost": 1.1110755,
+    "seconds": 230.911183875
+  }
+]
