@@ -721,7 +721,7 @@ def main() -> int:
     if not cases:
         sys.exit("no cases matched")
     print("running {} pair(s) across {} worker(s)\n".format(
-        len(cases), min(args.concurrency, len(cases))))
+        len(cases), min(args.concurrency, len(cases))), flush=True)
 
     # Read once, before anything runs. The rulings decide what counts as
     # this case's weakness, so a run that read them afterwards would score
@@ -743,7 +743,12 @@ def main() -> int:
             # `--json` write below — and threw away every case already paid
             # for. The progress line is the least important thing on this
             # screen and it must not be able to end the run.
-            print("  {:<20} {}".format(r["case_id"], _progress(r)))
+            # `flush`, because this is the only thing anybody watching a
+            # forty-minute batch can see. Python block-buffers stdout when it
+            # is a pipe rather than a terminal, so every one of these lines sat
+            # in the buffer until the run ended — a progress report that
+            # arrives with the result is not a progress report.
+            print("  {:<20} {}".format(r["case_id"], _progress(r)), flush=True)
 
     # Written before the report. A crash while formatting would otherwise throw
     # away runs already paid for.
