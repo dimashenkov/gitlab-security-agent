@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+"""Run corpus pairs as a queue that survives the subscription's session limit.
+
+Three windows were exhausted in two days, and each time the answer was a rule
+built on a number that measures something else: batch size against the *weekly*
+limit, then notional API cost against quota. There is no number for remaining
+session capacity — no CLI subcommand exposes it and nothing caches it under
+`~/.claude`. So this does not predict.
+
+What is observable is the refusal itself, and it carries the reset time:
+
+    You've hit your session limit · resets 7:20pm (Europe/Sofia).
+
+So the queue treats a refusal as a pause rather than a failure: it checkpoints
+after every pair, sleeps until the stated reset, and picks the same case up
+again. A refused run costs a re-run and never a measurement — `pair_corpus`
+already records it as incomplete and refuses to score it as clean.
+
+    tools/run_queue.py --language go --construction snapshot
+    tools/run_queue.py --case py-x2rj-828p-hx9m --case ts-v667-gc2r-2xm7
+    tools/run_queue.py --language php --dry-run     # what it would run
+
+One pair in flight at a time, so a refusal at the boundary loses at most one.
+Results land in `measurements/queue/<case>.json` as they finish, and the queue
+skips any case already recorded there or in an existing batch file — so
+stopping it and starting it again resumes rather than repeats.
+
+`measurements/queue/log.jsonl` records one line per attempt with the raw fields
+and nothing derived: duration, the four token counts, the notional cost clearly
+labelled as notional, the outcome, and which window it ran in. Codex's
+condition for the log being worth keeping: record the raw fields and weight
+nothing until there is enough data to say which of them predicts a refusal.
+Until then they are candidate correlates, not measurements of quota.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import List, Optional
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+QUEUE = ROOT / "measurements" / "queue"
+LOG = QUEUE / "log.jsonl"
+
+# The refusal, and the reset it names. Matched on the sentence rather than on a
+# status code because the CLI reports it as an ordinary error: exit 1 with the
+# message in its terminal object.
+LIMIT = re.compile(r"hit your (session|usage) limit", re.I)
+# Failures already seen and understood: the CLI exiting non-zero while printing
+# a success object, and a review killed by its own wall clock. Anything else is
+# `unknown`, and the queue stops rather than guessing which of the two it is.
+KNOWN_ERROR = re.compile(
+    r"reported '\(no subtype\)'|wall.?clock|timed out", re.I)
+# Told apart from the rest because it is the one failure where a replay is not
+# obviously free: the process may have submitted work before dying, and nothing
+# it left behind says whether it did.
+NO_ARTIFACT = re.compile(r"did not write its session|no session document", re.I)
+RESET = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.I)
+
+# A pause when the refusal names no time it could parse. Long enough not to
+# hammer the API, short enough that an unattended queue is not asleep for an
+# afternoon after a transient wording change.
+BLIND_WAIT = timedelta(minutes=30)
+
+
+def cases(args) -> List[str]:
+    """Every case the queue would run, in a stable order."""
+    if args.case:
+        return list(args.case)
+
+    chosen = []
+    for manifest in sorted((ROOT / "corpus-real").glob("*/case.yml")):
+        body = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+        if args.language and body.get("language") != args.language:
+            continue
+        if args.construction and body.get("construction") != args.construction:
+            continue
+        chosen.append(manifest.parent.name)
+    return chosen
+
+
+def already_run(case_id: str) -> bool:
+    """Recorded anywhere, so stopping and restarting resumes.
+
+    Both the queue's own per-case files and the batch files written by
+    `pair_corpus` directly, because the corpus has been measured both ways and
+    paying twice for one answer is the thing this is here to avoid.
+    """
+    if (QUEUE / (case_id + ".json")).is_file():
+        return True
+    for path in (ROOT / "measurements").glob("*.json"):
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        rows = body if isinstance(body, list) else body.get("results") or []
+        for row in rows if isinstance(rows, list) else ():
+            if isinstance(row, dict) and row.get("case_id") == case_id \
+                    and not row.get("incomplete"):
+                return True
+    return False
+
+
+def reset_at(detail: str, now: datetime) -> Optional[datetime]:
+    """The moment the refusal says the window reopens, in local time.
+
+    `resets 7:20pm` with no date: it is the next such time, which may be
+    tomorrow if the refusal arrives after it. Returns None when the sentence
+    carries no time this can read, and the caller waits blind rather than
+    guessing a moment.
+    """
+    match = RESET.search(detail or "")
+    if not match:
+        return None
+    hour = int(match.group(1)) % 12
+    if match.group(3).lower() == "pm":
+        hour += 12
+    when = now.replace(hour=hour, minute=int(match.group(2) or 0),
+                       second=0, microsecond=0)
+    return when if when > now else when + timedelta(days=1)
+
+
+def classify(payload: list) -> tuple:
+    """`(kind, detail)` for how this pair ended.
+
+    More states than the three it started with, because "unknown" was doing
+    the work of half a dozen different endings and only one of them may enter
+    the reset logic. Codex's list, and each is a different decision:
+
+        refused        an explicit, validated limit message — the only ending
+                       that may lead to sleeping until a reset
+        failed-known   a failure already understood: the CLI exiting non-zero
+                       while printing a success object, a wall-clock kill.
+                       Record it and carry on; one broken case is not a reason
+                       to stop a queue
+        no-artifact    the process left no session document at all. It may
+                       have submitted work before dying, so a replay is not
+                       obviously free
+        unknown        an ending this cannot name. It might be a refusal in
+                       new words, and treating it as an ordinary failure would
+                       work through the corpus being turned away while every
+                       line in the log looked healthy
+
+    An `unknown` does *not* mean "the wording changed". It may equally be a
+    timeout, a truncated document, a parser defect, a lost connection or a
+    local crash — which is exactly why it stops rather than guessing.
+    """
+    unknown = known = missing = None
+    for row in payload if isinstance(payload, list) else ():
+        for member in (row.get("members") or {}).values():
+            detail = str(member.get("stop_detail") or "")
+            if LIMIT.search(detail):
+                return "refused", detail
+            if member.get("stop_reason") != "error":
+                continue
+            if NO_ARTIFACT.search(detail):
+                missing = detail
+            elif KNOWN_ERROR.search(detail):
+                known = detail
+            else:
+                unknown = detail or "an error with no detail recorded"
+    if unknown:
+        return "unknown", unknown
+    if missing:
+        return "no-artifact", missing
+    return ("failed-known", known) if known else ("ok", None)
+
+
+def note(entry: dict) -> None:
+    QUEUE.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def raw_rows(payload: list, started_at: str, finished_at: str) -> list:
+    """One row per invocation, carrying only what the provider said.
+
+    Per member, not per pair, and nothing summed. Today's analysis tripped over
+    exactly one pre-summed figure: the four token counts added together are
+    99% cache reads, so any total including them says "the conversation
+    dominates" whatever else is true. A row is cheap; a sum somebody has to
+    unpick later is not.
+
+    No derived fields. `notional_api_cost` is the provider's own
+    `total_cost_usd` under a name that says what it is — the price this work
+    would have carried on the API, on a login that was a subscription. It is
+    here to be looked at, never to be reasoned from towards quota.
+    """
+    rows = []
+    for row in payload if isinstance(payload, list) else ():
+        for name, member in (row.get("members") or {}).items():
+            usage = member.get("usage") or {}
+            rows.append({
+                "kind": "review",
+                "case_id": row.get("case_id"), "member": name,
+                "started_at": started_at, "finished_at": finished_at,
+                "seconds": member.get("seconds"),
+                "stop_reason": member.get("stop_reason"),
+                "usage_reported": bool(usage.get("reported")),
+                "input_tokens": usage.get("input_tokens"),
+                "output_tokens": usage.get("output_tokens"),
+                "cache_read_tokens": usage.get("cache_read_tokens"),
+                "cache_write_tokens": usage.get("cache_write_tokens"),
+                # Named, and sourced. Claude Code emits `total_cost_usd`; it
+                # is the price this work would have carried on the API, and
+                # the login was a subscription. Saying where it came from is
+                # what keeps it from being read as a bill or as quota — both
+                # of which have already happened.
+                "notional_api_cost": (member.get("provenance") or {}).get(
+                    "reported_cost_usd"),
+                "notional_api_cost_source": "claude-code total_cost_usd",
+            })
+    return rows
+
+
+def run_one(case_id: str, args) -> tuple:
+    """`(payload, kind, detail)`. The payload is kept unless it was refused."""
+    target = QUEUE / (case_id + ".json")
+    QUEUE.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, "-u", str(ROOT / "tools" / "pair_corpus.py"),
+               str(ROOT / "corpus-real"), "--provider", args.provider,
+               "--profile", args.profile, "-c", "2",
+               "--case", case_id, "--json", str(target)]
+    proc = subprocess.run(command, cwd=ROOT, check=False)
+    if not target.is_file():
+        # Three, like every other return here. Two of them unpacked into a
+        # three-name assignment and this line raised `ValueError` — on the one
+        # path where `pair_corpus` wrote nothing at all, which is exactly the
+        # path a broken CLI takes. `no-artifact` rather than `unknown`: what is
+        # known is that no session document exists, and whether the call was
+        # submitted before it died is not.
+        return None, "no-artifact", "pair_corpus wrote no result file"
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    kind, detail = classify(payload)
+    if kind == "refused":
+        # Not kept. A refused pair has measured nothing, and leaving the file
+        # behind would make `already_run` skip it for ever.
+        target.unlink()
+    # The return code is deliberately not read. `pair_corpus` exits non-zero
+    # when a pair fails to discriminate, which is a result and not an error;
+    # what matters here is whether the row says the account was refused.
+    del proc
+    return payload, kind, detail
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--language")
+    parser.add_argument("--construction", choices=("regression", "snapshot"))
+    parser.add_argument("--case", action="append", default=[])
+    parser.add_argument("--provider", default="claude-cli",
+                        choices=("claude-cli", "anthropic-api"))
+    parser.add_argument("--profile", default="normal",
+                        choices=("probe", "normal", "deep"))
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--max-waits", type=int, default=4,
+                        help="how many resets to sit through before giving up")
+    args = parser.parse_args()
+
+    queued = [c for c in cases(args) if not already_run(c)]
+    skipped = len(cases(args)) - len(queued)
+    print("{} case(s) queued, {} already recorded".format(len(queued), skipped),
+          flush=True)
+    if args.dry_run or not queued:
+        for case_id in queued:
+            print("  " + case_id, flush=True)
+        return 0
+
+    window = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    waits = 0
+    done = 0
+
+    # Refusals since the last pair that completed. Two of them mean the queue
+    # woke after a reset, ran a pair, and was refused again — which is the
+    # observation, not merely the alarm. Whether a reset restores an allowance
+    # or only admits one more call is the open question the whole plan turns
+    # on, and this is the only place it can be answered: the second refusal
+    # *is* the answer, so the queue must run that pair before it stops.
+    #
+    # Hence the order below — sleep, run, and only then decide — rather than
+    # stopping at the first sign of trouble and never finding out.
+    since_progress = 0
+
+    while queued:
+        case_id = queued[0]
+        # The raw stamp, on every line. Today's "the limit counts loops" came
+        # from three windows cut at gaps between batches — a boundary somebody
+        # chose — and moving it turned 25·34·26 into 32·38·43. Every number in
+        # this log carries its own time so the next analysis can cut where it
+        # likes, and so a later disagreement is distinguishable from a real
+        # change rather than from a different choice of edge.
+        started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        started = time.monotonic()
+        payload, kind, detail = run_one(case_id, args)
+        elapsed = round(time.monotonic() - started, 1)
+
+        if kind in ("unknown", "no-artifact"):
+            # Neither slept on nor moved past. The refusal is matched on a
+            # sentence the provider can reword, so an ending this cannot name
+            # might be a refusal in new words — and treating it as an ordinary
+            # failure would work through the whole corpus being turned away.
+            note({"case_id": case_id, "window": window, "outcome": kind,
+                  "started_at": started_at, "finished_at":
+                      datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "detail": str(detail)[:200], "wall_seconds": elapsed})
+            # Both stop, for the same reason and not the same evidence.
+            # `unknown` may be a refusal in new words. `no-artifact` may have
+            # submitted work before dying, so advancing would launch another
+            # pair while the account or the process path may still be unwell —
+            # and nothing it left behind says how far it got. Carrying on is a
+            # decision that needs evidence neither of them provides.
+            print("\nstopped at {}: {}.\n  {}\n\n{} case(s) left. The result "
+                  "file, if any, is left in place for a person to look at "
+                  "rather than resumed past.".format(
+                      case_id,
+                      "the ending could not be classified" if kind == "unknown"
+                      else "no session document was written",
+                      str(detail)[:160], len(queued)), flush=True)
+            return 3
+
+        if kind == "refused":
+            # The raw rows too, not just the fact of the refusal. "A refusal
+            # costs one re-run" was asserted before it was checked; it turned
+            # out true — five refusals were turned away at the handshake, 12.5
+            # seconds and no tokens — but it is a property of five attempts,
+            # not a law. Written as a field, it re-measures itself every time,
+            # and the day a refusal lands mid-loop the log will say so instead
+            # of the plan continuing to claim otherwise.
+            refused_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            for entry in raw_rows(payload or [], started_at, refused_at):
+                note(dict(entry, window=window, pair_outcome="refused"))
+            note({"case_id": case_id, "window": window, "outcome": "refused",
+                  "started_at": started_at, "finished_at": refused_at,
+                  "detail": str(detail)[:200], "wall_seconds": elapsed})
+            waits += 1
+            since_progress += 1
+            if since_progress >= 2:
+                # Recorded as its own kind. This is the measurement, and a
+                # later reader must be able to find it without inferring it
+                # from two adjacent "refused" lines.
+                note({"case_id": case_id, "window": window,
+                      "outcome": "refused-after-reset",
+                      "detail": str(detail)[:200],
+                      "observation": "a pair run after the stated reset was "
+                                     "refused; the reset did not restore an "
+                                     "allowance this queue could use"})
+                print("\nstopped: woke at the stated reset, ran one pair, and "
+                      "was refused again. That is the observation this was "
+                      "waiting for — the reset did not restore an allowance "
+                      "this queue can use, so sleeping again would buy nothing "
+                      "measurable. {} case(s) left.".format(len(queued)),
+                      flush=True)
+                return 4
+            if waits > args.max_waits:
+                print("refused {} times; stopping with {} case(s) left".format(
+                    waits, len(queued)), flush=True)
+                return 2
+            now = datetime.now().astimezone()
+            when = reset_at(str(detail), now)
+            if when is None:
+                when = now + BLIND_WAIT
+                print("refused, and the message names no time this can read — "
+                      "waiting {} minutes".format(int(BLIND_WAIT.total_seconds() // 60)),
+                      flush=True)
+            else:
+                print("refused · {} · sleeping until {}".format(
+                    str(detail).strip()[:80], when.strftime("%H:%M")), flush=True)
+            # A minute past, because a reset at the stated minute is not a
+            # promise about the second.
+            time.sleep(max(0.0, (when - now).total_seconds()) + 60)
+            window = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            continue
+
+        queued.pop(0)
+        done += 1
+        since_progress = 0
+        row = (payload or [{}])[0]
+        outcome = ("incomplete" if row.get("incomplete")
+                   else "pass" if row.get("pair_success") else "fail")
+        finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for entry in raw_rows(payload or [], started_at, finished_at):
+            note(dict(entry, window=window, pair_outcome=outcome))
+        print("  {:<26} {:<10} {} left".format(case_id, outcome, len(queued)),
+              flush=True)
+
+    print("\n{} case(s) run, {} reset(s) waited out. Raw fields per attempt in "
+          "{}.".format(done, waits, LOG.relative_to(ROOT)), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
