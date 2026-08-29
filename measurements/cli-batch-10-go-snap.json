@@ -1,0 +1,1346 @@
+[
+  {
+    "case_id": "go-8r62-w5wh-fc5m-snap",
+    "language": "go",
+    "family": "sensitive-data-exposure",
+    "case_digest": "5c6686c3837685ed",
+    "ran_at": "2026-08-29T11:35:35+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.6661425000000001
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 152.606453125,
+        "cost": 0.6651985,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 20,
+          "output_tokens": 11203,
+          "cache_read_tokens": 204407,
+          "cache_write_tokens": 28282
+        },
+        "coverage": {
+          "changed": [
+            "server/server.go",
+            "server/websockets/client.go"
+          ],
+          "examined": [
+            "server/cors.go",
+            "server/embed.go",
+            "server/server.go",
+            "server/websockets/hub.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "server/websockets/client.go"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.710918
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 183.925849583,
+        "cost": 0.709961,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 20,
+          "output_tokens": 13061,
+          "cache_read_tokens": 201732,
+          "cache_write_tokens": 28247
+        },
+        "coverage": {
+          "changed": [
+            "server/server.go",
+            "server/websockets/client.go"
+          ],
+          "examined": [
+            "server/cors.go",
+            "server/server.go",
+            "server/websockets/hub.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "server/websockets/client.go"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": false,
+    "safe_incidental": [
+      {
+        "category": "dos",
+        "file": "server/server.go",
+        "severity": "low",
+        "title": "Send API request body size limit computed but never enforced",
+        "fingerprint": "e38c42fadbb7d834",
+        "blocking": false
+      }
+    ],
+    "unsafe_incidental": [
+      {
+        "category": "dos",
+        "file": "server/server.go",
+        "severity": "low",
+        "title": "Request body size limit is skipped exactly where it is configured (/api/v1/send)",
+        "fingerprint": "e38c42fadbb7d834",
+        "blocking": false
+      }
+    ],
+    "safe_false_positive": false,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.016004285666454614,
+    "safe_findings": [
+      {
+        "category": "dos",
+        "file": "server/server.go",
+        "severity": "low",
+        "title": "Send API request body size limit computed but never enforced",
+        "fingerprint": "e38c42fadbb7d834",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "server/server.go",
+        "severity": "low",
+        "title": "Request body size limit is skipped exactly where it is configured (/api/v1/send)",
+        "fingerprint": "e38c42fadbb7d834",
+        "blocking": false
+      }
+    ],
+    "cost": 1.3751595,
+    "seconds": 183.925849583
+  },
+  {
+    "case_id": "go-mmfr-pmjx-hw9w-snap",
+    "language": "go",
+    "family": "dos",
+    "case_digest": "707541b6dfea39c3",
+    "ran_at": "2026-08-29T11:35:35+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.020104
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 196.089117625,
+        "cost": 1.019159,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 28,
+          "output_tokens": 14261,
+          "cache_read_tokens": 395808,
+          "cache_write_tokens": 46459
+        },
+        "coverage": {
+          "changed": [
+            "openapi3filter/validation_error_encoder.go"
+          ],
+          "examined": [
+            "openapi3filter/errors.go",
+            "openapi3filter/middleware.go",
+            "openapi3filter/req_resp_encoder.go",
+            "openapi3filter/validate_request.go",
+            "openapi3filter/validation_error.go",
+            "openapi3filter/validation_error_encoder.go",
+            "openapi3filter/validation_handler.go",
+            "openapi3filter/validation_kit.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "3e8e2ff3451c583e",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.8422120000000002
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 162.165937,
+        "cost": 0.84126,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 28,
+          "output_tokens": 11905,
+          "cache_read_tokens": 335990,
+          "cache_write_tokens": 37550
+        },
+        "coverage": {
+          "changed": [
+            "openapi3filter/validation_error_encoder.go"
+          ],
+          "examined": [
+            "openapi3filter/errors.go",
+            "openapi3filter/req_resp_decoder.go",
+            "openapi3filter/validate_request.go",
+            "openapi3filter/validation_error.go",
+            "openapi3filter/validation_error_encoder.go",
+            "openapi3filter/validation_handler.go",
+            "openapi3filter/validation_kit.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.01833430856251219,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "openapi3filter/validation_error_encoder.go",
+        "severity": "low",
+        "title": "Nil-pointer dereference in convertParseError on request-body parse errors",
+        "fingerprint": "3e8e2ff3451c583e",
+        "blocking": false
+      }
+    ],
+    "cost": 1.8604189999999998,
+    "seconds": 196.089117625
+  },
+  {
+    "case_id": "go-m6jg-wr9m-cg2f-snap",
+    "language": "go",
+    "family": "path-traversal",
+    "case_digest": "d22060335d484858",
+    "ran_at": "2026-08-29T11:35:35+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.8623974999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 225.484811666,
+        "cost": 0.8614445,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 20,
+          "output_tokens": 16094,
+          "cache_read_tokens": 207229,
+          "cache_write_tokens": 35538
+        },
+        "coverage": {
+          "changed": [
+            "cmd/uniget/hooks.go"
+          ],
+          "examined": [
+            "cmd/uniget/common.go",
+            "cmd/uniget/cron.go",
+            "cmd/uniget/install.go",
+            "cmd/uniget/main.go",
+            "cmd/uniget/uninstall.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "cmd/uniget/hooks.go"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.5573605
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 314.70805729099993,
+        "cost": 1.5564025,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 42,
+          "output_tokens": 20852,
+          "cache_read_tokens": 791585,
+          "cache_write_tokens": 63910
+        },
+        "coverage": {
+          "changed": [
+            "cmd/uniget/hooks.go"
+          ],
+          "examined": [
+            "cmd/uniget/common.go",
+            "cmd/uniget/cron.go",
+            "cmd/uniget/hooks.go",
+            "cmd/uniget/install.go",
+            "cmd/uniget/main.go",
+            "cmd/uniget/uninstall.go",
+            "cmd/uniget/update.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [
+      {
+        "category": "supply-chain",
+        "file": "cmd/uniget/update.go",
+        "severity": "high",
+        "title": "Metadata sigstore verification is inverted and skipped by default",
+        "fingerprint": "f6a5233a65ca0f7e",
+        "blocking": false
+      }
+    ],
+    "safe_false_positive": false,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.06648926202166336,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "supply-chain",
+        "file": "cmd/uniget/update.go",
+        "severity": "high",
+        "title": "Metadata sigstore verification is inverted and skipped by default",
+        "fingerprint": "f6a5233a65ca0f7e",
+        "blocking": false
+      }
+    ],
+    "cost": 2.417847,
+    "seconds": 314.70805729099993
+  },
+  {
+    "case_id": "go-qmcq-xw74-w667-snap",
+    "language": "go",
+    "family": "injection",
+    "case_digest": "d22060335d484858",
+    "ran_at": "2026-08-29T11:41:12+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.551642
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 343.21294775000007,
+        "cost": 1.550693,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 40,
+          "output_tokens": 24068,
+          "cache_read_tokens": 706126,
+          "cache_write_tokens": 59573
+        },
+        "coverage": {
+          "changed": [
+            "cmd/uniget/hooks.go"
+          ],
+          "examined": [
+            "cmd/uniget/cron.go",
+            "cmd/uniget/hooks.go",
+            "cmd/uniget/install.go",
+            "cmd/uniget/main.go",
+            "cmd/uniget/update.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.6024639999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 319.497813875,
+        "cost": 1.601513,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 46,
+          "output_tokens": 21439,
+          "cache_read_tokens": 886736,
+          "cache_write_tokens": 62194
+        },
+        "coverage": {
+          "changed": [
+            "cmd/uniget/hooks.go"
+          ],
+          "examined": [
+            "cmd/uniget/cron.go",
+            "cmd/uniget/hooks.go",
+            "cmd/uniget/install.go",
+            "cmd/uniget/main.go",
+            "cmd/uniget/uninstall.go",
+            "cmd/uniget/update.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": false,
+    "safe_incidental": [
+      {
+        "category": "supply-chain",
+        "file": "cmd/uniget/update.go",
+        "severity": "high",
+        "title": "Metadata sigstore verification only runs when the \"ignore signature\" env var is set",
+        "fingerprint": "f6a5233a65ca0f7e",
+        "blocking": false
+      }
+    ],
+    "unsafe_incidental": [
+      {
+        "category": "supply-chain",
+        "file": "cmd/uniget/update.go",
+        "severity": "high",
+        "title": "Metadata signature verification is inverted and skipped by default",
+        "fingerprint": "f6a5233a65ca0f7e",
+        "blocking": false
+      }
+    ],
+    "safe_false_positive": false,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.06648926202166336,
+    "safe_findings": [
+      {
+        "category": "supply-chain",
+        "file": "cmd/uniget/update.go",
+        "severity": "high",
+        "title": "Metadata sigstore verification only runs when the \"ignore signature\" env var is set",
+        "fingerprint": "f6a5233a65ca0f7e",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "supply-chain",
+        "file": "cmd/uniget/update.go",
+        "severity": "high",
+        "title": "Metadata signature verification is inverted and skipped by default",
+        "fingerprint": "f6a5233a65ca0f7e",
+        "blocking": false
+      }
+    ],
+    "cost": 3.152206,
+    "seconds": 343.21294775000007
+  },
+  {
+    "case_id": "go-w67g-5rqw-f597-snap",
+    "language": "go",
+    "family": "crypto",
+    "case_digest": "caad3d1697a06a5d",
+    "ran_at": "2026-08-29T11:44:36+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.3537265
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 253.80838120800001,
+        "cost": 1.3527795,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 26,
+          "output_tokens": 19554,
+          "cache_read_tokens": 471039,
+          "cache_write_tokens": 62828
+        },
+        "coverage": {
+          "changed": [
+            "conn.go"
+          ],
+          "examined": [
+            "client.go",
+            "compression.go",
+            "conn.go",
+            "go.mod",
+            "json.go",
+            "mask.go",
+            "prepared.go",
+            "proxy.go",
+            "server.go",
+            "util.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.44529
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 271.497826958,
+        "cost": 1.444336,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 20949,
+          "cache_read_tokens": 443722,
+          "cache_write_tokens": 69864
+        },
+        "coverage": {
+          "changed": [
+            "conn.go"
+          ],
+          "examined": [
+            "client.go",
+            "compression.go",
+            "conn.go",
+            "go.mod",
+            "mask.go",
+            "server.go",
+            "util.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.0002642124267911401,
+    "safe_findings": [],
+    "unsafe_findings": [],
+    "cost": 2.7971155000000003,
+    "seconds": 271.497826958
+  },
+  {
+    "case_id": "go-r553-m4fv-5v97-snap",
+    "language": "go",
+    "family": "dos",
+    "case_digest": "c29820ea4921a85d",
+    "ran_at": "2026-08-29T11:41:34+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "2ec38fedbd9bff2a",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 2,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.6596165
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 360.80222070799994,
+        "cost": 1.6586685,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 30,
+          "output_tokens": 27692,
+          "cache_read_tokens": 588817,
+          "cache_write_tokens": 67181
+        },
+        "coverage": {
+          "changed": [
+            "internal/smtpd/smtpd.go"
+          ],
+          "examined": [
+            "internal/smtpd/main.go",
+            "internal/smtpd/smtpd.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "b1fbea00230b7d57",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 2,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.9723989999999998
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 481.02295041700006,
+        "cost": 1.97144,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 26,
+          "output_tokens": 36626,
+          "cache_read_tokens": 540660,
+          "cache_write_tokens": 78533
+        },
+        "coverage": {
+          "changed": [
+            "internal/smtpd/smtpd.go"
+          ],
+          "examined": [
+            "internal/smtpd/main.go",
+            "internal/smtpd/relay.go",
+            "internal/smtpd/smtpd.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [
+      {
+        "category": "sensitive-data-exposure",
+        "file": "internal/smtpd/main.go",
+        "severity": "low",
+        "title": "SMTP AUTH PLAIN/LOGIN forced on without TLS, ignoring allow-insecure flag",
+        "fingerprint": "d232955c2528ca92",
+        "blocking": false
+      }
+    ],
+    "unsafe_incidental": [
+      {
+        "category": "sensitive-data-exposure",
+        "file": "internal/smtpd/main.go",
+        "severity": "low",
+        "title": "SMTP AUTH PLAIN/LOGIN offered over unencrypted connections",
+        "fingerprint": "d232955c2528ca92",
+        "blocking": false
+      }
+    ],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.011653469361620388,
+    "safe_findings": [
+      {
+        "category": "sensitive-data-exposure",
+        "file": "internal/smtpd/main.go",
+        "severity": "low",
+        "title": "SMTP AUTH PLAIN/LOGIN forced on without TLS, ignoring allow-insecure flag",
+        "fingerprint": "d232955c2528ca92",
+        "blocking": false
+      },
+      {
+        "category": "dos",
+        "file": "internal/smtpd/smtpd.go",
+        "severity": "low",
+        "title": "Blocking reverse-DNS lookup in SMTP accept loop enables remote DoS",
+        "fingerprint": "2ec38fedbd9bff2a",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "internal/smtpd/smtpd.go",
+        "severity": "low",
+        "title": "Unbounded memory allocation reading a DATA line with no LF",
+        "fingerprint": "b1fbea00230b7d57",
+        "blocking": false
+      },
+      {
+        "category": "sensitive-data-exposure",
+        "file": "internal/smtpd/main.go",
+        "severity": "low",
+        "title": "SMTP AUTH PLAIN/LOGIN offered over unencrypted connections",
+        "fingerprint": "d232955c2528ca92",
+        "blocking": false
+      }
+    ],
+    "cost": 3.6301085000000004,
+    "seconds": 481.02295041700006
+  },
+  {
+    "case_id": "go-xhj3-7xw9-vr34-snap",
+    "language": "go",
+    "family": "dos",
+    "case_digest": "3b44e17acb402c57",
+    "ran_at": "2026-08-29T11:52:15+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "b08b6f0a68006e75",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 2.1950375
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 483.36125312499996,
+        "cost": 2.1940855,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 34,
+          "output_tokens": 37867,
+          "cache_read_tokens": 836601,
+          "cache_write_tokens": 82894
+        },
+        "coverage": {
+          "changed": [
+            "openapi3filter/req_resp_decoder.go"
+          ],
+          "examined": [
+            "openapi3filter/internal.go",
+            "openapi3filter/middleware.go",
+            "openapi3filter/req_resp_decoder.go",
+            "openapi3filter/validate_request.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "a4a2276d31675678",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.462883
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 297.54233962500007,
+        "cost": 1.46193,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 24,
+          "output_tokens": 23940,
+          "cache_read_tokens": 512680,
+          "cache_write_tokens": 60697
+        },
+        "coverage": {
+          "changed": [
+            "openapi3filter/req_resp_decoder.go"
+          ],
+          "examined": [
+            "openapi3filter/internal.go",
+            "openapi3filter/req_resp_decoder.go",
+            "openapi3filter/validate_request.go",
+            "openapi3filter/validate_request_input.go"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.007537219686322309,
+    "safe_findings": [
+      {
+        "category": "dos",
+        "file": "openapi3filter/req_resp_decoder.go",
+        "severity": "low",
+        "title": "Unchecked type assertion in deepSet panics on crafted deepObject query params",
+        "fingerprint": "b08b6f0a68006e75",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "openapi3filter/req_resp_decoder.go",
+        "severity": "low",
+        "title": "Unbounded array index in deepObject query decoding causes memory exhaustion",
+        "fingerprint": "a4a2276d31675678",
+        "blocking": false
+      }
+    ],
+    "cost": 3.6560154999999996,
+    "seconds": 483.36125312499996
+  }
+]
