@@ -1,0 +1,200 @@
+[
+  {
+    "case_id": "ts-w4mq-xh27-6xpx-snap",
+    "language": "typescript",
+    "family": "xss",
+    "case_digest": "7ae7a1f5f6101d02",
+    "ran_at": "2026-08-29T18:37:50+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "029bfd6e5f692e8b",
+          "severity": "low",
+          "confidence": "low",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.515469
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 373.16125766700003,
+        "cost": 1.514509,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 38,
+          "output_tokens": 25995,
+          "cache_read_tokens": 612108,
+          "cache_write_tokens": 55839
+        },
+        "coverage": {
+          "changed": [
+            "src/lib/addons/feature-event-formatter-md.ts"
+          ],
+          "examined": [
+            "src/lib/addons/addon.ts",
+            "src/lib/addons/datadog.ts",
+            "src/lib/addons/feature-event-formatter-md.ts",
+            "src/lib/addons/slack-app.ts",
+            "src/lib/addons/slack.ts",
+            "src/lib/addons/teams-workflow.ts",
+            "src/lib/addons/teams.test.ts",
+            "src/lib/addons/teams.ts",
+            "src/lib/addons/webhook.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "3d7c383882dc91e8",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.3953225
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 362.58658870799997,
+        "cost": 1.3943695,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 30,
+          "output_tokens": 25536,
+          "cache_read_tokens": 439919,
+          "cache_write_tokens": 53586
+        },
+        "coverage": {
+          "changed": [
+            "src/lib/addons/feature-event-formatter-md.ts"
+          ],
+          "examined": [
+            "src/lib/addons/addon.ts",
+            "src/lib/addons/datadog.ts",
+            "src/lib/addons/feature-event-formatter-md.ts",
+            "src/lib/addons/slack-app.ts",
+            "src/lib/addons/teams.ts",
+            "src/lib/addons/webhook.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.00566401087490088,
+    "safe_findings": [
+      {
+        "category": "injection",
+        "file": "src/lib/addons/feature-event-formatter-md.ts",
+        "severity": "low",
+        "title": "User-controlled createdBy is compiled as a Mustache template in event formatter",
+        "fingerprint": "029bfd6e5f692e8b",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "injection",
+        "file": "src/lib/addons/feature-event-formatter-md.ts",
+        "severity": "low",
+        "title": "User-controlled event.createdBy is used as a Mustache template",
+        "fingerprint": "3d7c383882dc91e8",
+        "blocking": false
+      }
+    ],
+    "cost": 2.9088785,
+    "seconds": 373.16125766700003
+  }
+]

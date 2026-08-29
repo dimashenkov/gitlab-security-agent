@@ -1,0 +1,203 @@
+[
+  {
+    "case_id": "ts-34pm-923j-7wf8-snap",
+    "language": "typescript",
+    "family": "xss",
+    "case_digest": "500d15ef0ad0a34b",
+    "ran_at": "2026-08-29T17:44:46+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.2007185
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 322.249118167,
+        "cost": 1.1997685,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 22851,
+          "cache_read_tokens": 318627,
+          "cache_write_tokens": 46907
+        },
+        "coverage": {
+          "changed": [
+            "ui/src/components/layout/Markdown.vue",
+            "ui/src/utils/markdown_plugins/link.ts"
+          ],
+          "examined": [
+            "ui/src/components/layout/ContextNews.vue",
+            "ui/src/components/layout/Markdown.vue",
+            "ui/src/components/layout/MarkdownTooltip.vue",
+            "ui/src/utils/markdown_plugins/link.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "a71b4ff1b36da61e",
+          "severity": "high",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "xss",
+            "ui/src/utils/markdown_plugins/link.ts",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.6502030000000001
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 280.12646195900004,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 20,
+          "output_tokens": 10743,
+          "cache_read_tokens": 218196,
+          "cache_write_tokens": 27147
+        },
+        "coverage": {
+          "changed": [
+            "ui/src/components/layout/Markdown.vue",
+            "ui/src/utils/markdown_plugins/link.ts"
+          ],
+          "examined": [
+            "ui/src/utils/markdown_plugins/link.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "ui/src/components/layout/Markdown.vue"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [
+      {
+        "category": "dos",
+        "file": "ui/src/utils/markdown_plugins/link.ts",
+        "severity": "low",
+        "title": "Quadratic-backtracking regex in markdown link plugin allows browser hang",
+        "fingerprint": "ab0ac105ed724f4b",
+        "blocking": false
+      }
+    ],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.008180084876068638,
+    "safe_findings": [
+      {
+        "category": "dos",
+        "file": "ui/src/utils/markdown_plugins/link.ts",
+        "severity": "low",
+        "title": "Quadratic-backtracking regex in markdown link plugin allows browser hang",
+        "fingerprint": "ab0ac105ed724f4b",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "xss",
+        "file": "ui/src/utils/markdown_plugins/link.ts",
+        "severity": "high",
+        "title": "Unescaped attribute names in [[link]] markdown plugin allow HTML injection (XSS)",
+        "fingerprint": "a71b4ff1b36da61e",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 322.249118167
+  }
+]

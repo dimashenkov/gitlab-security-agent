@@ -1,0 +1,191 @@
+[
+  {
+    "case_id": "ts-6wvw-vrw4-363w-snap",
+    "language": "typescript",
+    "family": "dos",
+    "case_digest": "b10b7ee47689283b",
+    "ran_at": "2026-08-29T17:54:49+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.5721399999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 385.10580075,
+        "cost": 1.571183,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 26,
+          "output_tokens": 30074,
+          "cache_read_tokens": 411626,
+          "cache_write_tokens": 61339
+        },
+        "coverage": {
+          "changed": [
+            "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts"
+          ],
+          "examined": [
+            "packages/node-opcua-secure-channel/source/server/nonce_cache.ts",
+            "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "00fa6405b82c4d78",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.84366
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 157.47233166700005,
+        "cost": 0.842685,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 11081,
+          "cache_read_tokens": 256860,
+          "cache_write_tokens": 43712
+        },
+        "coverage": {
+          "changed": [
+            "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts"
+          ],
+          "examined": [
+            "packages/node-opcua-secure-channel/source/server/nonce_cache.ts",
+            "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [
+      {
+        "category": "crypto",
+        "file": "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts",
+        "severity": "low",
+        "title": "Server accepts all-zero client nonce in OpenSecureChannel",
+        "fingerprint": "322fdfb9643364f5",
+        "blocking": false
+      }
+    ],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": -0.009067029866718552,
+    "safe_findings": [
+      {
+        "category": "crypto",
+        "file": "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts",
+        "severity": "low",
+        "title": "Server accepts all-zero client nonce in OpenSecureChannel",
+        "fingerprint": "322fdfb9643364f5",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "packages/node-opcua-secure-channel/source/server/server_secure_channel_layer.ts",
+        "severity": "low",
+        "title": "Unbounded global client-nonce cache allows memory-exhaustion DoS",
+        "fingerprint": "00fa6405b82c4d78",
+        "blocking": false
+      }
+    ],
+    "cost": 2.413868,
+    "seconds": 385.10580075
+  }
+]
