@@ -289,3 +289,192 @@ adjudications:
     evidence: >-
       sha256 of safe/change/src/Renci.SshNet/ScpClient.cs is a8630434d7203619
       in both cases.
+
+  # ------------------------------------------------------------------
+  # 2026-08-30. Eleven rulings, after Codex reviewed twelve and removed one.
+  #
+  # Read against the diff in every case, not against the finding's title:
+  # titles misled the labelling three times out of twelve, always in the
+  # direction of underrating the reviewer.
+  #
+  # The guard that makes this honest rather than convenient: the same question
+  # was asked of the 29 passing pairs — is the counted finding the advisory's
+  # weakness, or a collision sharing its category and file — and all 29 held.
+  # A procedure that interrogates only its failures can only improve the number.
+
+  - case_id: php-gvrw-qqp5-jgc5
+    member: safe
+    file: src/View/Shortcodes/EmbedShortcodeProvider.php
+    adjudicated_on: 2026-08-30
+    verdict: real
+    case_is_malformed: true
+    fix_review_outcome: fix_bypass
+    why_malformed: >-
+      The fix adds `removeDangerousAttributes` with an iframe attribute
+      allowlist, and the safe member reports that allowlist as bypassable —
+      the advisory's own weakness, not a neighbouring one. The claim is
+      structural: the outer pattern is `#^<iframe(?:"[^"]*"|'[^']*'|[^>])*>#i`,
+      anchored at the start, so any wrapper element or leading whitespace
+      leaves the whole guard unapplied. A pair whose safe member still carries
+      the weakness cannot measure discrimination in either direction.
+
+  - case_id: ts-v667-gc2r-2xm7
+    member: safe
+    file: back/loaders/express.ts
+    fingerprint: 0f4d7486c0ab0da6
+    adjudicated_on: 2026-08-30
+    verdict: real
+    case_is_malformed: true
+    fix_review_outcome: fix_regression
+    why_malformed: >-
+      The fix adds `/open/user/init` and `/open/user/notification/init` to the
+      allowlist and, in the same expression, changes `pathLower` to
+      `req.path` — dropping the case-normalisation, so `/API/user/init` no
+      longer matches and passes the init gate. The reviewer found a bypass the
+      fix itself introduced. As a benchmark item the case is invalid, because
+      its nominally safe member is not safe.
+    note: >-
+      Codex, 2026-08-30: "The reviewer was valuable, but the benchmark item is
+      invalid. Do not force those two facts into one metric." Hence
+      `fix_review_outcome` beside the exclusion — this earns product credit and
+      not pair-discrimination credit.
+
+  - case_id: php-pg62-f8g4-4wqh
+    member: safe
+    file: phpmyfaq/src/phpMyFAQ/Controller/Administration/GroupController.php
+    fingerprint: d267176bd170c763
+    adjudicated_on: 2026-08-30
+    verdict: real
+    case_is_malformed: true
+    fix_review_outcome: second_route
+    why_malformed: >-
+      The fix guards `updatePermissions` — you cannot grant a right you do not
+      hold. `updateMembers` calls `addToGroup` with no such check, so the same
+      privilege escalation stands by a second route. Exactly the reasoning
+      `py-6x92` and `cs-q939` were ruled on.
+
+  - case_id: go-xhj3-7xw9-vr34
+    member: safe
+    file: openapi3filter/req_resp_decoder.go
+    fingerprint: 90d0ae21e5e7b9f4
+    adjudicated_on: 2026-08-30
+    verdict: real
+    case_is_malformed: true
+    fix_review_outcome: fix_bypass
+    why_malformed: >-
+      The fix adds `maxSliceMapToSliceGap` and rejects negative indexes. The
+      safe member reports an integer overflow that bypasses **that new guard** —
+      the advisory's own uncontrolled resource consumption, reached through the
+      fix rather than around it.
+
+  - case_id: py-8x5v-cpv7-8jjp-snap
+    member: safe
+    file: backend/open_webui/retrieval/web/utils.py
+    fingerprint: edc9b9e9b7ea5e16
+    adjudicated_on: 2026-08-30
+    verdict: real
+    case_is_malformed: true
+    fix_review_outcome: fix_bypass
+    why_malformed: >-
+      `_is_global_addr` unwraps NAT64, 6to4, Teredo and ipv4-mapped correctly,
+      so the check itself is sound. But the resolver is consulted only when a
+      *name* is resolved: aiohttp's connector short-circuits on
+      `is_ip_address(host)` and returns the literal address without calling the
+      configured resolver, so a redirect to a literal internal address reaches
+      it unchecked. Same outcome as the advisory — internal services and cloud
+      metadata — by a route the fix does not close.
+    note: >-
+      I reached this from the structure and general knowledge of aiohttp;
+      Codex verified it against the connector source and a published aiohttp
+      SSRF discussion describing the same short-circuit. Recorded because the
+      premise was the weak part, not the conclusion.
+
+  # ---- incidental: the safe finding is a different weakness ----------
+
+  - case_id: go-qqff-5854-px68
+    member: safe
+    file: pkg/cookie/cookie.go
+    fingerprint: 82df3b4469b72a9e
+    adjudicated_on: 2026-08-30
+    verdict: real
+    incidental: true
+    why_not_the_target: >-
+      The advisory is unbounded allocation from the multipart cookie count, and
+      the fix adds `maxCookieParts = 32` — an upper bound. The finding is a
+      missing **lower** bound causing an out-of-range panic: the opposite end of
+      a different check, in the same file and category.
+
+  - case_id: go-r553-m4fv-5v97-snap
+    member: safe
+    file: internal/smtpd/smtpd.go
+    fingerprint: 2ec38fedbd9bff2a
+    adjudicated_on: 2026-08-30
+    verdict: real
+    incidental: true
+    why_not_the_target: >-
+      The advisory is memory consumed reading a DATA line with no LF, and the
+      fix replaces `ReadBytes` with a bounded `ReadSlice` loop. The finding is a
+      blocking reverse-DNS lookup in the accept loop — a different mechanism.
+    note: >-
+      One ruling, not two. The member's other finding is SMTP AUTH without TLS,
+      `sensitive-data-exposure` in `main.go`, which never matches the target key
+      and so needs no excusing. Codex caught that I had counted it.
+
+  - case_id: go-xhj3-7xw9-vr34-snap
+    member: safe
+    file: openapi3filter/req_resp_decoder.go
+    fingerprint: b08b6f0a68006e75
+    adjudicated_on: 2026-08-30
+    verdict: real
+    incidental: true
+    why_not_the_target: >-
+      The advisory is unbounded allocation from sparse indexes. The finding is
+      an unchecked type assertion in `deepSet` that panics — a crash, not
+      resource exhaustion, and untouched by the fix.
+
+  - case_id: py-g7gc-gmgp-wgqg-snap
+    member: safe
+    file: eml_parser/routing.py
+    fingerprint: 65be177f55161cba
+    adjudicated_on: 2026-08-30
+    verdict: real
+    incidental: true
+    why_not_the_target: >-
+      The advisory is the quadratic parenthesis-stripping loop, which the fix
+      replaces with a single linear pass and deletes the regex behind. The
+      finding is a different, dynamically built Received-header regex.
+
+  - case_id: py-qr67-gv47-xwwh-snap
+    member: safe
+    file: asyncssh/config.py
+    fingerprint: 06e5d02338358490
+    adjudicated_on: 2026-08-30
+    verdict: real
+    incidental: true
+    why_not_the_target: >-
+      The advisory is `%u` token expansion still escaping in
+      `AuthorizedKeysFile`. The finding is `Include` leaking Match state into
+      the parent configuration and silently dropping later directives — a
+      different defect in the same file.
+
+  - case_id: ts-w4mq-xh27-6xpx-snap
+    member: safe
+    file: src/lib/addons/feature-event-formatter-md.ts
+    fingerprint: 029bfd6e5f692e8b
+    adjudicated_on: 2026-08-30
+    verdict: real
+    incidental: true
+    why_not_the_target: >-
+      The advisory is the global `Mustache.escape` override, which disables
+      escaping process-wide; the fix makes it a per-render option. The finding
+      is that `createdBy` is compiled as a template at all — true in both
+      members and untouched by the fix.
+
+  # `py-g7gc-gmgp-wgqg` is deliberately not here. Its safe member carries two
+  # target-matching findings — `ed2d1169bb2b4ff7`, the quadratic URL re-scan,
+  # and `3a593ceb554e0c08`, a backtracking email regex run on an unbounded raw
+  # header after a `RecursionError`. Excusing only the first leaves the second
+  # and the pair still fails; and the second is close enough to the advisory —
+  # regex CPU exhaustion on unbounded header input — to need its own reading
+  # rather than inheriting a ruling written for its neighbour. It stays a raw
+  # failure until then.
