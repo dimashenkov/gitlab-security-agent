@@ -136,8 +136,19 @@ def already_run(case_id: str) -> bool:
     `pair_corpus` directly, because the corpus has been measured both ways and
     paying twice for one answer is the thing this is here to avoid.
     """
-    if (QUEUE / (case_id + ".json")).is_file():
-        return True
+    own = QUEUE / (case_id + ".json")
+    if own.is_file():
+        # The file existing is not the same as the case having been measured.
+        # A pair whose review stopped early leaves a row saying so, and reading
+        # its presence as "done" is this project's founding error — "did not
+        # check" read as "checked" — inside the queue built to avoid it. It
+        # cost `js-q4gh-4ffp-5cg8-snap` a silent skip: recorded, never run.
+        try:
+            rows = json.loads(own.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return any(isinstance(r, dict) and not r.get("incomplete")
+                   for r in rows if isinstance(rows, list))
     for path in (ROOT / "measurements").glob("*.json"):
         try:
             body = json.loads(path.read_text(encoding="utf-8"))

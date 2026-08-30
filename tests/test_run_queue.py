@@ -290,3 +290,43 @@ def test_nothing_in_the_window_row_is_derived(ledger):
 
     row = read_ledger(ledger)[0]
     assert not {"limit", "estimate", "threshold", "cap", "budget"} & set(row)
+
+
+# ------------------------- a file is not a measurement
+
+
+def test_a_pair_that_did_not_finish_is_not_treated_as_recorded(tmp_path, monkeypatch):
+    """The founding error of this project, found inside the queue built to
+    avoid it.
+
+    A review that stopped early leaves a result file saying so. The queue asked
+    only whether the file existed, so `js-q4gh-4ffp-5cg8-snap` — one member
+    incomplete, nothing measured — was skipped as done and would have stayed
+    skipped for ever. "Did not check" reading as "checked" is the one confusion
+    the whole tool exists to prevent.
+    """
+    import json
+
+    import run_queue
+    monkeypatch.setattr(run_queue, "QUEUE", tmp_path)
+    monkeypatch.setattr(run_queue, "ROOT", tmp_path)
+
+    unfinished = [{"case_id": "a-case", "incomplete": ["unsafe"],
+                   "pair_success": None}]
+    (tmp_path / "a-case.json").write_text(json.dumps(unfinished))
+    assert run_queue.already_run("a-case") is False
+
+    finished = [{"case_id": "a-case", "pair_success": True}]
+    (tmp_path / "a-case.json").write_text(json.dumps(finished))
+    assert run_queue.already_run("a-case") is True
+
+
+def test_a_result_file_that_will_not_parse_is_not_a_measurement(tmp_path, monkeypatch):
+    """Truncated by a kill, half-written by a crash. Either way nothing in it
+    says the case was measured, and the safe reading is to run it again."""
+    import run_queue
+    monkeypatch.setattr(run_queue, "QUEUE", tmp_path)
+    monkeypatch.setattr(run_queue, "ROOT", tmp_path)
+
+    (tmp_path / "a-case.json").write_text('[{"case_id": "a-cas')
+    assert run_queue.already_run("a-case") is False
