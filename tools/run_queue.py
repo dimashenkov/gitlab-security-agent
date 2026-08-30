@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -295,9 +296,16 @@ def close_window(window: str, termination: str, done: int, left: int,
 
     Nothing is computed from this here on purpose. It exists so the filter can.
     """
+    # Which compaction behaviour this window ran under. Windows compacted at
+    # different thresholds are not comparable, and mixing them silently would
+    # break the next recut exactly as the uncounted subagents broke the last —
+    # except self-inflicted. Read from the environment rather than declared, so
+    # a variable that is set and ignored is recorded as what it is.
     note({"kind": "window", "window": window,
           "window_termination": termination, "mode": mode,
           "pairs_completed": done, "pairs_left": left,
+          "autocompact_pct": os.environ.get(
+              "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "default"),
           "closed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
 
 

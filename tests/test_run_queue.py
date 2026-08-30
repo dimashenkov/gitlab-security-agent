@@ -330,3 +330,30 @@ def test_a_result_file_that_will_not_parse_is_not_a_measurement(tmp_path, monkey
 
     (tmp_path / "a-case.json").write_text('[{"case_id": "a-cas')
     assert run_queue.already_run("a-case") is False
+
+
+def test_a_window_records_which_compaction_it_ran_under(ledger, monkeypatch):
+    """Windows compacted at different thresholds are not comparable.
+
+    `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowers when auto-compaction fires, and it
+    is a documented variable with reports of being set and silently ignored. So
+    the value is read from the environment at the moment the window closes,
+    not declared once — a variable that is present and inert then shows up in
+    the ledger as what it actually was.
+
+    Recording it is the point. Mixing windows with different compaction
+    behaviour would break the next re-cut the same way the uncounted subagents
+    broke the last one, except deliberately.
+    """
+    import run_queue
+
+    monkeypatch.delenv("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", raising=False)
+    run_queue.close_window("w1", "refused", 3, 1, "unattended")
+
+    monkeypatch.setenv("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "50")
+    run_queue.close_window("w2", "refused", 3, 1, "unattended")
+
+    rows = read_ledger(ledger)
+    # "default", not "" or None: absent must be a value somebody can filter on,
+    # not an empty cell that reads as unknown.
+    assert [r["autocompact_pct"] for r in rows] == ["default", "50"]
