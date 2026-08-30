@@ -217,8 +217,29 @@ thing the change was about.
 reviewer reported unauthenticated file inclusion, rated critical — graver than
 the CSRF the case was built around, and in the member that carries the
 weakness. The pair is scored a miss because the target was not found. The
-finding itself is unadjudicated and is not disposed of by that score; if it is
-real it is a product result regardless of what the benchmark makes of it.
+finding itself is not disposed of by that score; if it is real it is a product
+result regardless of what the benchmark makes of it.
+
+It was read on 2026-08-30 and ruled `unclear`, which is a verdict and not a
+deferral. One thing is shown: URL segments reach `include_once` through a
+constructed class path, and `BackendAuth::check()` runs afterwards, inside the
+controller that inclusion is still resolving. No authentication barrier is
+visible before the include on this dispatch path.
+
+Everything the word `critical` rests on is not shown, and it is more than one
+missing helper — that a traversal segment survives HTTP and route normalisation
+at all, which path it resolves to, that an existing `.php` file sits there, and
+that including it does anything. A first reading of mine was wrong in the
+reviewer's favour: `..` in the controller position does not traverse, because
+`.php` is concatenated immediately and it becomes `...php`. Only the leading
+segment can climb, and the literal `Controllers` component constrains where it
+lands.
+
+Recorded in `adjudications.yml` with `not_verifiable: true` and deliberately
+without an `incidental` key, so it moves no number in either direction. Codex
+argued for `not_real`, scoped to the concrete claim; `unclear` was kept because
+the ordering is real and reproducible from this file, and the objection is
+recorded beside the ruling rather than dropped.
 
 ## What is sent where
 

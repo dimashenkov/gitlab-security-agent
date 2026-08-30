@@ -506,3 +506,62 @@ adjudications:
       not by measurement: the class before `@` contains `.`, so a long input
       with no `@` costs a retry per start position. The advisory's own defect
       was also quadratic, which is why this counts as the same outcome.
+  # The finding the reviewer reported instead of the target. It sits in the
+  # *unsafe* member, so it changes no score either way: the pair already fails
+  # because the CSRF target was never named. Recorded because a row that says
+  # only "missed" implies the reviewer found nothing, and it found something.
+  #
+  # Read on 2026-08-30, and the reading was corrected once. What is shown is the
+  # ordering: getRequestedController builds \<module>\Controllers\<name> from
+  # URL segments, findController turns it into a path under base_path()/modules
+  # and reaches include_once, and the backend's BackendAuth::check() runs later,
+  # inside Controller::run. The outer middleware calls $next before its own
+  # inspection. So: no authentication barrier is visible before inclusion on
+  # this dispatch path — phrased that way, because no deployment-level
+  # middleware was audited.
+  #
+  # What is *not* shown is everything the word "critical" rests on, and it is
+  # more than one missing helper:
+  #   - that a traversal segment survives HTTP and route normalisation at all;
+  #   - which path it resolves to;
+  #   - that an existing .php file sits there;
+  #   - that including it does anything, since inclusion runs top-level code and
+  #     that is where impact would come from.
+  # RouterHelper::segmentizeUrl is unreadable here (Winter\Storm is not
+  # vendored), but it is the first unresolved boundary, not the only one.
+  #
+  # One correction, kept because it was wrong first: `..` in the controller
+  # position does not traverse. `.php` is concatenated immediately, so it becomes
+  # `...php`. Only the module/author segment can climb, and the literal
+  # Controllers component then constrains where it lands.
+  #
+  # So critical is not supported — that grade needs demonstrated impact, not an
+  # unresolved possibility. `unclear` is kept rather than `not_real` because the
+  # pre-auth ordering is real and reproducible from this file, and the project
+  # treats `unclear` as an answer. Codex argued for `not_real` scoped to the
+  # concrete claim; recorded here rather than silently overridden.
+  - case_id: php-p2ch-c2c3-4xm5-snap
+    member: unsafe
+    file: modules/backend/classes/BackendController.php
+    fingerprint: 83b15cfae58377b5
+    verdict: unclear
+    not_verifiable: true
+    severity_reported: critical
+    claim: Unauthenticated file inclusion via backend controller path segments
+    evidence: |
+      BackendController.php:202 takes the segments, :211 builds the class name,
+      :274 builds the file path, :276 includes it. Controller.php:262 is where
+      BackendAuth::check() runs, after the include. BackendController.php:70
+      shows the outer middleware calling $next first.
+    why_not_the_target: |
+      Pre-auth path construction is shown; traversal reachability and impact are
+      not. No request is given that survives normalisation, no resolved path, no
+      existing target, and no inclusion behaviour that would matter.
+    note: |
+      Not scored, and deliberately carrying no `incidental` key so it cannot move
+      a number. To settle it, read Winter\Storm\Router\Helper::segmentizeUrl and
+      then answer the other three questions above — the helper alone decides
+      nothing. Codex's objection: "the record should not confirm the finding, but
+      its current `unclear` rationale gives the reviewer too much credit by
+      reducing the evidentiary failure to one missing helper."
+    adjudicated_on: 2026-08-30
