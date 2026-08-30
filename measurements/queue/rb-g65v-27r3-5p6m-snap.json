@@ -1,0 +1,196 @@
+[
+  {
+    "case_id": "rb-g65v-27r3-5p6m-snap",
+    "language": "ruby",
+    "family": "path-traversal",
+    "case_digest": "e7d34be2370275ca",
+    "ran_at": "2026-08-30T13:13:26+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "2e66586e6b338dc7",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.3745575
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 110.610615583,
+        "cost": 0.3736115,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 14,
+          "output_tokens": 8158,
+          "cache_read_tokens": 84603,
+          "cache_write_tokens": 12729
+        },
+        "coverage": {
+          "changed": [
+            "lib/guard/livereload/websocket.rb"
+          ],
+          "examined": [
+            "lib/guard/livereload/reactor.rb",
+            "lib/guard/livereload/websocket.rb"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "2e66586e6b338dc7",
+          "severity": "high",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "path-traversal",
+            "lib/guard/livereload/websocket.rb",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.21138200000000001
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 147.742684416,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 14,
+          "output_tokens": 4034,
+          "cache_read_tokens": 72190,
+          "cache_write_tokens": 7342
+        },
+        "coverage": {
+          "changed": [
+            "lib/guard/livereload/websocket.rb"
+          ],
+          "examined": [
+            "lib/guard/livereload/reactor.rb",
+            "lib/guard/livereload/websocket.rb"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.08967054743621501,
+    "safe_findings": [
+      {
+        "category": "path-traversal",
+        "file": "lib/guard/livereload/websocket.rb",
+        "severity": "low",
+        "title": "Path traversal in LiveReload HTTP handler leaks arbitrary file existence",
+        "fingerprint": "2e66586e6b338dc7",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "path-traversal",
+        "file": "lib/guard/livereload/websocket.rb",
+        "severity": "high",
+        "title": "Path traversal in LiveReload HTTP handler allows arbitrary file read",
+        "fingerprint": "2e66586e6b338dc7",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 147.742684416
+  }
+]

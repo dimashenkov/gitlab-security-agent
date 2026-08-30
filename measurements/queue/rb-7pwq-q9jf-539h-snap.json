@@ -1,0 +1,196 @@
+[
+  {
+    "case_id": "rb-7pwq-q9jf-539h-snap",
+    "language": "ruby",
+    "family": "injection",
+    "case_digest": "262eca6f6d468cd0",
+    "ran_at": "2026-08-30T13:03:32+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.985557
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 289.60090675,
+        "cost": 0.984604,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 21356,
+          "cache_read_tokens": 190728,
+          "cache_write_tokens": 35523
+        },
+        "coverage": {
+          "changed": [
+            "lib/kobako/transport/dispatcher.rb",
+            "sig/kobako/transport/dispatcher.rbs"
+          ],
+          "examined": [
+            "lib/kobako/transport/dispatcher.rb",
+            "lib/kobako/transport/error.rb",
+            "lib/kobako/transport/request.rb",
+            "lib/kobako/transport/response.rb",
+            "lib/kobako/transport/run.rb",
+            "lib/kobako/transport/yield.rb",
+            "lib/kobako/transport/yielder.rb"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "sig/kobako/transport/dispatcher.rbs"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "6767d0673bacc6d0",
+          "severity": "critical",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "injection",
+            "lib/kobako/transport/dispatcher.rb",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.6638485000000001
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 304.027196709,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 12766,
+          "cache_read_tokens": 182311,
+          "cache_write_tokens": 25248
+        },
+        "coverage": {
+          "changed": [
+            "lib/kobako/transport/dispatcher.rb",
+            "sig/kobako/transport/dispatcher.rbs"
+          ],
+          "examined": [
+            "lib/kobako/transport/dispatcher.rb",
+            "lib/kobako/transport/error.rb",
+            "lib/kobako/transport/request.rb",
+            "lib/kobako/transport/response.rb",
+            "lib/kobako/transport/run.rb",
+            "lib/kobako/transport/yield.rb",
+            "lib/kobako/transport/yielder.rb"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "sig/kobako/transport/dispatcher.rbs"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.12803951367781155,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "injection",
+        "file": "lib/kobako/transport/dispatcher.rb",
+        "severity": "critical",
+        "title": "Sandbox RPC dispatcher invokes arbitrary guest-supplied method names on host objects",
+        "fingerprint": "6767d0673bacc6d0",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 304.027196709
+  }
+]
