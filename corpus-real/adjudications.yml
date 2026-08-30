@@ -478,3 +478,31 @@ adjudications:
   # regex CPU exhaustion on unbounded header input — to need its own reading
   # rather than inheriting a ruling written for its neighbour. It stays a raw
   # failure until then.
+
+  - case_id: py-g7gc-gmgp-wgqg
+    member: safe
+    file: eml_parser/parser.py
+    fingerprint: 3a593ceb554e0c08
+    adjudicated_on: 2026-08-30
+    verdict: real
+    case_is_malformed: true
+    fix_review_outcome: fix_regression
+    why_malformed: >-
+      Held back from the batch of eleven because its safe member has two
+      target-matching findings and only one had been read. The second is the
+      deciding one: the fix adds a `RecursionError` fallback in `parser.py`
+      that runs `email_regex.findall` over the **raw, unbounded** header value.
+      That is the advisory's own outcome — CPU exhaustion parsing email headers
+      — reintroduced by the fix while it closes the quadratic parenthesis loop
+      in `routing.py`. Same shape as `ts-v667`: a regression the fix carries
+      in, found by the reviewer.
+    note: >-
+      The other finding, `ed2d1169bb2b4ff7` — a quadratic re-scan of accumulated
+      URLs — is a different mechanism and would have been `incidental` on its
+      own. It is not ruled separately because `case_is_malformed` removes the
+      case in both directions and a second ruling would excuse nothing further.
+    caveat: >-
+      The regex is quadratic rather than catastrophic, judged by its shape and
+      not by measurement: the class before `@` contains `.`, so a long input
+      with no `@` costs a retry per start position. The advisory's own defect
+      was also quadratic, which is why this counts as the same outcome.

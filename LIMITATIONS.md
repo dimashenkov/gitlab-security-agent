@@ -132,6 +132,94 @@ the evidence available:
 | The right code, the wrong danger | The finding names a lesser consequence than the one that matters, and a reader triages by the name | None. `py-p43p-whwx-q52h`: the reviewer found the exact line an advisory calls an unauthenticated denial of service — an unbounded username written to a log — and reported it as log injection. Both readings are true of the code; only one gets fixed this week. Scored as a miss, deliberately, rather than adjudicated into a pass |
 | A dependency change | Not reviewed. `*.lock` is excluded by default, and nothing makes the manifest get read instead | None. The exclusion was a token decision, and for a while the code claimed the coverage had moved to the manifest — it had not. A bumped version that only a lockfile records is invisible to this tool. Use a dependency scanner alongside it |
 
+
+## The fifteen measured misses
+
+Measured on 2026-08-30 across five languages and both constructions: 56 pairs,
+29 passing raw. Eleven failures were adjudicated — five cases whose nominally
+safe member still carried the advisory's weakness, six findings that shared a
+target's category and file while describing something else. One is held pending
+a second reading. The fifteen below are what is left, and no ruling reaches
+them: the reviewer did not report the advisory's weakness in the member that
+carries it.
+
+Every case is named individually. Grouping them under one sentence would let one
+twin's explanation account for the other, which is why `tools/check_accounted.py`
+matches on the exact identifier.
+
+**No fix was attempted, and that is a statement rather than an omission.** The
+stopping rule allows one round. No bounded, evidence-backed intervention was
+identified for either family: the first would need a change to how the reviewer
+reads a whole added file, whose effect cannot be known without spending the
+round to measure it, and the second is a question about which weakness the
+reviewer chooses to pursue, which nothing here can direct. A token prompt change
+made so that a fix could be claimed would be ceremony, not a fix.
+
+### Family A — nothing reported in the member carrying the weakness
+
+The reviewer read the change and reported no finding the answer key recognises.
+
+| Case | The weakness it did not report |
+|---|---|
+| `go-m6jg-wr9m-cg2f` | path traversal in a hooks file |
+| `go-qmcq-xw74-w667` | command injection through `EDITOR` |
+| `go-w67g-5rqw-f597-snap` | a cryptographically weak PRNG for the WebSocket mask key |
+| `php-7mpf-4465-7fc2-snap` | stored XSS in a backend list widget |
+| `py-p43p-whwx-q52h-snap` | an unbounded username written to a log on failed login |
+| `ts-cqmq-8755-7xvh-snap` | a negative `take` bypassing the query limit |
+| `ts-q7m3-rhxg-7vxr` | path traversal |
+| `ts-v667-gc2r-2xm7-snap` | improper authentication; both members returned nothing |
+| `py-qr67-gv47-xwwh-snap` | `%u` token expansion still escaping in `AuthorizedKeysFile` |
+
+`py-qr67-gv47-xwwh-snap` is here as well as among the adjudicated: its safe
+member's finding was excused as a different weakness, and its unsafe member
+still reported nothing the answer key recognises. One ruling does not dispose of
+the other half of a pair — a case can be an incidental finding and a miss at
+once, and it is.
+
+Seven of the nine are snapshot cases, and four of those have a regression twin
+that passes on the same weakness in the same code. That is the pattern the two
+constructions were built to expose, and it is where the corpus-wide gap between
+them shows: the weakness is found when the diff removes a guard and not found
+when the diff is a whole added file. Stated as the dominant pattern and not as
+the cause — two of the eight are regressions, so a single explanation would be
+an inference dressed as an observation.
+
+Note that `py-p43p-whwx-q52h-snap` is **not** the case described in "the right
+code, the wrong danger" above. That is its regression twin, which located the
+line and understated the danger. This one reported nothing at all. Two different
+failures, and putting them under one sentence would claim the snapshot reviewer
+found a line it never mentioned.
+
+### Family B — a real weakness reported, and not the one asked for
+
+The reviewer read the change and reported something true about it, in the right
+file, that is not the advisory's weakness. Scored as a miss: a report that is
+useful and incomplete is still incomplete, and the reader who needed the
+advisory's weakness did not get it.
+
+| Case | Asked for | Reported instead |
+|---|---|---|
+| `go-8r62-w5wh-fc5m-snap` | an origin-check bypass | a request-body size limit computed and not enforced |
+| `go-m6jg-wr9m-cg2f-snap` | path traversal | inverted signature verification, skipped by default |
+| `go-qmcq-xw74-w667-snap` | `EDITOR` command injection | the same signature defect |
+| `php-p2ch-c2c3-4xm5-snap` | CSRF through AJAX handler names | **unauthenticated file inclusion, rated critical** |
+| `php-pg62-f8g4-4wqh-snap` | privilege escalation | a CSRF token read from route attributes |
+| `ts-m9mq-7m7q-xc6p-snap` | path traversal | an SSRF through a redirect, read and found real |
+| `py-p43p-whwx-q52h` | denial of service | log injection — the same line, the lesser consequence |
+
+The tool does not know which advisory it is being measured against; it reads
+code and reports what it sees. That explains the shape and does not excuse it,
+because a user asking "is this change safe" gets an answer that missed the
+thing the change was about.
+
+**`php-p2ch-c2c3-4xm5-snap` deserves reading rather than counting.** The
+reviewer reported unauthenticated file inclusion, rated critical — graver than
+the CSRF the case was built around, and in the member that carries the
+weakness. The pair is scored a miss because the target was not found. The
+finding itself is unadjudicated and is not disposed of by that score; if it is
+real it is a product result regardless of what the benchmark makes of it.
+
 ## What is sent where
 
 The agent runs in your CI job and holds two credentials: an Anthropic API key
