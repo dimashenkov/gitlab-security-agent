@@ -16,9 +16,24 @@ after every pair, sleeps until the stated reset, and picks the same case up
 again. A refused run costs a re-run and never a measurement — `pair_corpus`
 already records it as incomplete and refuses to score it as clean.
 
-    tools/run_queue.py --language go --construction snapshot
-    tools/run_queue.py --case py-x2rj-828p-hx9m --case ts-v667-gc2r-2xm7
+    tools/run_queue.py --language go --construction snapshot   # unattended
+    tools/run_queue.py --language go --pairs 4                 # attended
+    tools/run_queue.py --construction snapshot --wait-for-reset
     tools/run_queue.py --language php --dry-run     # what it would run
+
+Two ways to run it, and the difference is about the person, not the quota.
+**Unattended** runs to refusal, sleeps until the reset the message names, and
+resumes — the whole corpus, overnight, without anybody watching. **Attended**
+takes `--pairs N`, runs that many and stops, so there is room left in the
+window to keep working interactively.
+
+`--pairs` is not a cap and nothing may be derived from it. Refusals cost twelve
+seconds and no tokens, and the subscription is paid either way; what the number
+reserves is interactive capacity, not allowance. Three separate rules were once
+built by reading a number like this as a measurement of the limit, and each was
+wrong. The ledger tags every window with how it ended for exactly that reason:
+a window stopped early says only that the limit was above that number, and must
+never be mixed with one that ran to refusal.
 
 One pair in flight at a time, so a refusal at the boundary loses at most one.
 Results land in `measurements/queue/<case>.json` as they finish, and the queue
@@ -201,6 +216,72 @@ def classify(payload: list) -> tuple:
     return ("failed-known", known) if known else ("ok", None)
 
 
+def sleep_until(target: datetime) -> None:
+    """Wait for a wall-clock moment, not for a duration.
+
+    `time.sleep(three hours)` counts on a monotonic clock, and on macOS that
+    clock does not advance while the machine is asleep. A queue that computed
+    the right wake-up — 09:47 refused, 12:50 stated, both correct — was still
+    asleep at 15:32, because the laptop had been shut for most of the interval
+    and its sleep had been added to the queue's.
+
+    Short steps against the actual time instead, so a suspended machine costs
+    at most one step of overshoot rather than however long it was closed. The
+    step is a minute: long enough not to spin, short enough that waking late is
+    measured in minutes.
+    """
+    while True:
+        remaining = (target - datetime.now().astimezone()).total_seconds()
+        if remaining <= 0:
+            return
+        time.sleep(min(60.0, remaining))
+
+
+def wait_for_fresh_window(args) -> None:
+    """Start at the top of a window rather than in the tail of a spent one.
+
+    One probe: ask for a case the queue is not going to run anyway. If the
+    account is refusing, the message names the reset and this waits for it, so
+    an unattended run launched at any hour begins with a full window instead of
+    being turned away on its first real pair.
+
+    A convenience, not a fix. Refusals cost twelve seconds either way; what
+    this buys is that an overnight run does not spend its first hours asleep
+    for a window that had minutes left in it.
+    """
+    probe = argparse.Namespace(**vars(args))
+    probe.case, probe.language, probe.construction = [], None, None
+    remaining = [c for c in cases(probe) if not already_run(c)]
+    if not remaining:
+        return
+    _payload, kind, detail = run_one(remaining[0], args)
+    if kind != "refused":
+        return
+    now = datetime.now().astimezone()
+    when = reset_at(str(detail), now) or (now + BLIND_WAIT)
+    print("the window is already spent · sleeping until {} before starting"
+          .format(when.strftime("%H:%M")), flush=True)
+    sleep_until(when + timedelta(minutes=1))
+
+
+def close_window(window: str, termination: str, done: int, left: int,
+                 mode: str) -> None:
+    """Write how a window ended, so a later reader cannot mistake one for the
+    other.
+
+    `refused` is a measurement of where the limit fell, under that window's
+    mixed load. `stopped_early` is not — it says the limit was above that
+    number and nothing else, and a cluster built from both would fall apart the
+    way the last one did, except deliberately.
+
+    Nothing is computed from this here on purpose. It exists so the filter can.
+    """
+    note({"kind": "window", "window": window,
+          "window_termination": termination, "mode": mode,
+          "pairs_completed": done, "pairs_left": left,
+          "closed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+
+
 def note(entry: dict) -> None:
     QUEUE.mkdir(parents=True, exist_ok=True)
     with LOG.open("a", encoding="utf-8") as handle:
@@ -288,6 +369,15 @@ def main() -> int:
     parser.add_argument("--profile", default="normal",
                         choices=("probe", "normal", "deep"))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--pairs", type=int, metavar="N",
+        help="run N pairs and stop cleanly — attended mode. This reserves "
+             "room for you to keep working in the same window; it is not a "
+             "quota measure and nothing may be derived from it.")
+    parser.add_argument(
+        "--wait-for-reset", action="store_true",
+        help="if a refusal is already in force, wait for the next window "
+             "before starting rather than walking into a spent one")
     parser.add_argument("--max-waits", type=int, default=4,
                         help="how many resets to sit through before giving up")
     args = parser.parse_args()
@@ -301,9 +391,20 @@ def main() -> int:
             print("  " + case_id, flush=True)
         return 0
 
+    mode = "attended" if args.pairs is not None else "unattended"
+    if args.wait_for_reset:
+        wait_for_fresh_window(args)
     window = datetime.now(timezone.utc).isoformat(timespec="seconds")
     waits = 0
     done = 0
+    # How this window ended, written when it does. A window stopped early is
+    # not a measurement of the limit — it says only that the limit was above
+    # that number — and a window that ran to refusal is. Mixing the two is how
+    # the last cluster fell apart, and doing it deliberately would be worse.
+    # Nothing here computes anything from it; it exists so that a later
+    # analysis can filter, and so a `stopped_early` window can never be
+    # mistaken for evidence about where the limit falls.
+    termination = "interrupted"
 
     # Refusals since the last pair that completed. Two of them mean the queue
     # woke after a reset, ran a pair, and was refused again — which is the
@@ -317,6 +418,13 @@ def main() -> int:
     since_progress = 0
 
     while queued:
+        if args.pairs is not None and done >= args.pairs:
+            termination = "stopped_early"
+            print("\nstopped after {} pair(s), as asked. {} left. This is "
+                  "room reserved for you to work in, not a quota decision — "
+                  "a refusal costs twelve seconds and nothing else.".format(
+                      done, len(queued)), flush=True)
+            break
         case_id = queued[0]
         # The raw stamp, on every line. Today's "the limit counts loops" came
         # from three windows cut at gaps between batches — a boundary somebody
@@ -351,6 +459,7 @@ def main() -> int:
                       "the ending could not be classified" if kind == "unknown"
                       else "no session document was written",
                       str(detail)[:160], len(queued)), flush=True)
+            close_window(window, "interrupted", done, len(queued), mode)
             return 3
 
         if kind == "refused":
@@ -385,10 +494,12 @@ def main() -> int:
                       "this queue can use, so sleeping again would buy nothing "
                       "measurable. {} case(s) left.".format(len(queued)),
                       flush=True)
+                close_window(window, "refused", done, len(queued), mode)
                 return 4
             if waits > args.max_waits:
                 print("refused {} times; stopping with {} case(s) left".format(
                     waits, len(queued)), flush=True)
+                close_window(window, "refused", done, len(queued), mode)
                 return 2
             now = datetime.now().astimezone()
             when = reset_at(str(detail), now)
@@ -402,7 +513,7 @@ def main() -> int:
                     str(detail).strip()[:80], when.strftime("%H:%M")), flush=True)
             # A minute past, because a reset at the stated minute is not a
             # promise about the second.
-            time.sleep(max(0.0, (when - now).total_seconds()) + 60)
+            sleep_until(when + timedelta(minutes=1))
             window = datetime.now(timezone.utc).isoformat(timespec="seconds")
             continue
 
@@ -429,6 +540,11 @@ def main() -> int:
         print("  {:<26} {:<10} {} left".format(case_id, outcome, len(queued)),
               flush=True)
 
+    if termination == "interrupted" and not queued:
+        # The queue drained. Not a measurement either: the work ran out before
+        # the limit did, which says nothing about where the limit is.
+        termination = "work_exhausted"
+    close_window(window, termination, done, len(queued), mode)
     print("\n{} case(s) run, {} reset(s) waited out. Raw fields per attempt in "
           "{}.".format(done, waits, LOG.relative_to(ROOT)), flush=True)
     return 0

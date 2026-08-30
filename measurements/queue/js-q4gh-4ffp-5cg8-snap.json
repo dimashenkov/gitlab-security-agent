@@ -1,0 +1,166 @@
+[
+  {
+    "case_id": "js-q4gh-4ffp-5cg8-snap",
+    "language": "javascript",
+    "family": "sensitive-data-exposure",
+    "case_digest": "c437a77ed50adf6a",
+    "ran_at": "2026-08-30T06:38:55+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "dd68261c9922ddaf",
+          "severity": "medium",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.767309
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 471.87864379200005,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 32,
+          "output_tokens": 33887,
+          "cache_read_tokens": 600462,
+          "cache_write_tokens": 61879
+        },
+        "coverage": {
+          "changed": [
+            "js/app.js",
+            "js/node_helper.js",
+            "js/server_functions.js"
+          ],
+          "examined": [
+            "js/defaults.js",
+            "js/ip_access_control.js",
+            "js/node_helper.js",
+            "js/server.js",
+            "js/server_functions.js",
+            "js/utils.js"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "js/app.js"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": false,
+        "finished_explicitly": false,
+        "stop_reason": "error",
+        "stop_detail": "the CLI reported '(no subtype)' and exited 1. A process that failed and still printed a success object has not agreed with itself, and this runner does not choose the reassuring half.",
+        "exit_code": 2,
+        "blocked": true,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.161248
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 33.01419412500002,
+        "cost": 0.160299,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 4,
+          "output_tokens": 2171,
+          "cache_read_tokens": 15668,
+          "cache_write_tokens": 9817
+        },
+        "coverage": {
+          "changed": [
+            "js/app.js",
+            "js/node_helper.js",
+            "js/server_functions.js"
+          ],
+          "examined": [],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "js/app.js",
+            "js/node_helper.js",
+            "js/server_functions.js"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "incomplete": [
+      "unsafe"
+    ],
+    "cost": null,
+    "seconds": 471.87864379200005
+  }
+]

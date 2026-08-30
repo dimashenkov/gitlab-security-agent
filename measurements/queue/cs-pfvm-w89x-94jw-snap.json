@@ -1,0 +1,258 @@
+[
+  {
+    "case_id": "cs-pfvm-w89x-94jw-snap",
+    "language": "csharp",
+    "family": "dos",
+    "case_digest": "18e26bc88f9fa3d7",
+    "ran_at": "2026-08-30T06:26:48+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": null,
+        "blocking": [
+          [
+            "authn-authz",
+            "src/SIPSorcery/net/TURN/TurnServer.cs",
+            0
+          ],
+          [
+            "secrets",
+            "src/SIPSorcery/net/TURN/TurnServer.cs",
+            0
+          ]
+        ],
+        "reported": 3,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.1911039999999997
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 370.772086333,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 30,
+          "output_tokens": 18930,
+          "cache_read_tokens": 498568,
+          "cache_write_tokens": 46748
+        },
+        "coverage": {
+          "changed": [
+            "src/SIPSorcery/net/TURN/TurnServer.cs"
+          ],
+          "examined": [
+            "src/SIPSorcery/net/TURN/TurnServer.cs"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": null,
+        "blocking": [
+          [
+            "authn-authz",
+            "src/SIPSorcery/net/TURN/TurnServer.cs",
+            0
+          ]
+        ],
+        "reported": 2,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.0329700000000002
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 355.80520166699995,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 28,
+          "output_tokens": 17591,
+          "cache_read_tokens": 394188,
+          "cache_write_tokens": 39501
+        },
+        "coverage": {
+          "changed": [
+            "src/SIPSorcery/net/TURN/TurnServer.cs"
+          ],
+          "examined": [
+            "src/SIPSorcery/net/TURN/TurnServer.cs"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": false,
+    "safe_incidental": [
+      {
+        "category": "secrets",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "high",
+        "title": "TURN server ships with hardcoded default credentials turn-user/turn-pass",
+        "fingerprint": "d2e7c5edf067595c",
+        "blocking": true
+      },
+      {
+        "category": "authn-authz",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "high",
+        "title": "TURN Refresh/CreatePermission/ChannelBind accepted without MESSAGE-INTEGRITY",
+        "fingerprint": "40f090843694be27",
+        "blocking": true
+      },
+      {
+        "category": "ssrf",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "medium",
+        "title": "TURN relay permits arbitrary peer addresses including loopback and private ranges",
+        "fingerprint": "73584908f6cbbdc2",
+        "blocking": false
+      }
+    ],
+    "unsafe_incidental": [
+      {
+        "category": "authn-authz",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "high",
+        "title": "TURN Refresh/CreatePermission/ChannelBind/Send accepted without MESSAGE-INTEGRITY",
+        "fingerprint": "40f090843694be27",
+        "blocking": true
+      },
+      {
+        "category": "authn-authz",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "high",
+        "title": "TURN server ships with hard-coded default credentials turn-user/turn-pass",
+        "fingerprint": "8f94da41cebe55e5",
+        "blocking": false
+      }
+    ],
+    "safe_false_positive": false,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 1,
+    "unsafe_exit": 1,
+    "size_delta": 0.04102174532333112,
+    "safe_findings": [
+      {
+        "category": "secrets",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "high",
+        "title": "TURN server ships with hardcoded default credentials turn-user/turn-pass",
+        "fingerprint": "d2e7c5edf067595c",
+        "blocking": true
+      },
+      {
+        "category": "authn-authz",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "high",
+        "title": "TURN Refresh/CreatePermission/ChannelBind accepted without MESSAGE-INTEGRITY",
+        "fingerprint": "40f090843694be27",
+        "blocking": true
+      },
+      {
+        "category": "ssrf",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "medium",
+        "title": "TURN relay permits arbitrary peer addresses including loopback and private ranges",
+        "fingerprint": "73584908f6cbbdc2",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "authn-authz",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "high",
+        "title": "TURN Refresh/CreatePermission/ChannelBind/Send accepted without MESSAGE-INTEGRITY",
+        "fingerprint": "40f090843694be27",
+        "blocking": true
+      },
+      {
+        "category": "authn-authz",
+        "file": "src/SIPSorcery/net/TURN/TurnServer.cs",
+        "severity": "high",
+        "title": "TURN server ships with hard-coded default credentials turn-user/turn-pass",
+        "fingerprint": "8f94da41cebe55e5",
+        "blocking": false
+      }
+    ],
+    "cost": null,
+    "seconds": 370.772086333
+  }
+]

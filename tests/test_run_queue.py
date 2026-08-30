@@ -14,14 +14,14 @@ account and sits out a reset for nothing.
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from run_queue import classify, raw_rows, reset_at
+from run_queue import classify, close_window, raw_rows, reset_at, sleep_until
 
 LIMIT_MESSAGE = "You've hit your session limit · resets 7:20pm (Europe/Sofia)."
 
@@ -161,3 +161,132 @@ def test_each_members_own_duration_survives():
     rows = raw_rows(row(unsafe=member(seconds=300.0), safe=member(seconds=120.0)),
                     "a", "b")
     assert sorted(r["seconds"] for r in rows) == [120.0, 300.0]
+
+
+# ------------------------------------------- waiting through a closed lid
+
+
+def test_the_wait_is_against_the_clock_and_not_a_duration(monkeypatch):
+    """The queue slept two and three quarter hours too long, correctly.
+
+    It was refused at 09:47, the message said 12:50, and `reset_at` returned
+    12:50 — every number right. At 15:32 it was still asleep, because
+    `time.sleep` counts on a monotonic clock that does not advance while the
+    machine is suspended, and the laptop had been shut for most of the
+    interval. The machine's sleep was added to the queue's.
+
+    So the wait is re-derived from the wall clock on every step, and a
+    suspended machine costs one step of overshoot rather than however long the
+    lid was closed. Simulated here by a clock that jumps: three hours pass
+    between two consecutive reads, exactly as they do across a suspend.
+    """
+    import run_queue
+
+    now = [datetime(2026, 8, 30, 9, 47, tzinfo=timezone.utc)]
+    slept = []
+
+    class Clock:
+        @staticmethod
+        def now(tz=None):
+            return now[0]
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        # The suspend: the first step returns to a machine three hours older.
+        now[0] += timedelta(hours=3) if len(slept) == 1 else timedelta(seconds=seconds)
+
+    monkeypatch.setattr(run_queue, "time", type("t", (), {"sleep": staticmethod(fake_sleep)}))
+    monkeypatch.setattr(run_queue, "datetime", type(
+        "d", (), {"now": staticmethod(lambda tz=None: now[0])}))
+
+    sleep_until(datetime(2026, 8, 30, 12, 51, tzinfo=timezone.utc))
+
+    # No single wait is longer than a step, so the interval computed before
+    # the suspend is never the thing being waited out.
+    assert max(slept) <= 60.0
+    # And it stops as soon as the clock says so. Three hours vanished during
+    # the first step; what remained after it was four minutes, not the three
+    # hours the original arithmetic had reserved.
+    assert sum(slept) < 11040
+    assert now[0] >= datetime(2026, 8, 30, 12, 51, tzinfo=timezone.utc)
+
+
+def test_a_target_already_past_returns_at_once(monkeypatch):
+    """Woken to find the moment gone — after a suspend, or because the message
+    named a time that had already happened. Sleeping a negative interval, or
+    any interval, would be waiting for something that has arrived."""
+    import run_queue
+
+    fixed = datetime(2026, 8, 30, 15, 32, tzinfo=timezone.utc)
+    monkeypatch.setattr(run_queue, "datetime", type(
+        "d", (), {"now": staticmethod(lambda tz=None: fixed)}))
+    monkeypatch.setattr(run_queue, "time", type(
+        "t", (), {"sleep": staticmethod(lambda s: pytest.fail("slept anyway"))}))
+
+    sleep_until(datetime(2026, 8, 30, 12, 51, tzinfo=timezone.utc))
+
+
+# --------------------------- telling the two kinds of window apart
+
+
+def read_ledger(path):
+    import json
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+@pytest.fixture
+def ledger(tmp_path, monkeypatch):
+    import run_queue
+    monkeypatch.setattr(run_queue, "QUEUE", tmp_path)
+    monkeypatch.setattr(run_queue, "LOG", tmp_path / "log.jsonl")
+    return tmp_path / "log.jsonl"
+
+
+def test_a_window_says_how_it_ended(ledger):
+    """The whole point of the field.
+
+    A window that ran to refusal measured where the limit fell, under that
+    window's load. A window stopped after four pairs because somebody wanted
+    room to work says only that the limit was above four. Averaging the two
+    gives a number about neither, and the last cluster fell apart that way by
+    accident — doing it on purpose would be worse.
+    """
+    close_window("w1", "refused", 6, 2, "unattended")
+    close_window("w2", "stopped_early", 4, 8, "attended")
+
+    rows = read_ledger(ledger)
+    assert [r["window_termination"] for r in rows] == ["refused", "stopped_early"]
+    assert [r["mode"] for r in rows] == ["unattended", "attended"]
+
+
+def test_every_window_row_carries_enough_to_be_filtered_out(ledger):
+    """A later analysis has to be able to drop the early stops without
+    guessing which they were. The row names the window, so its per-invocation
+    rows can be excluded with it."""
+    close_window("w1", "stopped_early", 4, 8, "attended")
+
+    row = read_ledger(ledger)[0]
+    assert row["kind"] == "window"
+    assert row["window"] == "w1"
+    assert row["pairs_completed"] == 4 and row["pairs_left"] == 8
+    assert "closed_at" in row
+
+
+def test_a_drained_queue_is_not_a_refusal_either(ledger):
+    """Running out of work is not running out of allowance. `work_exhausted`
+    is its own value so it cannot be read as either of the other two."""
+    close_window("w1", "work_exhausted", 11, 0, "unattended")
+
+    row = read_ledger(ledger)[0]
+    assert row["window_termination"] == "work_exhausted"
+    assert row["pairs_left"] == 0
+
+
+def test_nothing_in_the_window_row_is_derived(ledger):
+    """No rate, no estimate, no threshold. The field exists so a filter can be
+    written later; computing anything from it here is the mistake three rounds
+    of this turned on."""
+    close_window("w1", "refused", 6, 2, "unattended")
+
+    row = read_ledger(ledger)[0]
+    assert not {"limit", "estimate", "threshold", "cap", "budget"} & set(row)

@@ -1,0 +1,214 @@
+[
+  {
+    "case_id": "cs-jwjp-4649-v8jp-snap",
+    "language": "csharp",
+    "family": "dos",
+    "case_digest": "648850d9d82db558",
+    "ran_at": "2026-08-30T06:14:41+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "56c1a1474d739499",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.9091704999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 399.390354333,
+        "cost": 1.9082205,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 40,
+          "output_tokens": 32407,
+          "cache_read_tokens": 804231,
+          "cache_write_tokens": 69573
+        },
+        "coverage": {
+          "changed": [
+            "src/SIPSorcery/net/SCTP/Chunks/SctpSackChunk.cs",
+            "src/SIPSorcery/net/WebRTC/RTCSctpTransport.cs"
+          ],
+          "examined": [
+            "src/SIPSorcery/net/SCTP/Chunks/SctpChunk.cs",
+            "src/SIPSorcery/net/SCTP/Chunks/SctpDataChunk.cs",
+            "src/SIPSorcery/net/SCTP/Chunks/SctpErrorChunk.cs",
+            "src/SIPSorcery/net/SCTP/Chunks/SctpSackChunk.cs",
+            "src/SIPSorcery/net/WebRTC/DCEP.cs",
+            "src/SIPSorcery/net/WebRTC/RTCPeerConnection.cs",
+            "src/SIPSorcery/net/WebRTC/RTCPeerSctpAssociation.cs",
+            "src/SIPSorcery/net/WebRTC/RTCSctpTransport.cs"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": [
+          {
+            "title": "Inverted _isClosed check makes SCTP receive loop spin on transport error",
+            "file": "src/SIPSorcery/net/WebRTC/RTCSctpTransport.cs",
+            "reason": "evidence-not-found",
+            "detail": "quoted code does not appear in the file"
+          },
+          {
+            "title": "Inverted _isClosed check makes SCTP receive loop spin on transport error",
+            "file": "src/SIPSorcery/net/WebRTC/RTCSctpTransport.cs",
+            "reason": "evidence-not-found",
+            "detail": "quoted code does not appear in the file"
+          }
+        ]
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "a13720ccf5bd6dd1",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.4309219999999998
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 327.840765209,
+        "cost": 1.429974,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 32,
+          "output_tokens": 24818,
+          "cache_read_tokens": 496208,
+          "cache_write_tokens": 56126
+        },
+        "coverage": {
+          "changed": [
+            "src/SIPSorcery/net/SCTP/Chunks/SctpSackChunk.cs",
+            "src/SIPSorcery/net/WebRTC/RTCSctpTransport.cs"
+          ],
+          "examined": [
+            "src/SIPSorcery/net/SCTP/Chunks/SctpChunk.cs",
+            "src/SIPSorcery/net/SCTP/Chunks/SctpDataChunk.cs",
+            "src/SIPSorcery/net/SCTP/Chunks/SctpInitChunk.cs",
+            "src/SIPSorcery/net/SCTP/Chunks/SctpSackChunk.cs",
+            "src/SIPSorcery/net/WebRTC/RTCPeerSctpAssociation.cs",
+            "src/SIPSorcery/net/WebRTC/RTCSctpTransport.cs"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.08154399458747284,
+    "safe_findings": [
+      {
+        "category": "dos",
+        "file": "src/SIPSorcery/net/WebRTC/RTCSctpTransport.cs",
+        "severity": "low",
+        "title": "Inverted _isClosed check makes SCTP receive loop spin on transport error",
+        "fingerprint": "56c1a1474d739499",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "src/SIPSorcery/net/SCTP/Chunks/SctpSackChunk.cs",
+        "severity": "low",
+        "title": "SACK chunk parser trusts remote gap/duplicate counts, reading past the chunk",
+        "fingerprint": "a13720ccf5bd6dd1",
+        "blocking": false
+      }
+    ],
+    "cost": 3.3381945,
+    "seconds": 399.390354333
+  }
+]
