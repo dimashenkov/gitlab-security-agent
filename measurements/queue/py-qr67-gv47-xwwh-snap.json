@@ -1,0 +1,179 @@
+[
+  {
+    "case_id": "py-qr67-gv47-xwwh-snap",
+    "language": "python",
+    "family": "path-traversal",
+    "case_digest": "ad998da9514e0367",
+    "ran_at": "2026-08-30T05:50:30+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "06e5d02338358490",
+          "severity": "high",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "authn-authz",
+            "asyncssh/config.py",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.282702
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 512.5936108330001,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 27586,
+          "cache_read_tokens": 272074,
+          "cache_write_tokens": 45596
+        },
+        "coverage": {
+          "changed": [
+            "asyncssh/config.py"
+          ],
+          "examined": [
+            "asyncssh/config.py"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.3929274999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 409.4520929170001,
+        "cost": 1.3919795,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 24,
+          "output_tokens": 30086,
+          "cache_read_tokens": 324939,
+          "cache_write_tokens": 47724
+        },
+        "coverage": {
+          "changed": [
+            "asyncssh/config.py"
+          ],
+          "examined": [
+            "asyncssh/config.py",
+            "asyncssh/misc.py"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": false,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": false,
+    "pair_success": false,
+    "safe_exit": 1,
+    "unsafe_exit": 0,
+    "size_delta": 0.002695146724592208,
+    "safe_findings": [
+      {
+        "category": "authn-authz",
+        "file": "asyncssh/config.py",
+        "severity": "high",
+        "title": "Include leaks Match state into parent config, silently dropping later directives",
+        "fingerprint": "06e5d02338358490",
+        "blocking": true
+      }
+    ],
+    "unsafe_findings": [],
+    "cost": null,
+    "seconds": 512.5936108330001
+  }
+]

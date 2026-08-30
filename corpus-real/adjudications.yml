@@ -249,3 +249,43 @@ adjudications:
       stopped one hop short of the gate that refutes it. Not fabrication — the
       quoted code is real and the description of it is accurate — but the claim
       that makes it a security finding was never checked.
+
+  - case_id: py-6x92-6vx4-5fwr-snap
+    member: safe
+    file: cms/admin/forms.py
+    adjudicated_on: 2026-08-30
+    case_is_malformed: true
+    why_malformed: >-
+      Inherited from `py-6x92-6vx4-5fwr`, and not by resemblance. The safe
+      member's change is byte-identical between the two constructions —
+      `cms/admin/forms.py` and `cms/forms/validators.py` both hash the same —
+      so the reasoning that excluded the regression twin applies here without
+      restating it: the fix leaves `parent_page` unguarded, the safe member
+      still carries the advisory's own weakness, and a pair whose safe member
+      carries it cannot measure discrimination in either direction.
+    evidence: >-
+      sha256 of safe/change/cms/admin/forms.py is c3e9d3438fa4cc81 in both
+      cases, and of cms/forms/validators.py 5c7a67d05709ef7f in both.
+      Reproduce with: python3 -c "import hashlib,pathlib;
+      [print(c, hashlib.sha256((pathlib.Path('corpus-real')/c/'safe/change/cms/admin/forms.py').read_bytes()).hexdigest()[:16])
+      for c in ('py-6x92-6vx4-5fwr','py-6x92-6vx4-5fwr-snap')]"
+    precedent: >-
+      `py-2cp2-2r3c-7p7r-snap` was excluded on the same basis on 2026-08-28.
+      Applying a ruling to an identical member is consistency, not a new
+      decision; leaving it unapplied would have paid for a review of a pair
+      already known to be unable to discriminate.
+
+  - case_id: cs-q939-rpr3-3284-snap
+    member: safe
+    file: src/Renci.SshNet/ScpClient.cs
+    adjudicated_on: 2026-08-30
+    case_is_malformed: true
+    why_malformed: >-
+      Inherited from `cs-q939-rpr3-3284`, whose safe member's change is
+      byte-identical to this one. The advisory is CWE-22/CWE-73 — an SCP
+      recursive download writing outside its target — and the fix does not
+      close a second route to that outcome, so the safe member still carries
+      the weakness the case is about.
+    evidence: >-
+      sha256 of safe/change/src/Renci.SshNet/ScpClient.cs is a8630434d7203619
+      in both cases.

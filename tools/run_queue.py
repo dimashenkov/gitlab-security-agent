@@ -72,13 +72,39 @@ RESET = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.I)
 BLIND_WAIT = timedelta(minutes=30)
 
 
+def malformed() -> set:
+    """Cases a ruling has taken out of the score.
+
+    `pair_corpus` excludes them at the start of a run, so a queue that asked
+    for one got an empty result file back — and an empty payload read as a
+    pair that discriminated nothing, which this would have written down as a
+    failure. A case ruled unable to measure anything, recorded as a case that
+    measured the wrong thing, in the tool built to keep those two apart.
+    """
+    path = ROOT / "corpus-real" / "adjudications.yml"
+    try:
+        body = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return set()
+    rows = body if isinstance(body, list) else body.get("adjudications") or []
+    return {r.get("case_id") for r in rows
+            if isinstance(r, dict) and r.get("case_is_malformed")}
+
+
 def cases(args) -> List[str]:
-    """Every case the queue would run, in a stable order."""
+    """Every case the queue would run, in a stable order.
+
+    Named cases are taken as given — asking for one by hand is a decision —
+    but a language sweep drops the ruled-out ones, because sweeping is not.
+    """
+    excluded = malformed()
     if args.case:
         return list(args.case)
 
     chosen = []
     for manifest in sorted((ROOT / "corpus-real").glob("*/case.yml")):
+        if manifest.parent.name in excluded:
+            continue
         body = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
         if args.language and body.get("language") != args.language:
             continue
@@ -383,7 +409,18 @@ def main() -> int:
         queued.pop(0)
         done += 1
         since_progress = 0
-        row = (payload or [{}])[0]
+        if not payload:
+            # No row came back. `pair_corpus` writes an empty list when every
+            # case it was given is excluded by a ruling, and reading that as a
+            # pair that failed to discriminate would put a case ruled
+            # unmeasurable into the score as a miss.
+            note({"case_id": case_id, "window": window, "outcome": "no-result",
+                  "started_at": started_at, "wall_seconds": elapsed,
+                  "detail": "the scorer returned no row for this case"})
+            print("  {:<26} {:<10} {} left".format(
+                case_id, "no-result", len(queued)), flush=True)
+            continue
+        row = payload[0]
         outcome = ("incomplete" if row.get("incomplete")
                    else "pass" if row.get("pair_success") else "fail")
         finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")

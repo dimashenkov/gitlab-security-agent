@@ -1,0 +1,201 @@
+[
+  {
+    "case_id": "py-g7gc-gmgp-wgqg-snap",
+    "language": "python",
+    "family": "dos",
+    "case_digest": "b7e47fd3df79df5a",
+    "ran_at": "2026-08-30T05:19:20+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "65be177f55161cba",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.2705279999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 322.812923125,
+        "cost": 1.269576,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 22,
+          "output_tokens": 24313,
+          "cache_read_tokens": 368122,
+          "cache_write_tokens": 47758
+        },
+        "coverage": {
+          "changed": [
+            "eml_parser/parser.py",
+            "eml_parser/regexes.py",
+            "eml_parser/routing.py"
+          ],
+          "examined": [
+            "eml_parser/__init__.py",
+            "eml_parser/decode.py",
+            "eml_parser/routing.py"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "eml_parser/parser.py",
+            "eml_parser/regexes.py"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "65be177f55161cba",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.5922664999999998
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 379.063815166,
+        "cost": 1.5913195,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 20,
+          "output_tokens": 28332,
+          "cache_read_tokens": 404739,
+          "cache_write_tokens": 68055
+        },
+        "coverage": {
+          "changed": [
+            "eml_parser/parser.py",
+            "eml_parser/regexes.py",
+            "eml_parser/routing.py"
+          ],
+          "examined": [
+            "eml_parser/__init__.py",
+            "eml_parser/decode.py",
+            "eml_parser/parser.py",
+            "eml_parser/routing.py"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [
+            "eml_parser/regexes.py"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.021935693650654692,
+    "safe_findings": [
+      {
+        "category": "dos",
+        "file": "eml_parser/routing.py",
+        "severity": "low",
+        "title": "Catastrophic backtracking in dynamically built Received-header regex",
+        "fingerprint": "65be177f55161cba",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "eml_parser/routing.py",
+        "severity": "low",
+        "title": "Catastrophic backtracking in Received-header routing parser (ReDoS)",
+        "fingerprint": "65be177f55161cba",
+        "blocking": false
+      }
+    ],
+    "cost": 2.8608955,
+    "seconds": 379.063815166
+  }
+]

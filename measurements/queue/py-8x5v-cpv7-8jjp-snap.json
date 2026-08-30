@@ -1,0 +1,203 @@
+[
+  {
+    "case_id": "py-8x5v-cpv7-8jjp-snap",
+    "language": "python",
+    "family": "ssrf",
+    "case_digest": "169fb80a03874584",
+    "ran_at": "2026-08-30T05:02:34+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "edc9b9e9b7ea5e16",
+          "severity": "high",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "ssrf",
+            "backend/open_webui/retrieval/web/utils.py",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.4439665
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 517.353167458,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 20,
+          "output_tokens": 30593,
+          "cache_read_tokens": 302789,
+          "cache_write_tokens": 52670
+        },
+        "coverage": {
+          "changed": [
+            "backend/open_webui/retrieval/web/utils.py"
+          ],
+          "examined": [
+            "backend/open_webui/retrieval/web/utils.py"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "747b311e3e5a43fa",
+          "severity": "high",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "ssrf",
+            "backend/open_webui/retrieval/web/utils.py",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.402844
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 488.518104292,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 24,
+          "output_tokens": 28088,
+          "cache_read_tokens": 330088,
+          "cache_write_tokens": 53453
+        },
+        "coverage": {
+          "changed": [
+            "backend/open_webui/retrieval/web/utils.py"
+          ],
+          "examined": [
+            "backend/open_webui/retrieval/web/firecrawl.py",
+            "backend/open_webui/retrieval/web/main.py",
+            "backend/open_webui/retrieval/web/utils.py"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 1,
+    "unsafe_exit": 1,
+    "size_delta": 0.023699092407969552,
+    "safe_findings": [
+      {
+        "category": "ssrf",
+        "file": "backend/open_webui/retrieval/web/utils.py",
+        "severity": "high",
+        "title": "SSRF guard in async fetch path bypassable via redirect to a literal IP",
+        "fingerprint": "edc9b9e9b7ea5e16",
+        "blocking": true
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "ssrf",
+        "file": "backend/open_webui/retrieval/web/utils.py",
+        "severity": "high",
+        "title": "SSRF: aiohttp resolver guard skipped for IP-literal redirect targets",
+        "fingerprint": "747b311e3e5a43fa",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 517.353167458
+  }
+]

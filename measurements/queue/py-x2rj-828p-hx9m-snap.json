@@ -1,0 +1,203 @@
+[
+  {
+    "case_id": "py-x2rj-828p-hx9m-snap",
+    "language": "python",
+    "family": "injection",
+    "case_digest": "1ac96f79f4efdf9d",
+    "ran_at": "2026-08-30T06:05:53+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.8188599999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 260.383144042,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 24,
+          "output_tokens": 12192,
+          "cache_read_tokens": 321622,
+          "cache_write_tokens": 35218
+        },
+        "coverage": {
+          "changed": [
+            "xinference/model/llm/tool_parsers/llama3_tool_parser.py",
+            "xinference/model/llm/utils.py"
+          ],
+          "examined": [
+            "xinference/model/llm/core.py",
+            "xinference/model/llm/tool_parsers/llama3_tool_parser.py",
+            "xinference/model/llm/utils.py"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "793e4702f8a3ef4f",
+          "severity": "critical",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "injection",
+            "xinference/model/llm/tool_parsers/llama3_tool_parser.py",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.582856
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 249.870793833,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 18,
+          "output_tokens": 7758,
+          "cache_read_tokens": 201176,
+          "cache_write_tokens": 28728
+        },
+        "coverage": {
+          "changed": [
+            "xinference/model/llm/tool_parsers/llama3_tool_parser.py",
+            "xinference/model/llm/utils.py"
+          ],
+          "examined": [
+            "xinference/model/llm/core.py",
+            "xinference/model/llm/tool_parsers/llama3_tool_parser.py",
+            "xinference/model/llm/utils.py"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [
+      {
+        "category": "ssrf",
+        "file": "xinference/model/llm/utils.py",
+        "severity": "medium",
+        "title": "Unvalidated image URL fetched server-side (SSRF + local image file read)",
+        "fingerprint": "116503b6505498e7",
+        "blocking": false
+      }
+    ],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.011621836340937464,
+    "safe_findings": [
+      {
+        "category": "ssrf",
+        "file": "xinference/model/llm/utils.py",
+        "severity": "medium",
+        "title": "Unvalidated image URL fetched server-side (SSRF + local image file read)",
+        "fingerprint": "116503b6505498e7",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "injection",
+        "file": "xinference/model/llm/tool_parsers/llama3_tool_parser.py",
+        "severity": "critical",
+        "title": "Arbitrary code execution via eval() of LLM output in Llama3 tool parser",
+        "fingerprint": "793e4702f8a3ef4f",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 260.383144042
+  }
+]
