@@ -40,6 +40,10 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from artifact import is_target, load_adjudications, ruled_incidental
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -72,6 +76,30 @@ def named_in_limitations() -> set:
     return out
 
 
+def passed(row: dict, case: dict) -> bool:
+    """Did this pair discriminate, judged by the key in force **now**?
+
+    Not the boolean the scorer wrote. Answer keys are corrected when they turn
+    out to name the wrong thing, and `php-p2ch-c2c3-4xm5` is the proof: it is
+    stored as a failure, and against today's key it passes — the finding is
+    `authn-authz` in `Controller.php` and the case expects exactly that. The
+    stored value answers the key as it stood that afternoon.
+
+    `stage2.py` learned this and this tool did not, an hour after being written
+    beside it. Falls back to the stored boolean only for rows too old to carry
+    findings, which cannot be re-judged at all.
+    """
+    if "safe_findings" not in row or "unsafe_findings" not in row:
+        return row.get("pair_success") is True
+    excused = ruled_incidental(
+        load_adjudications(ROOT / "corpus-real"), row.get("case_id"), "safe")
+    found = any(is_target(f, case) for f in row.get("unsafe_findings") or [])
+    persists = any(is_target(f, case)
+                   and f.get("fingerprint") not in excused
+                   for f in row.get("safe_findings") or [])
+    return found and not persists
+
+
 def verdicts() -> dict:
     """The latest recorded answer per case, from every batch and the queue."""
     latest = {}
@@ -89,8 +117,16 @@ def verdicts() -> dict:
             when = row.get("ran_at") or ""
             case_id = row["case_id"]
             if case_id not in latest or when >= latest[case_id][0]:
-                latest[case_id] = (when, bool(row.get("pair_success")))
-    return {case_id: ok for case_id, (_when, ok) in latest.items()}
+                latest[case_id] = (when, row)
+
+    out = {}
+    for case_id, (_when, row) in latest.items():
+        manifest = ROOT / "corpus-real" / case_id / "case.yml"
+        if not manifest.is_file():
+            continue
+        case = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+        out[case_id] = passed(row, case)
+    return out
 
 
 def account(construction=None) -> dict:
