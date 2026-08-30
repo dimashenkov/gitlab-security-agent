@@ -1,0 +1,181 @@
+[
+  {
+    "case_id": "jv-mqjf-5f49-2fjh-snap",
+    "language": "java",
+    "family": "injection",
+    "case_digest": "fc37bfc2af87a342",
+    "ran_at": "2026-08-30T12:52:26+00:00",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": null,
+        "blocking": [],
+        "reported": 0,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 2.0822445000000003
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 409.5338485,
+        "cost": 2.0812935,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 36,
+          "output_tokens": 31007,
+          "cache_read_tokens": 814137,
+          "cache_write_tokens": 89887
+        },
+        "coverage": {
+          "changed": [
+            "modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/FilterToSqlHelper.java"
+          ],
+          "examined": [
+            "modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/FilterToSqlHelper.java",
+            "modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/PostGISDialect.java",
+            "modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/PostgisFilterToSQL.java",
+            "modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/PostgisPSFilterToSql.java"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "03e97135193a176c",
+          "severity": "high",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 1
+        },
+        "blocking": [
+          [
+            "injection",
+            "modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/FilterToSqlHelper.java",
+            0
+          ]
+        ],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.8827664999999999
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 256.19979300000006,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 30,
+          "output_tokens": 8943,
+          "cache_read_tokens": 420513,
+          "cache_write_tokens": 44785
+        },
+        "coverage": {
+          "changed": [
+            "modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/FilterToSqlHelper.java"
+          ],
+          "examined": [
+            "modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/FilterToSqlHelper.java"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": false,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": false,
+    "unsafe_recall": true,
+    "pair_success": true,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.0013672165254866994,
+    "safe_findings": [],
+    "unsafe_findings": [
+      {
+        "category": "injection",
+        "file": "modules/plugin/jdbc/jdbc-postgis/src/main/java/org/geotools/data/postgis/FilterToSqlHelper.java",
+        "severity": "high",
+        "title": "SQL injection: unescaped literal in jsonArrayContains jsonb_path_exists encoding",
+        "fingerprint": "03e97135193a176c",
+        "blocking": true
+      }
+    ],
+    "cost": null,
+    "seconds": 409.5338485
+  }
+]

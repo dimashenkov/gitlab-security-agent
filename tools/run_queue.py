@@ -229,6 +229,14 @@ def sleep_until(target: datetime) -> None:
     at most one step of overshoot rather than however long it was closed. The
     step is a minute: long enough not to spin, short enough that waking late is
     measured in minutes.
+
+    What this does *not* do, and it matters for overnight runs: nothing here
+    executes while the machine is suspended. Waking on time means waking when
+    the machine is awake. A queue left to run through the night finishes at
+    whatever hour the lid is opened unless something keeps the machine up —
+    `caffeinate -dimsu` does, an open lid on mains power does, and a closed lid
+    does not, whatever `caffeinate` is asked. The fix removes the overshoot;
+    it cannot make a sleeping computer run code.
     """
     while True:
         remaining = (target - datetime.now().astimezone()).total_seconds()
