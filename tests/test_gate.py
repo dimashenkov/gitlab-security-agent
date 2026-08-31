@@ -67,6 +67,29 @@ class TestIncompleteRuns:
         decision = decide(config, outcome_with(make_candidate(), stop_reason=STOP_TURN_LIMIT))
         assert decision.exit_code == EXIT_FINDINGS
 
+    def test_fail_on_none_does_not_forgive_an_incomplete_run(self, config):
+        """The two switches are not the same switch, and a comment said they were.
+
+        `templates/github-actions.yml` told a reader that `SECURITY_SCAN_FAIL_ON=none`
+        "turns a run that could not conclude into a pass". It does not: the
+        incomplete check runs before the severity threshold is ever consulted,
+        so dropping the threshold cannot reach it. Only
+        `fail_on_incomplete=False` forgives partial coverage.
+
+        Written because that sentence was repeated into a distributed SKILL.md,
+        where an agent would have acted on it unattended — silencing a gate by
+        setting the one variable that cannot silence it, and getting exit 2 in a
+        pipeline it believed it had made advisory.
+        """
+        config.fail_on = "none"
+        decision = decide(config, outcome_with(stop_reason=STOP_TURN_LIMIT))
+        assert decision.exit_code == EXIT_ERROR
+        assert "incomplete" in decision.reason.lower()
+
+        config.fail_on_incomplete = False
+        forgiven = decide(config, outcome_with(stop_reason=STOP_TURN_LIMIT))
+        assert forgiven.exit_code == EXIT_OK
+
 
 class TestThresholds:
     def test_high_blocks_at_the_default_threshold(self, config):

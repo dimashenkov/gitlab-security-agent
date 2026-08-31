@@ -27,8 +27,15 @@ jobs:
   review:
     runs-on: ubuntu-latest
     # Advisory. Remove this to make a finding fail the check — but do not
-    # instead set SECURITY_SCAN_FAIL_ON=none, which also narrows verification
-    # and turns a run that could not conclude into a pass.
+    # instead set SECURITY_SCAN_FAIL_ON=none. It drops the severity threshold
+    # so nothing blocks at all (gate.py:59-61) and changes which findings are
+    # verified (verify.py:371), which is a different thing from making the job
+    # non-blocking here.
+    #
+    # It does *not* govern a review that could not conclude — this comment used
+    # to claim it did, and that was wrong. Partial runs are decided earlier, by
+    # SECURITY_SCAN_FAIL_ON_INCOMPLETE, before the severity threshold is ever
+    # consulted (gate.py:258).
     continue-on-error: true
     timeout-minutes: 60
     steps:
