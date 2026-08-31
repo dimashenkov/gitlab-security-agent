@@ -90,6 +90,12 @@ confirmation that cannot say what would have refuted it is downgraded to
 
 Three ways in. Pick the one that matches where your code lives.
 
+> **Driving this from a coding agent?** `skills/security-review-in-ci/SKILL.md`
+> is written for Claude Code, Cursor, Codex or anything else that reads
+> `SKILL.md`. It carries the commands, the exit-code semantics, and the adoption
+> policy — advisory by default — so the agent does not have to infer them from
+> this file. Point your agent at it rather than at the README.
+
 ### On your own branch, no CI, no API key
 
 ```bash
