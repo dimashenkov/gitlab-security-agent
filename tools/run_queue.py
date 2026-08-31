@@ -130,12 +130,19 @@ def cases(args) -> List[str]:
     return chosen
 
 
-def already_run(case_id: str) -> bool:
+def already_run(case_id: str, repeat: bool = False) -> bool:
     """Recorded anywhere, so stopping and restarting resumes.
 
     Both the queue's own per-case files and the batch files written by
     `pair_corpus` directly, because the corpus has been measured both ways and
     paying twice for one answer is the thing this is here to avoid.
+
+    `repeat` is for a round that means to run the corpus again: it consults
+    only this round's own directory, so the round still resumes after a refusal
+    while earlier results do not silence it. Without it `--round` would queue
+    nothing at all, because every case is recorded from the first pass — the
+    skip that makes the queue resumable is the same skip that makes it unable
+    to repeat.
     """
     own = QUEUE / (case_id + ".json")
     if own.is_file():
@@ -150,6 +157,11 @@ def already_run(case_id: str) -> bool:
             return False
         return any(isinstance(r, dict) and not r.get("incomplete")
                    for r in rows if isinstance(rows, list))
+    if repeat:
+        # Nothing outside this round counts. A previous answer is what the
+        # round exists to compare against, so it must not prevent the run that
+        # produces the second one.
+        return False
     for path in (ROOT / "measurements").glob("*.json"):
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
@@ -418,12 +430,35 @@ def main() -> int:
              "before starting rather than walking into a spent one")
     parser.add_argument("--max-waits", type=int, default=4,
                         help="how many resets to sit through before giving up")
+    parser.add_argument(
+        "--round", type=int, metavar="N",
+        help="run the corpus again into measurements/round-N/, ignoring "
+             "results from earlier passes. Written to its own directory so a "
+             "repeat cannot overwrite the answer it is being compared against, "
+             "and left out of the globs `check_accounted` and `stage2` read, so "
+             "a second opinion does not silently become the record.")
     args = parser.parse_args()
 
-    queued = [c for c in cases(args) if not already_run(c)]
-    skipped = len(cases(args)) - len(queued)
-    print("{} case(s) queued, {} already recorded".format(len(queued), skipped),
-          flush=True)
+    if args.round is not None:
+        if args.round < 1:
+            sys.exit("--round is numbered from 1")
+        global QUEUE, LOG
+        QUEUE = ROOT / "measurements" / "round-{}".format(args.round)
+        LOG = QUEUE / "log.jsonl"
+        print("round {}: writing to {}, ignoring earlier results"
+              .format(args.round, QUEUE.relative_to(ROOT)), flush=True)
+
+    repeat = args.round is not None
+    eligible = cases(args)
+    queued = [c for c in eligible if not already_run(c, repeat)]
+    # Reported, not applied. `cases()` drops these on a sweep and the count is
+    # printed here so a saved window is visible rather than implicit — the
+    # first version of this line filtered a second time and claimed a flag
+    # could restore them, which `cases()` had already made impossible.
+    ruled_out = 0 if args.case else len(malformed())
+    print("{} case(s) queued, {} already recorded, {} ruled unable to measure "
+          "anything and not swept".format(
+              len(queued), len(eligible) - len(queued), ruled_out), flush=True)
     if args.dry_run or not queued:
         for case_id in queued:
             print("  " + case_id, flush=True)
