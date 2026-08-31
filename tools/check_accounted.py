@@ -42,7 +42,13 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from artifact import is_target, load_adjudications, ruled_incidental
+from artifact import (
+    case_digest,
+    is_target,
+    legacy_case_digest,
+    load_adjudications,
+    ruled_incidental,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -100,8 +106,40 @@ def passed(row: dict, case: dict) -> bool:
     return found and not persists
 
 
+def about_this_version(case_id: str, row: dict) -> bool:
+    """Is this row a result about the case as it stands today?
+
+    `tools/stage2.py` has asked this since a case had its weakness deleted by a
+    bug and then repaired: the recorded failure was a failure at reviewing code
+    that no longer existed, and nothing in the batch said so. The rule is copied
+    rather than re-invented — either digest counts, because the definition
+    narrowed to the members so a corrected answer key stops discarding the run
+    it was corrected for, and the old whole-tree value still means the members
+    are unchanged.
+
+    A row with no digest at all predates the record and is not a verdict about
+    today's case either.
+    """
+    directory = ROOT / "corpus-real" / case_id
+    if not (directory / "case.yml").is_file():
+        return False
+    return row.get("case_digest") in {case_digest(directory),
+                                      legacy_case_digest(directory)}
+
+
 def verdicts() -> dict:
-    """The latest recorded answer per case, from every batch and the queue."""
+    """The latest recorded answer per case, from every batch and the queue.
+
+    Two rows for one case are ordered by `ran_at`. When neither carries one the
+    comparison is `"" >= ""`, which is true, so the winner used to be whichever
+    file the filesystem handed over last — an ordering nobody chose and nothing
+    printed. `rb-mx5j-mp4f-g8jg` had three rows, two failures from before the
+    answer key was repaired and one pass from after, and the case was reported
+    as failing because of glob order. Rows that are not about today's version of
+    the case are dropped first, which removes that comparison in the case that
+    provoked it and, where it survives, leaves it between rows that at least
+    measured the same thing.
+    """
     latest = {}
     for path in (glob.glob(str(ROOT / "measurements" / "*.json"))
                  + glob.glob(str(ROOT / "measurements" / "queue" / "*.json"))):
@@ -114,8 +152,10 @@ def verdicts() -> dict:
                 continue
             if row.get("incomplete"):
                 continue
-            when = row.get("ran_at") or ""
             case_id = row["case_id"]
+            if not about_this_version(case_id, row):
+                continue
+            when = row.get("ran_at") or ""
             if case_id not in latest or when >= latest[case_id][0]:
                 latest[case_id] = (when, row)
 
