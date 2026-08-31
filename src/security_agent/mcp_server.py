@@ -525,6 +525,7 @@ def build_server(
     default_context_lines: int = 12,
     max_context_tokens: int = 0,
     max_context_soft_tokens: int = 0,
+    max_context_mode: str = "observe",
 ) -> MCPServer:
     """Assemble a session from the same parts the API path uses.
 
@@ -544,6 +545,10 @@ def build_server(
         raise ValueError(
             "--max-context-soft ({}) is above --max-context ({}), so it could "
             "never fire".format(max_context_soft_tokens, max_context_tokens))
+    if max_context_mode not in ("observe", "enforce"):
+        raise ValueError(
+            "--max-context-mode must be observe|enforce, got {!r}".format(
+                max_context_mode))
 
     workspace = Workspace(
         root=root, excludes=excludes, diff_base=diff_base, diff_head=diff_head,
@@ -563,8 +568,9 @@ def build_server(
             .format(max_tool_calls))
     allowance = Allowance(tool_set, max_tool_calls)
     session = Session()
-    session.context = ContextBudget.configured(max_context_tokens,
-                                               max_context_soft_tokens)
+    session.context = ContextBudget.configured(
+        max_context_tokens, max_context_soft_tokens,
+        enforcing=max_context_mode == "enforce")
 
     journal = None
     if crash_journal_path is not None:
@@ -625,6 +631,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             default_context_lines=args.context_lines,
             max_context_tokens=args.max_context,
             max_context_soft_tokens=args.max_context_soft,
+            max_context_mode=args.max_context_mode,
         )
     except (WorkspaceError, ConfigError, ValueError) as exc:
         # A server that never came up must not exit zero. On this transport the
@@ -850,6 +857,11 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
                         help="Where the session is told to start finishing "
                              "rather than stopped. 0 derives it from "
                              "--max-context.")
+    parser.add_argument("--max-context-mode", choices=("observe", "enforce"),
+                        default="observe",
+                        help="observe (default) counts what the limit would "
+                             "have kept out and keeps nothing out; enforce "
+                             "refuses. Measure before cutting.")
     parser.add_argument(
         "--path", metavar="PATH", action="append", default=[],
         help="Narrow which changed files the review is answerable for. "

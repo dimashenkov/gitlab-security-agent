@@ -118,6 +118,23 @@ EXPLAINED: Dict[str, str] = {
     # that hit the ceiling repeatedly would otherwise send hundreds of lines
     # across a boundary whose purpose is to be small.
     "ContextEvent.estimated_tokens": "read by ContextBudget.largest_result",
+    # `ChangedObject` answers about itself. `submodule`, `symlink`,
+    # `mode_changed`, `has_reviewable_text` and `why_unreadable` all read these
+    # in workspace.py, and what leaves the module is the rendered sentence —
+    # "mode 100644 → 100755" — rather than the raw mode strings. The first
+    # version of this check was right to flag them: they were declared while
+    # the code that consumes them did not exist yet, and only stopped being a
+    # promise nobody kept when `unreadable_objects` gave them a caller.
+    # The running total of the *imagined* enforcing run, which exists so the
+    # observing mode can report what enforcement would have refused rather than
+    # what this run's own total happens to be past. Only `ContextBudget.shadow`
+    # advances or reads it; what leaves the module is `would_refuse_results`.
+    # It deliberately does not cross the session document: it is the state of a
+    # simulation, not a fact about the review.
+    "ContextBudget.shadow_tokens": "read by ContextBudget.shadow",
+    "ChangedObject.old_path": "read by ChangedObject.why_unreadable",
+    "ChangedObject.old_mode": "read by ChangedObject.mode_changed and .submodule",
+    "ChangedObject.new_mode": "the same",
     "Capabilities.refusal_fallback": "read in agent.py where the call is built",
     "ChangedLines.removed_at": "read by ChangedLines' own helpers and by evidence.py",
     "Disposition.interaction": "carried through panel.py's own correction path",

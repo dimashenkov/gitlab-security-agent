@@ -1021,6 +1021,18 @@ def _budgeted(session: Session, name: str, result: ToolResult) -> ToolResult:
         result.apply(session)
         return result
 
+    if not budget.enforcing:
+        # Observing. The question "would this have been refused" is asked of an
+        # imagined enforcing run rather than of this one, because this one
+        # never refuses and so sails past the limit and stays there — after
+        # which every later result reads as refused. The result itself goes to
+        # the model unchanged, which is what makes the number worth having: it
+        # is measured on a review the measurement did not alter.
+        budget.shadow(result.content)
+        budget.admit(name, result.content)
+        result.apply(session)
+        return result
+
     if budget.would_exceed(result.content):
         cost = budget.refuse(name, result.content, "would cross the hard limit")
         left = budget.remaining or 0

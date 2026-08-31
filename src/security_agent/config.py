@@ -409,6 +409,15 @@ class Config:
     # it from the hard limit; a soft limit above the hard one is a setting that
     # never fires, which is worse than no setting because it reads like one.
     max_context_soft_tokens: int = 0
+    # `observe` counts what the limit would have kept out and keeps nothing
+    # out; `enforce` refuses. Observing is the default because the numbers to
+    # set a limit to do not exist yet, and this project has built four wrong
+    # rules from expectation. One run of "37% of real reviews would have been
+    # cut at 80k, 4% at 120k" settles it; no amount of reasoning does.
+    #
+    # The report says which mode was in force. A limit that quietly did nothing
+    # would be worse than no limit at all.
+    max_context_mode: str = "observe"
     excludes: Sequence[str] = DEFAULT_EXCLUDES
     # Which of the changed files this run is answerable for. Empty means all of
     # them, which is the only sensible default for a gate.
@@ -489,6 +498,7 @@ class Config:
             diff_ceiling_bytes=_env_int("SECURITY_SCAN_DIFF_CEILING_BYTES", 0),
             max_context_tokens=_env_int("SECURITY_SCAN_MAX_CONTEXT", 0),
             max_context_soft_tokens=_env_int("SECURITY_SCAN_MAX_CONTEXT_SOFT", 0),
+            max_context_mode=_env("SECURITY_SCAN_MAX_CONTEXT_MODE", "observe"),
             verify=_env_bool("SECURITY_SCAN_VERIFY", True),
             verify_votes=_env_int("SECURITY_SCAN_VERIFY_VOTES", 1),
             verify_model=_env("SECURITY_SCAN_VERIFY_MODEL"),
@@ -559,6 +569,16 @@ class Config:
             raise ConfigError("SECURITY_SCAN_MAX_TOKENS must be at least 4000")
         if self.max_turns < 1:
             raise ConfigError("SECURITY_SCAN_MAX_TURNS must be at least 1")
+        if self.max_context_mode not in ("observe", "enforce"):
+            raise ConfigError(
+                "SECURITY_SCAN_MAX_CONTEXT_MODE must be observe|enforce, got "
+                "{!r}".format(self.max_context_mode))
+        if self.max_context_mode == "enforce" and not self.max_context_tokens:
+            raise ConfigError(
+                "SECURITY_SCAN_MAX_CONTEXT_MODE=enforce was set without "
+                "SECURITY_SCAN_MAX_CONTEXT. There is no limit to enforce, and a "
+                "setting that reads as enforcement while enforcing nothing is "
+                "the failure this check exists to prevent")
         if self.max_context_tokens < 0 or self.max_context_soft_tokens < 0:
             raise ConfigError(
                 "SECURITY_SCAN_MAX_CONTEXT and SECURITY_SCAN_MAX_CONTEXT_SOFT "

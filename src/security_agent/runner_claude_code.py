@@ -77,7 +77,7 @@ from .models import (
 )
 from .session_document import SessionDocumentError, read_session
 from .tools import Session
-from .workspace import Workspace
+from .workspace import Workspace, inventory_notes
 
 log = logging.getLogger(__name__)
 
@@ -321,6 +321,7 @@ def build_mcp_config(
     context_lines: int = 12,
     max_context_tokens: int = 0,
     max_context_soft_tokens: int = 0,
+    max_context_mode: str = "observe",
 ) -> Dict[str, Any]:
     """The MCP config the CLI is handed: one server, ours, with its budget."""
     arguments = [
@@ -347,6 +348,7 @@ def build_mcp_config(
         # setting that reads as enforced and enforces nothing.
         "--max-context", str(max_context_tokens),
         "--max-context-soft", str(max_context_soft_tokens),
+        "--max-context-mode", max_context_mode,
     ]
     if base_sha:
         arguments += ["--base", base_sha]
@@ -486,6 +488,7 @@ class ClaudeCodeRunner:
             context_lines=self.ws.default_context_lines,
             max_context_tokens=self.cfg.max_context_tokens,
             max_context_soft_tokens=self.cfg.max_context_soft_tokens,
+            max_context_mode=self.cfg.max_context_mode,
             allowance=self.budget.review,
             handoff=handoff,
             scope=self.cfg.scope,
@@ -565,6 +568,8 @@ class ClaudeCodeRunner:
         # on the one runner whose reviews are the ones being read.
         if mode == "diff" and self.ws.diff_base:
             outcome.coverage.changed = [p for p, _ in self.ws.changed_files()]
+            (outcome.coverage.unreadable,
+             outcome.coverage.deleted) = inventory_notes(self.ws)
             if self.ws.scope:
                 outcome.coverage.out_of_scope = self.ws.out_of_scope(
                     [p for p, _ in self.ws.all_changed_files()])
@@ -970,6 +975,7 @@ def _apply_session(outcome: ScanOutcome, session: Session) -> None:
     # The same reasoning, and the same journey: a result the budget kept out was
     # kept out in the child, and this is the only record of it that survives.
     outcome.coverage.context_refusals = session.context.refused_results
+    outcome.coverage.context_would_refuse = session.context.would_refuse_results
 
 
 # --------------------------------------------------------------- environment

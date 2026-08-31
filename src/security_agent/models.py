@@ -931,6 +931,28 @@ class Coverage:
     # `diff_truncated`: the refusal message is text the model reads, and a
     # review is not made complete by a model choosing to stop asking.
     context_refusals: int = 0
+    # What the limit would have kept out on a run where it kept out nothing.
+    # Not a hole in the review — nothing was withheld — so it never makes a run
+    # incomplete. It is the measurement, and it is here rather than in a log
+    # because a number nobody sees is a number nobody sets a limit from.
+    context_would_refuse: int = 0
+    # (path, why) for changed files no reviewer could have read: a binary blob,
+    # a submodule pointer, a permission change, a rename that edited nothing.
+    #
+    # In the report because "2 of 5 changed files opened" reads as a thin review
+    # when three of the five had no line in them to open. And separated from the
+    # unopened ones because the two mean opposite things: one is work not done,
+    # the other is work that does not exist. A mode change is still worth a
+    # reader's eye — a script becoming executable is a real change — which is
+    # why it is named rather than silently subtracted.
+    unreadable: List[Tuple[str, str]] = field(default_factory=list)
+    # Files this change deleted. Not in `changed`, which is the list of files a
+    # reviewer is asked to *open* and a deleted file cannot be opened — and so,
+    # until this line existed, a deletion appeared in no part of the report at
+    # all. It is not unreadable either: every removed line of it is in the diff.
+    # A deleted security control is one of the things this product exists to
+    # catch, and it was the one kind of change nothing said had happened.
+    deleted: List[str] = field(default_factory=list)
 
     @property
     def unopened(self) -> List[str]:
@@ -950,6 +972,10 @@ class Coverage:
             "out_of_scope": self.out_of_scope,
             "diff_truncated": self.diff_truncated,
             "context_refusals": self.context_refusals,
+            "context_would_refuse": self.context_would_refuse,
+            "unreadable": [{"path": path, "why": why}
+                           for path, why in self.unreadable],
+            "deleted": self.deleted,
             "unopened": self.unopened,
             "complete": self.complete,
         }

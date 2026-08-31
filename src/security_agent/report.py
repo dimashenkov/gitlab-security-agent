@@ -365,6 +365,18 @@ def _context_refusal_note(outcome: ScanOutcome) -> List[str]:
     and read, or the limit can be raised — because a warning whose only remedy is
     "configure it differently" gets configured away.
     """
+    if outcome.coverage.context_would_refuse:
+        # Observing. Nothing was kept out, so this is not a warning about the
+        # review — it is the measurement the limit was set to take, and saying
+        # it here is what stops somebody enforcing a number nobody checked.
+        return [
+            "",
+            "> [!NOTE]",
+            "> **Context limit observed, not enforced.** {} tool result(s) "
+            "would have been refused under `SECURITY_SCAN_MAX_CONTEXT_MODE="
+            "enforce`. Every one of them was returned in full, so this review "
+            "is unaffected.".format(outcome.coverage.context_would_refuse),
+        ]
     refusals = outcome.coverage.context_refusals
     if not refusals:
         return []
@@ -668,6 +680,35 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
                 len(cov.changed),
                 "" if cov.complete else " — not opened: " + ", ".join(
                     "`{}`".format(f) for f in cov.unopened[:8])),
+            "",
+        ]
+    if cov.deleted:
+        # Deletions are filtered out of `changed` — that list is what a reviewer
+        # is asked to open, and a deleted file cannot be opened — so until this
+        # line existed a deletion appeared nowhere in the report. Its removed
+        # lines are in the diff and a deleted security control is one of the
+        # things this product exists to catch.
+        lines += [
+            "**Deleted ({}):** {}".format(
+                len(cov.deleted),
+                ", ".join("`{}`".format(path) for path in cov.deleted[:8])),
+            "",
+        ]
+    if cov.unreadable:
+        # Beside the coverage line and not folded into it. "2 of 5 changed
+        # files opened" reads as a thin review when three of the five had no
+        # line in them to open — and a mode change is still worth a reader's
+        # eye, so it is named rather than silently subtracted.
+        #
+        # "No source lines" rather than "no text to read": a mode header and a
+        # submodule's two commit ids are readable and security-relevant, they
+        # are simply not source. The looser wording said something false about
+        # exactly the entries it was listing.
+        lines += [
+            "**No source lines to read ({}):** {}".format(
+                len(cov.unreadable),
+                ", ".join("`{}` ({})".format(path, why)
+                          for path, why in cov.unreadable[:8])),
             "",
         ]
     rejected = (m.citations_rejected_not_found + m.citations_rejected_ambiguous

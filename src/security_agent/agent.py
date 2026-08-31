@@ -39,7 +39,7 @@ from .models import (
 )
 from .tools import Session, dispatch, load_finding_schema, tool_definitions
 from .transport import TransportFailure, split_capability_error, stream_message
-from .workspace import Workspace
+from .workspace import Workspace, inventory_notes
 
 log = logging.getLogger(__name__)
 
@@ -155,7 +155,8 @@ class SecurityAgent:
         )
         self.session = Session()
         self.session.context = ContextBudget.configured(
-            cfg.max_context_tokens, cfg.max_context_soft_tokens)
+            cfg.max_context_tokens, cfg.max_context_soft_tokens,
+            enforcing=cfg.max_context_mode == "enforce")
         self.usage = Usage()
         self.caps = Capabilities(
             task_budget=cfg.use_task_budget,
@@ -180,6 +181,8 @@ class SecurityAgent:
         outcome.revision = self._revision(mode)
         if diff_available:
             outcome.coverage.changed = [path for path, _ in self.ws.changed_files()]
+            (outcome.coverage.unreadable,
+             outcome.coverage.deleted) = inventory_notes(self.ws)
             if getattr(self.ws, "scope", ()):
                 outcome.coverage.out_of_scope = self.ws.out_of_scope(
                     [path for path, _ in self.ws.all_changed_files()])
@@ -329,6 +332,8 @@ class SecurityAgent:
         # conversation, and on the CLI path the tool results land in a child
         # process whose session is the only thing that comes back.
         outcome.coverage.context_refusals = self.session.context.refused_results
+        outcome.coverage.context_would_refuse = (
+            self.session.context.would_refuse_results)
         outcome.metrics = self.session.metrics
         outcome.rejected_claims = list(self.session.rejected)
         outcome.duplicates_dropped = self.session.duplicates_dropped

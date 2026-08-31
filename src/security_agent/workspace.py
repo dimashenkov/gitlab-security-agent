@@ -19,6 +19,7 @@ import fnmatch
 import logging
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
@@ -264,6 +265,55 @@ class Workspace:
         for path, code in _parse_name_status(raw):
             if not self.is_excluded(path) and self.in_scope(path):
                 out.append((path, _STATUS_NAMES.get(code, code)))
+        return out
+
+    def changed_objects(self) -> List["ChangedObject"]:
+        """Everything this change did, with enough detail to judge coverage.
+
+        Two git commands rather than one, because neither answers alone:
+        `--name-status` says what happened to each path and `--numstat` says how
+        much text moved and whether the file is binary. They are joined on the
+        path, which is the same path in both because both are given `-M` and
+        both report a rename against its new name.
+
+        No `--diff-filter`. `changed_files()` has one, deliberately — it is the
+        list of files a reviewer is asked to open, and a deleted file cannot be
+        opened. This list answers a different question: what did the change do.
+        A deletion belongs in it, because the removed lines of a deleted guard
+        are in the diff and are exactly what a security review is for.
+
+        The excludes and the scope are applied, as they are in `changed_files`:
+        this is still the run's own view of its work, and a file the operator
+        excluded is not a hole in the review.
+        """
+        if not self.diff_base:
+            return []
+        raw = self.git(
+            "diff", "--no-color", "--no-ext-diff", "-M", "--raw", "-z",
+            self.diff_base, self.diff_head,
+        )
+        numstat_raw = self.git(
+            "diff", "--no-color", "--no-ext-diff", "-M", "--numstat", "-z",
+            self.diff_base, self.diff_head,
+        )
+        counts = {path: (added, removed, binary)
+                  for path, added, removed, binary in _parse_numstat(numstat_raw)}
+
+        out: List[ChangedObject] = []
+        for path, old_path, code, old_mode, new_mode in _parse_raw(raw):
+            if self.is_excluded(path) or not self.in_scope(path):
+                continue
+            added, removed, binary = counts.get(path, (0, 0, False))
+            out.append(ChangedObject(
+                path=path,
+                status=_STATUS_NAMES.get(code, code),
+                added=added,
+                removed=removed,
+                binary=binary,
+                old_path=old_path,
+                old_mode=old_mode,
+                new_mode=new_mode,
+            ))
         return out
 
     def raw_changed_paths(self) -> List[str]:
@@ -819,10 +869,212 @@ def _git_env() -> dict:
 _STATUS_NAMES = {
     "A": "added",
     "C": "copied",
+    "D": "deleted",
     "M": "modified",
     "R": "renamed",
     "T": "type changed",
 }
+
+
+def inventory_notes(ws: "Workspace") -> Tuple[List[Tuple[str, str]], List[str]]:
+    """What the report needs from the inventory: the unreadable, and the deleted.
+
+    One function rather than the same two comprehensions on both runners: the
+    two coverage blocks have drifted apart before, and the report reads
+    whichever one filled it.
+
+    The deleted list is here because `changed_files()` filters deletions out —
+    correctly, since it is the list of files a reviewer is asked to open — and
+    a deleted file therefore appeared in no part of the report at all. A deleted
+    security control is one of the things this product exists to catch.
+
+    Failures are swallowed to empty lists on purpose. These are lines in a
+    report, not a gate; a git invocation that fails here must not take down a
+    review that has already been done.
+    """
+    try:
+        objects = ws.changed_objects()
+    except WorkspaceError:
+        return [], []
+    unreadable = [(obj.path, obj.why_unreadable())
+                  for obj in objects if not obj.has_reviewable_text]
+    deleted = [obj.path for obj in objects if obj.status == "deleted"]
+    return unreadable, deleted
+
+
+def _parse_numstat(raw: str):
+    """Parse ``git diff --numstat -z`` into (path, added, removed, binary).
+
+    Two shapes in the NUL-separated form. An ordinary entry is one field,
+    ``added\\tremoved\\tpath``. A rename or copy puts nothing after the second
+    tab and follows with two more fields: ``added\\tremoved\\t``, ``old``,
+    ``new`` — so the stream is walked rather than split into lines.
+
+    Binary files report ``-`` for both counts rather than a number. Coercing
+    that to zero would say a binary file changed nothing, which is the sentence
+    a reader would then use to skip it; it is reported as binary instead, and
+    what "nothing to read here" means is decided by the caller rather than by a
+    silent zero.
+    """
+    fields = [f for f in raw.split("\0") if f != ""]
+    i = 0
+    while i < len(fields):
+        # Split twice and no more. A tab is a legal character in a path on
+        # Linux and `-z` does not quote it, so an unlimited split cuts such a
+        # name in half and files the change under a path nothing looks up.
+        parts = fields[i].split("\t", 2)
+        if len(parts) < 3:
+            i += 1
+            continue
+        added_raw, removed_raw, path = parts[0], parts[1], parts[2]
+        if not path:
+            # A rename or copy: the two paths are the next two fields.
+            if i + 2 >= len(fields):
+                break
+            path = fields[i + 2]  # the new name, as everywhere else here
+            i += 3
+        else:
+            i += 1
+        binary = added_raw == "-" or removed_raw == "-"
+        added = 0 if binary else int(added_raw or 0)
+        removed = 0 if binary else int(removed_raw or 0)
+        yield path, added, removed, binary
+
+
+# Git's own mode words, kept as themselves. A number here is more honest than a
+# name: `100755` is what git wrote and what a reader can look up, and inventing
+# "executable" would hide the difference between a mode change and a type one.
+MODE_SUBMODULE = "160000"
+MODE_SYMLINK = "120000"
+MODE_ABSENT = "000000"
+
+
+def _parse_raw(raw: str):
+    """Parse ``git diff --raw -z -M`` into (path, old_path, code, old_mode, new_mode).
+
+    Chosen over `--name-status` because it is the only form that carries the
+    modes, and the modes are what tell a mode-only change from a rename that
+    edited nothing, a symlink from a regular file, and a submodule bump from
+    either. All three look like an ordinary modification without them, and all
+    three have no source line for a reviewer to read.
+
+    One entry is ``:<old mode> <new mode> <old sha> <new sha> <status>`` in the
+    first field, then the path — or, for a rename, the old path and the new one
+    as two further fields.
+
+    The `C` branch is kept and will not fire. Copy detection needs `-C`, which
+    is deliberately not asked for: it is expensive on large changes, and every
+    caller here passes `-M` alone, so a copied file arrives as an addition.
+    Written down because the branch reads like support for something that is
+    not switched on, and the next person to see `C` here should know it means
+    "if a caller ever asks for copies" rather than "copies are found".
+    """
+    fields = [f for f in raw.split("\0") if f != ""]
+    i = 0
+    while i < len(fields):
+        meta = fields[i]
+        if not meta.startswith(":"):
+            i += 1
+            continue
+        parts = meta[1:].split()
+        if len(parts) < 5:
+            i += 1
+            continue
+        old_mode, new_mode, code = parts[0], parts[1], parts[4]
+        if code[:1] in ("R", "C"):
+            if i + 2 >= len(fields):
+                break
+            yield fields[i + 2], fields[i + 1], code[:1], old_mode, new_mode
+            i += 3
+        else:
+            if i + 1 >= len(fields):
+                break
+            yield fields[i + 1], "", code[:1], old_mode, new_mode
+            i += 2
+
+
+@dataclass(frozen=True)
+class ChangedObject:
+    """One thing this change did, and whether a reviewer could read it.
+
+    The inventory `changed_files()` returns cannot answer the question a
+    completeness rule has to ask. It applies `--diff-filter=ACMRT`, so a pure
+    deletion is not in it at all — and the removed lines of a deleted guard are
+    exactly the change a security review exists to catch. It also cannot tell a
+    file whose text is in the diff from one whose text can never be: a binary
+    blob, a mode-only change and a pure rename appear as ordinary modifications
+    and carry no readable line.
+
+    A rule built on that list would fail healthy reviews for the second reason
+    and miss deletions for the first. This is the list it should have been.
+    """
+
+    path: str
+    status: str
+    added: int = 0
+    removed: int = 0
+    binary: bool = False
+    old_path: str = ""
+    old_mode: str = ""
+    new_mode: str = ""
+
+    @property
+    def submodule(self) -> bool:
+        return MODE_SUBMODULE in (self.old_mode, self.new_mode)
+
+    @property
+    def symlink(self) -> bool:
+        return MODE_SYMLINK in (self.old_mode, self.new_mode)
+
+    @property
+    def mode_changed(self) -> bool:
+        """The permissions moved, whatever else did.
+
+        Its own fact rather than a shrug about a zero-line diff: a script that
+        becomes executable is a security-relevant change with no source line in
+        it, and a rule that only knows "nothing to read" would file it beside a
+        rename and forget it.
+        """
+        return bool(self.old_mode and self.new_mode
+                    and self.old_mode != self.new_mode
+                    and MODE_ABSENT not in (self.old_mode, self.new_mode))
+
+    @property
+    def has_reviewable_text(self) -> bool:
+        """Would a diff of this object put any source line in front of anyone?
+
+        False for a binary blob, for a submodule pointer, for a change of mode
+        alone, and for a rename that moved a file without editing it. Not
+        "unimportant" — a rename of a security-critical file is worth knowing
+        about, and a script gaining the executable bit certainly is; both are in
+        this list for that reason. It is that *reading* them is not a thing
+        anyone can do, so a rule that demanded evidence of reading would be
+        demanding the impossible, and a gate that cannot be satisfied gets
+        deleted rather than obeyed.
+        """
+        if self.binary or self.submodule:
+            return False
+        return bool(self.added or self.removed)
+
+    def why_unreadable(self) -> str:
+        """Why no source line of this object can be put in front of a reviewer.
+
+        Empty when there is text to read. A sentence rather than a code,
+        because it is written into the report for a person: "3 files could not
+        be read" invites the question this answers, and a reader who cannot get
+        the answer assumes the worst or, worse, assumes nothing.
+        """
+        if self.has_reviewable_text:
+            return ""
+        if self.submodule:
+            return "submodule pointer"
+        if self.binary:
+            return "binary"
+        if self.mode_changed:
+            return "mode {} → {}".format(self.old_mode, self.new_mode)
+        if self.old_path:
+            return "moved from {}, unchanged".format(self.old_path)
+        return "no lines changed"
 
 
 def _parse_name_status(raw: str):

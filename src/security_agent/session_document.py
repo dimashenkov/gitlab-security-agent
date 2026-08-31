@@ -311,7 +311,17 @@ def _encode_context(budget: ContextBudget) -> Dict[str, Any]:
     be small. The counts are what the parent acts on; the events stay in the
     process that recorded them.
     """
-    return {name: getattr(budget, name) for name in _CONTEXT_FIELDS}
+    payload: Dict[str, Any] = {name: getattr(budget, name)
+                               for name in _CONTEXT_FIELDS}
+    payload["enforcing"] = budget.enforcing
+    # Ranked in the child, sent as three numbers per tool. The events
+    # themselves stay where they were recorded — a run that hit the ceiling
+    # repeatedly would carry hundreds of lines across a boundary whose whole
+    # purpose is to be small — but the ranking is the one thing a person tuning
+    # a limit actually needs, and it cannot be recomputed from the counts.
+    payload["by_tool"] = [{"tool": tool, "tokens": tokens, "amplified": amplified}
+                          for tool, tokens, amplified in budget.by_tool()]
+    return payload
 
 
 # Every counter the parent needs. Named once so the encoder and the decoder
@@ -320,6 +330,9 @@ def _encode_context(budget: ContextBudget) -> Dict[str, Any]:
 _CONTEXT_FIELDS: Tuple[str, ...] = (
     "soft", "hard", "estimated_result_tokens", "admitted_results",
     "refused_results", "refused_tokens",
+    # What enforcement would have kept out, on a run where it kept out nothing.
+    # The whole point of the observing mode, and useless if it stops here.
+    "would_refuse_results", "would_refuse_tokens",
 )
 
 
@@ -354,6 +367,10 @@ def _decode_context(payload: Any, where: str) -> ContextBudget:
             raise SessionDocumentError(
                 "{}: {} must be a non-negative integer".format(where, name))
         setattr(budget, name, value)
+    # Which mode the child was in. Read back because a report that says nothing
+    # was refused means two different things depending on it, and the parent
+    # cannot tell them apart from the counts.
+    budget.enforcing = _flag(payload, "enforcing", where)
     return budget
 
 

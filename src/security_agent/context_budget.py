@@ -51,6 +51,13 @@ from typing import List, Optional
 # routinely under three. An integer because the division is a ceiling.
 BYTES_PER_TOKEN = 3
 
+# Roughly what the refusal message costs. Used only by the imagined enforcing
+# run in `shadow`, where the real message is never built. A constant rather
+# than a measurement of the real string because it is one sentence and the
+# imagined run is an estimate throughout; what it must not be is zero, or a
+# session of nothing but refusals would look free.
+_REFUSAL_MESSAGE_TOKENS = 100
+
 
 @dataclass
 class ContextEvent:
@@ -74,14 +81,35 @@ class ContextBudget:
 
     soft: int = 0
     hard: int = 0
+    # Whether crossing the hard limit refuses a result or only records that it
+    # would have. Observation is the default when a limit is first set, because
+    # the numbers to set it to do not exist yet: this project has built four
+    # wrong rules from expectation, and one run of "37% of reviews would have
+    # been cut at 80k, 4% at 120k" is worth more than any of them. The report
+    # says which mode was in force, because a limit that quietly did nothing
+    # would be worse than no limit at all.
+    enforcing: bool = False
     estimated_result_tokens: int = 0
     admitted_results: int = 0
     refused_results: int = 0
     refused_tokens: int = 0
+    # What enforcement would have cost, counted while enforcing nothing.
+    would_refuse_results: int = 0
+    would_refuse_tokens: int = 0
+    # The estimate an *enforcing* run would have carried, which is not the one
+    # this run carries. Without it the observation is worthless: once the real
+    # total passes `hard` it stays past it, so every later result is counted as
+    # "would have been refused" — while the enforcing run it claims to describe
+    # would have refused the first one, stayed under the limit, and admitted
+    # most of the rest. The first version reported that inflated number, which
+    # is exactly the shape of thing this project keeps mistaking for a
+    # measurement.
+    shadow_tokens: int = 0
     events: List[ContextEvent] = field(default_factory=list)
 
     @classmethod
-    def configured(cls, hard: int, soft: int = 0) -> "ContextBudget":
+    def configured(cls, hard: int, soft: int = 0,
+                   enforcing: bool = False) -> "ContextBudget":
         """The budget one run was asked for.
 
         Zero hard is unbounded, and then the soft limit is meaningless rather
@@ -96,7 +124,8 @@ class ContextBudget:
         """
         if hard <= 0:
             return cls()
-        return cls(hard=hard, soft=soft if soft else (hard * 3) // 4)
+        return cls(hard=hard, soft=soft if soft else (hard * 3) // 4,
+                   enforcing=enforcing)
 
     @property
     def bounded(self) -> bool:
@@ -160,8 +189,80 @@ class ContextBudget:
         cost = self.estimate(text)
         self.refused_results += 1
         self.refused_tokens += cost
-        self.events.append(ContextEvent(tool, cost, admitted=False, reason=reason))
+        self.events.append(ContextEvent(tool, cost, admitted=False,
+                                        reason=reason))
         return cost
+
+    def shadow(self, text: str) -> bool:
+        """Would an *enforcing* run have refused this? Advances that run.
+
+        The observing mode's whole value is a number for "37% of real reviews
+        would have been cut at 80k" taken from real reviews rather than from
+        anyone's expectation. That number has to come from a second, imagined
+        run — the one where the refusals actually happened — because in this run
+        nothing is refused and the total keeps climbing. Reading "over the
+        limit" off *this* total counted every result after the first crossing as
+        refused, while the run it described would have refused one and carried
+        on under the ceiling.
+
+        Returns whether the imagined run would have refused, and moves that run
+        forward either way: a refusal there costs it only the refusal message,
+        which is what it costs here too.
+        """
+        cost = self.estimate(text)
+        if self.bounded and self.shadow_tokens + cost > self.hard:
+            self.would_refuse_results += 1
+            self.would_refuse_tokens += cost
+            # The refusal message is what the enforcing run would have carried
+            # instead. Small, and not nothing — a run of refusals still grows.
+            self.shadow_tokens += _REFUSAL_MESSAGE_TOKENS
+            return True
+        self.shadow_tokens += cost
+        return False
+
+    def amplification(self) -> int:
+        """Roughly what this run's tool output cost across the whole run.
+
+        Everything already in the conversation is re-read before each new
+        result arrives, so a result's real cost is its size times the number of
+        results that came after it. Forty thousand tokens as the last thing
+        fetched is forty thousand; the same forty thousand fetched first with
+        nineteen calls behind it is nearly eight hundred thousand — and that is
+        the shape of 920k output against 16.3M cache reads.
+
+        The clock is position among the *admitted* results rather than the
+        model's turn number, because the child process that runs the tools on
+        the CLI path does not count turns and would have reported zero for
+        every run on the path that matters most. Refused results are not in the
+        clock at all: they never entered the conversation, so counting them
+        would inflate everything before them with content nobody paid for.
+
+        It is a proxy and it has one known bias. Several tool calls returned in
+        a single assistant turn enter the next request together, so the first
+        of them is not re-read before the second — this counts as though it
+        were, and over-states the earlier members of a parallel batch. It is
+        recorded here rather than corrected because nothing at this layer knows
+        where a turn ended, and a number whose bias is written down can still
+        rank tools; one whose bias is not will be quoted as a measurement.
+        """
+        admitted = [e for e in self.events if e.admitted]
+        total = len(admitted)
+        return sum(e.estimated_tokens * (total - 1 - i)
+                   for i, e in enumerate(admitted))
+
+    def by_tool(self) -> List[tuple]:
+        """(tool, tokens, amplified) per tool, heaviest amplified first."""
+        admitted = [e for e in self.events if e.admitted]
+        total = len(admitted)
+        totals: dict = {}
+        for i, event in enumerate(admitted):
+            tokens, amplified = totals.get(event.tool, (0, 0))
+            totals[event.tool] = (
+                tokens + event.estimated_tokens,
+                amplified + event.estimated_tokens * (total - 1 - i),
+            )
+        return sorted(((tool, t, a) for tool, (t, a) in totals.items()),
+                      key=lambda row: row[2], reverse=True)
 
     def hint(self) -> str:
         """A line for the model when the budget is getting tight, or "".

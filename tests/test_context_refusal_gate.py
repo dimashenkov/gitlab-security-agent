@@ -71,7 +71,7 @@ class TestARefusedReadIsNotAnExposure:
 
     def test_a_refused_read_file_records_nothing(self, repo):
         session = Session()
-        session.context = ContextBudget(soft=10, hard=20)
+        session.context = ContextBudget(soft=10, hard=20, enforcing=True)
 
         result = dispatch(repo, session, "read_file", {"path": "app.py"})
 
@@ -82,7 +82,7 @@ class TestARefusedReadIsNotAnExposure:
     def test_an_admitted_read_file_records_it(self, repo):
         """The control. Deferring the accounting must not lose it."""
         session = Session()
-        session.context = ContextBudget(soft=100_000, hard=200_000)
+        session.context = ContextBudget(soft=100_000, hard=200_000, enforcing=True)
 
         dispatch(repo, session, "read_file", {"path": "app.py"})
 
@@ -91,7 +91,7 @@ class TestARefusedReadIsNotAnExposure:
 
     def test_a_refused_diff_records_no_exposure(self, repo):
         session = Session()
-        session.context = ContextBudget(soft=10, hard=20)
+        session.context = ContextBudget(soft=10, hard=20, enforcing=True)
 
         dispatch(repo, session, "get_diff", {})
 
@@ -106,7 +106,7 @@ class TestARefusedReadIsNotAnExposure:
         catches it in the way no setting can forgive.
         """
         session = Session()
-        session.context = ContextBudget(soft=10, hard=20)
+        session.context = ContextBudget(soft=10, hard=20, enforcing=True)
         dispatch(repo, session, "read_file", {"path": "app.py"})
         dispatch(repo, session, "get_diff", {})
         session.finished = True
@@ -126,7 +126,7 @@ class TestARefusalReachesTheVerdict:
 
     def _outcome(self, repo, config):
         session = Session()
-        session.context = ContextBudget(soft=100_000, hard=200_000)
+        session.context = ContextBudget(soft=100_000, hard=200_000, enforcing=True)
         # A real read, admitted: this run saw the change.
         dispatch(repo, session, "get_diff", {})
         # Then one request the budget would not hand over.
