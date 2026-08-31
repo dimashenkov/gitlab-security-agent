@@ -79,6 +79,7 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     root = Path(args.repo or ".").resolve()
     base, head = _resolve_range(cfg, root, mode, args)
     workspace = Workspace(root=root, excludes=cfg.excludes, diff_base=base,
+                          default_context_lines=cfg.diff_context_lines,
                           diff_head=head, scope=cfg.scope,
                           diff_ceiling=cfg.diff_ceiling_bytes)
 

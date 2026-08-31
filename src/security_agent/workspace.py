@@ -49,6 +49,7 @@ class Workspace:
         diff_head: str = "HEAD",
         scope: Sequence[str] = (),
         diff_ceiling: int = 0,
+        default_context_lines: int = 12,
     ) -> None:
         self.root = root.resolve()
         if not (self.root / ".git").exists():
@@ -59,6 +60,18 @@ class Workspace:
         self.scope = tuple(s for s in scope if s and s.strip())
         self.diff_base = diff_base
         self.diff_head = diff_head
+        # How much context a diff carries when the model does not ask for a
+        # number. It used to be a constant in `tools.py`, so
+        # `SECURITY_SCAN_CONTEXT_LINES` was read from the environment, stored on
+        # the config, and never consulted — a documented control that changed
+        # nothing. Negative is refused rather than clamped: it can only come
+        # from a typo, and silently reading it as 0 would answer a question
+        # nobody asked. Zero itself is allowed and means hunks with no context.
+        if default_context_lines < 0:
+            raise WorkspaceError(
+                "context lines cannot be negative, got {}".format(
+                    default_context_lines))
+        self.default_context_lines = default_context_lines
         self._tracked: Optional[List[str]] = None
         # Set when a diff was cut off at the ceiling. Recorded rather than only
         # said in prose: a sentence in the model's context is guidance, and an
@@ -357,7 +370,7 @@ class Workspace:
         finally:
             self.excludes, self.scope = saved_excludes, saved_scope
 
-    def diff(self, path: str = "", context_lines: int = 12) -> str:
+    def diff(self, path: str = "", context_lines: Optional[int] = None) -> str:
         if not self.diff_base:
             raise WorkspaceError(
                 "no diff base is available for this run (not a merge request "
@@ -365,7 +378,9 @@ class Workspace:
             )
         args = [
             "diff", "--no-color", "--no-ext-diff", "-M",
-            "--unified={}".format(max(0, min(context_lines, 100))),
+            "--unified={}".format(max(0, min(
+                self.default_context_lines if context_lines is None
+                else context_lines, 100))),
             self.diff_base, self.diff_head,
         ]
         if path:

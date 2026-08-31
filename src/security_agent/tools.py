@@ -488,7 +488,11 @@ def _handle_list_changed_files(ws: Workspace, session: Session, args: Dict[str, 
 
 def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
     path = str(args.get("path") or "")
-    context_lines = _as_int(args.get("context_lines"), 12)
+    # The model's explicit choice wins; the operator's setting is the
+    # default it falls back to. `search_code` keeps its own 0 — a different
+    # tool, and the setting names the diff.
+    context_lines = _as_int(args.get("context_lines"),
+                            ws.default_context_lines)
     body = ws.diff(path=path, context_lines=context_lines)
     # Only a *whole-change* diff can hide part of the change. A truncated
     # single-file diff means that file was not fully shown, which the trim

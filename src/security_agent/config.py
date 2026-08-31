@@ -110,7 +110,6 @@ class ForgeContext:
     diff_base_sha: str = ""
     source_branch_sha: str = ""
     default_branch: str = "main"
-    pipeline_source: str = ""
     job_url: str = ""
     commit_sha: str = ""
 
@@ -174,7 +173,6 @@ class ForgeContext:
             diff_base_sha=str((pull.get("base") or {}).get("sha") or ""),
             source_branch_sha=str((pull.get("head") or {}).get("sha") or _env("GITHUB_SHA")),
             default_branch=str(repository.get("default_branch") or "main"),
-            pipeline_source=_env("GITHUB_EVENT_NAME"),
             job_url="{}/{}/actions/runs/{}".format(
                 server, slug, _env("GITHUB_RUN_ID")) if slug else "",
             commit_sha=_env("GITHUB_SHA"),
@@ -204,7 +202,6 @@ class ForgeContext:
             diff_base_sha=_env("CI_MERGE_REQUEST_DIFF_BASE_SHA"),
             source_branch_sha=_env("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA"),
             default_branch=_env("CI_DEFAULT_BRANCH", "main"),
-            pipeline_source=_env("CI_PIPELINE_SOURCE"),
             job_url=_env("CI_JOB_URL"),
             commit_sha=_env("CI_COMMIT_SHA"),
         )

@@ -521,6 +521,7 @@ def build_server(
     crash_journal_path: Optional[Path] = None,
     run_id: str = "",
     revision: Optional[Revision] = None,
+    default_context_lines: int = 12,
 ) -> MCPServer:
     """Assemble a session from the same parts the API path uses.
 
@@ -530,7 +531,7 @@ def build_server(
     """
     workspace = Workspace(
         root=root, excludes=excludes, diff_base=diff_base, diff_head=diff_head,
-        scope=scope)
+        scope=scope, default_context_lines=default_context_lines)
     # `diff_available` follows the base, not a flag: without a base there is
     # nothing to diff, and offering `get_diff` anyway would spend a call to
     # learn that.
@@ -602,6 +603,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 Path(args.crash_journal) if args.crash_journal else None),
             run_id=args.run_id or "",
             revision=revision,
+            default_context_lines=args.context_lines,
         )
     except (WorkspaceError, ConfigError, ValueError) as exc:
         # A server that never came up must not exit zero. On this transport the
@@ -812,6 +814,10 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("--head", metavar="REV", default="HEAD", help="Diff head revision.")
     parser.add_argument("--tools", choices=TOOL_SETS, default=REVIEWER,
                         help="Which set to offer; nothing outside it can be called.")
+    parser.add_argument("--context-lines", type=int, default=12,
+                        help="lines of diff context when the model does not "
+                             "ask for a number; SECURITY_SCAN_CONTEXT_LINES "
+                             "on the parent")
     parser.add_argument("--max-tool-calls", type=int, default=100,
                         help="Ceiling for this session (default: 100).")
     parser.add_argument(

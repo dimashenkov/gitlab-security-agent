@@ -48,9 +48,11 @@ have reported that everything was fine. It excludes itself now; the general
 version of the problem — prose about a name counting as use of it — stands, and
 is the reason the output is a list for a person rather than a verdict.
 
-`EXPLAINED` is keyed on the bare name, so explaining `PROVIDER` explains every
-class's `PROVIDER` everywhere. Deliberate while the map is nine entries long,
-and worth remembering before it is ninety.
+`EXPLAINED` accepts a qualified key (`Profile.review_turns`) and a bare one
+(`PROVIDER`). The bare form exempts every class's field of that name at once,
+which was tolerable at nine entries and stopped being so at thirty-one, so
+everything added since is qualified. The nine module-constant entries keep the
+bare form because that is the shape they have.
 """
 
 from __future__ import annotations
@@ -76,6 +78,42 @@ EXPLAINED: Dict[str, str] = {
     "MAX_EXCERPT_CHARS": "the same",
     "MAX_TEXT_CHARS": "the same",
     "ABSENT": "re-exported sentinel; the tests are its readers",
+
+    # Triaged 2026-08-31, all twenty-two read inside the module that declares
+    # them and in no other. Each line is a claim that somebody opened the file,
+    # which is the only thing that separates "internal by design" from "a
+    # promise nobody keeps".
+
+    # budget.py *is* the enforcement. A ceiling read where it is applied is
+    # enforced; that is what these are. The field that started this tool,
+    # `Profile.conclusive`, was different — it named a guarantee about the rest
+    # of the system and only budget.py ever looked at it.
+    "Profile.review_turns": "turn ceiling, applied in RunBudget.turn",
+    "Profile.review_tool_calls": "the reviewer's allowance, applied on construction",
+    "Profile.verifier_tool_calls": "one verifier's allowance, applied when it opens",
+    "RunBudget.verifier_allowances": "the open verifier ledgers; summed for the total",
+    "RunBudget.review_turns": "turns taken so far, compared against the profile",
+
+    # A rendering structure. It is filled by the reader that parses a crashed
+    # run's journal and consumed by the summary printed beside it, both here.
+    "TracedCall.seq": "ordering within one crashed run's journal",
+    "TracedResult.seq": "the same",
+    "TracedFinding.seq": "the same",
+    "TracedRejection.seq": "the same",
+    "PartialTrace.foreign_runs": "counted while parsing, printed in the summary",
+    "PartialTrace.disordered_sequence_numbers": "the same",
+    "PartialTrace.last_record_at": "the same",
+    "PartialTrace.records_read": "the same",
+    "PartialTrace.unmatched_results": "the same",
+    "PartialTrace.findings_claimed": "the same",
+    "PartialTrace.claims_rejected": "the same",
+    "PartialTrace.review_summary": "the same",
+    "PartialTrace.verdict_reasoning": "the same",
+    "PartialTrace.missing_sequence_numbers": "the same",
+
+    "Capabilities.refusal_fallback": "read in agent.py where the call is built",
+    "ChangedLines.removed_at": "read by ChangedLines' own helpers and by evidence.py",
+    "Disposition.interaction": "carried through panel.py's own correction path",
 }
 
 
@@ -139,7 +177,11 @@ def main() -> int:
     rows = []
     for path in sources:
         for name, line, kind in _defined(path):
-            if name.split(".")[-1] in EXPLAINED:
+            # Qualified first, bare second. The bare form exempts every
+            # class's field of that name at once, which was fine at nine
+            # entries and is not at thirty-one; new entries are qualified and
+            # the old module-constant ones keep working.
+            if name in EXPLAINED or name.split(".")[-1] in EXPLAINED:
                 continue
             if not _readers(name, path, elsewhere):
                 rows.append((str(path.relative_to(ROOT)), line, name, kind))

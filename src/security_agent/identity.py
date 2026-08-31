@@ -69,6 +69,10 @@ def review_identity(cfg: Any, revision: Any, provenance: Any,
             # saw whole files is not comparable with one that saw a
             # window around each finding.
             "verifier_context_chars": getattr(cfg, "verifier_context_chars", 0),
+            # How much context a diff carried by default. Two runs at 12 and
+            # at 40 were shown different code, so one's artifact must not be
+            # reused for the other.
+            "diff_context_lines": getattr(cfg, "diff_context_lines", 12),
             # The accepted risks in force. An artifact produced before a risk
             # was accepted still lists the findings that entry silences, and
             # one produced before an entry expired still hides what it used to.

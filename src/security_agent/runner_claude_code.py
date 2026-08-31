@@ -318,6 +318,7 @@ def build_mcp_config(
     handoff: "Handoff",
     scope: Sequence[str] = (),
     python: str = "",
+    context_lines: int = 12,
 ) -> Dict[str, Any]:
     """The MCP config the CLI is handed: one server, ours, with its budget."""
     arguments = [
@@ -333,6 +334,11 @@ def build_mcp_config(
         "--base-sha", base_sha,
         "--head-sha", head_sha,
         "--config-digest", handoff.config_digest,
+        # Passed rather than left to the inherited environment. The child
+        # would read the same variable, and a setting that works on one
+        # path because of an env var and on the other because of an
+        # argument is a setting that will one day work on neither.
+        "--context-lines", str(context_lines),
     ]
     if base_sha:
         arguments += ["--base", base_sha]
@@ -469,6 +475,7 @@ class ClaudeCodeRunner:
             # defaults its own `--head`.
             head_sha=revision.head_sha,
             tool_set="reviewer",
+            context_lines=self.ws.default_context_lines,
             allowance=self.budget.review,
             handoff=handoff,
             scope=self.cfg.scope,
