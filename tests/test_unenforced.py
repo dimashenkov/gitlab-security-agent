@@ -19,7 +19,8 @@ from pathlib import Path
 
 import pytest
 
-TOOLS = Path(__file__).resolve().parents[1] / "tools"
+ROOT = Path(__file__).resolve().parents[1]
+TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
@@ -78,6 +79,49 @@ class TestItDoesNotCountItselfAsAReader:
         monkeypatch.setattr(sys, "argv", ["unenforced.py", "--strict"])
 
         assert unenforced.main() == 1
+
+
+class TestTheRealTreeStaysClean:
+    """The check itself, against this repository, on every test run.
+
+    `Config.diff_context_lines` was found on 2026-08-31 by someone running this
+    tool by hand — a documented setting read from the environment, stored, and
+    consulted by nothing. Nothing would have found the next one.
+
+    Note what this catches that `test_documented_settings.py` cannot: that file
+    asks whether a documented variable is *named* in the source, and
+    `SECURITY_SCAN_CONTEXT_LINES` was named — in the line that read it into a
+    field nobody used. The two checks are not redundant; the other one would
+    have passed throughout.
+
+    A failure here is not necessarily a bug. It is a field nobody has looked at,
+    and the fix is either to wire it or to add it to `EXPLAINED` with the reason
+    it is internal by design.
+    """
+
+    def test_no_unexplained_field_remains(self, monkeypatch, capsys):
+        monkeypatch.setattr(unenforced, "ROOT", ROOT)
+        monkeypatch.setattr(unenforced, "SRC", ROOT / "src" / "security_agent")
+        monkeypatch.setattr(sys, "argv", ["unenforced.py", "--strict"])
+        code = unenforced.main()
+        assert code == 0, capsys.readouterr().out
+
+    def test_every_explained_name_still_exists(self):
+        """A suppression outliving its field silences a name nobody declared,
+        and would sit there ready to excuse a future one that shares it."""
+        declared = set()
+        for path in (ROOT / "src" / "security_agent").glob("*.py"):
+            for name, _line, _kind in unenforced._defined(path):
+                declared.add(name)
+                declared.add(name.split(".")[-1])
+        # The nine bare module-constant entries predate `_defined` narrowing to
+        # fields and are not declared as fields anywhere; they are listed here
+        # so a genuinely stale entry still shows up.
+        legacy = {"PROVIDER", "SERVER_NAME", "PROTOCOL_VERSION", "DEFAULT_PROFILE",
+                  "MAX_ARGS", "MAX_ARG_CHARS", "MAX_EXCERPT_CHARS",
+                  "MAX_TEXT_CHARS", "ABSENT"}
+        stale = sorted(set(unenforced.EXPLAINED) - declared - legacy)
+        assert not stale, "EXPLAINED names a field that no longer exists: {}".format(stale)
 
 
 class TestWhatCountsAsDeclared:
