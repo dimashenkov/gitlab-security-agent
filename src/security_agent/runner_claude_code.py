@@ -976,6 +976,10 @@ def _apply_session(outcome: ScanOutcome, session: Session) -> None:
     # kept out in the child, and this is the only record of it that survives.
     outcome.coverage.context_refusals = session.context.refused_results
     outcome.coverage.context_would_refuse = session.context.would_refuse_results
+    # And the same again for the one fact the completeness rule will rest on.
+    # The child is where `get_diff` ran and where the budget decided whether its
+    # result was delivered; nothing in the parent can know it.
+    outcome.coverage.whole_diff_delivered = session.whole_diff_delivered
 
 
 # --------------------------------------------------------------- environment

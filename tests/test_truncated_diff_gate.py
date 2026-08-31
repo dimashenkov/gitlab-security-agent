@@ -12,10 +12,16 @@ a document a person may or may not open, under a green tick.
 Truncation is deliberately *not* in `NEVER_FORGIVEN`. A profile that cannot
 conclude is a property of the configuration, and no run of it means anything; a
 diff over the ceiling is a property of one change, and the operator has real
-moves — split it, narrow the review with `--path`, raise the ceiling. A gate
-that a large legitimate change can never satisfy is a gate that gets deleted, so
-this fails loudly by default and is forgiven by the same documented flag as
-every other partial review.
+moves — split it, narrow the review with `--path`, read the oversized file in
+windows, or raise the ceiling. A gate that a large legitimate change can never
+satisfy is a gate that gets deleted, so this fails loudly by default and is
+forgiven by the same documented flag as every other partial review.
+
+The windows are third in that list and were once absent from it, which mattered
+once any cut in any scope began to count: for a *single file* bigger than the
+ceiling, splitting the change and narrowing with `--path` are both advice that
+cannot be followed, and raising a global ceiling to read one file is the wrong
+lever. A reader told to do something they cannot do stops reading.
 """
 
 from __future__ import annotations
@@ -108,6 +114,17 @@ class TestATruncatedDiffIsNotAPass:
 
         assert "--path" in decision.reason or "Split the change" in decision.reason
 
+    def test_the_reason_names_the_remedy_for_one_oversized_file(
+            self, config, big_change):
+        """Splitting the change and narrowing with `--path` are both impossible
+        when the file itself is over the ceiling — and since any cut in any
+        scope now counts, that is a case a reader will actually meet. Naming
+        only the two moves they cannot make sends them to raise a global
+        ceiling to read one file."""
+        decision = decide(config, outcome_for(big_change))
+
+        assert "windows" in decision.reason
+
     def test_a_change_inside_the_ceiling_is_unaffected(self, config, tmp_path):
         """The control: an ordinary change still passes with the ordinary
         sentence, so this cannot be satisfied by failing everything."""
@@ -190,22 +207,40 @@ class TestTheCutHasToReachTheOutcome:
         assert big_change.diff_truncated is True
         assert session.diff_truncated is True
 
-    def test_a_single_file_diff_does_not_mark_the_session(self, big_change):
-        """`app.py` is over the ceiling on its own, so this is a workspace that
-        genuinely truncated — and the session must still say False.
+    def test_a_single_file_diff_marks_the_session_too(self, big_change):
+        """`app.py` is over the ceiling on its own, and the session says so.
 
-        The flag means "the review did not see the whole change", which is a
-        statement about the unqualified diff. A file asked for by name and
-        trimmed says so in its own output, and treating that as run-wide
-        truncation would fail every review of a large file: a gate nothing can
-        satisfy is a gate that gets switched off.
+        This assertion used to be `is False`, on the argument that the flag was
+        a statement about the unqualified diff and that failing every review of
+        a large file makes a gate nothing can satisfy — and a gate nothing can
+        satisfy gets switched off. That argument is real and it lost, for two
+        reasons found later.
+
+        The first is that it was never true of both runners. `agent.py` reads
+        its own workspace, where the flag is set by any cut in any scope, so the
+        Messages API path already exited 2 on this case while the CLI path
+        exited 0 — the same review, two verdicts, decided by which runner
+        happened to be configured.
+
+        The second is Codex's ruling, translated: *"a particular file cut short
+        is exactly 'the whole relevant change was not seen'. Exit 0 would breach
+        the fundamental invariant."* A file handed over in part is part of the
+        change unseen, and the notice in the tool output is read by the model,
+        not by the person merging.
+
+        The right model is a third thing and is not built: separate *truncation
+        was observed* from *a relevant part is still unread*, and gate only on
+        the second, so that reading the rest afterwards clears it. Until that
+        distinction exists, strict is the only correct choice — and the remedy
+        for one oversized file is to read it in windows, not to raise a global
+        ceiling.
         """
         ws = self._fresh(big_change)
         session = Session()
         dispatch(ws, session, "get_diff", {"path": "app.py"})
 
         assert ws.diff_truncated is True
-        assert session.diff_truncated is False
+        assert session.diff_truncated is True
 
     def test_the_cli_runners_chain_ends_at_the_gate(self, config, big_change):
         """Workspace to session to outcome to exit code, nothing set by hand.

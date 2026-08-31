@@ -327,13 +327,32 @@ class SecurityAgent:
         # tell a review that stopped early from one that never started.
         outcome.exposures = list(self.session.exposures)
         outcome.coverage.examined = list(self.session.files_examined)
-        outcome.coverage.diff_truncated = self.ws.diff_truncated
+        # The session, not the workspace, and the two runners now read the same
+        # thing. It used to read the workspace here and the session there, so a
+        # single-file diff cut short exited 2 on this path and 0 on the other —
+        # one review, two verdicts, decided by which runner was configured.
+        #
+        # The session is the better of the two because it is set on delivery.
+        # The workspace records that git's output was cut whether or not the
+        # result ever reached the model, so a cut diff the context budget
+        # refused would have been reported as "the reviewer read the first part
+        # of the change" when the reviewer read none of it. That run is still
+        # partial — the refusal makes it so, and says why in its own words.
+        #
+        # Nothing else in production calls `Workspace.diff`, so there is no cut
+        # this misses. If something ever does, it has to say so on the session
+        # like `get_diff` does.
+        outcome.coverage.diff_truncated = self.session.diff_truncated
         # Read from the session, not the workspace: the budget lives with the
         # conversation, and on the CLI path the tool results land in a child
         # process whose session is the only thing that comes back.
         outcome.coverage.context_refusals = self.session.context.refused_results
         outcome.coverage.context_would_refuse = (
             self.session.context.would_refuse_results)
+        # From the session for the same reason as the refusals: it is set when
+        # a result is delivered, and delivery is decided by the budget rather
+        # than by the workspace that produced the text.
+        outcome.coverage.whole_diff_delivered = self.session.whole_diff_delivered
         outcome.metrics = self.session.metrics
         outcome.rejected_claims = list(self.session.rejected)
         outcome.duplicates_dropped = self.session.duplicates_dropped

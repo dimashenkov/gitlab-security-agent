@@ -953,6 +953,18 @@ class Coverage:
     # A deleted security control is one of the things this product exists to
     # catch, and it was the one kind of change nothing said had happened.
     deleted: List[str] = field(default_factory=list)
+    # The entire text of the change was put in front of the reviewer once,
+    # whole and uncut — not one file of it, not the first part of it, and not a
+    # result the context budget kept out.
+    #
+    # Recorded and not yet gated on, deliberately. Whether healthy runs already
+    # do this cannot be read off the artifacts already paid for: none of them
+    # records which tools were called. Gating on an unmeasured habit is how the
+    # last two completeness proposals would have failed reviews that were fine.
+    # So it is observed first and enforced second, the same order the context
+    # limit was given, and the observation is in the artifact where a rule can
+    # later be set from it rather than from an expectation.
+    whole_diff_delivered: bool = False
 
     @property
     def unopened(self) -> List[str]:
@@ -976,6 +988,7 @@ class Coverage:
             "unreadable": [{"path": path, "why": why}
                            for path, why in self.unreadable],
             "deleted": self.deleted,
+            "whole_diff_delivered": self.whole_diff_delivered,
             "unopened": self.unopened,
             "complete": self.complete,
         }

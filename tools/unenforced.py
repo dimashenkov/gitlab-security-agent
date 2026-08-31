@@ -132,6 +132,14 @@ EXPLAINED: Dict[str, str] = {
     # It deliberately does not cross the session document: it is the state of a
     # simulation, not a fact about the review.
     "ContextBudget.shadow_tokens": "read by ContextBudget.shadow",
+    # One of `ToolResult`'s deferred effects, and internal for the same reason
+    # as the other three: a handler *describes* what delivering its result would
+    # mean, and `ToolResult.apply` — the same module — is what turns the
+    # description into a fact on the session, and only when the content actually
+    # went to the model. What crosses the boundary is
+    # `Session.whole_diff_delivered`, which `agent.py`,
+    # `runner_claude_code.py` and `session_document.py` all read.
+    "ToolResult.whole_diff": "read by ToolResult.apply, on delivery",
     "ChangedObject.old_path": "read by ChangedObject.why_unreadable",
     "ChangedObject.old_mode": "read by ChangedObject.mode_changed and .submodule",
     "ChangedObject.new_mode": "the same",

@@ -80,6 +80,13 @@ class Workspace:
         # reaches the artifact so a report cannot claim coverage the run did not
         # have.
         self.diff_truncated = False
+        # The same fact about the *last* `diff()` call rather than about the run.
+        # Both are needed and they are not the same: the run-level flag is a
+        # hole in the review and must stay set once anything was cut, while a
+        # caller asking "was *this* body whole" gets a wrong answer from a flag
+        # an earlier single-file diff turned on. That confusion would have
+        # reported a genuinely complete diff as never delivered.
+        self.last_diff_truncated = False
         # Zero means "use the class default". Held rather than defaulted at the
         # call site so `diff_ceiling` has one answer.
         self._diff_ceiling = max(0, int(diff_ceiling))
@@ -426,6 +433,10 @@ class Workspace:
                 "no diff base is available for this run (not a merge request "
                 "pipeline). Use the file-reading tools instead."
             )
+        # Cleared before the work, not after it. It says "the last call", and a
+        # call that raised is still the last one — leaving the previous answer
+        # standing would make a stale True or False survive a failure.
+        self.last_diff_truncated = False
         args = [
             "diff", "--no-color", "--no-ext-diff", "-M",
             "--unified={}".format(max(0, min(
@@ -445,7 +456,9 @@ class Workspace:
             if not in_scope:
                 return ""
             args += ["--", *(self.repo_path(p) for p in in_scope)]
-        return self._bounded(args)
+        body, truncated = self._bounded(args)
+        self.last_diff_truncated = truncated
+        return body
 
     # How much of a diff is read before the pipe is closed.
     #
@@ -470,7 +483,7 @@ class Workspace:
         """
         return self._diff_ceiling or self.MAX_DIFF_BYTES
 
-    def _bounded(self, args: List[str]) -> str:
+    def _bounded(self, args: List[str]) -> Tuple[str, bool]:
         """Read git's output up to a ceiling, then stop reading.
 
         `subprocess.run(capture_output=True)` reads the whole pipe into memory
@@ -488,6 +501,15 @@ class Workspace:
         `search()` was hardened against exactly this and `diff()` was not, which
         is the whole finding: the reasoning was written down one function away
         and did not travel.
+
+        **A failed git is not an empty diff.** stderr goes to `/dev/null` and the
+        exit status used to go unread, so a bad revision, a broken index or a
+        pathspec git would not accept all came back as `""` — indistinguishable
+        from a change with nothing in it. That distinction was cosmetic until
+        `whole_diff` started reading an empty body as "the reviewer was shown
+        everything there is"; then it became a way for a crash to be recorded as
+        complete coverage. A non-zero status is raised, except after a
+        deliberate kill, where a non-zero status is what killing produced.
         """
         deadline = time.monotonic() + GIT_TIMEOUT_SECONDS
         try:
@@ -505,25 +527,48 @@ class Workspace:
         size = 0
         truncated = False
         try:
-            while True:
+            # Never more than the ceiling in one read. The first version asked
+            # for 64k regardless and then compared, so a 300-byte diff under a
+            # 50-byte ceiling arrived whole and was called truncated — the
+            # ceiling was a suggestion and the flag was about the suggestion
+            # rather than about the output.
+            while size < self.diff_ceiling:
                 if time.monotonic() > deadline:
                     truncated = True
                     break
-                chunk = proc.stdout.read(65_536)
+                chunk = proc.stdout.read(min(65_536, self.diff_ceiling - size))
                 if not chunk:
                     break
                 chunks.append(chunk)
                 size += len(chunk)
-                if size >= self.diff_ceiling:
+            else:
+                # The ceiling was reached exactly, which is not the same as
+                # being cut by it: a diff whose last byte lands on the limit is
+                # whole, and calling that truncated told the reviewer it had
+                # seen part of a change it had seen all of. One more read
+                # settles it — nothing means end of output, a byte means there
+                # was more. The byte is discarded rather than kept: keeping it
+                # put the body one over the ceiling the whole function exists
+                # to hold, and it belongs to the part being declared missing.
+                #
+                # Like every other read here, this one blocks. The deadline is
+                # checked between reads and does not bound one, which was true
+                # of the loop before this probe existed; what bounds a git that
+                # never answers is git's own exit, not this timer.
+                if proc.stdout.read(1):
                     truncated = True
-                    break
         finally:
             # Killed rather than drained: draining is what an unbounded read
             # does, and the point of stopping was not to hold the rest.
             if truncated:
                 proc.kill()
             proc.stdout.close()
-            proc.wait()
+            status = proc.wait()
+
+        if not truncated and status != 0:
+            raise WorkspaceError(
+                "git {} exited {}; no diff was produced".format(
+                    " ".join(args[:6]), status))
 
         body = b"".join(chunks).decode("utf-8", "surrogateescape")
         if truncated:
@@ -534,7 +579,7 @@ class Workspace:
                 "\n… this diff was cut off at {} bytes. What follows it was not "
                 "read, and a change this large has not been fully reviewed."
                 .format(self.diff_ceiling))
-        return body
+        return body, truncated
 
     def changed_line_map(self):
         """Lines this change is answerable for, per file, computed once.

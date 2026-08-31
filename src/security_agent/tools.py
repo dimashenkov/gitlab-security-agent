@@ -114,6 +114,10 @@ class Session:
     # — the fact has to travel with the session or the gate never learns that
     # the reviewer saw the first part of a change and no more.
     diff_truncated: bool = False
+    # The entire text of the change was put in front of the model at least once,
+    # whole and uncut. See `ToolResult.whole_diff` for why this one fact is the
+    # completeness rule and line-by-line accounting is not.
+    whole_diff_delivered: bool = False
     _attempts: Dict[str, int] = field(default_factory=dict)
 
     def note_file(self, path: str) -> None:
@@ -167,6 +171,24 @@ class ToolResult:
     exposures: Tuple[Tuple[str, str], ...] = ()
     # This result is a whole-change diff that the workspace cut at its ceiling.
     diff_truncated: bool = False
+    # This result carried the entire change, whole and uncut.
+    #
+    # The completeness question — did the reviewer read what it is answerable
+    # for — was twice attempted as a per-file boolean and twice wrong: files
+    # *opened by name* answers "none" for a review that read the whole diff, and
+    # files whose bytes arrived counts one search hit as having seen a file.
+    # Line-level accounting was the third attempt, and Codex refused it for a
+    # reason worth keeping: "'моделът видя обзор и избра какво да отвори' не
+    # може едновременно да е по-евтино и не по-снизходително" — an overview the
+    # model selects from is cheaper *because* something went unread, and no
+    # arithmetic over delivered lines makes that not so.
+    #
+    # What is left is the one fact that is both cheap and honest: the whole text
+    # of the change reached the model once, entire. Everything after that is
+    # navigation. It is false when the diff was cut at either ceiling, when only
+    # one file was asked for, and when the context budget refused the result —
+    # `apply` runs on delivery and on nothing else.
+    whole_diff: bool = False
 
     def apply(self, session: "Session") -> None:
         """Record what this result means, now that it is going to the model."""
@@ -176,6 +198,8 @@ class ToolResult:
             session.note_exposure(path, channel)
         if self.diff_truncated:
             session.diff_truncated = True
+        if self.whole_diff:
+            session.whole_diff_delivered = True
 
 
 Handler = Callable[[Workspace, Session, Dict[str, Any]], ToolResult]
@@ -555,17 +579,37 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
     context_lines = _as_int(args.get("context_lines"),
                             ws.default_context_lines)
     body = ws.diff(path=path, context_lines=context_lines)
-    # Only a *whole-change* diff can hide part of the change. A truncated
-    # single-file diff means that file was not fully shown, which the trim
-    # notice below already says to the model — it is the unqualified one that
-    # decides whether the review saw the change it is answerable for.
-    truncated_change = bool(not path and ws.diff_truncated)
+    # `ws.last_diff_truncated` and not `ws.diff_truncated`: the first is this
+    # call's truth and the second stays set once anything in the run has been
+    # cut, so reading the run's flag here let an earlier single-file trim decide
+    # what a later whole-change diff is.
+    #
+    # Any cut, in any scope. The rule used to be "only a whole-change diff can
+    # hide part of the change", and it left a hole a measurement found rather
+    # than an argument: a 247,000-character diff sits under the workspace's
+    # 512 KiB ceiling and over this module's 120,000-character one, so it was
+    # cut in half by `_trim_diff`, `ws.diff_truncated` stayed False, and the run
+    # was reported complete over the first half of a change. That is the exact
+    # sentence this product exists to prevent.
+    #
+    # A single-file diff cut short is the same fact in a smaller frame — the
+    # reviewer asked for something and was handed part of it — and treating it
+    # as harmless is what made the two runners disagree about identical
+    # reviews. Both cuts, both scopes, one flag.
     if not body.strip():
         return ToolResult(
             "Empty diff for {}.".format(path or "this merge request"),
             "empty diff",
+            diff_truncated=ws.last_diff_truncated,
+            # A whole change with no diff body is a change with no text in it —
+            # binary files, a rename, a mode bit. There is nothing being kept
+            # from the reviewer, and calling that "the change was never shown"
+            # would report every binary-only merge request as unread. The
+            # inventory already names those files and why they cannot be read.
+            whole_diff=bool(not path and not ws.last_diff_truncated),
         )
     body, trimmed = _trim_diff(body)
+    truncated_change = bool(trimmed or ws.last_diff_truncated)
     note = (
         "\n\n[Diff trimmed at {} characters, at a file boundary. The files "
         "above are whole; the ones after the cut are not here at all. Request "
@@ -582,6 +626,10 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
         # of them in the arguments and contains all of them.
         exposures=tuple((touched, "get_diff") for touched in _paths_in_diff(body)),
         diff_truncated=truncated_change,
+        # The same two cuts, asked of the whole change rather than of this
+        # result: a body that is missing files, or a body that is missing the
+        # rest of one file, is not the change shown entire.
+        whole_diff=bool(not path and not truncated_change),
     )
 
 

@@ -233,9 +233,10 @@ def _why_partial(outcome: ScanOutcome) -> str:
     if not outcome.complete:
         return STOP_EXPLANATIONS.get(outcome.stop_reason, "the review did not complete")
     return (
-        "the change was larger than the reviewer can be shown, so it read the "
-        "first part of the diff and no more. Split the change, or narrow the "
-        "review with --path, for a complete reading")
+        "the diff was larger than the reviewer can be shown, so it read the "
+        "first part of the diff and no more. Split the change, narrow the "
+        "review with --path, or read the oversized file in windows, for a "
+        "complete reading")
 
 
 def decide(cfg: Config, outcome: ScanOutcome) -> Decision:

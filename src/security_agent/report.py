@@ -75,6 +75,7 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
         lines += _incomplete_warning(outcome)
 
     lines += _truncated_diff_note(outcome)
+    lines += _whole_diff_note(outcome)
     lines += _context_refusal_note(outcome)
     lines += _scope_note(cfg, outcome)
     lines += _sign_off(outcome)
@@ -353,6 +354,42 @@ def _truncated_diff_note(outcome: ScanOutcome) -> List[str]:
         "was not examined through it. Narrow the review with `--path`, split "
         "the change, or raise `SECURITY_SCAN_DIFF_CEILING_BYTES`, for a "
         "complete reading.",
+    ]
+
+
+def _whole_diff_note(outcome: ScanOutcome) -> List[str]:
+    """The whole change was never put in front of the reviewer in one piece.
+
+    A note and not a warning, and not a gate. Whether a healthy review reliably
+    asks for the whole diff has never been measured — the artifacts already paid
+    for do not record which tools were called — and a rule set from an
+    expectation is how the two earlier completeness proposals would have failed
+    reviews that were fine. This is the measurement that has to exist before the
+    rule, in the document the reader already opens.
+
+    It stays quiet for a truncated diff, and only for that. A cut diff *is* this
+    fact in other words — the reviewer was handed the first part of the change —
+    and the warning above says so with its own remedy.
+
+    A refused result is not. The refusal counter does not record which tool was
+    refused, so silencing on it meant one rejected `read_file` could hide the
+    observation about the diff, and the observation is the whole reason this
+    fact is recorded rather than gated on. Two notes about two different things
+    is the correct amount of noise.
+    """
+    coverage = outcome.coverage
+    if coverage.whole_diff_delivered:
+        return []
+    if coverage.diff_truncated:
+        return []
+    return [
+        "",
+        "> [!NOTE]",
+        "> **The change was never shown to the reviewer as a whole.** It worked "
+        "from individual files, searches, or the file list. That can be a "
+        "complete review and it is not treated as an incomplete one — it is "
+        "recorded because what a reviewer was shown is a fact about the run, "
+        "not an impression of it.",
     ]
 
 
