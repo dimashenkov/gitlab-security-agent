@@ -291,3 +291,53 @@ class TestGrouping:
         """Assuming UTC moves a run between days on someone else's machine."""
         assert spend.instant("2026-08-30T12:00:00") is None
         assert spend.instant("2026-08-30T12:00:00Z") is not None
+
+
+class TestTheCommandItself:
+    """Codex's objection: the tests validated helpers, not the CLI.
+
+    Several passed on values handed to `summarise` directly — the unreadable-file
+    count among them, which `main()` has to compute and pass on and which no test
+    made it do. These drive `main()` and read what it printed.
+    """
+
+    def test_it_reports_on_the_files_it_is_given(self, tmp_path, capsys):
+        good = artifact(tmp_path, "a.json", cost=2.00)
+        assert spend.main([str(good)]) == 0
+        assert "2.00" in capsys.readouterr().out
+
+    def test_it_counts_the_files_it_could_not_read(self, tmp_path, capsys):
+        """`main()` computes this; passing it to `summarise` by hand did not."""
+        good = artifact(tmp_path, "a.json")
+        bad = tmp_path / "broken.json"
+        bad.write_text("{not json", encoding="utf-8")
+        spend.main([str(good), str(bad)])
+        assert "1 file(s) could not be read" in capsys.readouterr().out
+
+    def test_a_path_that_does_not_exist_is_exit_two(self, tmp_path, capsys):
+        assert spend.main([str(tmp_path / "absent.json")]) == 2
+        assert "not the same as nothing having been spent" in capsys.readouterr().out
+
+    def test_since_keeps_the_later_run_and_drops_the_earlier(self, tmp_path, capsys):
+        old = artifact(tmp_path, "a.json", when="2026-07-01T12:00:00+00:00", cost=9.99)
+        new = artifact(tmp_path, "b.json", when="2026-08-30T12:00:00+00:00", cost=1.11)
+        spend.main([str(old), str(new), "--since", "2026-08-01"])
+        out = capsys.readouterr().out
+        assert "1.11" in out
+        assert "9.99" not in out
+
+    def test_since_keeps_a_run_whose_stamp_cannot_be_read(self, tmp_path, capsys):
+        """A filter that silently removes what it cannot parse makes the report
+        shorter and says nothing."""
+        undated = artifact(tmp_path, "a.json", when="", cost=1.11)
+        spend.main([str(undated), "--since", "2026-08-01"])
+        out = capsys.readouterr().out
+        assert "undated" in out
+        assert "1.11" in out
+
+    def test_the_detail_view_names_who_paid_per_run(self, tmp_path, capsys):
+        row = artifact(tmp_path, "a.json", subscription="max")
+        spend.main([str(row), "--detail"])
+        out = capsys.readouterr().out
+        assert "who paid" in out
+        assert "subscription (max)" in out
