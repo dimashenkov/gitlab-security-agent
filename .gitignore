@@ -13,3 +13,6 @@ security-report.md
 
 # Personal working rules — loaded automatically, never shipped.
 CLAUDE.md
+
+# Permissions and environment for one machine, not a property of the product.
+.claude/settings.local.json
