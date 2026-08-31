@@ -450,6 +450,31 @@ def main() -> int:
 
     repeat = args.round is not None
     eligible = cases(args)
+    if repeat:
+        # The frozen list and the frozen order, or nothing. A round whose queue
+        # picks its own cases alphabetically has a manifest that describes a run
+        # that did not happen — and the order is half of what the manifest is
+        # for: alphabetical puts each language in its own window and confounds
+        # the language with the reset.
+        manifest = QUEUE / "manifest.json"
+        if not manifest.is_file():
+            sys.exit(
+                "round {} has no manifest. Freeze it first:\n"
+                "  tools/round.py freeze {}\n"
+                "Running without one produces reviews and no experiment: "
+                "nothing records which earlier row each new one answers."
+                .format(args.round, args.round))
+        try:
+            frozen = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            sys.exit("round {} manifest is unreadable: {}".format(args.round, exc))
+        order = frozen.get("protocol", {}).get("order") or []
+        if not order:
+            sys.exit("round {} manifest carries no order".format(args.round))
+        if args.language or args.construction or args.case:
+            sys.exit("a frozen round runs what it froze; --language, "
+                     "--construction and --case would narrow it after the fact")
+        eligible = list(order)
     queued = [c for c in eligible if not already_run(c, repeat)]
     # Reported, not applied. `cases()` drops these on a sweep and the count is
     # printed here so a saved window is visible rather than implicit — the
