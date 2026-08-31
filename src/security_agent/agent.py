@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 import anthropic
 
 from .config import Config
+from .context_budget import ContextBudget
 from .models import (
     STOP_BUDGET,
     STOP_COMPLETED,
@@ -153,6 +154,8 @@ class SecurityAgent:
             timeout=cfg.request_timeout,
         )
         self.session = Session()
+        self.session.context = ContextBudget.configured(
+            cfg.max_context_tokens, cfg.max_context_soft_tokens)
         self.usage = Usage()
         self.caps = Capabilities(
             task_budget=cfg.use_task_budget,
@@ -322,6 +325,10 @@ class SecurityAgent:
         outcome.exposures = list(self.session.exposures)
         outcome.coverage.examined = list(self.session.files_examined)
         outcome.coverage.diff_truncated = self.ws.diff_truncated
+        # Read from the session, not the workspace: the budget lives with the
+        # conversation, and on the CLI path the tool results land in a child
+        # process whose session is the only thing that comes back.
+        outcome.coverage.context_refusals = self.session.context.refused_results
         outcome.metrics = self.session.metrics
         outcome.rejected_claims = list(self.session.rejected)
         outcome.duplicates_dropped = self.session.duplicates_dropped

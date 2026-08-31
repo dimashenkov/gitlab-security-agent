@@ -391,6 +391,24 @@ class Config:
     # constant — a remedy nobody can perform moves the blame to somebody who
     # cannot act on it.
     diff_ceiling_bytes: int = 0
+    # How many estimated tokens of *tool output* one review may accumulate
+    # before results stop being returned. Zero means unbounded, which is the
+    # default: a ceiling that appeared silently would change every existing run
+    # without anyone choosing it.
+    #
+    # Estimated, and of tool output only — not the system prompt, not the tool
+    # schemas, not the reviewer's own words. The real conversation is always
+    # larger than this number, so a value set here should sit below the context
+    # the run is meant to fit in. See `context_budget.py`.
+    #
+    # Configurable for the same reason as `diff_ceiling_bytes`: the gate tells a
+    # reader of a shortened review that they may raise it, and that sentence has
+    # to be true when it is written rather than after.
+    max_context_tokens: int = 0
+    # Where the run is told to start finishing rather than stopped. Zero derives
+    # it from the hard limit; a soft limit above the hard one is a setting that
+    # never fires, which is worse than no setting because it reads like one.
+    max_context_soft_tokens: int = 0
     excludes: Sequence[str] = DEFAULT_EXCLUDES
     # Which of the changed files this run is answerable for. Empty means all of
     # them, which is the only sensible default for a gate.
@@ -469,6 +487,8 @@ class Config:
             mode=_env("SECURITY_SCAN_MODE", "auto"),
             diff_context_lines=_env_int("SECURITY_SCAN_CONTEXT_LINES", 12),
             diff_ceiling_bytes=_env_int("SECURITY_SCAN_DIFF_CEILING_BYTES", 0),
+            max_context_tokens=_env_int("SECURITY_SCAN_MAX_CONTEXT", 0),
+            max_context_soft_tokens=_env_int("SECURITY_SCAN_MAX_CONTEXT_SOFT", 0),
             verify=_env_bool("SECURITY_SCAN_VERIFY", True),
             verify_votes=_env_int("SECURITY_SCAN_VERIFY_VOTES", 1),
             verify_model=_env("SECURITY_SCAN_VERIFY_MODEL"),
@@ -539,6 +559,24 @@ class Config:
             raise ConfigError("SECURITY_SCAN_MAX_TOKENS must be at least 4000")
         if self.max_turns < 1:
             raise ConfigError("SECURITY_SCAN_MAX_TURNS must be at least 1")
+        if self.max_context_tokens < 0 or self.max_context_soft_tokens < 0:
+            raise ConfigError(
+                "SECURITY_SCAN_MAX_CONTEXT and SECURITY_SCAN_MAX_CONTEXT_SOFT "
+                "must not be negative; 0 means unbounded")
+        if self.max_context_soft_tokens and not self.max_context_tokens:
+            raise ConfigError(
+                "SECURITY_SCAN_MAX_CONTEXT_SOFT was set without "
+                "SECURITY_SCAN_MAX_CONTEXT. A soft limit only advises; with no "
+                "hard limit behind it nothing is ever bounded, which reads like "
+                "a setting and is not one")
+        if (self.max_context_tokens and self.max_context_soft_tokens
+                and self.max_context_soft_tokens > self.max_context_tokens):
+            raise ConfigError(
+                "SECURITY_SCAN_MAX_CONTEXT_SOFT ({}) is above "
+                "SECURITY_SCAN_MAX_CONTEXT ({}), so it could never fire. "
+                "Refused rather than ignored: a limit that never fires still "
+                "reads like one.".format(self.max_context_soft_tokens,
+                                         self.max_context_tokens))
         if not 1 <= self.verify_concurrency <= 16:
             raise ConfigError("SECURITY_SCAN_VERIFY_CONCURRENCY must be between 1 and 16")
         if not 1 <= self.verify_votes <= 5:

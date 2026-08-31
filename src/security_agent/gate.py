@@ -203,15 +203,33 @@ def _partial(outcome: ScanOutcome) -> bool:
     obeyed. So it fails loudly by default and stays forgivable by the same
     documented flag as every other partial review.
     """
-    return not outcome.complete or outcome.coverage.diff_truncated
+    return (not outcome.complete
+            or outcome.coverage.diff_truncated
+            or outcome.coverage.context_refusals > 0)
 
 
 def _why_partial(outcome: ScanOutcome) -> str:
-    """The sentence naming which of the two happened, for the author to act on.
+    """The sentence naming which of the three happened, for the author to act on.
 
-    Truncation is named separately because the remedy is different: nothing
-    about turn limits tells anyone to split a merge request.
+    Each is named separately because the remedy is different: nothing about turn
+    limits tells anyone to split a merge request, and nothing about a large
+    change tells anyone to raise a context limit.
+
+    A refusal is named first when there is one. It is the newest of the three
+    and the easiest to miss, and a run can carry it *and* have stopped early —
+    reporting only the stop reason would send the author to the wrong setting.
     """
+    refusals = outcome.coverage.context_refusals
+    if refusals:
+        also = ("" if outcome.complete else
+                ", and the review then stopped before finishing ({})".format(
+                    STOP_EXPLANATIONS.get(outcome.stop_reason,
+                                          "reason not recorded")))
+        return (
+            "{} tool result(s) were larger than the review's remaining context "
+            "budget and were not returned, so the reviewer asked for code it "
+            "never saw{}. Narrow those reads, or raise the context limit, for a "
+            "complete reading".format(refusals, also))
     if not outcome.complete:
         return STOP_EXPLANATIONS.get(outcome.stop_reason, "the review did not complete")
     return (

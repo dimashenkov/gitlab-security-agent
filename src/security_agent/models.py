@@ -925,6 +925,12 @@ class Coverage:
     # to the diff is what the *model* reads, and an attacker can write the same
     # sentence into a file. This is what the artifact and the gate can rely on.
     diff_truncated: bool = False
+    # Tool results the context budget kept out of the conversation. The reviewer
+    # asked for something and got none of it, which is a hole in the reading
+    # whatever it decided afterwards. Structural for the same reason as
+    # `diff_truncated`: the refusal message is text the model reads, and a
+    # review is not made complete by a model choosing to stop asking.
+    context_refusals: int = 0
 
     @property
     def unopened(self) -> List[str]:
@@ -943,6 +949,7 @@ class Coverage:
             "excluded": self.excluded,
             "out_of_scope": self.out_of_scope,
             "diff_truncated": self.diff_truncated,
+            "context_refusals": self.context_refusals,
             "unopened": self.unopened,
             "complete": self.complete,
         }

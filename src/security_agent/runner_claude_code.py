@@ -319,6 +319,8 @@ def build_mcp_config(
     scope: Sequence[str] = (),
     python: str = "",
     context_lines: int = 12,
+    max_context_tokens: int = 0,
+    max_context_soft_tokens: int = 0,
 ) -> Dict[str, Any]:
     """The MCP config the CLI is handed: one server, ours, with its budget."""
     arguments = [
@@ -339,6 +341,12 @@ def build_mcp_config(
         # path because of an env var and on the other because of an
         # argument is a setting that will one day work on neither.
         "--context-lines", str(context_lines),
+        # The same reasoning, and the more important case: the tool results land
+        # in the child, so the child is the only process that can refuse one.
+        # A budget configured on the parent and not passed here would be a
+        # setting that reads as enforced and enforces nothing.
+        "--max-context", str(max_context_tokens),
+        "--max-context-soft", str(max_context_soft_tokens),
     ]
     if base_sha:
         arguments += ["--base", base_sha]
@@ -476,6 +484,8 @@ class ClaudeCodeRunner:
             head_sha=revision.head_sha,
             tool_set="reviewer",
             context_lines=self.ws.default_context_lines,
+            max_context_tokens=self.cfg.max_context_tokens,
+            max_context_soft_tokens=self.cfg.max_context_soft_tokens,
             allowance=self.budget.review,
             handoff=handoff,
             scope=self.cfg.scope,
@@ -957,6 +967,9 @@ def _apply_session(outcome: ScanOutcome, session: Session) -> None:
     # always False here. The other two are the parent's own knowledge and are
     # filled by the caller, which holds the workspace.
     outcome.coverage.diff_truncated = session.diff_truncated
+    # The same reasoning, and the same journey: a result the budget kept out was
+    # kept out in the child, and this is the only record of it that survives.
+    outcome.coverage.context_refusals = session.context.refused_results
 
 
 # --------------------------------------------------------------- environment

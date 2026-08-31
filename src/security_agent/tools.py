@@ -19,7 +19,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import generated
 from .evidence import (
@@ -28,7 +28,9 @@ from .evidence import (
     evidence_span,
     excerpt,
     locate_evidence,
+    unquote_path,
 )
+from .context_budget import ContextBudget
 from .models import Candidate, Finding, RejectedClaim, StageMetrics, ToolCallRecord
 from .workspace import Workspace, WorkspaceError
 
@@ -92,6 +94,10 @@ class Session:
     exposures: List[tuple] = field(default_factory=list)
     duplicates_dropped: int = 0
     turn: int = 0
+    # How much of the conversation the review has spent. Unbounded by default,
+    # so switching it on is a decision: a budget that appeared silently would
+    # change every existing run without anyone choosing it.
+    context: ContextBudget = field(default_factory=ContextBudget)
     metrics: StageMetrics = field(default_factory=StageMetrics)
     # Set only by `finish_review`. The one place a runner-independent answer to
     # "did this review end, or was it ended" is written down.
@@ -138,9 +144,38 @@ class Session:
 
 @dataclass
 class ToolResult:
+    """What a tool produced, and what it means for the session *if delivered*.
+
+    The last three fields are deliberately deferred. They were once written
+    straight onto the session inside the handler, which was correct while every
+    result was delivered and became wrong the moment the context budget could
+    refuse one: a read whose bytes never reached the model was still recorded as
+    an exposure, and `gate._reviewed_nothing` reads exposures to tell a review
+    that stopped early from one that never started. A run refused everything it
+    asked for would have claimed the change had been seen.
+
+    So a handler now *describes* what delivering its result would mean, and
+    `_budgeted` applies it only when the content actually goes to the model.
+    """
+
     content: str
     summary: str
     is_error: bool = False
+    # Files the agent opened by name. `Session.files_examined`.
+    examined: Tuple[str, ...] = ()
+    # (path, channel) for every file whose bytes this result carries.
+    exposures: Tuple[Tuple[str, str], ...] = ()
+    # This result is a whole-change diff that the workspace cut at its ceiling.
+    diff_truncated: bool = False
+
+    def apply(self, session: "Session") -> None:
+        """Record what this result means, now that it is going to the model."""
+        for path in self.examined:
+            session.note_file(path)
+        for path, channel in self.exposures:
+            session.note_exposure(path, channel)
+        if self.diff_truncated:
+            session.diff_truncated = True
 
 
 Handler = Callable[[Workspace, Session, Dict[str, Any]], ToolResult]
@@ -486,6 +521,32 @@ def _handle_list_changed_files(ws: Workspace, session: Session, args: Dict[str, 
     )
 
 
+def _trim_diff(body: str) -> Tuple[str, bool]:
+    """Cut an oversized diff where a file ends, never mid-line.
+
+    The first version sliced at exactly 120,000 characters. That can land in
+    the middle of a hunk header, of a line number, or of the expression that
+    makes the change dangerous — and the file was still recorded as exposed,
+    because `_paths_in_diff` had already seen its header. A reviewer shown two
+    thirds of a function has been shown something worse than nothing: it looks
+    complete.
+
+    So the cut is made at the last `diff --git` boundary inside the ceiling.
+    What survives is whole files; what is missing is missing entirely, which is
+    a state the model can act on and the accounting can see. A single file
+    larger than the whole ceiling has no boundary to cut at, and falls back to
+    the last complete line rather than to nothing.
+    """
+    if len(body) <= MAX_DIFF_CHARS:
+        return body, False
+    head = body[:MAX_DIFF_CHARS]
+    boundary = head.rfind("\ndiff --git ")
+    if boundary > 0:
+        return head[:boundary], True
+    line_end = head.rfind("\n")
+    return (head[:line_end] if line_end > 0 else head), True
+
+
 def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
     path = str(args.get("path") or "")
     # The model's explicit choice wins; the operator's setting is the
@@ -498,32 +559,29 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
     # single-file diff means that file was not fully shown, which the trim
     # notice below already says to the model — it is the unqualified one that
     # decides whether the review saw the change it is answerable for.
-    if not path and ws.diff_truncated:
-        session.diff_truncated = True
+    truncated_change = bool(not path and ws.diff_truncated)
     if not body.strip():
         return ToolResult(
             "Empty diff for {}.".format(path or "this merge request"),
             "empty diff",
         )
-    trimmed = False
-    if len(body) > MAX_DIFF_CHARS:
-        body = body[:MAX_DIFF_CHARS]
-        trimmed = True
-    if path:
-        session.note_file(ws.repo_path(path))
-    # Every file the body actually carries. A whole-change diff names none of
-    # them in the arguments and contains all of them.
-    for touched in _paths_in_diff(body):
-        session.note_exposure(touched, "get_diff")
+    body, trimmed = _trim_diff(body)
     note = (
-        "\n\n[Diff trimmed at 120000 characters. Request individual files with "
-        "`path` to see the rest.]" if trimmed else ""
+        "\n\n[Diff trimmed at {} characters, at a file boundary. The files "
+        "above are whole; the ones after the cut are not here at all. Request "
+        "them individually with `path`.]".format(MAX_DIFF_CHARS)
+        if trimmed else ""
     )
     return ToolResult(
         body + note,
         "diff for {} ({} chars{})".format(
             path or "all files", len(body), ", trimmed" if trimmed else ""
         ),
+        examined=(ws.repo_path(path),) if path else (),
+        # Every file the body actually carries. A whole-change diff names none
+        # of them in the arguments and contains all of them.
+        exposures=tuple((touched, "get_diff") for touched in _paths_in_diff(body)),
+        diff_truncated=truncated_change,
     )
 
 
@@ -539,14 +597,17 @@ def _handle_read_file(ws: Workspace, session: Session, args: Dict[str, Any]) -> 
     start = _as_int(args.get("start_line"), 1)
     end = _as_int(args.get("end_line"), 0)
     body, trimmed = ws.read_file(path, start_line=start, end_line=end)
-    session.note_file(ws.repo_path(path))
-    session.note_exposure(ws.repo_path(path), "read_file")
     if trimmed:
         body += (
             "\n\n[Output trimmed. Re-read with a narrower start_line/end_line "
             "window to see the rest.]"
         )
-    return ToolResult(body, "read {}".format(path))
+    return ToolResult(
+        body,
+        "read {}".format(path),
+        examined=(ws.repo_path(path),),
+        exposures=((ws.repo_path(path), "read_file"),),
+    )
 
 
 def _handle_search_code(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
@@ -558,11 +619,14 @@ def _handle_search_code(ws: Workspace, session: Session, args: Dict[str, Any]) -
         case_sensitive=bool(args.get("case_sensitive", False)),
         context_lines=_as_int(args.get("context_lines"), 0),
     )
-    # The files the matches came from. Nobody asked for these by name, and
-    # their lines are now in the conversation.
-    for touched in _paths_in_search(body):
-        session.note_exposure(touched, "search_code")
-    return ToolResult(body, "search {!r}: {} match(es)".format(pattern, count))
+    return ToolResult(
+        body,
+        "search {!r}: {} match(es)".format(pattern, count),
+        # The files the matches came from. Nobody asked for these by name, and
+        # their lines are now in the conversation.
+        exposures=tuple((touched, "search_code")
+                        for touched in _paths_in_search(body)),
+    )
 
 
 def _handle_git_log(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
@@ -804,28 +868,76 @@ HANDLERS: Dict[str, Handler] = {
 }
 
 
-# Both sides of a file header. `+++ b/...` names the file as it is after the
-# change and is what an addition or an edit carries; a deletion writes
-# `+++ /dev/null` and names the file only on the `--- a/...` line, so reading
-# the `+++` side alone recorded no exposure for it.
-#
-# The bytes of a deleted file are in the diff either way — every removed line
-# of it — so a review of a deletion had the code in front of it and the record
-# said nothing had reached the model. That mattered once the gate began reading
-# this to tell a review that stopped early from one nothing reached: a
-# deletion-only change, partial, was about to be called an absent review.
-_DIFF_PATH = re.compile(r"^(?:\+\+\+ b|--- a)/(.+)$", re.M)
+def _header_path(line: str) -> str:
+    """The file named by a `--- a/...` or `+++ b/...` header, decoded.
+
+    Git puts the prefix inside the quotes — `"b/src/caf\\303\\251.py"` — so the
+    unquoting happens first and the `a/`/`b/` strip second. The single tab git
+    appends when a path contains a space is removed, and nothing else is: a
+    trailing space is a legal name on Linux, and `.strip()` here would produce a
+    key that nothing ever looks up.
+    """
+    body = line[4:]
+    if body.endswith("\t"):
+        body = body[:-1]
+    path = unquote_path(body)
+    if path.startswith("a/") or path.startswith("b/"):
+        return path[2:]
+    return path
 
 
 def _paths_in_diff(body: str) -> List[str]:
     """The files a unified diff actually carries content for.
 
+    Read structurally, one line at a time, rather than by scanning the whole
+    body for anything shaped like a header. The scanning version matched
+    `^(?:\\+\\+\\+ b|--- a)/(.+)$` anywhere, and every line of added content in a
+    diff begins with `+` — so a merge request that adds the literal line
+
+        +++ b/payments/authorise.py
+
+    to any file wrote an exposure record for a file the reviewer never opened.
+    The record is read by `gate._reviewed_nothing` to tell a review that
+    stopped early from one that never started, so the forgery pointed the wrong
+    way: it made a thinner review look like a fuller one. The same class of
+    defect, and the same fix, as `evidence.changed_lines` — parse the format,
+    do not pattern-match the text.
+
+    A header only counts before the first `@@` of its file section. After that,
+    everything until the next `diff --git` is content the author wrote.
+
+    Both sides are read. `+++ b/...` names the file as it is after the change
+    and is what an addition or an edit carries; a deletion writes
+    `+++ /dev/null` and names the file only on `--- a/...`. The bytes of a
+    deleted file are in the diff either way — every removed line of it — so a
+    review of a deletion had the code in front of it, and reading the `+++`
+    side alone recorded nothing.
+
+    Paths are decoded with the same function the evidence layer uses: git
+    escapes quotes, backslashes and control characters whatever
+    `core.quotePath` says, and a path recorded in its escaped form is a path
+    nothing will ever match.
+
     Deduplicated, because an ordinary edit names the same file on both header
     lines and an exposure is a fact about a file rather than a count of
     mentions.
     """
-    return list(dict.fromkeys(
-        line for line in _DIFF_PATH.findall(body or "") if line != "/dev/null"))
+    found: List[str] = []
+    in_hunk = False
+    for line in (body or "").splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if in_hunk:
+            continue
+        if line.startswith("--- ") or line.startswith("+++ "):
+            path = _header_path(line)
+            if path and path != "/dev/null":
+                found.append(path)
+    return list(dict.fromkeys(found))
 
 
 _SEARCH_PATH = re.compile(r"^([^\s:][^:]*):\d+:", re.M)
@@ -842,29 +954,106 @@ def dispatch(ws: Workspace, session: Session, name: str, args: Dict[str, Any]) -
     A raised exception here would end the run; a returned error lets the agent
     correct a bad argument and continue, which is almost always what a wrong path
     or an invalid regex deserves.
+
+    Every exit goes through `_budgeted`, including the error ones. They are not
+    refused — an error result always reaches the model — but they are text in
+    the conversation and were once the four ways out of this function that the
+    estimate never saw.
     """
     handler = HANDLERS.get(name)
     if handler is None:
-        return ToolResult(
+        return _budgeted(session, name, ToolResult(
             "No tool named {!r}. Available: {}.".format(name, ", ".join(sorted(HANDLERS))),
             "unknown tool {}".format(name),
             is_error=True,
-        )
+        ))
     if not isinstance(args, dict):
-        return ToolResult(
+        return _budgeted(session, name, ToolResult(
             "Tool input must be a JSON object.", "malformed input", is_error=True
-        )
+        ))
     try:
-        return handler(ws, session, args)
+        result = handler(ws, session, args)
     except WorkspaceError as exc:
-        return ToolResult(str(exc), "error: {}".format(exc), is_error=True)
+        return _budgeted(session, name, ToolResult(
+            str(exc), "error: {}".format(exc), is_error=True))
     except Exception as exc:  # last line of defence — never kill the run
         log.exception("tool %s raised", name)
-        return ToolResult(
+        return _budgeted(session, name, ToolResult(
             "{} failed unexpectedly: {}: {}".format(name, type(exc).__name__, exc),
             "error: {}".format(type(exc).__name__),
             is_error=True,
+        ))
+    return _budgeted(session, name, result)
+
+
+# Tools whose result is a decision, not a payload. They are tiny, and their
+# handlers write to the session before the result is weighed — `finish_review`
+# sets `finished`, `report_finding` appends a candidate. Refusing one for space
+# would leave the session recording something the model was told did not happen.
+# They are counted like everything else; they are simply never kept out.
+ALWAYS_ADMITTED = frozenset({REPORT_FINDING, FINISH_REVIEW, SUBMIT_VERDICT})
+
+
+def _budgeted(session: Session, name: str, result: ToolResult) -> ToolResult:
+    """Count what this result costs, or keep it out if there is no room.
+
+    The check is made *before* the content enters the conversation. Asking
+    afterwards is the "one last huge tool call" problem: a 20k result admitted
+    at 105k against a 110k ceiling does not stop at 110k, it lands at 125k, and
+    the ceiling measured nothing.
+
+    An error result is admitted whatever the budget says. It is small, and
+    refusing the message that explains a bad argument would leave the model
+    guessing at the very moment it needs to narrow its request. That does mean
+    the estimate can pass `hard`: this is a ceiling on what is *fetched*, not a
+    guarantee about the conversation, and the alternative — a review that cannot
+    be told why its argument was wrong — is worse.
+
+    A refused result records nothing on the session. `exposures` is how
+    `gate._reviewed_nothing` tells a review that stopped early from one that
+    never started, and content that was kept out of the conversation was not
+    seen. Recording it here would have let a run refused everything it asked
+    for claim the change had been read.
+    """
+    budget = session.context
+    if not budget.bounded or result.is_error or name in ALWAYS_ADMITTED:
+        budget.admit(name, result.content)
+        result.apply(session)
+        return result
+
+    if budget.would_exceed(result.content):
+        cost = budget.refuse(name, result.content, "would cross the hard limit")
+        left = budget.remaining or 0
+        # The refusal is a tool result rather than an exception so the model can
+        # act on it, and it says what to do rather than only what happened.
+        #
+        # What it must not say is "finish with what you have". The first draft
+        # did, and that is an instruction to conclude on less than the change —
+        # from the one component whose whole purpose is to stop that happening
+        # silently. It narrows, or it says the review is short.
+        refusal = ToolResult(
+            "This result is about {:,} estimated tokens and only about {:,} "
+            "remain in the review's context budget, so it was not returned and "
+            "none of it was seen. Narrow the request — a line range, a single "
+            "file, a tighter pattern — and read it. Anything left unread makes "
+            "this review incomplete, and it will be reported as incomplete."
+            .format(cost, left),
+            "{}: refused, {:,} tokens over budget".format(name, cost - left),
+            is_error=True,
         )
+        # The refusal itself is text in the conversation. Not counting it let a
+        # run of repeated refusals grow the real context while the estimate
+        # stood still.
+        budget.admit(name + ":refusal", refusal.content)
+        return refusal
+
+    budget.admit(name, result.content)
+    result.apply(session)
+    hint = budget.hint()
+    if hint:
+        budget.admit(name + ":hint", hint)
+        return ToolResult(result.content + hint, result.summary, result.is_error)
+    return result
 
 
 def _as_int(value: Any, default: int) -> int:

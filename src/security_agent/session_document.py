@@ -34,6 +34,7 @@ from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .context_budget import ContextBudget
 from .models import (
     CONFIDENCE_ORDER,
     SEVERITY_ORDER,
@@ -109,6 +110,11 @@ SESSION_FIELDS: Dict[str, str] = {
     "duplicates_dropped": "duplicates_dropped",
     "turn": "turn",
     "metrics": "metrics",
+    # What the review spent of the conversation. It crosses this boundary
+    # because the child is where the tool results land and the parent is where
+    # the run is judged: a budget the parent cannot see is a budget nobody can
+    # act on, and a refusal to admit a result has to reach the report.
+    "context": "context",
     "finished": "finished",
     "final_summary": "final_summary",
     "unresolved": "unresolved",
@@ -280,6 +286,7 @@ def _encoded_session(session: Session) -> Dict[str, Any]:
         "duplicates_dropped": session.duplicates_dropped,
         "turn": session.turn,
         "metrics": _encode_metrics(session.metrics),
+        "context": _encode_context(session.context),
         "finished": session.finished,
         "final_summary": session.final_summary,
         "unresolved": list(session.unresolved),
@@ -294,6 +301,60 @@ def _encoded_session(session: Session) -> Dict[str, Any]:
 
 def _encode_metrics(metrics: StageMetrics) -> Dict[str, int]:
     return {f.name: getattr(metrics, f.name) for f in dataclass_fields(StageMetrics)}
+
+
+def _encode_context(budget: ContextBudget) -> Dict[str, Any]:
+    """The counts, not the event list.
+
+    Every refused result is one line in `events`, and a run that hit the ceiling
+    repeatedly would carry hundreds across a boundary whose whole purpose is to
+    be small. The counts are what the parent acts on; the events stay in the
+    process that recorded them.
+    """
+    return {name: getattr(budget, name) for name in _CONTEXT_FIELDS}
+
+
+# Every counter the parent needs. Named once so the encoder and the decoder
+# cannot disagree, and so a field added to `ContextBudget` and forgotten here
+# fails a test rather than quietly not crossing the boundary.
+_CONTEXT_FIELDS: Tuple[str, ...] = (
+    "soft", "hard", "estimated_result_tokens", "admitted_results",
+    "refused_results", "refused_tokens",
+)
+
+
+def _decode_context(payload: Any, where: str) -> ContextBudget:
+    """Absent is a run that predates the budget, not a run that spent nothing.
+
+    An older document carries no `context` key at all. Reading that as zeros
+    would say the review used no context, which is the absent-versus-zero
+    confusion this project keeps finding in its own records — so a missing block
+    produces an unbounded budget with nothing counted, and an unbounded budget
+    is visibly not a measurement.
+
+    A block that *is* present must carry every field. The first version filled a
+    missing member with zero, which is the same confusion one level down and a
+    worse version of it: `refused_results` is the count that decides whether the
+    review is reported as incomplete, and a truncated or older document would
+    have erased it into a clean run.
+    """
+    if payload is None:
+        return ContextBudget()
+    if not isinstance(payload, dict):
+        raise SessionDocumentError("{} must be an object".format(where))
+    budget = ContextBudget()
+    for name in _CONTEXT_FIELDS:
+        if name not in payload:
+            raise SessionDocumentError(
+                "{}: {} is missing. A context block that is present must carry "
+                "every count; a missing one would read as zero and turn a "
+                "shortened review into a clean one.".format(where, name))
+        value = payload[name]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise SessionDocumentError(
+                "{}: {} must be a non-negative integer".format(where, name))
+        setattr(budget, name, value)
+    return budget
 
 
 def _encode_candidate(candidate: Candidate) -> Dict[str, Any]:
@@ -433,6 +494,7 @@ def _decode_session(payload: Dict[str, Any], where: str) -> Session:
         for index, item in enumerate(_items(payload, "candidates", where), start=1)
     ]
     metrics = _decode_metrics(_field(payload, "metrics", where), where + ": metrics")
+    context = _decode_context(payload.get("context"), where + ": context")
 
     session = Session(
         candidates=candidates,
@@ -449,6 +511,7 @@ def _decode_session(payload: Dict[str, Any], where: str) -> Session:
         duplicates_dropped=_count(payload, "duplicates_dropped", where),
         turn=_count(payload, "turn", where),
         metrics=metrics,
+        context=context,
         finished=_flag(payload, "finished", where),
         final_summary=_text(payload, "final_summary", where),
         unresolved=_strings(payload, "unresolved", where),

@@ -75,6 +75,7 @@ def render_markdown(cfg: Config, outcome: ScanOutcome, decision: Decision) -> st
         lines += _incomplete_warning(outcome)
 
     lines += _truncated_diff_note(outcome)
+    lines += _context_refusal_note(outcome)
     lines += _scope_note(cfg, outcome)
     lines += _sign_off(outcome)
 
@@ -352,6 +353,28 @@ def _truncated_diff_note(outcome: ScanOutcome) -> List[str]:
         "was not examined through it. Narrow the review with `--path`, split "
         "the change, or raise `SECURITY_SCAN_DIFF_CEILING_BYTES`, for a "
         "complete reading.",
+    ]
+
+
+def _context_refusal_note(outcome: ScanOutcome) -> List[str]:
+    """The reviewer asked for code and the context budget did not hand it over.
+
+    Beside the truncated-diff warning and for the same reason: the refusal was a
+    tool result the *model* read, and the person deciding whether to merge never
+    sees it. The remedy is two-sided on purpose — a broad request can be narrowed
+    and read, or the limit can be raised — because a warning whose only remedy is
+    "configure it differently" gets configured away.
+    """
+    refusals = outcome.coverage.context_refusals
+    if not refusals:
+        return []
+    return [
+        "",
+        "> [!WARNING]",
+        "> **{} tool result(s) were too large for the review's context budget "
+        "and were not returned.** The reviewer asked for code and saw none of "
+        "it, so this reading has a hole in it. Narrow those reads, or raise "
+        "`SECURITY_SCAN_MAX_CONTEXT`, for a complete review.".format(refusals),
     ]
 
 

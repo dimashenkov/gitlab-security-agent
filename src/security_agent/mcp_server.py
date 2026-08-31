@@ -51,6 +51,7 @@ from .crash_journal import CrashJournal, CrashJournalError
 from .gate import EXIT_ERROR, EXIT_OK
 from .models import Revision, ToolCallRecord
 from .session_document import SessionDocumentError, write_session
+from .context_budget import ContextBudget
 from .tools import (
     Session,
     ToolResult,
@@ -522,6 +523,8 @@ def build_server(
     run_id: str = "",
     revision: Optional[Revision] = None,
     default_context_lines: int = 12,
+    max_context_tokens: int = 0,
+    max_context_soft_tokens: int = 0,
 ) -> MCPServer:
     """Assemble a session from the same parts the API path uses.
 
@@ -529,6 +532,19 @@ def build_server(
     `main` for why a journal that was asked for and could not be opened stops
     the server from starting.
     """
+    # Before the workspace, because an argument that could never work should be
+    # refused whatever the repository turns out to be. Refused rather than
+    # corrected: this is a command line, outside `Config.validate`, and a
+    # ceiling that quietly relaxes is the defect this project keeps finding in
+    # its own code.
+    if max_context_tokens < 0 or max_context_soft_tokens < 0:
+        raise ValueError("--max-context and --max-context-soft must not be "
+                         "negative; 0 means unbounded")
+    if max_context_soft_tokens > max_context_tokens > 0:
+        raise ValueError(
+            "--max-context-soft ({}) is above --max-context ({}), so it could "
+            "never fire".format(max_context_soft_tokens, max_context_tokens))
+
     workspace = Workspace(
         root=root, excludes=excludes, diff_base=diff_base, diff_head=diff_head,
         scope=scope, default_context_lines=default_context_lines)
@@ -546,6 +562,9 @@ def build_server(
             "session that may make no tool calls cannot review anything"
             .format(max_tool_calls))
     allowance = Allowance(tool_set, max_tool_calls)
+    session = Session()
+    session.context = ContextBudget.configured(max_context_tokens,
+                                               max_context_soft_tokens)
 
     journal = None
     if crash_journal_path is not None:
@@ -554,7 +573,7 @@ def build_server(
         # would otherwise leave an empty file, and an empty file cannot say
         # whether the run never began or the disk was never reachable.
         journal.run_started(mode=tool_set, revision=_revision_line(revision))
-    return MCPServer(workspace, tools, allowance, journal=journal)
+    return MCPServer(workspace, tools, allowance, session=session, journal=journal)
 
 
 def _revision_line(revision: Optional[Revision]) -> str:
@@ -604,6 +623,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             run_id=args.run_id or "",
             revision=revision,
             default_context_lines=args.context_lines,
+            max_context_tokens=args.max_context,
+            max_context_soft_tokens=args.max_context_soft,
         )
     except (WorkspaceError, ConfigError, ValueError) as exc:
         # A server that never came up must not exit zero. On this transport the
@@ -820,6 +841,15 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
                              "on the parent")
     parser.add_argument("--max-tool-calls", type=int, default=100,
                         help="Ceiling for this session (default: 100).")
+    parser.add_argument("--max-context", type=int, default=0,
+                        help="Estimated tokens of tool output this session may "
+                             "accumulate before results stop being returned. "
+                             "0 (default) is unbounded; "
+                             "SECURITY_SCAN_MAX_CONTEXT on the parent.")
+    parser.add_argument("--max-context-soft", type=int, default=0,
+                        help="Where the session is told to start finishing "
+                             "rather than stopped. 0 derives it from "
+                             "--max-context.")
     parser.add_argument(
         "--path", metavar="PATH", action="append", default=[],
         help="Narrow which changed files the review is answerable for. "

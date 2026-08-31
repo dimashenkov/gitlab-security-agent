@@ -111,6 +111,13 @@ EXPLAINED: Dict[str, str] = {
     "PartialTrace.verdict_reasoning": "the same",
     "PartialTrace.missing_sequence_numbers": "the same",
 
+    # `ContextEvent` is built and consumed inside `context_budget.py`: `admit`
+    # and `refuse` append one, `largest_result` reads them back to name the
+    # heaviest single tool result. Nothing outside needs an event, and the
+    # session document deliberately carries the counts without them — a run
+    # that hit the ceiling repeatedly would otherwise send hundreds of lines
+    # across a boundary whose purpose is to be small.
+    "ContextEvent.estimated_tokens": "read by ContextBudget.largest_result",
     "Capabilities.refusal_fallback": "read in agent.py where the call is built",
     "ChangedLines.removed_at": "read by ChangedLines' own helpers and by evidence.py",
     "Disposition.interaction": "carried through panel.py's own correction path",
