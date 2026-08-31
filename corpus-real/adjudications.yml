@@ -565,3 +565,116 @@ adjudications:
       its current `unclear` rationale gives the reviewer too much credit by
       reducing the evidentiary failure to one missing helper."
     adjudicated_on: 2026-08-30
+
+  # The snapshot twin of the guard-livereload case ruled at line 55. Same
+  # reading, and it can be applied here because this row has a fingerprint and
+  # that one does not — which is the whole difference between a ruling that
+  # excuses something and a ruling that is only a sentence.
+  #
+  # Rejected on the way here, and recorded because it would have reversed a
+  # decision the project already argued: `case_is_malformed`, on the grounds
+  # that the fix leaves the traversal in place and only withholds the body.
+  # Codex refused it. The advisory's weakness is arbitrary file *read*, and no
+  # file content leaves the process on the safe member. The residual oracle is
+  # strictly smaller, answers a different question, and — decisively — is not
+  # new: before the fix the codes were 200 versus 404, so the same distinction
+  # existed and the patch never claimed to remove it. A pre-existing lesser
+  # weakness surviving a fix is the shape `incidental` was written for.
+  #
+  # Note the fingerprint is the same on both members: it anchors to the code
+  # the finding quotes, and both quote `_serve`. The ruling is member-scoped,
+  # so excusing it on the safe side leaves the unsafe target untouched.
+  - case_id: rb-g65v-27r3-5p6m-snap
+    member: safe
+    file: lib/guard/livereload/websocket.rb
+    fingerprint: 2e66586e6b338dc7
+    severity_reported: low
+    claim: Path traversal in the LiveReload HTTP handler leaks arbitrary file existence
+    verdict: real
+    incidental: true
+    evidence: >-
+      `_serve` no longer calls `_serve_file` for a readable path. It sends a
+      constant 403 when `_readable_file(path)` is true and a constant 404 when
+      it is false, and `_readable_file` is unchanged — `File.readable?(path)`
+      on the raw path, with no `expand_path`, no `realpath` and no rejection of
+      `..` anywhere in the file. So `../../etc/shadow` still answers a question
+      about the host, and only the body is withheld.
+    why_not_the_target: >-
+      The advisory is arbitrary file read through directory traversal and that
+      is closed: no file content leaves the process. The existence oracle is a
+      lesser weakness of the same family in the same file, which is exactly
+      what `is_target` cannot tell apart and what this ruling exists to
+      separate.
+    precedent: rb-g65v-27r3-5p6m
+    adjudicated_on: 2026-08-31
+
+  # Not a ruling that changes anything, and written that way on purpose.
+  #
+  # The pair fails because the reviewer never reported the advisory's denial of
+  # service — a malformed UDP datagram killing the TURN receive loop. Nothing
+  # here excuses that and nothing here could: `incidental` separates a non-target
+  # finding from a target one when the coarse key confuses them, and an
+  # `authn-authz` finding never matches a `dos` target, so the scorer already
+  # treats it as beside the point.
+  #
+  # It is recorded because the finding is a real product result that a line
+  # saying only "missed the DoS" would throw away. TURN requests accepted
+  # without MESSAGE-INTEGRITY, present in *both* members, so it survives the
+  # maintainers' fix in the file the fix touched.
+  - case_id: cs-pfvm-w89x-94jw-snap
+    member: safe
+    file: src/SIPSorcery/net/TURN/TurnServer.cs
+    fingerprint: 40f090843694be27
+    severity_reported: high
+    claim: TURN Refresh/CreatePermission/ChannelBind accepted without MESSAGE-INTEGRITY
+    verdict: real
+    not_verifiable: false
+    evidence: >-
+      The same fingerprint is reported on the unsafe member, so the defect is
+      anchored to code that both members share and the fix did not touch it.
+    note: >-
+      Changes no score and carries no `incidental` key. The case is a
+      limitation, family B, and this row exists so the finding is discoverable
+      from the case rather than only from a batch file.
+    adjudicated_on: 2026-08-31
+
+  # The advisory is an out-of-bounds read while parsing SACK chunks. The unsafe
+  # member reports exactly that, in the file the fix touched. The safe member
+  # reports something else that also ends in lost availability, in the *other*
+  # file the fix touched, and the coarse key reads that as the target
+  # persisting.
+  #
+  # Ruled incidental on specificity, which is the only thing that saves it:
+  # the advisory is not "a denial of service somewhere in SCTP", it is
+  # malformed SACK count fields read past the end of a chunk. The safe finding
+  # is transport-error handling *after* parsing — an inverted lifecycle check
+  # and a busy loop. Different trigger, different state, different code,
+  # different repair.
+  #
+  # Codex named four things that would make this wrong, and none is visible in
+  # the members: that the malformed SACK input can drive the transport-error
+  # path, that the `_isClosed` edit was part of the intended defence against
+  # that input, that the spin is the safe-side manifestation of the parser
+  # failure after the bounds fix, or that the advisory describes general
+  # receive-loop exhaustion rather than the parser. Recorded so the next reader
+  # can overturn this by finding one of them rather than by re-litigating it.
+  - case_id: cs-jwjp-4649-v8jp-snap
+    member: safe
+    file: src/SIPSorcery/net/WebRTC/RTCSctpTransport.cs
+    fingerprint: 56c1a1474d739499
+    severity_reported: low
+    claim: Inverted _isClosed check makes the SCTP receive loop spin on transport error
+    verdict: real
+    incidental: true
+    evidence: >-
+      The finding is in RTCSctpTransport.cs and concerns the receive loop's
+      reaction to a transport error. The advisory's weakness is in
+      SctpSackChunk.cs and is reported separately on the unsafe member as
+      a13720ccf5bd6dd1.
+    why_not_the_target: >-
+      Same category and one of the two expected files, which is why the coarse
+      key matched it, and a different mechanism reached by a different trigger.
+      Category and changed-file overlap make a candidate; they do not establish
+      identity.
+    adjudicated_on: 2026-08-31
+

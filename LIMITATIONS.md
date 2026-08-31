@@ -241,6 +241,54 @@ argued for `not_real`, scoped to the concrete claim; `unclear` was kept because
 the ordering is real and reproducible from this file, and the objection is
 recorded beside the ruling rather than dropped.
 
+## The two cases outside the five languages
+
+Added 2026-08-31, when the accounting stopped counting rows from an unrecorded
+corpus version and the last two C#/Ruby cases came due. They are limitations for
+two different reasons, and collapsing them would hide the second one.
+
+**`cs-pfvm-w89x-94jw-snap` — family B, and the finding it did report is real.**
+The advisory is a denial of service: a malformed UDP datagram crashes the TURN
+receive loop with no restart, disabling UDP relay for every client. Neither
+member reports anything in the `dos` category. Both report authentication
+defects in the same file — TURN Refresh/CreatePermission/ChannelBind accepted
+without MESSAGE-INTEGRITY, fingerprint `40f090843694be27`, present on **both**
+members and therefore surviving the maintainers' fix — and the safe member adds
+hardcoded `turn-user/turn-pass` credentials and a relay that permits loopback
+and private-range peers. Scored a miss, because the advisory's weakness was
+never named. The authentication finding is recorded in `adjudications.yml` with
+`verdict: real` and no `incidental` key, so it changes no number and is not lost.
+
+**`rb-g65v-27r3-5p6m` — not a miss at all, and this is the honest shape of it.**
+The reviewer found the advisory's arbitrary file read on the unsafe member. It
+also reported, on the safe member, that the fix leaves an existence oracle:
+`_serve` withholds the body but still answers 403 for a readable path and 404
+for an absent one, and `_readable_file` never normalises the path. That finding
+is correct, is a lesser weakness than the advisory's, and was ruled `incidental`
+on 2026-08-28.
+
+**The ruling cannot be applied, because the row carries no fingerprint.** It was
+written before batch summaries recorded them, and `ruled_incidental` matches on
+the fingerprint and on nothing else — deliberately, because a ruling that named
+only the file would also excuse a genuine arbitrary file read in that file.
+`tools/artifact.py` anticipated exactly this and named the honest behaviour:
+leave the pair scored as it was and say why, rather than widen the key until it
+fits.
+
+So this is a limitation about the **evidence**, not about the reviewer. Its
+snapshot twin has a fingerprint, carries the identical ruling, and passes. This
+one is recoverable by one re-run and by nothing else — no reading changes it.
+
+Rejected while writing these, and recorded because it would have reversed a
+decision the project had already argued: ruling both Ruby cases
+`case_is_malformed` on the grounds that the traversal survives the fix. Codex
+refused it. The advisory's weakness is arbitrary file *read* and no file content
+leaves the process on the safe member; the residual oracle is smaller, answers a
+different question, and is not new — before the fix the codes were 200 versus
+404. Reaching for `case_is_malformed` because a fingerprint was missing would
+also have used a case-level ruling to evade the safeguard that the missing
+fingerprint exists to enforce.
+
 ## What is sent where
 
 The agent runs in your CI job and holds two credentials: an Anthropic API key
