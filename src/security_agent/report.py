@@ -529,6 +529,39 @@ def _rejected_section(outcome: ScanOutcome) -> List[str]:
     return [*lines, ""]
 
 
+def _cost_note(prov) -> str:
+    """What the run cost, appended to the billing line, or "".
+
+    The figure was written into the artifact and rendered nowhere, so seeing it
+    meant opening JSON. It goes beside `Billing:` and not on a line of its own
+    because the two are one fact: a number without who paid it is the confusion
+    this project has already built three wrong rules on.
+
+    On the CLI path `total_cost_usd` arrives on a subscription too — a two-token
+    reply on a Max plan came back as $0.29 — so it is marked as list price for
+    the tokens used rather than presented as an amount charged. When the
+    provider reported nothing the line simply does not gain a figure; "$0.00"
+    would be a measurement, and there was none.
+    """
+    cost = getattr(prov, "reported_cost_usd", None)
+    if not isinstance(cost, (int, float)):
+        return ""
+    # From the authentication, not the provider. `claude-cli` says how the run
+    # was launched; a CLI whose stored login is an API key is charged, and the
+    # first version of this called that notional — the confusion this line was
+    # added to resolve, reproduced inside it.
+    method = (getattr(prov, "auth_method", "") or "").strip()
+    if getattr(prov, "provider", "") == "anthropic-api" or method in ("api-key", "console"):
+        return " · **${:.2f}** charged".format(cost)
+    if method == "claude.ai" and getattr(prov, "auth_subscription", ""):
+        return (" · **${:.2f}** at API list price for the tokens used — "
+                "not an amount charged".format(cost))
+    # Nobody established how this was billed, so the figure is stated without a
+    # claim about who paid it rather than assigned to the cheaper reading.
+    return (" · **${:.2f}** at API list price; how this run was billed was "
+            "not established".format(cost))
+
+
 def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
     usage = outcome.total_usage()
     lines: List[str] = []
@@ -586,7 +619,7 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
         # Only when the provider said something. A line reading "not
         # established" on every API run would be noise, and the honest silence
         # is the absence of the line rather than a sentence about not knowing.
-        lines += ["**Billing:** {}".format(prov.billing), ""]
+        lines += ["**Billing:** {}{}".format(prov.billing, _cost_note(prov)), ""]
     lines += [
         "**Settings:** fail on `{}` · minimum confidence `{}` · verification "
         "`{}`{} · model `{}` · effort `{}`".format(

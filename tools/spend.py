@@ -39,6 +39,7 @@ import argparse
 import json
 import statistics
 import sys
+from datetime import datetime, timezone
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -47,7 +48,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Where an artifact lands by default. `SECURITY_SCAN_OUTPUT_DIR` moves it, so a
 # caller with a different layout passes paths instead.
-DEFAULT_GLOBS = (".security-scan/**/findings.json", "journal/**/findings.json")
+DEFAULT_GLOBS = (".security-scan/**/findings.json", "journal/**/findings.json",
+                 # This repository's own kept artifacts. Without it the tool
+                 # reported "no artifacts found" in the tree that has spent the
+                 # most, because the first two are where a *user's* run writes.
+                 "measurements/**/findings.json")
+
+# The queue writes one row per invocation, and that is a different record from
+# an artifact: the corpus runs kept an artifact only for the members that
+# failed. Read as a separate source and never merged, because a review can
+# appear in both and nothing keys them together — summing them would inflate
+# the one number this tool exists to state carefully.
+QUEUE_LOG = "measurements/queue/log.jsonl"
+# Set by `queue_rows`: lines it could not parse, or -1 for a log it
+# could not read at all.
+QUEUE_SKIPPED = 0
 
 BILLED = "anthropic-api"
 NOTIONAL = "claude-cli"
@@ -87,25 +102,53 @@ def cost_of(row: Dict[str, Any]) -> Optional[float]:
     return float(value) if isinstance(value, (int, float)) else None
 
 
-def billed(row: Dict[str, Any]) -> bool:
-    """Was anyone actually charged for this run?
+# Three, because two could not express the case that matters. The first
+# version had `billed()` returning a bool keyed on `provider`, and it was wrong
+# in exactly the way this tool exists to prevent: `claude-cli` is how the run
+# was launched, not who paid for it. `Authentication.method` is `claude.ai` for
+# a subscription login and `api-key` or `console` for a billed one, so a CLI run
+# whose stored login is an API key is charged — and was being reported as
+# notional. A subscription figure and a bill were about to be added under the
+# wrong heading by the tool written to keep them apart.
+CHARGED = "charged"
+NOTIONAL_ = "notional"
+UNKNOWN = "unknown"
 
-    Decided by the provider, never by whether a number is present: the CLI
-    reports a figure on a subscription too, which is the confusion this answers.
+
+def paid_by(row: Dict[str, Any]) -> str:
+    """`charged`, `notional`, or `unknown` — never inferred from the number.
+
+    `unknown` is a real answer and is never folded into either money column.
+    Guessing it as notional would understate a bill, and understating a cost is
+    believed while overstating one prompts a question.
     """
-    return _provenance(row).get("provider") == BILLED
+    prov = _provenance(row)
+    if prov.get("provider") == BILLED:
+        # The Messages API path: an API key is the only way it runs.
+        return CHARGED
+    method = (prov.get("auth_method") or "").strip()
+    if method == "claude.ai" and prov.get("auth_subscription"):
+        return NOTIONAL_
+    if method in ("api-key", "console"):
+        return CHARGED
+    # An empty method is the CLI declining to say, an unparseable answer, or a
+    # timeout. All three are "nobody established this".
+    return UNKNOWN
+
+
+def billed(row: Dict[str, Any]) -> bool:
+    """Kept for readers that want the yes/no; `paid_by` is the honest answer."""
+    return paid_by(row) == CHARGED
 
 
 def who_paid(row: Dict[str, Any]) -> str:
     prov = _provenance(row)
-    if prov.get("provider") == BILLED:
+    state = paid_by(row)
+    if state == CHARGED:
         return "API key — billed"
-    subscription = prov.get("auth_subscription")
-    if subscription:
-        return "subscription ({}) — notional".format(subscription)
-    if prov.get("provider") == NOTIONAL:
-        return "Claude Code login — notional"
-    return "unknown"
+    if state == NOTIONAL_:
+        return "subscription ({}) — notional".format(prov.get("auth_subscription"))
+    return "not established — counted in neither column"
 
 
 def when(row: Dict[str, Any]) -> str:
@@ -124,73 +167,202 @@ def unreported_stages(row: Dict[str, Any]) -> int:
     return value if isinstance(value, int) else 0
 
 
-def _period(stamp: str, by: str) -> str:
+def queue_rows(path: Path) -> List[Dict[str, Any]]:
+    """The queue's own log, reshaped into the fields `summarise` reads.
+
+    Every row is notional by construction: the queue runs on `claude-cli`, and
+    the log says so in `notional_api_cost_source` rather than leaving a reader
+    to infer it from the provider.
+    """
+    if not path.is_file():
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        body = path.read_text(encoding="utf-8")
+    except OSError:
+        # `is_file()` passing does not make the read succeed, and a report that
+        # silently loses the whole log is the failure this tool is about.
+        globals()["QUEUE_SKIPPED"] = -1
+        return []
+    skipped = 0
+    for line in body.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            skipped += 1
+            continue
+        if not isinstance(row, dict) or row.get("kind") != "review":
+            continue
+        cost = row.get("notional_api_cost")
+        provenance: Dict[str, Any] = {
+            "provider": NOTIONAL,
+            "model_requested": row.get("model", ""),
+            # Carried when the row has them. Rows written before the queue
+            # recorded these classify as unknown, which is what they are: the
+            # log did not say, and the cost cannot be assigned to a pot on the
+            # strength of the runner's name.
+            "auth_method": row.get("auth_method") or "",
+            "auth_subscription": row.get("auth_subscription") or "",
+        }
+        if isinstance(cost, (int, float)):
+            provenance["reported_cost_usd"] = float(cost)
+        usage: Dict[str, Any] = {name: row.get(name) for name in TOKEN_FIELDS}
+        # `usage_reported` false means the run finished and its figures never
+        # arrived: an admitted gap, not four zeros.
+        usage["unreported_stages"] = 0 if row.get("usage_reported") else 1
+        out.append({
+            "generated_at": row.get("started_at", ""),
+            "provenance": provenance,
+            "usage": usage,
+            "_path": "{}:{}/{}".format(path, row.get("case_id"), row.get("member")),
+        })
+    # Counted, not swallowed. The artifact path promises unreadable records are
+    # reported; this one had the same obligation and dropped them in silence.
+    globals()["QUEUE_SKIPPED"] = skipped
+    return out
+
+
+def instant(stamp: str) -> Optional[datetime]:
+    """`stamp` as an aware UTC datetime, or None when it cannot be read.
+
+    Parsed rather than compared as text. Every other tool here compares ISO
+    strings and is correct only while everything writes UTC — which breaks the
+    moment one record carries a local offset, because `2026-08-31T01:00+03:00`
+    sorts after `2026-08-30` and belongs before it. A tool whose purpose is
+    accounting should not knowingly keep a boundary that is wrong.
+
+    A timestamp with no offset is *not* assumed to be UTC. Guessing a timezone
+    moves a run between days, and this returns None so it is reported as undated
+    instead.
+    """
     if not stamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _period(stamp: str, by: str) -> str:
+    moment = instant(stamp)
+    if moment is None:
         return "undated"
-    return stamp[:7] if by == "month" else stamp[:10]
+    return moment.strftime("%Y-%m" if by == "month" else "%Y-%m-%d")
 
 
 def summarise(rows: List[Dict[str, Any]], by: str = "day",
-              unreadable: int = 0) -> int:
+              unreadable: int = 0, source: str = "artifacts",
+              skipped_lines: int = 0) -> int:
     if not rows:
-        print("No artifacts found. Point it at a findings.json, or run a "
-              "review first.")
+        print("Nothing to report. No records were found — which is not the "
+              "same as nothing having been spent.")
         return 2
 
     groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for row in rows:
         groups[_period(when(row), by)].append(row)
 
-    print("{:<12} {:>5} {:>12} {:>12} {:>9}".format(
-        by, "runs", "billed $", "notional $", "no cost"))
-    print("-" * 54)
+    print("{:<12} {:>5} {:>11} {:>12} {:>9} {:>9}".format(
+        by, "runs", "charged $", "notional $", "unknown", "no cost"))
+    print("-" * 62)
 
-    totals = {"billed": [], "notional": [], "silent": 0, "runs": 0}
+    totals: Dict[str, Any] = {CHARGED: [], NOTIONAL_: [], "unknown": 0,
+                              "silent": 0, "runs": 0}
     for period in sorted(groups):
         members = groups[period]
-        bill = [c for c in (cost_of(r) for r in members if billed(r)) if c is not None]
-        note = [c for c in (cost_of(r) for r in members if not billed(r)) if c is not None]
-        silent = sum(1 for r in members if cost_of(r) is None)
-        totals["billed"] += bill
-        totals["notional"] += note
+        pots: Dict[str, List[float]] = {CHARGED: [], NOTIONAL_: []}
+        unknown = silent = 0
+        for row in members:
+            cost = cost_of(row)
+            if cost is None:
+                silent += 1
+                continue
+            state = paid_by(row)
+            if state == UNKNOWN:
+                # A figure exists and nobody established which pot it belongs
+                # in. Putting it in the cheaper one would understate a bill, so
+                # it is counted as a run and its money is reported nowhere.
+                unknown += 1
+                continue
+            pots[state].append(cost)
+        for state in (CHARGED, NOTIONAL_):
+            totals[state] += pots[state]
+        totals["unknown"] += unknown
         totals["silent"] += silent
         totals["runs"] += len(members)
-        print("{:<12} {:>5} {:>12} {:>12} {:>9}".format(
+        print("{:<12} {:>5} {:>11} {:>12} {:>9} {:>9}".format(
             period, len(members),
-            "{:.2f}".format(sum(bill)) if bill else "—",
-            "{:.2f}".format(sum(note)) if note else "—",
-            silent or "—"))
+            "{:.2f}".format(sum(pots[CHARGED])) if pots[CHARGED] else "—",
+            "{:.2f}".format(sum(pots[NOTIONAL_])) if pots[NOTIONAL_] else "—",
+            unknown or "—", silent or "—"))
 
-    print("-" * 54)
-    print("{:<12} {:>5} {:>12} {:>12} {:>9}".format(
+    print("-" * 62)
+    print("{:<12} {:>5} {:>11} {:>12} {:>9} {:>9}".format(
         "total", totals["runs"],
-        "{:.2f}".format(sum(totals["billed"])) if totals["billed"] else "—",
-        "{:.2f}".format(sum(totals["notional"])) if totals["notional"] else "—",
-        totals["silent"] or "—"))
+        "{:.2f}".format(sum(totals[CHARGED])) if totals[CHARGED] else "—",
+        "{:.2f}".format(sum(totals[NOTIONAL_])) if totals[NOTIONAL_] else "—",
+        totals["unknown"] or "—", totals["silent"] or "—"))
 
-    # The two columns are never added. Doing so would produce one number that is
-    # part bill and part list price, which is the exact confusion this tool
-    # exists to prevent — and it would be the number someone quoted.
-    print("\nThe two money columns are separate on purpose and are not added.")
-    if totals["billed"]:
-        print("  billed:   ${:.2f} across {} run(s) — an API key paid this"
-              .format(sum(totals["billed"]), len(totals["billed"])))
-    if totals["notional"]:
-        median = statistics.median(totals["notional"])
+    # Never added. One number that is part bill and part list price is the exact
+    # confusion this tool exists to prevent, and it would be the number quoted.
+    print("\nThe money columns are separate on purpose and are not added.")
+    if totals[CHARGED]:
+        print("  charged:  ${:.2f} across {} run(s) — an API key paid this"
+              .format(sum(totals[CHARGED]), len(totals[CHARGED])))
+    if totals[NOTIONAL_]:
+        median = statistics.median(totals[NOTIONAL_])
         print("  notional: ${:.2f} across {} run(s), ${:.2f} median — API list "
               "price for the tokens used, charged to nobody"
-              .format(sum(totals["notional"]), len(totals["notional"]), median))
+              .format(sum(totals[NOTIONAL_]), len(totals[NOTIONAL_]), median))
+    if totals["unknown"]:
+        print("  {} run(s) reported a cost with no established billing. Their "
+              "money is in neither column, because assigning it to the cheaper "
+              "one would understate a bill.".format(totals["unknown"]))
     if totals["silent"]:
-        print("  {} run(s) reported no cost at all. Absent, not $0.00, and not "
-              "counted in either column.".format(totals["silent"]))
+        print("  {} run(s) reported no cost at all. Absent, not $0.00."
+              .format(totals["silent"]))
 
-    gaps = sum(unreported_stages(r) for r in rows)
-    if gaps:
-        print("  {} stage(s) ran without reporting their tokens, so the token "
-              "counts above are a floor.".format(gaps))
+    # The four counts, named, or nothing. The previous version printed a
+    # sentence about "the token counts above" being a floor while the table
+    # carried no token columns at all, and a test passed against it.
+    counted = [tokens(r) for r in rows]
+    sums = {name: sum(v[name] for v in counted if isinstance(v[name], int))
+            for name in TOKEN_FIELDS}
+    missing = sum(1 for v in counted
+                  if any(not isinstance(v[name], int) for name in TOKEN_FIELDS))
+    if any(sums.values()):
+        print("\ntokens: " + " · ".join(
+            "{} {:,}".format(name.replace("_tokens", ""), sums[name])
+            for name in TOKEN_FIELDS))
+        print("  Not summed into one figure: cache reads are a tenth of the "
+              "input rate and cache writes are twice it, so a total of the four "
+              "is dominated by the cheapest of them.")
+        gaps = sum(unreported_stages(r) for r in rows)
+        if gaps or missing:
+            print("  A floor, not a total: {} stage(s) ran without reporting, "
+                  "and {} run(s) are missing at least one count."
+                  .format(gaps, missing))
+
+    if source == "artifacts":
+        print("\nSource: retained artifacts. This repository keeps an artifact "
+              "for the members that failed, so this is a selected sample and "
+              "not total spend.")
+    else:
+        print("\nSource: the queue's own log — one row per invocation it ran, "
+              "and nothing it did not.")
     if unreadable:
-        print("  {} file(s) could not be read and are not in any number here."
+        print("  {} file(s) could not be read and are in no number here."
               .format(unreadable))
+    if skipped_lines == -1:
+        print("  The queue log exists and could not be read at all.")
+    elif skipped_lines:
+        print("  {} line(s) of the queue log did not parse and are in no "
+              "number here.".format(skipped_lines))
     return 0
 
 
@@ -221,15 +393,40 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--by", default="day", choices=("day", "month"))
     parser.add_argument("--since", default="", help="ISO date; earlier runs are skipped")
     parser.add_argument("--detail", action="store_true", help="one line per run")
+    parser.add_argument(
+        "--source", default="artifacts", choices=("artifacts", "queue"),
+        help="artifacts written by a review, or the queue's own log. Separate "
+             "on purpose: a review can be in both and nothing keys them "
+             "together, so adding them would double-count")
     args = parser.parse_args(argv)
 
-    paths = collect(args)
-    rows = artifacts(paths)
-    unreadable = len(paths) - len(rows)
+    if args.source == "queue":
+        rows = queue_rows(ROOT / QUEUE_LOG)
+        unreadable = 0
+        skipped = QUEUE_SKIPPED
+    else:
+        skipped = 0
+        paths = collect(args)
+        rows = artifacts(paths)
+        unreadable = len(paths) - len(rows)
     if args.since:
-        rows = [r for r in rows if when(r) >= args.since]
+        # Compared as instants, not as text: an offset timestamp sorts by its
+        # local hour and belongs at its UTC one. A run whose stamp cannot be
+        # read is kept rather than dropped — a filter that silently removes
+        # what it cannot parse makes the report shorter and says nothing.
+        try:
+            floor = instant(args.since) or instant(args.since + "T00:00:00+00:00")
+        except ValueError:
+            floor = None
+        if floor is not None:
+            rows = [r for r in rows
+                    if instant(when(r)) is None or instant(when(r)) >= floor]
 
-    code = summarise(rows, args.by, unreadable)
+    code = summarise(rows, args.by, unreadable, args.source, skipped)
+    if args.source == "artifacts" and queue_rows(ROOT / QUEUE_LOG):
+        print("\nThe queue log holds review rows this source does not: "
+              "tools/spend.py --source queue. Not added to the above — a "
+              "review can appear in both and nothing keys them together.")
     if args.detail and rows:
         detail(rows)
     return code

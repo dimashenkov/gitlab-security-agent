@@ -352,6 +352,17 @@ def raw_rows(payload: list, started_at: str, finished_at: str) -> list:
                 "notional_api_cost": (member.get("provenance") or {}).get(
                     "reported_cost_usd"),
                 "notional_api_cost_source": "claude-code total_cost_usd",
+                # Who paid, from the same provenance block the cost comes from.
+                # Without these the cost is unclassifiable: `tools/spend.py`
+                # reported all 44 stored rows as "billing not established",
+                # because `claude-cli` says how a run was launched and not how
+                # its login is billed. `claude.ai` plus a plan is a
+                # subscription; `api-key` or `console` is charged; empty is the
+                # CLI declining to say, and stays unknown rather than being
+                # read as the cheaper answer.
+                "auth_method": (member.get("provenance") or {}).get("auth_method"),
+                "auth_subscription": (member.get("provenance") or {}).get(
+                    "auth_subscription"),
             })
     return rows
 
