@@ -58,6 +58,7 @@ def run_once(args: argparse.Namespace, index: int) -> dict:
     cmd = [
         sys.executable, "-m", "security_agent",
         "--repo", args.repo, "--no-comment",
+        "--provider", args.provider,
         "--output-dir", str(out_dir),
     ]
     if args.base:
@@ -92,7 +93,7 @@ def run_once(args: argparse.Namespace, index: int) -> dict:
             "exit_code": proc.returncode, "payload": payload}
 
 
-def summarise(runs: list) -> None:
+def summarise(runs: list, provider: str = "claude-cli") -> None:
     good = [r for r in runs if r["ok"]]
     if not good:
         print("every run failed; nothing to compare")
@@ -116,11 +117,20 @@ def summarise(runs: list) -> None:
         print("cost           not reported by this runner for any of the {} "
               "run(s) — absent, not $0.000".format(len(good)))
     else:
-        print("cost           ${:.3f} median  (${:.3f}–${:.3f}){}".format(
-            statistics.median(costs), min(costs), max(costs),
+        # Priced from tokens at API rates. On the CLI path nobody is billed
+        # those rates — the run came out of a subscription — so the column is a
+        # notional figure and says so. Reading it as money spent is how three
+        # wrong rules about the weekly limit were built from a number that was
+        # never a bill.
+        label = "cost" if provider == "anthropic-api" else "cost (notional)"
+        print("{:<15}${:.3f} median  (${:.3f}–${:.3f}){}".format(
+            label, statistics.median(costs), min(costs), max(costs),
             "" if len(costs) == len(good) else
             "  over {} of {} runs; the rest reported no usage".format(
                 len(costs), len(good))))
+        if provider != "anthropic-api":
+            print("               ^ API list price for the tokens used, not an "
+                  "amount anyone was charged")
     print("turns          {} median  ({}–{})".format(
         int(statistics.median(turns)), min(turns), max(turns)))
     times = [r["seconds"] for r in good]
@@ -171,6 +181,19 @@ def main() -> int:
     parser.add_argument("--base", help="diff base; omit for a whole-repository review")
     parser.add_argument("--head")
     parser.add_argument("--effort")
+    # Defaulted, and defaulted to the CLI, because the omission bricked the
+    # tool. `python -m security_agent` with no provider takes the Messages API
+    # path, which needs an `ANTHROPIC_API_KEY`; the owner ruled that key out
+    # permanently on 2026-08-30 (D-007). So this tool existed, was the obvious
+    # thing to reach for when variance was finally wanted, and could not be run
+    # at all — the flag it needed was one it never offered.
+    #
+    # `anthropic-api` is still reachable by name. Naming it is the point: which
+    # account pays is not a decision this tool makes on anyone's behalf.
+    parser.add_argument("--provider", default="claude-cli",
+                        choices=("claude-cli", "anthropic-api"),
+                        help="default claude-cli, which runs on your own "
+                             "logged-in `claude` and needs no API key")
     parser.add_argument("-n", "--runs", type=int, default=5)
     parser.add_argument("-c", "--concurrency", type=int, default=5,
                         help="How many reviews to run at once. They share nothing.")
@@ -207,7 +230,7 @@ def main() -> int:
     print("\nwall clock: {:.0f}s".format(time.monotonic() - started))
     runs.sort(key=lambda r: r["index"])
 
-    summarise(runs)
+    summarise(runs, args.provider)
     if args.json:
         Path(args.json).write_text(json.dumps(
             [r.get("payload") for r in runs if r["ok"]], indent=2))
