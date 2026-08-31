@@ -36,6 +36,21 @@ internal by design. What is wrong is a name whose *docstring makes a promise
 about the system* and whose only reader is the file it lives in — and telling
 those apart needs a person, which is why the unexplained ones are listed rather
 than failed by default.
+
+**A reader is any file that contains the word**, comments and docstrings
+included, and that is coarser than it sounds. Two consequences, both real:
+
+This file is one of the files searched, and its own docstring says
+`conclusive` — the name it exists to find. So it counted itself as a reader and
+was blind to its own example. Had the field not since acquired genuine readers
+in `gate.py`, `models.py` and `runner_claude_code.py`, running this tool would
+have reported that everything was fine. It excludes itself now; the general
+version of the problem — prose about a name counting as use of it — stands, and
+is the reason the output is a list for a person rather than a verdict.
+
+`EXPLAINED` is keyed on the bare name, so explaining `PROVIDER` explains every
+class's `PROVIDER` everywhere. Deliberate while the map is nine entries long,
+and worth remembering before it is ninety.
 """
 
 from __future__ import annotations
@@ -114,7 +129,12 @@ def main() -> int:
     elsewhere = list(sources)
     if args.include_tests:
         elsewhere += sorted((ROOT / "tests").glob("*.py"))
-    elsewhere += sorted((ROOT / "tools").glob("*.py"))
+    # Every tool except this one. A tool that reads a product field is a real
+    # reader — `artifact.py` imports the product's evidence rule on purpose —
+    # but this file's own docstring names `conclusive`, the field it was
+    # written to catch, so counting itself made it blind to its own example.
+    elsewhere += [p for p in sorted((ROOT / "tools").glob("*.py"))
+                  if p.resolve() != Path(__file__).resolve()]
 
     rows = []
     for path in sources:

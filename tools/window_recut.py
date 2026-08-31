@@ -86,52 +86,66 @@ def early_windows():
             row = json.loads(line)
         except ValueError:
             continue
-        if row.get("kind") == "window" and row.get("window_termination") != "refused":
-            out.add(row.get("window"))
+        if row.get("kind") != "window":
+            continue
+        if row.get("window_termination") == "refused":
+            continue
+        # A window row with no identifier would otherwise put `None` in the
+        # drop set, and every corpus review carries no `window` key at all — so
+        # one malformed line silently erased every review from the analysis and
+        # printed smaller numbers without saying anything had gone.
+        if row.get("window"):
+            out.add(row["window"])
     return out
 
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument(
-    "--include-early", action="store_true",
-    help="also count windows the queue closed for a reason other than a "
-         "refusal — deliberately off, because such a window says only that "
-         "the limit was above its own number")
-parser.add_argument("--since", default="2026-08-28")
-args = parser.parse_args()
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--include-early", action="store_true",
+        help="also count windows the queue closed for a reason other than a "
+             "refusal — deliberately off, because such a window says only that "
+             "the limit was above its own number")
+    parser.add_argument("--since", default="2026-08-28")
+    args = parser.parse_args()
 
-dropped = set() if args.include_early else early_windows()
-everything = [*ledger(args.since), *reviews()]
-for row in everything:
-    row["ts"] = stamp(row)
-everything = [r for r in everything if r.get("window") not in dropped]
-everything.sort(key=lambda r: r["ts"])
+    dropped = set() if args.include_early else early_windows()
+    everything = [*ledger(args.since), *reviews()]
+    for row in everything:
+        row["ts"] = stamp(row)
+    everything = [r for r in everything if r.get("window") not in dropped]
+    everything.sort(key=lambda r: r["ts"])
 
-if dropped:
-    print("{} window(s) dropped: closed by something other than a refusal, so "
-          "they bound the limit from below and say nothing else{}\n".format(
-              len(dropped),
-              "" if not args.include_early else " (kept anyway, as asked)"))
+    if dropped:
+        print("{} window(s) dropped: closed by something other than a refusal, so "
+              "they bound the limit from below and say nothing else{}\n".format(
+                  len(dropped),
+                  "" if not args.include_early else " (kept anyway, as asked)"))
 
-# The ends of the three windows: the last thing that ran before each refusal.
-ENDS = [datetime(2026, 8, 28, 23, 59, tzinfo=timezone.utc),
-        datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc),
-        datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)]
+    # The ends of the three windows: the last thing that ran before each refusal.
+    ENDS = [datetime(2026, 8, 28, 23, 59, tzinfo=timezone.utc),
+            datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc),
+            datetime(2026, 8, 29, 18, 0, tzinfo=timezone.utc)]
 
-print("{:<22} {:>6} {:>9} {:>10} {:>8} {:>15}".format(
-    "window ends (UTC)", "hours", "reviews", "subagent", "session", "tokens"))
+    print("{:<22} {:>6} {:>9} {:>10} {:>8} {:>15}".format(
+        "window ends (UTC)", "hours", "reviews", "subagent", "session", "tokens"))
 
-for lookback in (2, 4, 6, 8):
-    print("\n-- counting everything in the {} hours before each end".format(lookback))
-    for end in ENDS:
-        start = end - timedelta(hours=lookback)
-        inside = [r for r in everything if start <= r["ts"] <= end]
-        counts = defaultdict(int)
-        tokens = 0
-        for row in inside:
-            counts[row["kind"]] += 1
-            tokens += sum(row.get(f) or 0 for f in FIELDS)
-        print("{:<22} {:>6} {:>9} {:>10} {:>8} {:>15,}".format(
-            end.strftime("%m-%d %H:%M"), lookback,
-            counts["review"], counts["subagent-message"],
-            counts["session-message"], tokens))
+    for lookback in (2, 4, 6, 8):
+        print("\n-- counting everything in the {} hours before each end".format(lookback))
+        for end in ENDS:
+            start = end - timedelta(hours=lookback)
+            inside = [r for r in everything if start <= r["ts"] <= end]
+            counts = defaultdict(int)
+            tokens = 0
+            for row in inside:
+                counts[row["kind"]] += 1
+                tokens += sum(row.get(f) or 0 for f in FIELDS)
+            print("{:<22} {:>6} {:>9} {:>10} {:>8} {:>15,}".format(
+                end.strftime("%m-%d %H:%M"), lookback,
+                counts["review"], counts["subagent-message"],
+                counts["session-message"], tokens))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
