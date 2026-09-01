@@ -48,7 +48,7 @@ import random
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -64,7 +64,12 @@ FIVE_LANGUAGES = ("go", "php", "py", "ts", "js")
 class Sweep:
     """The shape `run_queue.cases` expects, with nothing selected."""
 
-    case: List[str] = []
+    # A stand-in for the parsed arguments `run_queue.cases` reads, with
+    # nothing selected. It is never mutated and never instantiated twice,
+    # so the shared-default hazard the rule warns about cannot arise —
+    # but the rule is right in general, so the exemption is written here
+    # rather than switched off for the file.
+    case: ClassVar[List[str]] = []
     language = None
     construction = None
 

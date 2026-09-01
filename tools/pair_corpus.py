@@ -150,6 +150,38 @@ def cost_summary(costs: Sequence[Optional[float]], unit: str = "pair") -> str:
         sum(known), len(values), unit)
 
 
+def cost_per_pass(rows: Sequence[dict]) -> str:
+    """Spend divided by pairs that actually discriminated, not by pairs run.
+
+    Cost per run answers "what did this cost"; cost per *success* answers "what
+    did a working answer cost", and the two move apart exactly when a change
+    makes the reviewer cheaper and worse. A version that halves the bill and
+    fails a third of the corpus improves the first number and ruins the second,
+    and only the second would have said so.
+
+    It refuses to divide by nothing and refuses to price an incomplete total,
+    for the same reason `cost_summary` does: a figure produced from partial
+    inputs gets quoted without its caveat.
+    """
+    priced = [(row.get("cost"), bool(row.get("pair_success")))
+              for row in rows if row.get("cost") is not None]
+    if not priced:
+        return ""
+    passed = sum(1 for _, ok in priced if ok)
+    if not passed:
+        return ("cost per discriminating pair: NOT AVAILABLE — none of the {} "
+                "costed pair(s) discriminated. The spend bought no answer, "
+                "which is a result and not a division.".format(len(priced)))
+    total = sum(cost for cost, _ in priced)
+    missing = len(rows) - len(priced)
+    tail = ("" if not missing else
+            " ({} pair(s) could not be costed and are in neither figure)"
+            .format(missing))
+    return ("cost per discriminating pair: ${:.2f}  —  ${:.2f} over {} of {} "
+            "costed pair(s){}".format(
+                total / passed, total, passed, len(priced), tail))
+
+
 def notional_summary(rows: Sequence[dict]) -> str:
     """What the Claude Code CLI priced these runs at, or "" if it never said.
 
@@ -662,6 +694,9 @@ def report(results: list, adjudications: Sequence[dict] = ()) -> None:
     print(_stratified(done))
 
     print("\n" + cost_summary([r.get("cost") for r in done], "pair"))
+    per_pass = cost_per_pass(done)
+    if per_pass:
+        print(per_pass)
     notional = notional_summary(done)
     if notional:
         print(notional)

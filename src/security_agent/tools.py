@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import generated
+from .context_budget import ContextBudget
 from .evidence import (
     EvidenceProblem,
     attribution,
@@ -30,7 +31,6 @@ from .evidence import (
     locate_evidence,
     unquote_path,
 )
-from .context_budget import ContextBudget
 from .models import Candidate, Finding, RejectedClaim, StageMetrics, ToolCallRecord
 from .workspace import Workspace, WorkspaceError
 

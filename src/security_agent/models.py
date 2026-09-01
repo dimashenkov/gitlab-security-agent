@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Ordered weakest-to-strongest. Comparisons go through `severity_rank` /
 # `confidence_rank` so an unrecognised value from a future schema revision sorts

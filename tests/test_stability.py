@@ -123,8 +123,8 @@ class TestTheBoundIsStatedAndCorrect:
         bounds = []
         for runs in (3, 10):
             stability.report([run_row(i) for i in range(runs)], "c", "unsafe")
-            line = [l for l in capsys.readouterr().out.splitlines()
-                    if "upper bound" in l][0]
+            line = next(row for row in capsys.readouterr().out.splitlines()
+                        if "upper bound" in row)
             bounds.append(line)
         assert bounds[0] != bounds[1]
 

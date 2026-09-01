@@ -47,11 +47,11 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TextIO
 from . import __version__
 from .budget import Allowance
 from .config import Config, ConfigError
+from .context_budget import ContextBudget
 from .crash_journal import CrashJournal, CrashJournalError
 from .gate import EXIT_ERROR, EXIT_OK
 from .models import Revision, ToolCallRecord
 from .session_document import SessionDocumentError, write_session
-from .context_budget import ContextBudget
 from .tools import (
     Session,
     ToolResult,

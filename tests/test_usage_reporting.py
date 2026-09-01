@@ -49,7 +49,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from pair_corpus import add_costs, cost_of, cost_summary, notional_summary, report
+from pair_corpus import (
+    add_costs,
+    cost_of,
+    cost_per_pass,
+    cost_summary,
+    notional_summary,
+    report,
+)
 
 from security_agent.config import Config
 from security_agent.gate import decide
@@ -652,3 +659,47 @@ def test_a_batch_of_refusals_is_not_summed_into_a_cheap_afternoon():
     assert "$0.71" in printed
     assert " of 6 " not in printed
     assert "6 pairs" not in printed
+
+# --------------------------------------------------- what an answer costs
+
+
+def test_cost_per_pass_divides_by_answers_not_by_runs():
+    """Cost per run says what was spent. Cost per discriminating pair says what
+    a working answer cost, and the two part company exactly when a change makes
+    the reviewer cheaper and worse."""
+    line = cost_per_pass([
+        {"cost": 1.0, "pair_success": True},
+        {"cost": 1.0, "pair_success": True},
+        {"cost": 2.0, "pair_success": False},
+    ])
+
+    assert "$2.00" in line          # $4.00 over two that discriminated
+    assert "$4.00 over 2 of 3" in line
+
+
+def test_a_run_that_discriminated_nothing_is_not_priced_at_infinity():
+    """Dividing by zero successes is not a very large number, it is the absence
+    of one — and the sentence has to say what happened instead."""
+    line = cost_per_pass([{"cost": 1.0, "pair_success": False}])
+
+    assert "NOT AVAILABLE" in line
+    assert "bought no answer" in line
+
+
+def test_uncosted_pairs_are_named_rather_than_folded_in():
+    """The same failure mode as `cost_summary`: a figure standing for part of
+    the run, quoted without the part it does not cover."""
+    line = cost_per_pass([
+        {"cost": 2.0, "pair_success": True},
+        {"cost": None, "pair_success": True},
+    ])
+
+    assert "$2.00" in line
+    assert "1 pair(s) could not be costed" in line
+
+
+def test_no_costed_pair_produces_no_line_at_all():
+    """Silence rather than a dollar sign. A line that says "unknown" still puts
+    a currency figure on a page that gets skimmed."""
+    assert cost_per_pass([{"cost": None, "pair_success": True}]) == ""
+    assert cost_per_pass([]) == ""

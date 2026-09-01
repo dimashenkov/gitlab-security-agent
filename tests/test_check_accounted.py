@@ -34,7 +34,6 @@ if str(TOOLS) not in sys.path:
 import check_accounted  # noqa: E402
 from artifact import case_digest  # noqa: E402
 
-
 CASE = "xx-test-0000-0000"
 
 

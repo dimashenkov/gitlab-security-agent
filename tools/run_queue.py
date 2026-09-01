@@ -442,7 +442,12 @@ def main() -> int:
     if args.round is not None:
         if args.round < 1:
             sys.exit("--round is numbered from 1")
-        global QUEUE, LOG
+        # A round redirects every later write in this process to its own
+        # directory, and the writers read these two names at module level. The
+        # rule against `global` is right about state that several callers
+        # mutate; this is one assignment, made once, before any work starts, so
+        # that a round cannot be half-written into the previous round's files.
+        global QUEUE, LOG  # noqa: PLW0603
         QUEUE = ROOT / "measurements" / "round-{}".format(args.round)
         LOG = QUEUE / "log.jsonl"
         print("round {}: writing to {}, ignoring earlier results"

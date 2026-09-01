@@ -253,7 +253,7 @@ class TestObservingIsTheDefault:
         session = Session()
         session.context = ContextBudget(soft=400, hard=500)
         _budgeted(session, "get_diff", ToolResult(big(600), "huge"))
-        for n in range(4):
+        for _ in range(4):
             _budgeted(session, "read_file", ToolResult(big(10), "small"))
 
         assert session.context.would_refuse_results == 1, (
@@ -266,7 +266,7 @@ class TestObservingIsTheDefault:
         Zero would make a session of nothing but refusals look costless."""
         session = Session()
         session.context = ContextBudget(soft=400, hard=500)
-        for n in range(3):
+        for _ in range(3):
             _budgeted(session, "get_diff", ToolResult(big(600), "huge"))
         assert session.context.shadow_tokens > 0
         assert session.context.would_refuse_results == 3
@@ -319,7 +319,7 @@ class TestWhereTheCostActuallyIs:
         """Not the largest result — the one that cost the most across the run."""
         session = Session()
         _budgeted(session, "get_diff", ToolResult(big(1000), "s"))
-        for n in range(18):
+        for _ in range(18):
             _budgeted(session, "search_code", ToolResult(big(1), "s"))
         _budgeted(session, "read_file", ToolResult(big(3000), "s"))
 

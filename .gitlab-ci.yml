@@ -8,6 +8,22 @@ stages:
   - review
   - evaluate
 
+# One pipeline per commit, not two.
+#
+# Level 0 runs on every branch now, and the merge-request rule was already
+# there — so a push to a branch with an open merge request would start both a
+# branch pipeline and a merge-request pipeline. Two green ticks for one commit,
+# on two pipelines, and no way to tell which one the merge is gated on.
+#
+# So: while a merge request is open, only the merge-request pipeline runs.
+# Before one is opened, the branch pipeline does. Neither state loses a check.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
 default:
   interruptible: true
 
@@ -17,29 +33,54 @@ variables:
 
 # ---------------------------------------------------------------------- test
 
-unit-tests:
+# Level 0 of the evaluation regime: everything that can be decided without
+# spending a model call, on every commit that reaches the server.
+#
+# The rules used to be `merge_request_event` or the default branch, so a push to
+# a feature branch ran no pipeline at all — and "evaluation after every change"
+# was, for most changes, nothing. A check that runs on some pushes is a check
+# whose absence is invisible.
+#
+# `allow_failure` is gone from the lint for the same reason. A gate that reports
+# and does not stop is a gate somebody will read as passing.
+.level-0: &level-0
   stage: test
   image: $PYTHON_IMAGE
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+unit-tests:
+  <<: *level-0
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends git
     - pip install --no-cache-dir -e ".[dev]"
   script:
     - pytest -q
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 lint:
-  stage: test
-  image: $PYTHON_IMAGE
+  <<: *level-0
   before_script:
     - pip install --no-cache-dir ruff
   script:
-    - ruff check src/ tests/
-  allow_failure: true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # `tools/` too. The evaluator lives there, and a change to the thing that
+    # measures the product used to pass unlinted while the product it measures
+    # did not.
+    - ruff check src/ tests/ tools/
+
+promises-kept:
+  <<: *level-0
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends git
+    - pip install --no-cache-dir -e ".[dev]"
+  script:
+    # A field whose docstring states a guarantee and whose only reader is its
+    # own module is a policy the system was told about and does not apply. This
+    # is the grep that finds them, and it was written after one such field let
+    # `--profile probe` conclude a review it was documented never to conclude.
+    - PYTHONPATH=src python3 tools/unenforced.py --strict
+    # And the decision log, checked against the commits it claims to describe.
+    - PYTHONPATH=src python3 tools/check_decisions.py
 
 # --------------------------------------------------------------------- build
 
@@ -162,8 +203,12 @@ corpus-check:
     # after a paid run had already been scored against it.
     - python3 tools/check_corpus.py corpus/ corpus-real/
   rules:
+    # Level 0, so every push. Both of these are free and deterministic, and
+    # both were gated to merge requests and the default branch — which meant
+    # the corpus could be edited on a branch and land unchecked until the
+    # merge request opened.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH
 
 corpus-adversary:
   stage: evaluate
@@ -179,7 +224,7 @@ corpus-adversary:
     - python3 tools/corpus_adversary.py corpus/ corpus-real/
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH
 
 # --- paid, manual ------------------------------------------------------------
 
