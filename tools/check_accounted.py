@@ -4,11 +4,19 @@
 The measurement ends when no failure is left without an outcome — not when a
 fraction reaches a number. Every case is exactly one of:
 
-    passes            the pair discriminated, nothing owed
-    fixed             it failed, something was changed, it was measured again
+    pass              the pair discriminated, nothing owed
     limitation        it failed and `LIMITATIONS.md` says why it is not fixed
     invalid           `adjudications.yml` rules it unable to measure anything
+    not run           in the corpus, no result recorded for it
     unaccounted       none of the above — the work that is left
+
+There is deliberately no `fixed` bucket, and this docstring promised one for a
+while. A case that failed, was changed and then measured again lands in `pass`,
+where it cannot be told apart from a case that never failed. Nothing records
+which case was fixed, so the bucket would have to be filled by hand — and with
+zero fixes made so far it would be empty in every case. Said here rather than
+implemented: a tally that names an outcome it cannot compute is worse than one
+that does not name it.
 
 The report that says the work is done reads like this, and the numbers sum:
 
