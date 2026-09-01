@@ -40,6 +40,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -414,7 +415,21 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
               # left the case unresolved, and a case could never be *fixed* by
               # running it again, only made worse. A re-run that cannot improve
               # anything is a re-run nobody does.
-              "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+              # Microseconds, not seconds. Two runs of one case started in the
+              # same second carried the same stamp, and `stage2.py` and
+              # `check_accounted.py` order runs by it to take the latest — so
+              # which of the two won was decided by the order of lines in a
+              # file. `run_id` below cannot break that tie: it identifies a run
+              # and says nothing about when it happened.
+              "ran_at": datetime.now(timezone.utc).isoformat(
+                  timespec="microseconds"),
+              # Which execution this is. `ran_at` orders runs and does not
+              # identify them: it is stamped at the *start* of the case, so it
+              # answers "when did this begin", and a rule that counted
+              # executions by it folded two into one — losing a confirming
+              # failure and with it a regression. Microseconds make the
+              # collision unlikely; they do not make the field an identifier.
+              "run_id": uuid.uuid4().hex}
     try:
         members = {}
         for member in ("safe", "unsafe"):

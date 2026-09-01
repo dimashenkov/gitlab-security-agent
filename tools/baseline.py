@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -64,8 +65,45 @@ from pair_corpus import SCORER_VERSION, load_adjudications, malformed_cases
 # rather than used to refuse.
 SUITE_IDENTITY = ("cases", "corpus", "excluded", "scorer_version",
                   "adjudications")
-SYSTEM_IDENTITY = ("prompts", "model", "settings")
+
+SYSTEM_IDENTITY = ("prompts", "model", "providers", "settings")
 IDENTITY = SUITE_IDENTITY + SYSTEM_IDENTITY
+
+# Fields added after baselines were already being frozen. Only these may be
+# absent from a frozen identity and read as "not recorded" instead of
+# "changed". The list is closed on purpose: while absence was forgiven in
+# general, deleting a key from baseline.json switched off the check it stood
+# for, `corpus` included.
+LATE_FIELDS = ("providers",)
+
+# How many times a case has to fail before a failure counts as a regression.
+#
+# It was one, implicitly, and that is now measured wrong. Thirteen cases run
+# twice on 2026-09-01 with nothing changed between the passes — verified before
+# and after every case, against digests of the prompts, the schema, the
+# adjudications, the scorer and the reviewer's own source — moved twice:
+#
+#     go-m6jg-wr9m-cg2f   pass -> fail
+#     rb-g65v-27r3-5p6m   fail -> pass
+#
+# Both directions, which is the part that matters. The suite does not decay
+# under repetition, it moves; so a single `pass -> fail` is not evidence that
+# anything broke, and a single `fail -> pass` is not evidence that anything was
+# fixed. A gate that blocked on the first would block merges that broke nothing,
+# and a gate that fires on noise is switched off after the third time.
+#
+# Two rather than three, and the number is here rather than in a flag on
+# purpose. What the rate of flipping actually is remains unknown — two passes
+# detect movement and cannot size it, and finding out costs about $26 a pair —
+# but the rate is not needed to decide about *one case*: re-running a single
+# suspicious case costs about a dollar, and asking twice turns an unknown
+# frequency into a local check.
+#
+# Fixed in advance because the alternative is deciding it after seeing which
+# cases flipped, which is choosing the rule to fit the answer. A case that fails
+# once and then does not is recorded as unstable — not as passing, which would
+# be re-running until the result is convenient.
+CONFIRMATIONS_REQUIRED = 2
 
 
 def digest_tree(root: Path, cases: Sequence[str] = ()) -> str:
@@ -131,15 +169,29 @@ def identity_of(results: list, corpus: Path, cases: Sequence[str] = ()) -> dict:
             p.get("schema_sha", ""), p.get("agent_version", ""))
         for p in provenance
     })
+    # Both the requested and the served model. Reading only what was served
+    # said "the model did not change" about two runs that asked for different
+    # ones and were handed the same fallback — while the confirmation rule,
+    # which reads both, split them into two systems. The comparison's own
+    # explanation then contradicted its verdict.
     models = sorted({
         model
         for p in provenance
-        for model in (p.get("models_served") or [p.get("model_requested", "")])
+        for model in [*(p.get("models_served") or []),
+                      p.get("model_requested", "")]
         if model
     })
 
+    # Who ran the reviews. `_system_identity` counts it when deciding whether
+    # two failing runs are the same experiment, and this did not — so a
+    # baseline frozen on one provider could be compared against a run on the
+    # other without the comparison saying the system under test had changed.
+    # The two are not interchangeable: one bills per token and one does not.
+    providers = sorted({p.get("provider", "") for p in provenance if p.get("provider")})
+
     return {
         "cases": sorted(cases),
+        "providers": providers,
         "corpus": digest_tree(corpus, cases),
         "excluded": sorted(malformed_cases(corpus)),
         # A list, not a value. A server-side fallback can substitute a model
@@ -153,10 +205,50 @@ def identity_of(results: list, corpus: Path, cases: Sequence[str] = ()) -> dict:
     }
 
 
+def _stamp(row):
+    """When the row says it ran, as an instant, or None if it does not say.
+
+    Compared as an instant and not as text, the same lesson `stage2._instant`
+    already carries: `2026-09-01T14:00:00+03:00` is *earlier* than
+    `2026-09-01T12:00:00+00:00`, and sorting the two strings puts them the
+    other way round. A value that will not parse, or one carrying no timezone,
+    is no time at all rather than a time that sorts somewhere — an unknown
+    moment presented as the earliest possible one let an old failing row
+    outrank a new passing row that simply carried no stamp.
+    """
+    try:
+        when = datetime.fromisoformat(str((row or {}).get("ran_at", "")))
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo else None
+
+
 def outcomes_of(results: list) -> dict:
-    """The per-case result, keyed by case. Unresolved cases are kept as such."""
+    """The per-case result, keyed by case. Unresolved cases are kept as such.
+
+    The last row wins, and "last" is the latest run — not the last line read.
+    `compare` concatenates the files in the order they were typed, so
+    `compare new.json old.json` used to make the older run the current state of
+    every case, quietly reversing every verdict below.
+
+    Per case, and only when every row for that case says when it ran. One row
+    without a usable stamp and the whole case keeps the order it was given:
+    ordering the rest around it would put an unknown moment somewhere on the
+    line, and wherever it goes is a claim nothing supports. It is `freeze` that
+    makes this matter most — a baseline frozen from the wrong row is wrong for
+    every comparison after it.
+    """
+    rows = [r for r in results if isinstance(r, dict)]
+    by_case: dict = {}
+    for row in rows:
+        by_case.setdefault(row.get("case_id"), []).append(row)
+    ordered = []
+    for case_rows in by_case.values():
+        dated = all(_stamp(row) is not None for row in case_rows)
+        ordered.extend(sorted(case_rows, key=_stamp) if dated else case_rows)
+
     out = {}
-    for row in results:
+    for row in ordered:
         case_id = row.get("case_id")
         if not case_id:
             continue
@@ -185,14 +277,159 @@ def outcomes_of(results: list) -> dict:
     return out
 
 
+def _rows_for(case_id: str, results: list) -> list:
+    """Every scorable row this result file holds for one case.
+
+    More than one is the point. A case re-run to confirm a failure writes a
+    second row beside the first, and the confirmation rule counts rows rather
+    than trusting a single verdict. `outcomes_of` keeps only the last, which is
+    right for "what is this case's state" and wrong for "how often has it done
+    that".
+    """
+    rows = [row for row in results
+            if isinstance(row, dict)
+            and row.get("case_id") == case_id
+            and isinstance(row.get("pair_success"), bool)]
+    # One row per *execution*, not per line in a file: duplicating a row
+    # fabricated a regression, and passing the same file twice produced "2 of 2
+    # runs" out of one run.
+    #
+    # `run_id` is the identifier when the row carries one. `ran_at` is not: it
+    # is stamped to the second and at the *start* of the case, so two runs
+    # begun in the same second — a scripted pair, a retry, anything
+    # concurrent — collapsed into one, which drops a confirming failure and
+    # hides a regression. Older rows have no `run_id`, so they fall back to the
+    # whole row, and that fallback has a known limit: two genuinely separate
+    # legacy executions that produced identical rows count as one. The format
+    # does not forbid it — normalised, hand-merged or trimmed artifacts can be
+    # equal — so the claim is not that it cannot happen but that it errs the
+    # safe way. Merging two real failures under-counts, and under-counting asks
+    # for another run; splitting one row into two would invent a confirmation
+    # nobody performed. Rows written from here on carry a `run_id` and do not
+    # reach this branch.
+    seen = {}
+    for row in rows:
+        seen.setdefault(row.get("run_id") or json.dumps(row, sort_keys=True), row)
+    return list(seen.values())
+
+
+def _system_identity(row: dict) -> str:
+    """What produced this row: prompts, model, provider, settings.
+
+    Two failing runs confirm each other only if they are the same experiment.
+    Without this the confirmation counted any two failures in the files it was
+    given — so a failure under one prompt and a failure under another was
+    reported as a *confirmed* regression, which is the one thing a repetition
+    rule exists to rule out. `identity_of` cannot answer it: it merges every
+    row in every file into one identity and so cannot say which row came from
+    which system.
+
+    A row that does not record enough to say what produced it returns the empty
+    string, which the caller reads as *unknown* rather than as a system of its
+    own. Two rows that do not say what produced them are not thereby the same
+    thing, and grouping them together let them confirm each other.
+
+    "Enough" is every member naming a prompt and a model. Asking only whether
+    *some* provenance existed was walked straight around by a partial one: a
+    row carrying nothing but `reported_cost_usd`, or provenance on one member
+    and none on the other, produced a perfectly ordinary identity whose prompt
+    and model fields were all empty — and two of those confirmed each other.
+    """
+    parts = []
+    members = row.get("members") or {}
+    if not members or not all(
+            (block or {}).get("provenance", {}).get("system_prompt_sha")
+            and ((block or {}).get("provenance", {}).get("models_served")
+                 or (block or {}).get("provenance", {}).get("model_requested"))
+            for block in members.values()):
+        return ""
+    for member in sorted((row.get("members") or {}).keys()):
+        block = (row.get("members") or {})[member] or {}
+        prov = block.get("provenance") or {}
+        parts.append("|".join([
+            member,
+            str(prov.get("system_prompt_sha", "")),
+            str(prov.get("verifier_prompt_sha", "")),
+            str(prov.get("schema_sha", "")),
+            str(prov.get("agent_version", "")),
+            str(prov.get("provider", "")),
+            # Both. Reading only what was served folds two runs that asked
+            # for different models and were both served the same fallback into
+            # one system, which is two experiments counted as a repetition.
+            str(prov.get("model_requested", "")),
+            ",".join(sorted(prov.get("models_served") or [])),
+            digest_json(block.get("settings") or {}),
+        ]))
+    return "\n".join(parts)
+
+
+def _providers_named(case_ids: Sequence[str], results: list) -> str:
+    """The provider to re-run with, read from the rows themselves.
+
+    The printed instruction named none, and `--provider` is required — so
+    following it exactly ended in an argparse error and no second measurement.
+    Guessing a default here would be worse: one of the two choices bills.
+    """
+    named = {
+        (block.get("provenance") or {}).get("provider")
+        for case_id in case_ids
+        for row in _rows_for(case_id, results)
+        for block in (row.get("members") or {}).values()
+    }
+    named.discard(None)
+    named.discard("")
+    return named.pop() if len(named) == 1 else "<the provider that produced it>"
+
+
+def _runs_recorded(case_id: str, results: list) -> int:
+    return len(_rows_for(case_id, results))
+
+
+def _failures_recorded(case_id: str, results: list) -> int:
+    """How many failing runs of one case came from the *same* system.
+
+    The largest group, not the total: two failures under two different prompts
+    are two experiments, not a repetition, and counting them together confirms
+    a regression that was never reproduced.
+    """
+    groups: dict = {}
+    for row in _rows_for(case_id, results):
+        if not row["pair_success"]:
+            key = _system_identity(row)
+            groups[key] = groups.get(key, 0) + 1
+    return max(groups.values()) if groups else 0
+
+
 def drifted(baseline: dict, current: dict, fields=IDENTITY) -> list:
     """Which of `fields` differ between the frozen identity and this one.
 
     The default is every field, so a caller that wants the old all-or-nothing
     reading still gets it. The two callers that matter pass one half each.
+
+    A missing field is *unknown* rather than changed only for the fields in
+    `LATE_FIELDS` — the ones added after the format existed. `providers` is
+    one, and an older baseline would otherwise report the provider as having
+    moved when nothing had; a drift warning that is false is one that gets
+    ignored. It is not silently forgiven either: `unrecorded` names it, so
+    "cannot be compared" stays distinguishable from "compared, and equal".
+
+    Every other missing field counts as changed, and that is the whole reason
+    for the list. Forgiving absence in general made deleting a key from
+    baseline.json a way to switch off any check in it — `corpus` included, so
+    an edited suite would have compared without a refusal, a warning or
+    `--force`.
     """
+    frozen = baseline.get("identity", {})
     return [field for field in fields
-            if baseline.get("identity", {}).get(field) != current.get(field)]
+            if not (field in LATE_FIELDS and field not in frozen)
+            and frozen.get(field) != current.get(field)]
+
+
+def unrecorded(baseline: dict, fields=IDENTITY) -> list:
+    """Late-added fields the frozen identity predates, so cannot be compared."""
+    frozen = baseline.get("identity", {})
+    return [field for field in fields
+            if field in LATE_FIELDS and field not in frozen]
 
 
 def freeze(result_path: Path, corpus: Path, out: Path) -> int:
@@ -229,10 +466,24 @@ def freeze(result_path: Path, corpus: Path, out: Path) -> int:
     return 0
 
 
-def compare(result_path: Path, corpus: Path, baseline_path: Path,
+def compare(result_paths, corpus: Path, baseline_path: Path,
             force: bool) -> int:
+    """Read one or more result files against a frozen baseline.
+
+    More than one because a confirmation is a second *run*, and
+    `pair_corpus --json` writes the whole file each time. Telling somebody to
+    "run those cases again into the same file" produced a file with one row —
+    so a failure could never be confirmed, and a re-run that passed erased the
+    failure it was meant to confirm. That is the run-until-it-passes this rule
+    exists to prevent, arrived at by following its own instructions.
+    """
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    results = json.loads(result_path.read_text(encoding="utf-8"))
+    if isinstance(result_paths, (str, Path)):
+        result_paths = [result_paths]
+    results = []
+    for path in result_paths:
+        body = json.loads(Path(path).read_text(encoding="utf-8"))
+        results += body if isinstance(body, list) else [body]
     # The baseline's case list, not this run's. The question is whether these
     # cases are still what they were; a run that covered a different set says
     # so through `cases` rather than through a corpus digest nobody can read.
@@ -319,16 +570,84 @@ def compare(result_path: Path, corpus: Path, baseline_path: Path,
                 field, baseline.get("identity", {}).get(field),
                 current_identity.get(field)))
         print()
-    else:
+    unknown = unrecorded(baseline, SYSTEM_IDENTITY)
+    if unknown:
+        # Said out loud, because the sentence below it — "nothing under test
+        # changed" — would otherwise cover a field the baseline never wrote
+        # down. Not compared is not the same as compared and equal, and this
+        # tool exists to keep those two apart.
+        print("Cannot be compared — the baseline predates {} and does not "
+              "record it. Re-freeze to get an answer about it.\n".format(
+                  ", ".join(unknown)))
+    if not under_test:
         print("Nothing under test changed: same prompts, model and settings as "
               "the baseline. Any difference below is run-to-run variation, not "
               "an effect.\n")
 
     before, after = baseline.get("outcomes", {}), outcomes_of(results)
     regressed, fixed, unresolved, errored, missing = [], [], [], [], []
-    reshaped = []
+    reshaped, candidates, unstable, improved, across = [], [], [], [], []
     for case_id, was in sorted(before.items()):
         now = after.get(case_id)
+        # Asked before the transition, because a case that failed and then
+        # passed has no transition to read: `outcomes_of` keeps the last row,
+        # so the two cancel and the case is reported as nothing at all. Mixed
+        # rows are the third answer — not a regression, and not a pass either.
+        # Calling it a pass would be re-running until the result is convenient.
+        runs = _rows_for(case_id, results)
+        # Grouped by what produced them, because "the same case disagreeing
+        # with itself" is a statement about one experiment. Read across
+        # systems, a failure under the prompt being tested and a pass under
+        # another one cancelled each other and the case was printed as
+        # unstable — a second false green, reached from the other side.
+        groups: dict = {}
+        for row in runs:
+            groups.setdefault(_system_identity(row), []).append(row)
+        mixed = any(len({row["pair_success"] for row in group}) > 1
+                    for group in groups.values())
+        # Asked before `mixed`, and this is a false green that was live. A case
+        # with [fail, fail, pass] is mixed, and mixed was answered first, so a
+        # regression reproduced twice was reported as "the suite moving on its
+        # own" and exited 0. With the runs coming from two systems it was
+        # worse: two failures under the prompt being tested, one pass under
+        # another, and the pass cancelled them.
+        #
+        # Reproduced outranks moved. A later pass does not un-reproduce two
+        # failures — it makes the case one that fails some of the time, which
+        # is a failing case. Otherwise `CONFIRMATIONS_REQUIRED = 2` would mean
+        # "two failures and no pass ever", which is not what it says.
+        failing = _failures_recorded(case_id, results)
+        # And never across systems. Counting inside each group is not enough on
+        # its own: the tool has no notion of which group is the system under
+        # test, so two failures from an older or foreign configuration, sitting
+        # in a file somebody concatenated, were reported as a confirmed
+        # regression of the current one. Rather than guess which group is
+        # meant, this says the inputs cannot answer it — the runs are named,
+        # the case is named, and what it asks for is two runs of one system.
+        #
+        # A group keyed on the empty string is the *unknown* system — a row
+        # that does not record enough to say what produced it. Unknown is not a
+        # system two rows can share: grouped together, two rows that do not say
+        # what produced them confirmed each other.
+        #
+        # More than one of them, though. A single undated legacy row confirms
+        # nothing on its own, and treating it as unanswerable made every older
+        # result permanently uncomparable — including a run with one passing
+        # row and no question in it. Runners before provenance existed wrote
+        # exactly such files.
+        spanning = len(groups) > 1 or len(groups.get("", ())) > 1
+        confirmed = (was["outcome"] == "pass"
+                     and failing >= CONFIRMATIONS_REQUIRED
+                     and not spanning)
+        if spanning:
+            across.append(case_id)
+        # The denominator has to come from the group that did the confirming.
+        # "2 of 3 runs" counted a pass produced by a different system in the
+        # same breath as two failures under this one, which is two experiments
+        # reported as one history.
+        within = max((len(group) for group in groups.values()
+                      if sum(1 for r in group if not r["pair_success"])
+                      == failing), default=len(runs))
         if now is None:
             missing.append(case_id)
         elif now["outcome"] == "error":
@@ -343,10 +662,51 @@ def compare(result_path: Path, corpus: Path, baseline_path: Path,
             errored.append(case_id)
         elif now["outcome"] == "unresolved":
             unresolved.append(case_id)
-        elif was["outcome"] == "pass" and now["outcome"] == "fail":
-            regressed.append(case_id)
+        elif confirmed:
+            regressed.append("{} ({} of {} runs)".format(
+                case_id, failing, within))
+        elif mixed:
+            # Asked after the endings that mean "no result", and before the
+            # transition. A file holding `[fail, pass, error]` has a last state
+            # of `error`, and classifying it as unstable first returned 0 —
+            # "the check did not finish" reported as a green gate, which is the
+            # one thing this project exists to prevent.
+            #
+            # Before the transition because a case that failed and then passed
+            # has no transition to read: `outcomes_of` keeps the last row, the
+            # two cancel, and the case is reported as nothing at all. Mixed
+            # runs are the third answer — not a regression, and not a pass
+            # either, which would be re-running until the result is convenient.
+            unstable.append("{} ({} of {} runs failed)".format(
+                case_id, sum(1 for r in runs if not r["pair_success"]),
+                len(runs)))
+        elif was["outcome"] == "pass" and failing:
+            # A candidate, not a verdict: the confirmed case was answered
+            # above, so reaching here means one failing run and no second.
+            # That second sighting is a re-run of this one case — about a
+            # dollar — rather than another pass over the suite.
+            #
+            # Asked about the failing *runs* rather than about `now`, which is
+            # the last row and can be a pass produced by another system. That
+            # arrangement — fail under A, pass under B — matched nothing at
+            # all and the case was printed as neither.
+            candidates.append(case_id)
         elif was["outcome"] == "fail" and now["outcome"] == "pass":
-            fixed.append(case_id)
+            # The same bar as a failure, in the other direction. One passing
+            # run is not evidence of a fix: the pair that measured the noise
+            # turned a failure into a pass with nothing changed. Reporting
+            # only — neither answer gates — but "it passes now" was the exact
+            # sentence the measurement refuted.
+            passing = max((sum(1 for r in group if r["pair_success"])
+                           for group in groups.values()), default=0)
+            # `not spanning` for the same reason as the confirmation above. The
+            # rule said nothing is confirmed from runs of more than one system,
+            # and it was applied to failures only — so a case could be called
+            # fixed and listed as spanning in the same output.
+            if passing >= CONFIRMATIONS_REQUIRED and not spanning:
+                fixed.append(case_id)
+            else:
+                improved.append(case_id)
         elif (was["outcome"] == now["outcome"] == "fail"
                 and "shape" in was and was.get("shape") != now.get("shape")):
             # Still failing, failing differently. Not called a regression: the
@@ -358,7 +718,12 @@ def compare(result_path: Path, corpus: Path, baseline_path: Path,
     added = sorted(set(after) - set(before))
 
     print("{} case(s) in the baseline, {} in this run.".format(len(before), len(after)))
-    for label, cases in (("regressed", regressed), ("fixed", fixed),
+    for label, cases in (("regressed", regressed),
+                         ("failed once, unconfirmed", candidates),
+                         ("unstable: failed and passed in the same run", unstable),
+                         ("fixed", fixed),
+                         ("passed once, unconfirmed", improved),
+                         ("runs came from more than one system", across),
                          ("still failing, differently", reshaped),
                          ("no longer completes", unresolved),
                          ("errored", errored),
@@ -378,10 +743,83 @@ def compare(result_path: Path, corpus: Path, baseline_path: Path,
         # with the same shrug.
         print("\nA case with no result is not a case that regressed. It needs "
               "the artifact read before it means anything.")
+    if candidates:
+        # Named loudly, and not blocking. The suite is known to move on its own
+        # in both directions, so one failure is a question rather than an
+        # answer — and the answer costs about a dollar, because it is a re-run
+        # of these cases and not of the suite.
+        #
+        # A *second file*, because `pair_corpus --json` writes the whole file
+        # each time: "run them again into the same file" produced a file with
+        # one row, so a failure could never be confirmed and a re-run that
+        # passed erased the failure it was meant to confirm.
+        print("\n{} case(s) failed once and have not been confirmed:\n  {}\n\n"
+              "Run just those again into a NEW file and pass both:\n"
+              "  tools/pair_corpus.py corpus-real --case {} "
+              "--provider {} --json again.json\n"
+              "  tools/baseline.py compare first.json again.json\n\n"
+              "A single `pass -> fail` is not evidence that anything broke: "
+              "thirteen cases run twice with nothing changed moved two, in both "
+              "directions. {} failing runs make it a regression; one failing "
+              "run and one passing makes it unstable, which is a third answer "
+              "and a true one.".format(
+                  len(candidates), "\n  ".join(candidates),
+                  " --case ".join(candidates),
+                  _providers_named(candidates, results),
+                  CONFIRMATIONS_REQUIRED))
+    if across:
+        # The inputs, not the code, are what cannot answer here. Said in the
+        # imperative, because the fix is a choice of files.
+        print("\n{} case(s) have runs from more than one system in these "
+              "files, so no repetition among them repeats the same "
+              "experiment, and nothing is confirmed from them — in either "
+              "direction. Compare files from one configuration, or run the "
+              "case twice under the one you mean to test. The prompts, the "
+              "settings and the provider are part of that, and so is the "
+              "model that answered: a fallback served mid-run is a different "
+              "system from the one that was asked for.".format(len(across)))
+    if unstable:
+        # Its own sentence. Folded in with the candidates it printed their
+        # count and their list, so a run with only unstable cases announced
+        # "0 case(s) failed once" above an empty list.
+        print("\n{} case(s) failed and passed within the same comparison. That "
+              "is the suite moving on its own, not a verdict about the code, "
+              "and it is recorded rather than resolved: calling it a pass "
+              "would be re-running until the result is convenient.".format(
+                  len(unstable)))
     if regressed:
         return 1
     if unresolved or errored or missing:
         return 2
+    if across:
+        # The sentence above says these inputs cannot answer the question, and
+        # the process exited 0 while saying it — one path even reached "No
+        # regression against the frozen suite". A message that contradicts its
+        # own exit code is read by the exit code.
+        return 2
+    if candidates:
+        # 2, not 0. Not because one failure is a regression — it is measured
+        # not to be — but because the comparison has no answer about this case
+        # yet, and 0 is the code for "nothing blocking", which is read as
+        # clean. The first version returned 0 here and left the confirming run
+        # to whoever felt like paying for it; a question nobody is obliged to
+        # answer is a question that stays unanswered.
+        #
+        # This is not the zero threshold returning, but it is close enough to
+        # deserve the honest version: at the flip rate measured, most
+        # comparisons will land here, and what ends the loop is a person
+        # choosing to spend about a dollar re-running one case. Nothing
+        # automates that — the CI job is manual and allow_failure, so exit 2
+        # moves the decision to a human rather than forcing it. What 2 buys
+        # over 0 is that the unanswered question is not printed in the colour
+        # of an answer.
+        return 2
+    if unstable:
+        # 0, and this one really is an answer: the case moves on its own. It is
+        # printed, it is never counted as passing, and there is nothing further
+        # to buy — a third run would only be re-running until the result is
+        # convenient.
+        return 0
     print("\nNo regression against the frozen suite.")
     return 0
 
@@ -397,7 +835,10 @@ def main() -> int:
     freezer.add_argument("--out", default="baseline.json")
 
     comparer = sub.add_parser("compare")
-    comparer.add_argument("result")
+    comparer.add_argument("result", nargs="+",
+                          help="one file per run; a confirmation is a second "
+                               "run, and `pair_corpus --json` overwrites, so "
+                               "the second one is a second file")
     comparer.add_argument("--baseline", default="baseline.json")
     comparer.add_argument("--force", action="store_true",
                           help="compare anyway across a changed identity, and "
@@ -408,18 +849,23 @@ def main() -> int:
     if not corpus.is_dir():
         print("no such corpus: {}".format(corpus), file=sys.stderr)
         return 2
-    result = Path(args.result)
-    if not result.is_file():
-        print("no such result: {}".format(result), file=sys.stderr)
-        return 2
-
     if args.command == "freeze":
+        result = Path(args.result)
+        if not result.is_file():
+            print("no such result: {}".format(result), file=sys.stderr)
+            return 2
         return freeze(result, corpus, Path(args.out))
+
+    paths = [Path(name) for name in args.result]
+    for path in paths:
+        if not path.is_file():
+            print("no such result: {}".format(path), file=sys.stderr)
+            return 2
     baseline = Path(args.baseline)
     if not baseline.is_file():
         print("no baseline at {} — freeze one first".format(baseline), file=sys.stderr)
         return 2
-    return compare(result, corpus, baseline, args.force)
+    return compare(paths, corpus, baseline, args.force)
 
 
 if __name__ == "__main__":

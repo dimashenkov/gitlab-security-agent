@@ -298,6 +298,11 @@ eval-baseline:
     # The mechanism exists; baseline.json does not, because populating it takes
     # a paid corpus run. Until then this exits 2 with that sentence, which is
     # the honest state and not a passing check.
+    #
+    # Exit 2 also means "one case failed once and has not been confirmed" — a
+    # question, not a verdict, answered by re-running that one case into a
+    # second file and passing both. The suite is measured to move on its own
+    # in both directions, so a single pass -> fail is not evidence.
     - test -f baseline.json || { echo "no baseline.json — run eval-corpus, then tools/baseline.py freeze"; exit 2; }
     - python3 tools/baseline.py compare corpus-result.json --baseline baseline.json
 
