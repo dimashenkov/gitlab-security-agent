@@ -58,6 +58,37 @@ PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 REVISION = Revision(mode="diff", base="main", head="HEAD",
                     base_sha="a" * 40, head_sha="b" * 40)
 
+# The terminal object a clean run actually produces, recorded from Claude Code
+# 2.1.236 and kept whole. Written out rather than reduced to the two keys the
+# runner used to read, because the fields around them are the ones that moved:
+# `terminal_reason`, `permission_denials` and `stop_reason` did not exist when
+# this runner was written, and a fixture that omits them tests a shape the CLI
+# stopped producing. The telemetry halves — timings, cost, usage — are trimmed;
+# nothing decides on those.
+CLEAN_ENDING = {
+    "type": "result", "subtype": "success", "is_error": False,
+    "stop_reason": "end_turn", "terminal_reason": "completed",
+    "permission_denials": [], "api_error_status": None,
+    "num_turns": 1, "result": "done",
+}
+
+
+def terminal(**overrides):
+    """The clean ending as JSON text, with named fields replaced or removed.
+
+    A field set to `None` is deleted rather than set to null, so a test can say
+    "this CLI does not send that field" — which is the case every check in
+    `_objection` has to survive, since refusing an absent field would make an
+    older client unusable on a guess about its version.
+    """
+    payload = dict(CLEAN_ENDING)
+    for key, value in overrides.items():
+        if value is None and key in payload:
+            del payload[key]
+        else:
+            payload[key] = value
+    return json.dumps(payload)
+
 
 @pytest.fixture
 def cfg(tmp_path):
@@ -332,11 +363,17 @@ class TestTheApiKeyIsNotAvailableToTheCli:
 
 class TestTerminalOutput:
     def test_a_clean_success_is_recognised(self):
-        result = runner._parse_terminal(
-            0, json.dumps({"subtype": "success", "result": "done"}), "")
+        """The whole object the upgraded CLI sends, not a two-key stand-in.
+
+        This is the other half of every refusal below: the checks that read the
+        fields around `subtype` have to let the real terminal object through,
+        or a runner that refuses everything would pass all of them.
+        """
+        result = runner._parse_terminal(0, terminal(), "")
 
         assert result.subtype == "success"
         assert not result.failed
+        assert result.objection == ""
 
     @pytest.mark.parametrize("subtype", ["error_max_turns", "error_during_execution"])
     def test_a_named_failure_is_not_a_success(self, subtype):
@@ -380,6 +417,101 @@ class TestTerminalOutput:
 
     def test_a_json_array_is_not_an_object(self):
         assert runner._parse_terminal(0, "[1, 2, 3]", "").failed
+
+    def test_an_is_error_that_is_not_a_boolean_is_not_read_as_no(self):
+        """One field read two ways in two adjacent lines.
+
+        The contradiction check asked `is_error is True` and the line under it
+        asked for the same field's truth, so `"is_error": 1` — a boolean that
+        went through a serialiser with no booleans — kept the `success` subtype
+        while its own error text was being copied into the detail.
+        """
+        result = runner._parse_terminal(
+            0, terminal(is_error=1, result="rate limited"), "")
+
+        assert result.subtype not in runner._SUBTYPES
+        assert "rate limited" in result.detail
+
+    def test_an_older_cli_that_sends_no_is_error_is_still_a_clean_success(self):
+        """Absence is forgiven here, and only here.
+
+        The first version of this check refused every object without
+        `is_error` — and the test that would have caught the regression was
+        rewritten to the recorded 2.1.236 shape in the same edit, so the
+        regression was written down as intended behaviour rather than found.
+        A CLI from before the field existed would have had every one of its
+        healthy reviews reported as incomplete.
+
+        Only the combination is forgiven: a zero exit and `subtype: success`.
+        """
+        result = runner._parse_terminal(
+            0, json.dumps({"subtype": "success", "result": "done"}), "")
+
+        assert result.objection == ""
+
+    def test_a_missing_is_error_on_anything_else_is_still_refused(self):
+        """The control. Forgiving the field must not become ignoring it."""
+        result = runner._parse_terminal(
+            1, json.dumps({"subtype": "success", "result": "done"}), "")
+
+        assert "did not say whether it ended in error" in result.objection
+
+    def test_a_refused_call_to_one_of_our_tools_is_not_a_review_that_looked(self):
+        """`permission_denials` is the CLI's own record that it stopped the
+        reviewer from doing something our prompt asked for. Those calls never
+        reach our server, so the session document cannot know they happened —
+        this field is the only place they exist."""
+        result = runner._parse_terminal(0, terminal(permission_denials=[
+            {"tool_name": "mcp__security_agent__get_diff"}]), "")
+
+        assert "refused 1 of this review's own tool call" in result.objection
+
+    def test_a_refused_builtin_is_the_containment_working_not_a_failure(self):
+        """This runner hands the CLI a denylist of its own built-ins on purpose,
+        so that a reviewer reaching for `Read` or `Bash` is stopped. A model that
+        tries one, is refused, and does the same work through `read_file` has
+        been contained exactly as designed.
+
+        Counting every denial made that containment read as a fault and would
+        have failed healthy reviews systematically — the reverse of the mistake
+        the check was written for, and just as expensive.
+        """
+        result = runner._parse_terminal(0, terminal(permission_denials=[
+            {"tool_name": "Bash"}, {"tool_name": "Read"}]), "")
+
+        assert result.objection == ""
+
+    def test_an_ending_the_cli_does_not_call_completed_is_refused(self):
+        result = runner._parse_terminal(
+            0, terminal(terminal_reason="interrupted"), "")
+
+        assert "terminal_reason" in result.objection
+
+    @pytest.mark.parametrize("stop_reason", ["max_tokens", "refusal", "pause_turn"])
+    def test_a_turn_the_api_path_would_refuse_is_refused_here_too(self, stop_reason):
+        """The same allowlist as `agent.FINISHED_CLEANLY`, imported rather than
+        typed out again: two lists that must agree and are written twice are two
+        lists that will one day disagree, and the disagreement would be one
+        runner calling a truncated turn a completed review."""
+        result = runner._parse_terminal(0, terminal(stop_reason=stop_reason), "")
+
+        assert stop_reason in result.objection
+
+    def test_an_object_of_another_type_is_not_the_end_of_the_run(self):
+        result = runner._parse_terminal(0, terminal(type="system"), "")
+
+        assert "type 'system'" in result.objection
+
+    @pytest.mark.parametrize("field", ["stop_reason", "terminal_reason",
+                                       "permission_denials", "type"])
+    def test_a_field_the_cli_never_sends_is_not_held_against_it(self, field):
+        """The half that keeps these checks usable. A field that is absent is a
+        question that was never asked, and refusing on it would make an older
+        client unusable on a guess about its version — which is the failure the
+        authentication preflight already refuses to make."""
+        result = runner._parse_terminal(0, terminal(**{field: None}), "")
+
+        assert result.objection == ""
 
 
 # ------------------------------------------------- what makes a run complete
@@ -492,8 +624,7 @@ class TestCompletionNeedsBothHalves:
         self._signed_off_session(handoff)
 
         session, stop_reason, detail = subject._collect(
-            handoff, runner._parse_terminal(
-                0, json.dumps({"subtype": "success"}), ""), REVISION)
+            handoff, runner._parse_terminal(0, terminal(), ""), REVISION)
 
         assert session is not None, "the document was readable"
         assert stop_reason == STOP_INCONCLUSIVE
@@ -510,10 +641,62 @@ class TestCompletionNeedsBothHalves:
         self._signed_off_session(handoff)
 
         _session, stop_reason, _detail = subject._collect(
-            handoff, runner._parse_terminal(
-                0, json.dumps({"subtype": "success"}), ""), REVISION)
+            handoff, runner._parse_terminal(0, terminal(), ""), REVISION)
 
         assert stop_reason == STOP_COMPLETED
+
+    def test_a_signed_off_review_the_cli_refused_tool_calls_in_is_not_complete(
+            self, cfg, budget, tmp_path, git_repo):
+        """The failure the 2.1.236 upgrade produced, one notch to the left.
+
+        There the reviewer got no tools at all, invented `<invoke
+        name="get_diff">` in its prose, and was caught because nothing was ever
+        recorded as reached. A session where *some* calls are refused by the CLI
+        and the rest are served does not look like that: the reviewer signs off,
+        the document is whole, and the calls that were denied left no trace in
+        it, because they never reached our server. The CLI's own record of them
+        is the only evidence there is that this review could not look.
+        """
+        subject = self._runner(cfg, budget, tmp_path, git_repo)
+        handoff = Handoff(tmp_path / "handoff", subject.run_id, "digest-123")
+        self._signed_off_session(handoff)
+
+        _session, stop_reason, detail = subject._collect(
+            handoff,
+            runner._parse_terminal(0, terminal(permission_denials=[
+                {"tool_name": "mcp__security_agent__read_file"},
+                {"tool_name": "mcp__security_agent__search_code"}]), ""),
+            REVISION)
+
+        assert stop_reason != STOP_COMPLETED
+        assert "refused 2 of this review's own tool call" in detail
+
+    @pytest.mark.parametrize("ending", [
+        {"stop_reason": "max_tokens"},
+        {"terminal_reason": "interrupted"},
+        # `is_error: None` is deliberately not here. An object with no
+        # `is_error` at all, a zero exit and `subtype: success` is what an
+        # older CLI sent, and refusing it made every review from one
+        # incomplete. `terminal()` fills the other fields, so this shape is a
+        # current object with the field removed rather than an old one, and
+        # asserting on it would be asserting on a case that does not occur.
+    ])
+    def test_a_signed_off_review_that_ended_untidily_is_not_complete(
+            self, cfg, budget, tmp_path, git_repo, ending):
+        """Every one of these arrives with `subtype: "success"`, which is the
+        only field this runner used to read. A review that signed off is not
+        thereby a review that finished, and the CLI describing its own ending in
+        more fields than we ask about is a thing that has already happened
+        once."""
+        subject = self._runner(cfg, budget, tmp_path, git_repo)
+        handoff = Handoff(tmp_path / "handoff", subject.run_id, "digest-123")
+        self._signed_off_session(handoff)
+
+        _session, stop_reason, detail = subject._collect(
+            handoff, runner._parse_terminal(0, terminal(**ending), ""), REVISION)
+
+        assert stop_reason != STOP_COMPLETED
+        assert detail
 
     def test_the_crash_trace_is_carried_into_the_detail(
             self, cfg, budget, tmp_path, git_repo):
@@ -758,6 +941,133 @@ class TestAuthenticationIsAskedBeforeTheRun:
 
         assert "ANTHROPIC_API_KEY" not in seen
         assert "ANTHROPIC_AUTH_TOKEN" not in seen
+
+
+class TestTheHandoffHasMoreThanOneWriter:
+    """One review is no longer one process, and the spend report was left behind.
+
+    Claude Code 2.1.236 starts our MCP server twice — a throwaway probe that
+    sends `server/discover`, then the session — and both are handed the same
+    `--spend-report` path. The crash journal was moved to a per-process name the
+    day this was found, and `read_trace` was taught to read the pattern; this
+    file kept asking for one exact name and taking whatever was in it.
+
+    The stake is the one fact in that file: `refused_for_budget` is what turns a
+    review that ran out of tool calls into exit 2. The probe's report says
+    `false` and `spent: 0`, so if the probe's write lands last — or if this
+    report follows the journal to a per-process name and the exact one stops
+    existing — the parent reads "no refusal" and a review that stopped looking
+    is reported as a completed review with no findings.
+    """
+
+    def _report(self, handoff, name, **fields):
+        payload = {"label": "reviewer", "ceiling": 40, "spent": 0,
+                   "refused_for_budget": False}
+        payload.update(fields)
+        handoff.root.mkdir(parents=True, exist_ok=True)
+        (handoff.root / name).write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_a_probe_writing_last_cannot_erase_the_budget_refusal(self, handoff):
+        self._report(handoff, "spend.4242.json", spent=40,
+                     refused_for_budget=True)
+        self._report(handoff, "spend.json", spent=0)
+
+        assert handoff.refused_for_budget() is True
+
+    def test_a_report_that_moved_to_a_per_process_name_is_still_found(self, handoff):
+        """The direction the child has already gone once. A parent that asks
+        only for the exact name would find nothing here, and nothing found reads
+        as no refusal."""
+        self._report(handoff, "spend.4242.json", spent=31,
+                     refused_for_budget=True)
+
+        assert handoff.spent_tool_calls() == 31
+        assert handoff.refused_for_budget() is True
+
+    def test_what_every_process_spent_is_added_up(self, handoff):
+        """Each process counts its own allowance, so the run spent the sum. The
+        alternative — believing one of them — understates how close the run came
+        to its ceiling, on the runner where the ceiling is enforced elsewhere."""
+        self._report(handoff, "spend.json", spent=3)
+        self._report(handoff, "spend.111.json", spent=17)
+
+        assert handoff.spent_tool_calls() == 20
+
+    def test_no_report_at_all_is_absent_rather_than_nothing_spent(self, handoff):
+        """The child writes this file best-effort and refuses to fail a review
+        over a disk that was full. So a missing report is a missing figure, and
+        must not become a confident zero."""
+        assert handoff.spent_tool_calls() is None
+        assert handoff.spend() == {}
+
+    def test_a_report_that_names_no_figure_stays_absent(self, handoff):
+        self._report(handoff, "spend.json", spent=None)
+
+        assert handoff.spent_tool_calls() is None
+
+    def test_an_unreadable_report_does_not_hide_a_readable_one(self, handoff):
+        handoff.root.mkdir(parents=True, exist_ok=True)
+        (handoff.root / "spend.json").write_text("{ truncated", encoding="utf-8")
+        self._report(handoff, "spend.9.json", spent=12, refused_for_budget=True)
+
+        assert handoff.refused_for_budget() is True
+        assert handoff.spent_tool_calls() == 12
+
+    def test_a_write_still_in_flight_is_not_read_as_a_report(self, handoff):
+        """`_write_spend_report` renames `spend.json.partial` into place. The
+        pattern must not match it, or a half-written file would be folded in as
+        a process's answer."""
+        handoff.root.mkdir(parents=True, exist_ok=True)
+        (handoff.root / "spend.json.partial").write_text(
+            json.dumps({"spent": 99}), encoding="utf-8")
+
+        assert handoff.spend() == {}
+
+    def test_the_run_is_refused_when_any_process_hit_the_ceiling(
+            self, cfg, tmp_path, git_repo):
+        """The whole chain, not the reading of a file. A signed-off document, a
+        clean terminal object, and one process out of two saying it was refused
+        a tool call — the run must come out as budget-exhausted rather than as a
+        completed review that found nothing."""
+        from security_agent.budget import PROFILES, RunBudget
+        from security_agent.models import STOP_BUDGET
+
+        budget = RunBudget(profile=PROFILES["normal"], turns_enforced=False)
+        workspace = Workspace(root=git_repo, diff_base="", diff_head="HEAD")
+        subject = ClaudeCodeRunner(cfg, workspace, budget,
+                                   config_digest="digest-123")
+        handoff = Handoff(tmp_path / "handoff", subject.run_id, "digest-123")
+        TestCompletionNeedsBothHalves()._signed_off_session(handoff)
+        self._report(handoff, "spend.4242.json",
+                     spent=budget.review.ceiling, refused_for_budget=True)
+        self._report(handoff, "spend.json", spent=0)
+
+        _session, stop_reason, detail = subject._collect(
+            handoff, runner._parse_terminal(0, terminal(), ""), REVISION)
+
+        assert stop_reason == STOP_BUDGET
+        assert "ran out of tool calls" in detail
+
+    def test_an_impossible_figure_does_not_spin_the_fold(
+            self, cfg, tmp_path, git_repo):
+        """The loop's length is read out of a file written by another process.
+        Counting past the ceiling changes nothing — every call beyond it is
+        refused — so it stops there rather than running for as long as the
+        number says."""
+        from security_agent.budget import PROFILES, RunBudget
+
+        budget = RunBudget(profile=PROFILES["normal"], turns_enforced=False)
+        workspace = Workspace(root=git_repo, diff_base="", diff_head="HEAD")
+        subject = ClaudeCodeRunner(cfg, workspace, budget, config_digest="d")
+        handoff = Handoff(tmp_path / "handoff", subject.run_id, "d")
+        self._report(handoff, "spend.json", spent=10 ** 9)
+
+        started = time.monotonic()
+        subject._collect(handoff, runner.CliResult(killed=True,
+                                                   stop=STOP_TIME_LIMIT), REVISION)
+
+        assert time.monotonic() - started < 5.0
+        assert budget.review.spent == budget.review.ceiling
 
 
 def test_the_denied_list_is_not_empty():

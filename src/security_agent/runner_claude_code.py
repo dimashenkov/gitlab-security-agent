@@ -42,6 +42,25 @@ So the CLI runs in an empty temporary directory and never sees the repository
 at all. The repository is read only by the MCP server, a different process,
 pointed at it explicitly. This is not a setting that can be misconfigured; it
 is the absence of a path.
+
+## One review is not one process, and the CLI's ending is not one field
+
+Claude Code 2.1.236 starts our MCP server twice for a single review: a
+throwaway probe that sends `server/discover`, then the session. Every file in
+the handoff directory therefore has more than one writer, and the crash journal
+was the first thing to find that out — the probe claimed the single path and
+the session refused to start, leaving a reviewer with no tools that wrote
+`<invoke name="get_diff">` into its prose and invented the result.
+
+Two rules come out of it, and both are about the parent rather than the child.
+Nothing here may assume that a file named in the MCP configuration was written
+by the process that did the reviewing; where the answer matters, every writer's
+answer is read and the blocking one wins. And nothing here may take one field of
+the terminal object as the whole of what the CLI said about its ending: the same
+upgrade that split the process also grew `terminal_reason`, `permission_denials`
+and `stop_reason` beside the `subtype` this runner used to read alone. A field
+that arrives after we stopped looking is a field that can say "this review was
+stopped" while `subtype` still says `success`.
 """
 
 from __future__ import annotations
@@ -60,7 +79,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .agent import _provenance
+from .agent import FINISHED_CLEANLY, _provenance
 from .budget import STOPPED_TOOL_CALLS, Allowance, RunBudget
 from .config import Config
 from .crash_journal import read_trace, render_trace
@@ -116,6 +135,13 @@ _SUBTYPES = {
     "error_max_turns": STOP_ERROR,
     "error_during_execution": STOP_ERROR,
 }
+
+# What `terminal_reason` may say for the run to be a review that finished. The
+# field did not exist when this runner was written; it arrived with the upgrade
+# that also split one review into two processes, which is the whole argument for
+# reading it — a CLI that grows a second way to say "this ended early" and is
+# only ever asked the first one will be believed about the wrong thing.
+_CLEAN_TERMINAL_REASONS = frozenset({"completed"})
 
 
 class RunnerError(Exception):
@@ -391,27 +417,82 @@ class Handoff:
         self.cwd = self.root / "cwd"
         self.cwd.mkdir(parents=True, exist_ok=True)
 
+    def spend_reports(self) -> List[Dict[str, Any]]:
+        """Every spend report this run's children left, not only the first one.
+
+        The path handed to the MCP configuration is handed to *every* process
+        the CLI starts from it, and since 2.1.236 that is at least two: the
+        probe that sends `server/discover` and the session that does the
+        reviewing. Both write this file on their way out, so what sits at the
+        exact name is whichever of them finished last — and the probe's report
+        says `spent: 0, refused_for_budget: false`, which is the answer that
+        makes a review that ran out of tool calls look like one that had tool
+        calls to spare.
+
+        Read as a pattern as well as a path, which is what `read_trace` already
+        does with the crash journal: the journal moved to `crash.<pid>.jsonl`
+        the day this was found, and a parent that asks only for the exact name
+        would find nothing at all if the spend report follows it there. Nothing
+        found reads as no refusal, so the failure of this method to keep up with
+        the child is a failure in the direction of a green tick.
+        """
+        found: List[Dict[str, Any]] = []
+        for path in self._report_paths():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(payload, dict):
+                found.append(payload)
+        return found
+
+    def _report_paths(self) -> List[Path]:
+        """The exact name, then every per-process sibling of it.
+
+        The pattern cannot match the `.partial` file a write leaves behind
+        mid-rename, because that name ends in `.partial` rather than in the
+        report's own suffix.
+        """
+        paths = [self.spend_report] if self.spend_report.exists() else []
+        paths += sorted(self.spend_report.parent.glob("{}.*{}".format(
+            self.spend_report.stem, self.spend_report.suffix)))
+        return paths
+
     def spend(self) -> Dict[str, Any]:
-        """What the child reported spending, or `{}` if it never said.
+        """What the children reported spending, or `{}` if none of them said.
 
         The whole record, not one key. Reading only `spent` left
         `refused_for_budget` on the floor — the child computed that its review
         had been cut short, wrote it down, exited 2 about it, and the parent
         looked past all three. A run that hit its ceiling then rendered as a
         completed review with no findings.
+
+        Folded across the writers rather than picked from one of them. `spent`
+        is summed because each process counts its own allowance, and a refusal
+        is carried if *any* process recorded one: a refusal is an event that
+        happened, and a second process that never made a tool call cannot
+        un-happen it. The rest of the record is taken from whichever report
+        spent the most, which is the process that did the reviewing.
         """
-        try:
-            payload = json.loads(self.spend_report.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        reports = self.spend_reports()
+        if not reports:
             return {}
-        return payload if isinstance(payload, dict) else {}
+        folded = dict(max(reports, key=lambda report: _as_int(
+            report.get("spent")) or 0))
+        counted = [value for value in (_as_int(report.get("spent"))
+                                       for report in reports)
+                   if value is not None]
+        # Absent stays absent: a report that never named a figure must not be
+        # folded into a confident zero.
+        folded.pop("spent", None)
+        if counted:
+            folded["spent"] = sum(counted)
+        folded["refused_for_budget"] = any(
+            report.get("refused_for_budget") is True for report in reports)
+        return folded
 
     def spent_tool_calls(self) -> Optional[int]:
-        report = self.spend()
-        try:
-            return int(report["spent"])
-        except (KeyError, TypeError, ValueError):
-            return None
+        return _as_int(self.spend().get("spent"))
 
     def refused_for_budget(self) -> bool:
         return self.spend().get("refused_for_budget") is True
@@ -610,7 +691,14 @@ class ClaudeCodeRunner:
         spent = handoff.spent_tool_calls()
         if spent is not None:
             for _ in range(spent):
-                self.budget.review.note_tool_call()
+                if not self.budget.review.note_tool_call():
+                    # The allowance is exhausted, so every further call would be
+                    # refused anyway and counting them changes nothing. Stopping
+                    # is not tidiness: this figure now arrives from however many
+                    # processes the CLI started, added together, and a loop whose
+                    # length is read out of a file is a loop a wrong file can run
+                    # for as long as it likes.
+                    break
 
         # No grace period after a kill. The wait is for a rename already in
         # flight from a process that is shutting down cleanly; a process this
@@ -665,6 +753,14 @@ class ClaudeCodeRunner:
         stop = _SUBTYPES.get(result.subtype, STOP_ERROR)
         if stop != STOP_COMPLETED:
             return session, stop, result.detail or _unnamed(result.subtype)
+
+        if result.objection:
+            # `subtype` said `success` and another field of the same object said
+            # the run was stopped, refused a tool call, or ended in a way nobody
+            # here has named. The subtype is one sentence out of the CLI's own
+            # description of its ending, and it was the only sentence this
+            # runner read while the description grew around it.
+            return session, STOP_ERROR, result.objection
 
         # The CLI says it finished. Two of our own statements can still say the
         # review did not, and both were being ignored.
@@ -794,11 +890,18 @@ class CliResult:
         returncode: int = 0,
         usage: Optional[Dict[str, Any]] = None,
         payload: Optional[Dict[str, Any]] = None,
+        objection: str = "",
     ) -> None:
         self.subtype = subtype
         self.detail = detail
         self.killed = killed
         self.failed = failed
+        # What the rest of the terminal object says about this ending, when it
+        # does not agree that the review finished. Carried beside `subtype`
+        # rather than folded into it because the two are read for different
+        # questions: `subtype` names the ending, and this says whether the
+        # object as a whole is entitled to call it a completed review.
+        self.objection = objection
         # The named ending this result already implies, decided where the
         # failure was observed. Deriving it later from `killed`/`failed` meant
         # one flag covering two different endings — a process that could not be
@@ -868,7 +971,12 @@ def _parse_terminal(returncode: int, stdout: str, stderr: str) -> CliResult:
                 type(payload).__name__)))
 
     subtype = str(payload.get("subtype") or "")
-    if payload.get("is_error") is True and subtype in _SUBTYPES:
+    # Truthiness, not `is True`, which is how the `detail=` line four lines down
+    # has always read the same field. The two disagreed about `"is_error": 1` —
+    # a boolean that came back from a serialiser with no booleans in it — and
+    # the disagreement went the permissive way: the `success` subtype was kept
+    # while the error text belonging to it was copied into the detail.
+    if payload.get("is_error") and subtype in _SUBTYPES:
         # It said `success` and also said it errored. Believe the error: the
         # permissive reading of a contradiction is the one that ships.
         subtype = ""
@@ -879,7 +987,125 @@ def _parse_terminal(returncode: int, stdout: str, stderr: str) -> CliResult:
         detail=str(payload.get("result") or "") if payload.get("is_error") else "",
         usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
         payload=payload,
+        objection=_objection(payload, returncode),
     )
+
+
+
+def _denied_review_tools(denials: Any) -> List[str]:
+    """The refused calls that belong to *this review*, and not the rest.
+
+    Every denial used to count, which reads as caution and is not. This runner
+    hands the CLI a denylist of its own built-ins on purpose — `Bash`, `Read`,
+    `Edit` and the rest — precisely so that a reviewer reaching for one is
+    stopped. A model that tries `Read`, is refused, and then does the same work
+    through `read_file` has been contained exactly as designed, and failing its
+    review over the refusal turns the containment into a fault.
+
+    What matters is a refused call to one of *our* tools. Those are the calls
+    the session document cannot know about, because they never arrived, so a
+    sign-off written without them was written by a reviewer that was stopped
+    from looking and does not know it.
+    """
+    if not isinstance(denials, (list, tuple)):
+        # A shape nobody has seen. Named rather than counted, because "some"
+        # over an unknown structure is a number invented for the sentence.
+        return ["(an unreadable permission_denials)"] if denials else []
+    found = []
+    for entry in denials:
+        name = ""
+        if isinstance(entry, dict):
+            name = str(entry.get("tool_name") or entry.get("tool") or
+                       entry.get("name") or "")
+        elif isinstance(entry, str):
+            name = entry
+        if name.startswith(TOOL_PREFIX):
+            found.append(name)
+    return found
+
+
+def _objection(payload: Dict[str, Any], returncode: int = 0) -> str:
+    """Why this terminal object is not a statement that a review finished, or "".
+
+    `subtype` was the whole of what this runner asked the CLI about its own
+    ending, and the object recorded from 2.1.236 answers that question in four
+    more fields: `is_error`, `stop_reason`, `terminal_reason` and
+    `permission_denials`. Each of them can say the review was cut short while
+    `subtype` still says `success`, and the one that matters most is the last:
+    a denial is the CLI refusing a tool call our prompt told the reviewer to
+    make, so a session full of them is a reviewer that could not look, and a
+    reviewer that could not look and signed off anyway is the exact shape of
+    "could not check" reported as "checked and clean".
+
+    Every check is an allowlist and every one of them tolerates the field being
+    absent, which is the difference between this and the version of the rule
+    that would break a working installation. A field the CLI never sent is a
+    question that was never asked, and refusing on it would make an older client
+    unusable on a guess about its version. A field that is *there* and holds a
+    value nobody has named is refused, because an ending nobody named is an
+    ending nobody checked.
+
+    `is_error` is the exception, and deliberately: it is not tolerated when
+    absent. It is the field that carries the CLI's own answer to "did this go
+    wrong", the one every recorded object has sent, and reading its absence as
+    `False` is the absent-versus-zero confusion this project refuses everywhere
+    else — here it would be reading silence as reassurance about a review.
+    """
+    flag = payload.get("is_error")
+    if flag is None:
+        # Absent is not an error when the object is otherwise a clean success
+        # from a process that exited zero. The field arrived with a version of
+        # the CLI; refusing every object without it makes every review from an
+        # older one incomplete, which is the reverse mistake and just as
+        # expensive — the first version of this check did exactly that, and the
+        # test that would have caught it was rewritten to the new shape at the
+        # same time, so the regression was recorded as intended behaviour.
+        #
+        # Only the combination is forgiven. A missing `is_error` on anything
+        # other than a zero-exit `success` is still silence where an answer
+        # belongs.
+        if returncode == 0 and payload.get("subtype") == "success":
+            flag = False
+        else:
+            return ("the CLI's terminal object did not say whether it ended in "
+                    "error, and its silence is not the same as a no. A review "
+                    "is only complete when the provider says so.")
+    if not isinstance(flag, bool):
+        return ("the CLI answered `is_error` with {!r}, which is neither true "
+                "nor false. An answer that cannot be read is not a clean "
+                "ending.".format(flag))
+    if flag:
+        return str(payload.get("result") or "") or (
+            "the CLI's terminal object reported an error and named none.")
+
+    ours = _denied_review_tools(payload.get("permission_denials"))
+    if ours:
+        return ("the CLI refused {} of this review's own tool call(s): {}. "
+                "Those calls never reached our server, so nothing in the "
+                "session document records what the reviewer was stopped from "
+                "looking at — and a review that was stopped from looking is "
+                "not a review that looked.".format(
+                    len(ours), ", ".join(sorted(set(ours))[:5])))
+
+    stop_reason = str(payload.get("stop_reason") or "")
+    if stop_reason and stop_reason not in FINISHED_CLEANLY:
+        return ("the CLI ended its turn with stop_reason {!r}, which is not one "
+                "of the endings the API path accepts either. The same list is "
+                "read on both runners so that a turn cut short cannot be a "
+                "completed review on one of them.".format(stop_reason))
+
+    terminal_reason = str(payload.get("terminal_reason") or "")
+    if terminal_reason and terminal_reason not in _CLEAN_TERMINAL_REASONS:
+        return ("the CLI gave terminal_reason {!r} rather than saying it "
+                "completed. Treated as a failure rather than a completed "
+                "review.".format(terminal_reason))
+
+    kind = str(payload.get("type") or "")
+    if kind and kind != "result":
+        return ("the CLI's terminal object is of type {!r} rather than the "
+                "result object `--output-format json` promises, so what was "
+                "read may not be the end of the run at all.".format(kind))
+    return ""
 
 
 # How long the parent waits for the child's document after the CLI has exited.
@@ -1028,6 +1254,22 @@ def _child_env() -> Dict[str, str]:
     for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "PWD", "OLDPWD"):
         env.pop(name, None)
     return env
+
+
+def _as_int(value: Any) -> Optional[int]:
+    """A whole number, or `None` for anything that is not one.
+
+    `None` rather than zero, because every caller of this is reading a figure
+    out of a file written by another process, and "the child did not say" and
+    "the child said nothing was spent" are the two answers this project spends
+    most of its time keeping apart.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _tail(stderr: str, limit: int = 400) -> str:

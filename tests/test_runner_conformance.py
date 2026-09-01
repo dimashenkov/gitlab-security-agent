@@ -268,8 +268,31 @@ class Server:
 
     @property
     def journal(self):
+        """Where the server actually writes, which is no longer the path we ask for.
+
+        The name in the argument list is a base: the server writes
+        `crash.<pid>.jsonl` beside it, because one review is no longer one
+        process — the CLI starts the server once to probe it and once for the
+        session, and a single exclusive path meant the probe took it and the
+        session refused to start.
+
+        This harness polls the journal to catch a call mid-flight, so reading
+        the base name found nothing, the kill landed after the call had
+        finished, and the test that exists to observe an unfinished call
+        observed a finished one. `read_trace` resolves the same way.
+        """
         args = self.spec["args"]
-        return args[args.index("--crash-journal") + 1]
+        base = args[args.index("--crash-journal") + 1]
+        if os.path.exists(base):
+            return base
+        directory, name = os.path.split(base)
+        stem, suffix = os.path.splitext(name)
+        siblings = [os.path.join(directory, entry)
+                    for entry in os.listdir(directory or ".")
+                    if entry.startswith(stem + ".") and entry.endswith(suffix)]
+        if not siblings:
+            return base
+        return max(siblings, key=os.path.getsize)
 
     def start(self):
         if self.proc is not None:

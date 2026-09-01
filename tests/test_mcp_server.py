@@ -19,13 +19,14 @@ import pytest
 
 from security_agent import mcp_server
 from security_agent import tools as tools_module
-from security_agent.crash_journal import read_trace
+from security_agent.crash_journal import CrashJournalError, read_trace
 from security_agent.mcp_server import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
     PROTOCOL_VERSION,
     REVIEWER,
+    SUPPORTED_PROTOCOL_VERSIONS,
     VERIFIER,
     build_server,
 )
@@ -217,11 +218,77 @@ class TestHandshake:
         assert "tools" in reply["result"]["capabilities"]
         assert reply["result"]["serverInfo"]["name"]
 
-    def test_a_client_asking_for_another_version_still_gets_ours(self, reviewer):
+    def test_a_client_asking_for_a_version_we_cannot_speak_still_gets_ours(
+            self, reviewer):
         """Answering with the client's version would claim a dialect we do not speak."""
         (reply,) = drive(reviewer, line(1, "initialize", protocolVersion="1999-01-01"))
 
         assert reply["result"]["protocolVersion"] == PROTOCOL_VERSION
+
+    def test_a_version_this_server_does_implement_is_answered_with_itself(
+            self, reviewer):
+        """The client's version moves, and a version mismatch is allowed to end it.
+
+        Claude Code 2.1.236 negotiates 2025-11-25 while this file was written
+        against 2025-06-18. The spec lets a client that does not recognise the
+        version the server names disconnect, and a client that disconnects
+        leaves the reviewer with no tools at all — which has already been
+        watched happen here, ending in a reviewer writing an `<invoke>` tag into
+        its prose and inventing the answer. Our shapes are the same under both
+        revisions, so both are answered with themselves.
+        """
+        for version in SUPPORTED_PROTOCOL_VERSIONS:
+            (reply,) = drive(reviewer, line(1, "initialize",
+                                            protocolVersion=version))
+            assert reply["result"]["protocolVersion"] == version
+
+    def test_the_newer_handshake_still_leads_to_working_tools(self, reviewer):
+        """Negotiating the newer version must not be all that is negotiated.
+
+        A handshake that agrees on a version and then serves nothing is the same
+        outcome as a handshake that failed, and it is harder to see. The whole
+        chain is driven: the version the client asked for, the tool list, and a
+        tool that reaches the repository and comes back with its contents.
+        """
+        replies = drive(
+            reviewer,
+            line(1, "initialize", protocolVersion="2025-11-25",
+                 capabilities={"roots": {"listChanged": True}, "elicitation": {}},
+                 clientInfo={"name": "claude-code", "version": "2.1.236"}),
+            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            line(2, "tools/list"),
+            line(3, "tools/call", name="read_file",
+                 arguments={"path": "app/views.py"}),
+        )
+
+        assert [r["id"] for r in replies] == [1, 2, 3]
+        assert replies[0]["result"]["protocolVersion"] == "2025-11-25"
+        assert "read_file" in [t["name"] for t in replies[1]["result"]["tools"]]
+        assert READ_VIEWS in replies[2]["result"]["content"][0]["text"]
+
+    def test_a_probe_for_a_method_we_do_not_implement_does_not_end_the_server(
+            self, reviewer):
+        """The shape 2.1.236 opens with, and the server has to survive it.
+
+        The client sends `server/discover` before `initialize` and before any
+        capability has been agreed. It is answered with the error the spec asks
+        for, and the session then proceeds as though nothing had happened —
+        because a server that treats an unknown probe as fatal serves no tools,
+        which is indistinguishable from a review that found nothing.
+        """
+        replies = drive(
+            reviewer,
+            line("server-discover-probe-1", "server/discover", _meta={
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {
+                    "roots": {"listChanged": True}, "elicitation": {}},
+            }),
+            line(0, "initialize", protocolVersion="2025-11-25"),
+        )
+
+        assert replies[0]["id"] == "server-discover-probe-1"
+        assert replies[0]["error"]["code"] == METHOD_NOT_FOUND
+        assert replies[1]["result"]["protocolVersion"] == "2025-11-25"
 
     def test_the_initialized_notification_is_not_answered(self, reviewer):
         """Replying to a notification is a protocol violation, not a courtesy.
@@ -881,3 +948,256 @@ class TestTheSessionDocument:
         assert [c.name for c in trace.calls] == ["read_file"]
         assert trace.calls[0].finished
         assert not trace.review_finished
+
+
+class TestOneReviewIsTwoProcesses:
+    """Every file this server writes is named by the parent, and named once.
+
+    Claude Code 2.1.236 starts the server twice for one review: a throwaway
+    process that is sent `server/discover` and closed, then the session. Both
+    are handed the same argv, so both are handed the same session document, the
+    same spend report and the same journal path — and the probe reaches the end
+    of `main` having done none of the work those files describe.
+
+    The crash journal has already cost a corpus of paid runs this way. These
+    tests are about the other two, which are not diagnostics: the document *is*
+    the review, and the spend report carries the one key that says the review
+    was cut short.
+    """
+
+    def probe(self, monkeypatch, argv):
+        """The throwaway process: one method we do not implement, then closed."""
+        monkeypatch.setattr("sys.stdin", io.StringIO(
+            line("server-discover-probe-1", "server/discover") + "\n"))
+        return mcp_server.main(argv)
+
+    def test_the_probe_does_not_hand_over_an_emptiness_on_top_of_the_review(
+            self, git_repo, tmp_path, monkeypatch, capfd):
+        """A document from the process that reviewed nothing reads as a clean run.
+
+        It carries this run's id, this run's commits and this run's config
+        digest, so every binding check passes and nothing downstream can tell it
+        from a review that genuinely examined nothing. Which of the two
+        processes writes last is the client's scheduling and not ours, so the
+        one that did no work does not write over the one that did.
+        """
+        document = tmp_path / "session.json"
+        argv = ["--repo", str(git_repo), "--max-tool-calls", "10",
+                "--session-document", str(document), "--run-id", RUN_ID,
+                "--base-sha", REVISION.base_sha, "--head-sha", REVISION.head_sha,
+                "--config-digest", DIGEST]
+
+        monkeypatch.setattr("sys.stdin", io.StringIO("".join(t + "\n" for t in (
+            line(1, "tools/call", name="report_finding", arguments=FINDING),
+            line(2, "tools/call", name="finish_review",
+                 arguments={"summary": SIGN_OFF}),
+        ))))
+        assert mcp_server.main(argv) == 0
+        assert self.probe(monkeypatch, argv) == 0
+        capfd.readouterr()
+
+        session = read_session(document, run_id=RUN_ID, revision=REVISION,
+                               config_digest=DIGEST)
+        assert [c.finding.title for c in session.candidates] == [FINDING["title"]]
+        assert session.finished, (
+            "the probe process handed over an empty session over a signed-off "
+            "review, and it is bound to this run so nothing downstream can "
+            "tell the difference")
+
+    def test_a_process_that_did_nothing_still_writes_the_first_document(
+            self, git_repo, tmp_path, monkeypatch, capfd):
+        """The other half: whichever process starts first, a document exists.
+
+        The parent treats a missing document as a child that never came up, so
+        the rule has to be "do not overwrite", not "do not write". Getting it
+        the other way round would turn the ordering where the probe runs first
+        into a review reported as a process that died.
+        """
+        document = tmp_path / "session.json"
+        argv = ["--repo", str(git_repo), "--session-document", str(document),
+                "--run-id", RUN_ID, "--base-sha", REVISION.base_sha,
+                "--head-sha", REVISION.head_sha, "--config-digest", DIGEST]
+
+        assert self.probe(monkeypatch, argv) == 0
+        capfd.readouterr()
+
+        session = read_session(document, run_id=RUN_ID, revision=REVISION,
+                               config_digest=DIGEST)
+        assert session.tool_calls == []
+        assert session.finished is False
+
+    def test_the_probe_does_not_erase_a_budget_refusal(
+            self, git_repo, tmp_path, monkeypatch, capfd):
+        """`refused_for_budget` is read by the parent to decide what a run means.
+
+        A review that burned its allowance before reaching the vulnerable code
+        and a review that looked and found nothing produce the same empty
+        report; this key is what separates them. The probe spends nothing, so
+        its `false` written over the session's `true` turns a truncated review
+        into a completed one.
+        """
+        spend = tmp_path / "spend.json"
+        argv = ["--repo", str(git_repo), "--max-tool-calls", "1",
+                "--spend-report", str(spend), "--run-id", RUN_ID]
+
+        request = line(1, "tools/call", name="git_log", arguments={})
+        monkeypatch.setattr("sys.stdin", io.StringIO((request + "\n") * 2))
+        assert mcp_server.main(argv) == 2
+        assert self.probe(monkeypatch, argv) == 0
+        capfd.readouterr()
+
+        assert json.loads(spend.read_text()) == {
+            "label": REVIEWER, "ceiling": 1, "spent": 1,
+            "refused_for_budget": True,
+        }
+
+    def test_two_processes_do_not_write_one_temporary(self, git_repo, tmp_path,
+                                                      monkeypatch):
+        """The neighbour the spend report is written through is a claimed name too.
+
+        Both processes write this file when their client closes them, and a
+        fixed `.partial` neighbour is one file with two writers in it. The
+        rename then makes a torn document the report — and the parent reads the
+        report by parsing it, so a torn one says nothing at all, including
+        nothing about a budget refusal.
+
+        The rename is held back so the temporaries survive to be counted; what
+        is under test is that the two processes never reach for the same name.
+        """
+        spend = tmp_path / "spend.json"
+        monkeypatch.setattr(Path, "replace", lambda self, target: None)
+        server = build_server(root=git_repo, tool_set=REVIEWER, max_tool_calls=10)
+        call(server, 1, "git_log")
+
+        for pid in (5101, 5102):
+            monkeypatch.setattr(os, "getpid", lambda pid=pid: pid)
+            mcp_server._write_spend_report(spend, server)
+
+        assert len(list(tmp_path.glob("*.partial"))) == 2
+
+    def test_this_run_s_own_probe_journal_does_not_stop_the_session(
+            self, git_repo, tmp_path, monkeypatch):
+        """The failure that started all of this, from the session's side.
+
+        Two processes, one `--crash-journal` path. The probe gets there first
+        and leaves a file; the session must still start, and its trace must be
+        the one a reader is given.
+        """
+        journal = tmp_path / "crash.jsonl"
+
+        monkeypatch.setattr(os, "getpid", lambda: 4101)
+        probe = build_server(root=git_repo, tool_set=REVIEWER,
+                             crash_journal_path=journal, run_id=RUN_ID)
+        monkeypatch.setattr(os, "getpid", lambda: 4102)
+        session = build_server(root=git_repo, tool_set=REVIEWER,
+                               crash_journal_path=journal, run_id=RUN_ID)
+
+        assert probe.journal.path != session.journal.path
+        call(session, 1, "git_log")
+
+        trace = read_trace(journal)
+        assert [c.name for c in trace.calls] == ["git_log"]
+        assert trace.run_id == RUN_ID
+
+    def test_a_journal_from_an_earlier_run_beside_ours_stops_the_start(
+            self, git_repo, tmp_path):
+        """The guard the per-process naming quietly stopped enforcing.
+
+        Nothing writes to the plain name any more, so a check on the plain name
+        alone refuses nothing. `read_trace` reads whichever sibling has the most
+        records in it, which is how last week's run becomes this run's account
+        of its own death — the exact misreading the original single-file rule
+        existed to prevent.
+        """
+        journal = tmp_path / "crash.jsonl"
+        (tmp_path / "crash.9909.jsonl").write_text(
+            '{"seq": 1, "run": "an-older-job", "kind": "run_started"}\n'
+            '{"seq": 2, "run": "an-older-job", "kind": "tool_started", '
+            '"call_id": "call-1", "name": "read_file"}\n',
+            encoding="utf-8")
+
+        with pytest.raises(CrashJournalError) as raised:
+            build_server(root=git_repo, tool_set=REVIEWER,
+                         crash_journal_path=journal, run_id=RUN_ID)
+
+        assert "an-older-job" in str(raised.value)
+
+    def test_a_journal_nobody_can_be_shown_to_own_stops_the_start(
+            self, git_repo, tmp_path):
+        """An unattributable trace is the case where guessing is confident.
+
+        A file with records whose first line does not parse cannot be shown to
+        belong to this run, and the reader would still hand its contents over as
+        this run's progress.
+        """
+        journal = tmp_path / "crash.jsonl"
+        (tmp_path / "crash.9910.jsonl").write_text("not json\n", encoding="utf-8")
+
+        with pytest.raises(CrashJournalError):
+            build_server(root=git_repo, tool_set=REVIEWER,
+                         crash_journal_path=journal, run_id=RUN_ID)
+
+class TestTheProbeCannotClobberTheReview:
+    """Both writers checked `exists()` and then wrote, which is two steps.
+
+    The gap between them is a race with a real loser: the probe looks and finds
+    nothing, the session writes the review, and the probe then lands on top —
+    replacing a critical finding with a document saying nothing was examined, or
+    `refused_for_budget: true` with `false`. Both carry this run's id and pass
+    every binding check downstream.
+
+    `os.link` is the same intent in one step, so these tests write the file
+    *between* the check and the write and assert that the real result survives.
+    """
+
+    def test_an_empty_session_document_cannot_replace_a_real_one(self, tmp_path):
+        from security_agent import mcp_server as server_module
+
+        path = tmp_path / "session.json"
+        path.write_text('{"the": "real review"}', encoding="utf-8")
+
+        from security_agent.tools import Session
+
+        written = server_module._write_session_document(
+            path, Session(), run_id=RUN_ID, revision=Revision(),
+            config_digest="digest")
+
+        assert written is True
+        assert path.read_text() == '{"the": "real review"}'
+
+    def test_an_empty_session_document_is_written_when_there_is_none(self, tmp_path):
+        """The other half. Leaving nothing at all would make the parent read a
+        child that never came up as a child that never ran."""
+        from security_agent import mcp_server as server_module
+
+        path = tmp_path / "session.json"
+
+        from security_agent.tools import Session
+
+        assert server_module._write_session_document(
+            path, Session(), run_id=RUN_ID, revision=Revision(),
+            config_digest="digest") is True
+        assert path.exists()
+        assert not list(tmp_path.glob("*.empty.*"))
+
+    def test_a_spend_report_from_a_process_that_spent_nothing_cannot_replace_one(
+            self, tmp_path):
+        """`refused_for_budget` is the single fact that turns a review which ran
+        out of tool calls into an incomplete one. The probe reports `false`."""
+        import json as json_module
+
+        from security_agent import mcp_server as server_module
+
+        path = tmp_path / "spend.json"
+        path.write_text(json_module.dumps({"refused_for_budget": True}),
+                        encoding="utf-8")
+
+        from security_agent.budget import Allowance
+
+        server = server_module.MCPServer(
+            workspace=None, tools=[], allowance=Allowance("reviewer", 10))
+        server_module._write_spend_report(path, server)
+
+        assert json_module.loads(path.read_text())["refused_for_budget"] is True
+        assert not list(tmp_path.glob("*.partial"))
+

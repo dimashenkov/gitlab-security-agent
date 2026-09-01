@@ -1,0 +1,163 @@
+{
+  "case_id": "py-p43p-whwx-q52h",
+  "language": "python",
+  "family": "dos",
+  "case_digest": "5360605ca881050a",
+  "ran_at": "2026-09-01T09:56:20+00:00",
+  "members": {
+    "safe": {
+      "complete": false,
+      "finished_explicitly": false,
+      "stop_reason": "error",
+      "stop_detail": "the review process ended without writing its session document.",
+      "exit_code": 2,
+      "blocked": true,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.053685
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 15.263585874999999,
+      "cost": 0.052305,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 2,
+        "output_tokens": 37,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 5137
+      },
+      "coverage": {
+        "changed": [
+          "jupyterhub/auth.py",
+          "jupyterhub/handlers/base.py",
+          "jupyterhub/handlers/login.py"
+        ],
+        "examined": [],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": false,
+        "unopened": [
+          "jupyterhub/auth.py",
+          "jupyterhub/handlers/base.py",
+          "jupyterhub/handlers/login.py"
+        ],
+        "complete": false
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": false,
+      "finished_explicitly": false,
+      "stop_reason": "error",
+      "stop_detail": "the review process ended without writing its session document.",
+      "exit_code": 2,
+      "blocked": true,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.016047000000000002
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 13.936621333000001,
+      "cost": 0.014682,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 2,
+        "output_tokens": 16,
+        "cache_read_tokens": 3904,
+        "cache_write_tokens": 1232
+      },
+      "coverage": {
+        "changed": [
+          "jupyterhub/auth.py",
+          "jupyterhub/handlers/base.py",
+          "jupyterhub/handlers/login.py"
+        ],
+        "examined": [],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": false,
+        "unopened": [
+          "jupyterhub/auth.py",
+          "jupyterhub/handlers/base.py",
+          "jupyterhub/handlers/login.py"
+        ],
+        "complete": false
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "incomplete": [
+    "safe",
+    "unsafe"
+  ],
+  "cost": 0.06698699999999999,
+  "seconds": 15.263585874999999
+}

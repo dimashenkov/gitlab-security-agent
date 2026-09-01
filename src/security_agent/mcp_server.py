@@ -36,6 +36,7 @@ anything.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -63,11 +64,29 @@ from .workspace import Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
 
-# The revision whose shapes this file implements. Sent back on `initialize`
-# whatever the client asked for: the spec's own answer to a version we do not
-# speak is to state the one we do and let the client decide, and guessing at a
-# dialect we have not implemented would fail later and less clearly.
+# The revision this file was written against, and the one named on `initialize`
+# when the client asks for something outside the list below: the spec's own
+# answer to a version we do not speak is to state the one we do and let the
+# client decide, and guessing at a dialect we have not implemented would fail
+# later and less clearly.
 PROTOCOL_VERSION = "2025-06-18"
+
+# The revisions this server's shapes are genuinely valid under, and the reason
+# the version is negotiated rather than stated. `initialize`, `tools/list` and a
+# `tools/call` result of text content beside `isError` are spelled identically
+# in all three; everything that separates them — elicitation, roots, structured
+# content, batching — this server either does not use or already refuses, so
+# answering with the client's own version claims nothing we do not do.
+#
+# Stating ours unconditionally was safe only while clients were forgiving. The
+# spec permits a client that does not recognise the version the server names to
+# disconnect, and a disconnected client is a session with no tools — the failure
+# Claude Code 2.1.236 has already produced here by another route, where the
+# reviewer invented `<invoke name="get_diff">` and its result rather than say it
+# had nothing. That same client negotiates 2025-11-25 and was being answered
+# with 2025-06-18 on the hope that it would accept it. It does today. The list
+# is what stops the next move in the client's version being a silent one.
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
 
 SERVER_NAME = "gitlab-security-agent"
 
@@ -165,6 +184,11 @@ class MCPServer:
         self.allowance = allowance
         self.session = Session() if session is None else session
         self.server_name = server_name
+        # What `initialize` settled on, and the version every later message is
+        # answered under. Held per session rather than read off the module
+        # constant because two of this server's processes serve one review and a
+        # client is free to negotiate differently with each.
+        self.protocol_version = PROTOCOL_VERSION
         # Optional, never authoritative, and deliberately held *here* rather
         # than inside the tool handlers. Journalling from `tools.py` would put a
         # file write in every handler and tie the tool layer — which the API
@@ -245,7 +269,7 @@ class MCPServer:
             return self._error(
                 None, INVALID_REQUEST,
                 "JSON-RPC batches are not part of MCP {}; send one request per "
-                "line".format(PROTOCOL_VERSION))
+                "line".format(self.protocol_version))
         if not isinstance(message, dict):
             return self._error(
                 None, INVALID_REQUEST, "a JSON-RPC message must be an object")
@@ -305,13 +329,30 @@ class MCPServer:
     # --------------------------------------------------------------- methods
 
     def _initialize(self, request_id: Any, params: Dict[str, Any]) -> str:
+        """Settle on a version, and say what this server can do.
+
+        The client's own version is answered when it is one this server's shapes
+        are valid under, and only then. A version outside that list is answered
+        with ours, which is what the spec asks for and leaves the decision where
+        it belongs — with the client, which knows whether it can speak it.
+
+        The capabilities the client offers alongside its version are read and
+        deliberately not acted on. 2.1.236 sends `roots` and `elicitation`; both
+        are things a server may ask the *client* to do, this server asks for
+        neither, and a capability nobody uses needs no handling. What it must not
+        do is object to them: a handshake refused over a field we do not read is
+        a session with no tools, and a session with no tools has already been
+        seen to end in a reviewer inventing the calls it never made.
+        """
         asked = params.get("protocolVersion")
-        if asked and asked != PROTOCOL_VERSION:
-            log.warning("client asked for MCP %s; answering with %s",
-                        asked, PROTOCOL_VERSION)
+        if isinstance(asked, str) and asked in SUPPORTED_PROTOCOL_VERSIONS:
+            self.protocol_version = asked
+        elif asked:
+            log.warning("client asked for MCP %s, which this server does not "
+                        "implement; answering with %s", asked, self.protocol_version)
         self.initialized = True
         return self._result(request_id, {
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": self.protocol_version,
             # `listChanged` is false and says so. The set is fixed at
             # construction — that is the point of it — so a client that polls
             # for changes would be polling for something that cannot happen.
@@ -574,12 +615,95 @@ def build_server(
 
     journal = None
     if crash_journal_path is not None:
-        journal = CrashJournal(Path(crash_journal_path), run_id=run_id)
+        # One journal per *process*, not per run, because a run is no longer
+        # one process. Claude Code 2.1.236 starts this server twice for one
+        # review: once to probe it with `server/discover`, which this server
+        # does not implement and answers with a JSON-RPC error, and once for
+        # the session. Both were handed the same path; the probe claimed it and
+        # wrote its error record, and the session then refused to start at all.
+        #
+        # The reviewer was left with no tools. It wrote `<invoke name="get_diff">`
+        # into its prose and invented the result — a review of a repository that
+        # did not exist. The gate caught it, because nothing was ever recorded
+        # as reached, but every paid review failed this way after the upgrade.
+        #
+        # The guarantee the single path was protecting — two runs must never
+        # interleave into one trace — is kept by the name: a pid cannot be
+        # shared, and `read_trace` is given whichever file has a review in it.
+        path = Path(crash_journal_path)
+        _refuse_another_run_s_journal(path, run_id)
+        journal = CrashJournal(
+            path.with_name("{}.{}{}".format(path.stem, os.getpid(), path.suffix)),
+            run_id=run_id)
         # Written before anything else can be. A child killed during start-up
         # would otherwise leave an empty file, and an empty file cannot say
         # whether the run never began or the disk was never reachable.
         journal.run_started(mode=tool_set, revision=_revision_line(revision))
     return MCPServer(workspace, tools, allowance, session=session, journal=journal)
+
+
+def _refuse_another_run_s_journal(path: Path, run_id: str) -> None:
+    """Stop before writing beside a journal that belongs to somebody else.
+
+    The rule being kept is the one the single-file design was for: a reader must
+    never take an earlier run's progress for this one's and give a confident
+    account of a death that happened last week. What changed is where journals
+    live. Since one review became two processes they are written to
+    `<name>.<pid><suffix>`, and `read_trace` — finding nothing at the plain name
+    — reads whichever sibling has the most records in it. So a check on the
+    plain name alone now guards a path that nothing writes to, while the files
+    that would actually be misread sit beside it unexamined.
+
+    The run id is what separates the two cases, and it has to, because one of
+    them is normal. Claude Code starts this server twice for one review, so a
+    sibling stamped with *our* run id is this run's probe process and must be
+    tolerated — refusing it is exactly the failure this whole change was made
+    for. A sibling stamped with another run id, or one whose first record cannot
+    be read at all, is refused: an unattributable journal is the case where
+    guessing produces the confident wrong answer.
+
+    Without `--run-id` there is nothing to tell two runs apart by and this check
+    can only pass. That is a real gap and not a silent one — both runners always
+    pass a run id, because the session document's binding needs it too.
+    """
+    for candidate in [path, *sorted(path.parent.glob(
+            "{}.*{}".format(path.stem, path.suffix)))]:
+        owner = _journal_owner(candidate)
+        if owner is None or owner == str(run_id):
+            continue
+        raise CrashJournalError(
+            "{} already exists and has records in it, written by run {!r} "
+            "rather than {!r}; this run's trace would be read as that one's "
+            "progress".format(candidate, owner, str(run_id)))
+
+
+def _journal_owner(path: Path) -> Optional[str]:
+    """Which run wrote a journal, or `None` for a file with nothing in it.
+
+    Only the first line is read. A journal is append-only and every record
+    carries the same run, so the first record answers the question; the file
+    itself can be a hundred kilobytes of a review that went badly.
+
+    An empty file is nobody's — the probe process creates one and writes to it,
+    and a file with no records has no trace to be confused with. A file with
+    records whose first line does not parse, or carries no run, is reported as
+    `""`, which belongs to no run that named itself and is therefore refused.
+    """
+    try:
+        if path.stat().st_size == 0:
+            return None
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            first = handle.readline()
+    except OSError:
+        return None
+    try:
+        record = json.loads(first)
+    except ValueError:
+        return ""
+    if not isinstance(record, dict):
+        return ""
+    run = record.get("run")
+    return run if isinstance(run, str) else ""
 
 
 def _revision_line(revision: Optional[Revision]) -> str:
@@ -769,6 +893,14 @@ def _write_spend_report(path: Path, server: "MCPServer") -> None:
     has to mean the same thing on both runners — it is part of what the two are
     compared on — and an exit code can only say whether the ceiling was hit, not
     where the run stopped short of it.
+
+    A process that spent nothing will not overwrite a report that is already
+    there, for the same reason `_write_session_document` will not overwrite a
+    document. Both processes of one review are handed this same path, and the
+    probe spends nothing; its `refused_for_budget: false` landing on top of the
+    session's `true` would erase the one statement that says the review ran out
+    of tool calls before it finished looking, and the runner reads that key to
+    decide whether a review with no findings was a clean one.
     """
     payload = {
         "label": server.allowance.label,
@@ -776,10 +908,30 @@ def _write_spend_report(path: Path, server: "MCPServer") -> None:
         "spent": server.allowance.spent,
         "refused_for_budget": server.refused_for_budget,
     }
+    nothing_to_say = server.allowance.spent == 0 and not server.refused_for_budget
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(path.name + ".partial")
+        # Named for this process. A fixed neighbour is one more file two
+        # processes of the same review would both claim, and two writers
+        # interleaving into it would put a torn document where the rename then
+        # makes it the report.
+        temporary = path.with_name("{}.{}.partial".format(path.name, os.getpid()))
         temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        if nothing_to_say:
+            # Checking `path.exists()` and then renaming is two steps, and the
+            # gap between them is a race the probe can win: it looks and finds
+            # nothing, the session writes `refused_for_budget: true`, and the
+            # probe's `false` lands on top — erasing the one statement that
+            # turns a review which ran out of tool calls into an incomplete one
+            # rather than a clean one.
+            #
+            # `os.link` is the same intent in a single step. It fails when the
+            # name is taken, so a process with nothing to report can only ever
+            # create the report, never replace one.
+            with contextlib.suppress(FileExistsError):
+                os.link(str(temporary), str(path))
+            temporary.unlink()
+            return
         temporary.replace(path)
     except OSError as exc:
         log.error("could not write the spend report to %s: %s", path, exc)
@@ -815,7 +967,55 @@ def _write_session_document(
     `write_session` either renames a complete document into place or leaves the
     path alone, so a `False` here also means no half-document was left behind
     for the parent to find.
+
+    One thing this will not do is hand over an emptiness on top of somebody
+    else's work. Both processes of one review are given the same `--session-
+    document`, and the probe — which is sent `server/discover`, answers that it
+    does not implement it, and is closed — reaches this function at exit with a
+    session that has no tool calls, no candidates and no sign-off in it. Whether
+    that write lands before or after the session's last one is the client's
+    scheduling and not ours; landing after, it replaces a review that found a
+    critical vulnerability with a document saying the run examined nothing. That
+    document passes every binding check — same run, same commits, same config —
+    so nothing downstream could tell it from a review that genuinely did
+    nothing.
+
+    A process that did none of the work therefore writes only when no document
+    exists yet, which keeps the other half of the guarantee: whichever of the
+    two starts first, the parent still finds a document rather than the silence
+    it reads as a child that never came up.
     """
+    if _did_nothing(session):
+        # A process that served no tool has nothing to hand over, and the only
+        # question is whether the parent would otherwise find no document at
+        # all. So it writes one *if there is not one already* — and the check
+        # and the write must be one step, not two.
+        #
+        # Two steps is a race with a real loser: the probe looks and finds
+        # nothing, the session writes the review, and the probe then replaces a
+        # critical finding with a document saying nothing was examined. That
+        # document carries this run's id, its commits and its config digest, so
+        # every binding check in `read_session` passes and nothing downstream
+        # can tell it from a review that genuinely did nothing.
+        #
+        # `os.link` is that one step: it fails if the name is taken, and the
+        # process that did the reviewing is never the one that loses.
+        temporary = path.with_name("{}.empty.{}".format(path.name, os.getpid()))
+        try:
+            write_session(temporary, session, run_id=run_id, revision=revision,
+                          config_digest=config_digest)
+            os.link(str(temporary), str(path))
+        except FileExistsError:
+            log.info("leaving the session document at %s alone: this process "
+                     "made no tool calls and another one has handed over", path)
+        except (SessionDocumentError, OSError) as exc:
+            log.error("could not write an empty session document: %s", exc)
+            return False
+        finally:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
+        return True
+
     try:
         write_session(path, session, run_id=run_id, revision=revision,
                       config_digest=config_digest)
@@ -826,6 +1026,20 @@ def _write_session_document(
             "by anyone now.", exc)
         return False
     return True
+
+
+def _did_nothing(session: Session) -> bool:
+    """Whether this session holds any of the work a document is written to carry.
+
+    Every one of these fields is reached only through a tool call, so an empty
+    reading means this process served no tool — which is what the probe process
+    is, and is also what a session whose handshake failed looks like. The test
+    is deliberately over-inclusive: a session with so much as one recorded call
+    counts as having something to say, because the alternative is a rule that
+    has to decide which work is worth keeping.
+    """
+    return not (session.tool_calls or session.candidates or session.rejected
+                or session.finished or session.verdict)
 
 
 def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
@@ -884,8 +1098,9 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         "--crash-journal", metavar="PATH",
         help="Where to append one line per event as the run goes. Read only "
              "when this process was killed and wrote no session document; it "
-             "says how far the run got, never what it found. The path must not "
-             "already exist.")
+             "says how far the run got, never what it found. The process id is "
+             "put into the name, because one review is two processes; a journal "
+             "beside it belonging to another run stops the start.")
     parser.add_argument(
         "--run-id", metavar="ID", default="",
         help="The run this session belongs to. Stamped into the session "

@@ -136,10 +136,35 @@ class CrashJournal:
             os.close(os.open(str(self.path),
                              os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
         except FileExistsError:
-            raise CrashJournalError(
-                "{} already exists; a crash journal is written once per run and "
-                "appending would merge two runs into one trace".format(self.path)
-            ) from None
+            # An existing *empty* journal is claimed rather than refused. The
+            # rule this enforces is that two runs must not interleave into one
+            # trace, and a file with no records in it has no trace to merge —
+            # so refusing it protects nothing and costs the run.
+            #
+            # It is not hypothetical. Claude Code 2.1.236 starts the MCP server
+            # twice for one review: once to probe it with `server/discover`,
+            # which our server does not implement and answers with a JSON-RPC
+            # error, and once for the session itself. The probe creates this
+            # file and writes nothing; the session then found it and died
+            # before serving a single tool. The reviewer, left with no tools at
+            # all, wrote `<invoke name="get_diff">` into its prose and invented
+            # both the call and its result — a review of a repository that did
+            # not exist, correctly reported as incomplete because no tool was
+            # ever called.
+            #
+            # A non-empty journal is still refused. `run_id` on every record
+            # would let a reader separate two runs, but the reader pairs calls
+            # by id and looks for holes in the sequence; two interleaved runs
+            # give it a confident and false account, which is worse than none.
+            try:
+                claimable = self.path.stat().st_size == 0
+            except OSError:
+                claimable = False
+            if not claimable:
+                raise CrashJournalError(
+                    "{} already exists and has records in it; a crash journal "
+                    "is written once per run and appending would merge two "
+                    "runs into one trace".format(self.path)) from None
         except OSError:
             # Every other filesystem problem is counted and survived, like a
             # failed write: the journal is diagnostics, and a review must not be
@@ -414,6 +439,23 @@ def read_trace(path: Path) -> PartialTrace:
     only thing left.
     """
     target = Path(path)
+    if not target.exists():
+        # The server writes one journal per process — `crash.<pid>.jsonl` —
+        # because one review is no longer one process: the CLI probes the
+        # server with a throwaway process before starting the session, and both
+        # were handed the same name. So the caller's path is a *pattern* when
+        # nothing sits at it exactly, and the file with the most records is the
+        # one that did the reviewing; a probe writes one record and exits.
+        #
+        # Largest rather than newest: modification times on a fresh checkout
+        # are unreliable, and "the process that got furthest" is the question
+        # being asked.
+        siblings = sorted(
+            target.parent.glob("{}.*{}".format(target.stem, target.suffix)),
+            key=lambda candidate: candidate.stat().st_size, reverse=True)
+        if siblings:
+            target = siblings[0]
+
     try:
         data = target.read_bytes()
         present = True

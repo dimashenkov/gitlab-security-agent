@@ -1,0 +1,144 @@
+{
+  "experiment": "noise-floor",
+  "question": "With nothing changed between them, do any cases in this suite give a different verdict in the second pass than in the first?",
+  "created_at": "2026-09-01T09:56:04+00:00",
+  "environment": {
+    "agent_version": "0.1.0",
+    "system_prompt": "bd359730e26be159",
+    "verifier_prompt": "4c3ea369c2d10317",
+    "findings_schema": "771225ae1a564f71",
+    "adjudications": "592c47f409f0f434",
+    "scorer": "803f7296f1670185",
+    "reviewer": "3361b5030efe705f"
+  },
+  "suite": {
+    "file": "suites/sentinel.yml",
+    "digest": "62387b3490a4ad12",
+    "count": 13
+  },
+  "protocol": {
+    "passes": [
+      "a",
+      "b"
+    ],
+    "order": [
+      "py-p43p-whwx-q52h",
+      "py-2wxc-x7rj-hg8f",
+      "php-5h77-88j3-r659",
+      "go-8r62-w5wh-fc5m",
+      "go-m6jg-wr9m-cg2f",
+      "js-q4gh-4ffp-5cg8",
+      "rs-4pj9-g833-qx53",
+      "jv-45ph-gxxr-gwgw",
+      "rb-g65v-27r3-5p6m",
+      "rb-mx5j-mp4f-g8jg",
+      "ts-q7m3-rhxg-7vxr",
+      "ts-34pm-923j-7wf8",
+      "php-p2ch-c2c3-4xm5"
+    ],
+    "order_seed": "noise-floor",
+    "provider": "claude-cli",
+    "profile": "normal",
+    "primary_endpoint": "per case, whether pass b's pair_success equals pass a's. Reported as agreed / flipped, with each flip named and its direction given.",
+    "comparable": "a case counts only if both passes produced a verdict and both rows carry the case_digest frozen here. A row about a different version of a case is not an observation of this one.",
+    "missing": "any case with no verdict in either pass makes the experiment incomplete. It is reported and the comparison exits 2; a partial pair is not evidence of agreement.",
+    "not_answerable": "how often a case flips. Two passes detect movement; they do not estimate its rate, and no threshold may be set from this."
+  },
+  "counts": {
+    "cases": 13,
+    "reviews": 52
+  },
+  "cases": [
+    {
+      "case_id": "go-8r62-w5wh-fc5m",
+      "language": "go",
+      "construction": "regression",
+      "case_digest": "1d538b5a3bf82303",
+      "answer_key_digest": "a6a1dcd7dc628e0c"
+    },
+    {
+      "case_id": "go-m6jg-wr9m-cg2f",
+      "language": "go",
+      "construction": "regression",
+      "case_digest": "8460f79ee6e91abe",
+      "answer_key_digest": "4a79175e3a7ca4bc"
+    },
+    {
+      "case_id": "js-q4gh-4ffp-5cg8",
+      "language": "javascript",
+      "construction": "regression",
+      "case_digest": "4faa659b1403d3d9",
+      "answer_key_digest": "354f2dfc347eae3f"
+    },
+    {
+      "case_id": "jv-45ph-gxxr-gwgw",
+      "language": "java",
+      "construction": "regression",
+      "case_digest": "25447ccbbb8d643e",
+      "answer_key_digest": "45884fcd0fce6041"
+    },
+    {
+      "case_id": "php-5h77-88j3-r659",
+      "language": "php",
+      "construction": "regression",
+      "case_digest": "3ffc547d64def2fe",
+      "answer_key_digest": "6227f35671639904"
+    },
+    {
+      "case_id": "php-p2ch-c2c3-4xm5",
+      "language": "php",
+      "construction": "regression",
+      "case_digest": "9ccba6cf3855c0ea",
+      "answer_key_digest": "615dd5127b831ac4"
+    },
+    {
+      "case_id": "py-2wxc-x7rj-hg8f",
+      "language": "python",
+      "construction": "regression",
+      "case_digest": "7bcd0f20a02fbe82",
+      "answer_key_digest": "9ceb7802c1204430"
+    },
+    {
+      "case_id": "py-p43p-whwx-q52h",
+      "language": "python",
+      "construction": "regression",
+      "case_digest": "5360605ca881050a",
+      "answer_key_digest": "d5b17af8061a25d8"
+    },
+    {
+      "case_id": "rb-g65v-27r3-5p6m",
+      "language": "ruby",
+      "construction": "regression",
+      "case_digest": "9e82ba8e60ddf4a7",
+      "answer_key_digest": "22736ced1b228bac"
+    },
+    {
+      "case_id": "rb-mx5j-mp4f-g8jg",
+      "language": "ruby",
+      "construction": "regression",
+      "case_digest": "aae86416c7fc9015",
+      "answer_key_digest": "e5ec4ffe2d578c70"
+    },
+    {
+      "case_id": "rs-4pj9-g833-qx53",
+      "language": "rust",
+      "construction": "regression",
+      "case_digest": "e7d7c4f469538d43",
+      "answer_key_digest": "aa445d2275cbdaa7"
+    },
+    {
+      "case_id": "ts-34pm-923j-7wf8",
+      "language": "typescript",
+      "construction": "regression",
+      "case_digest": "d85b5108c3b3926e",
+      "answer_key_digest": "935891657d568ca9"
+    },
+    {
+      "case_id": "ts-q7m3-rhxg-7vxr",
+      "language": "typescript",
+      "construction": "regression",
+      "case_digest": "41f9486a1e4fa269",
+      "answer_key_digest": "7565dcb2d102ff6a"
+    }
+  ]
+}

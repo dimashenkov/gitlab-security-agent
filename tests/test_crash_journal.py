@@ -630,6 +630,39 @@ def test_a_second_run_cannot_append_to_the_first_ones_journal(tmp_path):
     assert "merge two runs" in str(raised.value)
 
 
+def test_an_empty_journal_left_by_a_probe_is_claimed_not_refused(tmp_path):
+    """The rule is that two runs must not interleave into one trace, and a file
+    with no records in it has no trace to merge.
+
+    Not hypothetical. Claude Code 2.1.236 starts the MCP server twice for one
+    review — once to probe it with `server/discover`, which this server answers
+    with a JSON-RPC error, and once for the session. The probe created this file
+    and wrote nothing; the session then found it and died before serving a
+    single tool. The reviewer, left with no tools at all, wrote
+    `<invoke name="get_diff">` into its prose and invented both the call and its
+    result, and every paid review failed the same way.
+    """
+    path = tmp_path / "run.jsonl"
+    journal(path)                       # the probe: creates it, writes nothing
+
+    handle = journal(path, "run-0002")  # the session: takes it over
+    handle.run_started(mode="diff")
+
+    assert path.read_text().strip()
+    assert handle.write_failures == 0
+
+
+def test_a_journal_with_records_in_it_is_still_refused(tmp_path):
+    """The control. Claiming an empty file must not become claiming any file."""
+    path = tmp_path / "run.jsonl"
+    journal(path).run_started(mode="diff")
+
+    with pytest.raises(CrashJournalError) as raised:
+        journal(path, "run-0002")
+
+    assert "has records in it" in str(raised.value)
+
+
 def test_an_unwritable_location_is_not_reported_as_an_existing_journal(tmp_path):
     """`mkdir` raises `FileExistsError` when the parent is a file — `exist_ok`
     only forgives a directory. Folding the two together answered "this journal
