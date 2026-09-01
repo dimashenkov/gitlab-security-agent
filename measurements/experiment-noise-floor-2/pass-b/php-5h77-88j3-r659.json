@@ -1,0 +1,184 @@
+{
+  "case_id": "php-5h77-88j3-r659",
+  "language": "php",
+  "family": "xss",
+  "case_digest": "3ffc547d64def2fe",
+  "ran_at": "2026-09-01T12:38:57+00:00",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.4972845
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 132.105057,
+      "cost": 0.4959705,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 20,
+        "output_tokens": 8556,
+        "cache_read_tokens": 155201,
+        "cache_write_tokens": 20437
+      },
+      "coverage": {
+        "changed": [
+          "includes/functions-infos.php"
+        ],
+        "examined": [
+          "includes/functions-formatting.php",
+          "includes/functions-infos.php",
+          "includes/functions-links.php"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": {
+        "fingerprint": "a4584bd57afa6379",
+        "severity": "medium",
+        "confidence": "medium",
+        "verdict": "confirmed",
+        "blocking": false,
+        "matched": 1
+      },
+      "blocking": [],
+      "reported": 1,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5",
+          "claude-haiku-4-5-20251001"
+        ],
+        "model_substituted": true,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.6767345
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 270.8595051669997,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 30,
+        "output_tokens": 10707,
+        "cache_read_tokens": 288169,
+        "cache_write_tokens": 26347
+      },
+      "coverage": {
+        "changed": [
+          "includes/functions-infos.php"
+        ],
+        "examined": [
+          "includes/functions-formatting.php",
+          "includes/functions-infos.php",
+          "includes/functions.php"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 0,
+  "size_delta": 0.07113677215534615,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "xss",
+      "file": "includes/functions-infos.php",
+      "severity": "medium",
+      "title": "Removed yourls_esc_js on chart labels allows stored XSS in stats page",
+      "fingerprint": "a4584bd57afa6379",
+      "blocking": false
+    }
+  ],
+  "cost": null,
+  "seconds": 270.8595051669997
+}

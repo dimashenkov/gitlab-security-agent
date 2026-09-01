@@ -1,0 +1,190 @@
+{
+  "case_id": "ts-34pm-923j-7wf8",
+  "language": "typescript",
+  "family": "xss",
+  "case_digest": "d85b5108c3b3926e",
+  "ran_at": "2026-09-01T11:18:25+00:00",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.522418
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 104.316690333,
+      "cost": 0.521049,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 20,
+        "output_tokens": 6736,
+        "cache_read_tokens": 161258,
+        "cache_write_tokens": 27192
+      },
+      "coverage": {
+        "changed": [
+          "ui/src/components/layout/Markdown.vue",
+          "ui/src/utils/markdown_plugins/link.ts"
+        ],
+        "examined": [
+          "ui/src/components/layout/Markdown.vue",
+          "ui/src/utils/markdown_plugins/link.ts"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 1,
+      "blocked": true,
+      "target": {
+        "fingerprint": "a3a44f045505fde4",
+        "severity": "medium",
+        "confidence": "medium",
+        "verdict": "confirmed",
+        "blocking": true,
+        "matched": 1
+      },
+      "blocking": [
+        [
+          "xss",
+          "ui/src/utils/markdown_plugins/link.ts",
+          0
+        ]
+      ],
+      "reported": 1,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5",
+          "claude-haiku-4-5-20251001"
+        ],
+        "model_substituted": true,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.607508
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 209.73653041700004,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 20,
+        "output_tokens": 7884,
+        "cache_read_tokens": 239280,
+        "cache_write_tokens": 28928
+      },
+      "coverage": {
+        "changed": [
+          "ui/src/components/layout/Markdown.vue",
+          "ui/src/utils/markdown_plugins/link.ts"
+        ],
+        "examined": [
+          "ui/src/components/layout/Markdown.vue",
+          "ui/src/utils/markdown_plugins/link.ts"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 1,
+  "size_delta": 0.008180084876068638,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "xss",
+      "file": "ui/src/utils/markdown_plugins/link.ts",
+      "severity": "medium",
+      "title": "Markdown link plugin emits arbitrary attributes into raw HTML (XSS)",
+      "fingerprint": "a3a44f045505fde4",
+      "blocking": true
+    }
+  ],
+  "cost": null,
+  "seconds": 209.73653041700004
+}

@@ -1,0 +1,181 @@
+{
+  "case_id": "jv-45ph-gxxr-gwgw",
+  "language": "java",
+  "family": "authn-authz",
+  "case_digest": "25447ccbbb8d643e",
+  "ran_at": "2026-09-01T10:58:57+00:00",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.34845899999999996
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 87.63633295800003,
+      "cost": 0.347124,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 16,
+        "output_tokens": 5743,
+        "cache_read_tokens": 113258,
+        "cache_write_tokens": 14684
+      },
+      "coverage": {
+        "changed": [
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java"
+        ],
+        "examined": [
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": {
+        "fingerprint": "f02eede1ec20eb19",
+        "severity": "medium",
+        "confidence": "medium",
+        "verdict": "confirmed",
+        "blocking": false,
+        "matched": 1
+      },
+      "blocking": [],
+      "reported": 1,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5",
+          "claude-haiku-4-5-20251001"
+        ],
+        "model_substituted": true,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.512722
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 246.22418166700004,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 20,
+        "output_tokens": 8047,
+        "cache_read_tokens": 178618,
+        "cache_write_tokens": 22077
+      },
+      "coverage": {
+        "changed": [
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java"
+        ],
+        "examined": [
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/LiveTableLiveDataEntryStore.java",
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 0,
+  "size_delta": 0.04903533293616241,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "authn-authz",
+      "file": "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java",
+      "severity": "medium",
+      "title": "LiveData save drops checkSavingDocument authorization check before saving",
+      "fingerprint": "f02eede1ec20eb19",
+      "blocking": false
+    }
+  ],
+  "cost": null,
+  "seconds": 246.22418166700004
+}

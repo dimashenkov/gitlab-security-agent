@@ -1,0 +1,189 @@
+{
+  "case_id": "jv-45ph-gxxr-gwgw",
+  "language": "java",
+  "family": "authn-authz",
+  "case_digest": "25447ccbbb8d643e",
+  "ran_at": "2026-09-01T12:12:11+00:00",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.445144
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 88.993814541,
+      "cost": 0.44378,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 22,
+        "output_tokens": 5399,
+        "cache_read_tokens": 173810,
+        "cache_write_tokens": 22179
+      },
+      "coverage": {
+        "changed": [
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java"
+        ],
+        "examined": [
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/LiveTableLiveDataEntryStore.java",
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/LiveTableLiveDataResultsRenderer.java",
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 1,
+      "blocked": true,
+      "target": {
+        "fingerprint": "f02eede1ec20eb19",
+        "severity": "high",
+        "confidence": "medium",
+        "verdict": "confirmed",
+        "blocking": true,
+        "matched": 1
+      },
+      "blocking": [
+        [
+          "authn-authz",
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java",
+          0
+        ]
+      ],
+      "reported": 1,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5",
+          "claude-haiku-4-5-20251001"
+        ],
+        "model_substituted": true,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.4807195
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 254.53868650000004,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 18,
+        "output_tokens": 7208,
+        "cache_read_tokens": 156349,
+        "cache_write_tokens": 22094
+      },
+      "coverage": {
+        "changed": [
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java"
+        ],
+        "examined": [
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/LiveTableLiveDataEntryStore.java",
+          "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 1,
+  "size_delta": 0.04903533293616241,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "authn-authz",
+      "file": "xwiki-platform-core/xwiki-platform-livedata/xwiki-platform-livedata-livetable/src/main/java/org/xwiki/livedata/internal/livetable/ModelBridge.java",
+      "severity": "high",
+      "title": "LiveData save drops pre-save authorization check (checkSavingDocument)",
+      "fingerprint": "f02eede1ec20eb19",
+      "blocking": true
+    }
+  ],
+  "cost": null,
+  "seconds": 254.53868650000004
+}

@@ -1,0 +1,200 @@
+{
+  "case_id": "js-q4gh-4ffp-5cg8",
+  "language": "javascript",
+  "family": "sensitive-data-exposure",
+  "case_digest": "4faa659b1403d3d9",
+  "ran_at": "2026-09-01T12:56:06+00:00",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.5466040000000001
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 141.53561954199998,
+      "cost": 0.545212,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 14,
+        "output_tokens": 9598,
+        "cache_read_tokens": 120344,
+        "cache_write_tokens": 24502
+      },
+      "coverage": {
+        "changed": [
+          "js/app.js",
+          "js/node_helper.js",
+          "js/server_functions.js"
+        ],
+        "examined": [
+          "js/node_helper.js",
+          "js/server.js",
+          "js/server_functions.js",
+          "js/utils.js"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [
+          "js/app.js"
+        ],
+        "complete": false
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 1,
+      "blocked": true,
+      "target": {
+        "fingerprint": "fc7bd19cd7f2d185",
+        "severity": "high",
+        "confidence": "medium",
+        "verdict": "confirmed",
+        "blocking": true,
+        "matched": 1
+      },
+      "blocking": [
+        [
+          "sensitive-data-exposure",
+          "js/server_functions.js",
+          0
+        ]
+      ],
+      "reported": 1,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_served": [
+          "claude-opus-5",
+          "claude-haiku-4-5-20251001"
+        ],
+        "model_substituted": true,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.6108399999999999
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 256.18677179200006,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 26,
+        "output_tokens": 9339,
+        "cache_read_tokens": 247568,
+        "cache_write_tokens": 25209
+      },
+      "coverage": {
+        "changed": [
+          "js/app.js",
+          "js/node_helper.js",
+          "js/server_functions.js"
+        ],
+        "examined": [
+          "js/node_helper.js",
+          "js/server.js",
+          "js/server_functions.js",
+          "js/utils.js"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [
+          "js/app.js"
+        ],
+        "complete": false
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 1,
+  "size_delta": 0.037405820652976804,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "sensitive-data-exposure",
+      "file": "js/server_functions.js",
+      "severity": "high",
+      "title": "Secret placeholder substitution no longer restricted to the module's own secrets",
+      "fingerprint": "fc7bd19cd7f2d185",
+      "blocking": true
+    }
+  ],
+  "cost": null,
+  "seconds": 256.18677179200006
+}
