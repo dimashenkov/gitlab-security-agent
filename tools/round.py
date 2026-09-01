@@ -123,6 +123,25 @@ def scope_cases(scope: str) -> List[str]:
         unrun = set(check_accounted.account().get("unrun", [])) & set(eligible)
         held = {"rb-g65v-27r3-5p6m", "rb-g65v-27r3-5p6m-snap"} & set(eligible)
         return sorted(five | unrun | held)
+    if scope == "sentinel":
+        # The frozen suite in `suites/sentinel.yml`, chosen by the rule in
+        # `tools/sentinel.py` rather than named here. Naming the cases in this
+        # file would give the suite two definitions that agree until they do
+        # not, and the one a run used would be whichever this function said.
+        #
+        # Intersected with what the queue considers eligible, and any shortfall
+        # is refused rather than run: a suite that quietly shrinks between the
+        # freeze and the run is the sample changing after the question was set.
+        from sentinel import read_cases
+
+        wanted = read_cases(ROOT / "suites" / "sentinel.yml")
+        missing = sorted(set(wanted) - set(eligible))
+        if missing:
+            raise SystemExit(
+                "the sentinel suite names {} case(s) the queue will not run: "
+                "{}. Fix the suite or the queue; do not run the remainder."
+                .format(len(missing), ", ".join(missing)))
+        return sorted(wanted)
     raise SystemExit("unknown scope {!r}".format(scope))
 
 
@@ -290,7 +309,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     it = sub.add_parser("freeze", help="write the manifest for a round")
     it.add_argument("number", type=int)
     it.add_argument("--scope", default="approved",
-                    choices=("approved", "five", "all"))
+                    choices=("approved", "five", "all", "sentinel"))
     it.add_argument("--dry-run", action="store_true")
 
     done = sub.add_parser("compare", help="read a round against its manifest")

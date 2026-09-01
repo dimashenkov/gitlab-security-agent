@@ -479,6 +479,28 @@ def main() -> int:
         if args.language or args.construction or args.case:
             sys.exit("a frozen round runs what it froze; --language, "
                      "--construction and --case would narrow it after the fact")
+
+        # The provider and the profile are half of what "the same conditions"
+        # means, and they were frozen and then not enforced: `--round 2` and
+        # `--round 3 --profile deep` both ran happily, and the comparison
+        # afterwards would have called the difference between them the product
+        # moving on its own. Frozen means frozen.
+        protocol = frozen.get("protocol", {})
+        for chosen, name in ((args.provider, "provider"),
+                             (args.profile, "profile")):
+            want = protocol.get(name)
+            if want and chosen != want:
+                sys.exit(
+                    "round {} froze {} {!r} and this run asks for {!r}. A pass "
+                    "run under different conditions is not a repetition of the "
+                    "other one; re-freeze as a new experiment if the change is "
+                    "deliberate.".format(args.round, name, want, chosen))
+
+        # Refused here, not recommended here. The first version printed
+        # "verify before spending" and then spent: every frozen condition
+        # except the provider and the profile was a suggestion, and the whole
+        # point of freezing them is that a pass run under changed conditions is
+        # not a repetition of the other one.
         eligible = list(order)
     queued = [c for c in eligible if not already_run(c, repeat)]
     # Reported, not applied. `cases()` drops these on a sweep and the count is

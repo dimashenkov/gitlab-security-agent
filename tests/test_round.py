@@ -166,3 +166,39 @@ class TestComparing:
         capsys.readouterr()
         roundtool.compare(1)
         assert "0 agreed, 0 flipped, 2 not yet run" in capsys.readouterr().out
+
+def test_the_sentinel_scope_takes_the_suite_from_its_own_file():
+    """One definition of the suite, not two.
+
+    Naming the cases in `round.py` as well would give the sentinel two
+    definitions that agree until they do not, and the one a paid run used would
+    be whichever this function said rather than the one the rule produced.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import round as round_tool
+    from sentinel import read_cases
+
+    root = Path(__file__).resolve().parents[1]
+    frozen = read_cases(root / "suites" / "sentinel.yml")
+
+    assert round_tool.scope_cases("sentinel") == sorted(frozen)
+
+
+def test_a_sentinel_case_the_queue_will_not_run_stops_the_freeze(monkeypatch):
+    """A suite that quietly shrinks between the freeze and the run is the
+    sample changing after the question was set. Refused, not trimmed."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import round as round_tool
+
+    monkeypatch.setattr(round_tool.run_queue, "cases", lambda sweep: ["only-one"])
+
+    with pytest.raises(SystemExit) as raised:
+        round_tool.scope_cases("sentinel")
+
+    assert "will not run" in str(raised.value)
