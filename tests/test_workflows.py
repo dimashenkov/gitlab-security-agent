@@ -108,11 +108,24 @@ def reviewing_steps(path: Path) -> list:
     `gitlab-security-agent` — so the test that says a review must not gate the
     build reached no step at all in the file it most needed to check. A list of
     spellings is the shape this repository has been caught by four times.
+
+    *Handed* it, which means `with:` or `env:` — the two ways a step receives
+    one. Searching the whole step also matched a step that only names the key
+    in a condition or prints it in a message: the guard that refuses to
+    benchmark without a key reviews nothing, and counted as a review it broke
+    the rule that a review must not gate the build. That rule is about the
+    benchmark; the guard failing is how "it did not run" stays visible, which
+    is the older rule and the stronger one.
+
+    Still a property and not a spelling: our own workflow and the template both
+    pass the key through `env:`, and the pinned action through `with:`, so all
+    three are still found.
     """
     found = []
     for job, step in steps(path):
-        rendered = yaml.safe_dump(step)
-        if "API_KEY" in rendered or "api-key" in rendered:
+        handed = yaml.safe_dump({"with": step.get("with"),
+                                 "env": step.get("env")})
+        if "API_KEY" in handed or "api-key" in handed:
             found.append((job, step))
     return found
 
@@ -419,3 +432,21 @@ def test_the_provider_is_what_that_command_would_die_without():
     with pytest.raises(SystemExit):
         _build_parser().parse_args(
             ["corpus/", "--concurrency", "1", "--json", "corpus-result.json"])
+
+
+def test_the_benchmark_refuses_to_run_without_a_key():
+    """Without the secret, the action reports `conclusion: success` with zero
+    findings — indistinguishable from a clean review, and watched happening in
+    their own run on 2026-08-22 before it was written down. The repository has
+    no secrets set, so the first pull request opened here would collect a green
+    check from a review that never ran. The guard fails the job instead, which
+    is how "it did not run" stays visible."""
+    workflow = ROOT / ".github" / "workflows" / "security-review.yml"
+    guard = [step for _, step in steps(workflow)
+             if "exit 1" in yaml.safe_dump(step)]
+
+    assert guard, "nothing stops the benchmark from running without a key"
+    assert "CLAUDE_API_KEY" in yaml.safe_dump(guard[0]), (
+        "the guard does not check the key the action is given")
+    assert guard[0].get("if"), (
+        "the guard runs unconditionally, so it fails even when a key is set")

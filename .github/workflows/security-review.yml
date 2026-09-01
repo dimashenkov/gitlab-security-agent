@@ -19,6 +19,21 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
+      # Stop before the benchmark rather than run it blind. Without the secret
+      # the action reports `conclusion: success` with zero findings, which is
+      # indistinguishable from a clean review — the exact failure this
+      # repository exists to prevent, and one we watched happen in their run on
+      # 2026-08-22 before writing it down. The repository has no secrets set, so
+      # the first pull request ever opened here would collect a green check from
+      # a review that never ran.
+      - name: Refuse to benchmark without a key
+        if: ${{ secrets.CLAUDE_API_KEY == '' }}
+        run: |
+          echo "CLAUDE_API_KEY is not set, so the benchmark cannot run."
+          echo "Not skipping quietly: the action would report success with"
+          echo "zero findings, which reads as a clean review."
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
