@@ -1,0 +1,225 @@
+[
+  {
+    "case_id": "rs-g9hv-x236-4qp3",
+    "language": "rust",
+    "family": "dos",
+    "case_digest": "394c22f1155c6a95",
+    "ran_at": "2026-09-02T05:36:34.174843+00:00",
+    "run_id": "7a1228bbd6994f568aa1193eb4a91cec",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "e2e2d5cf59807a31",
+          "severity": "low",
+          "confidence": "low",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 1,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.0756519999999998
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 237.823752667,
+        "cost": 1.074286,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 42,
+          "output_tokens": 15467,
+          "cache_read_tokens": 545422,
+          "cache_write_tokens": 41469
+        },
+        "coverage": {
+          "changed": [
+            "russh/src/kex/curve25519.rs",
+            "russh/src/kex/mod.rs"
+          ],
+          "examined": [
+            "russh/src/kex/curve25519.rs",
+            "russh/src/kex/ecdh_nistp.rs",
+            "russh/src/kex/mod.rs"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "context_refusals": 0,
+          "context_would_refuse": 0,
+          "unreadable": [],
+          "deleted": [],
+          "whole_diff_delivered": true,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": [
+          {
+            "title": "Unchecked slice length before BigEndian::read_u32 in curve25519 server_dh panics on short KEX_ECDH_INIT",
+            "file": "russh/src/kex/curve25519.rs",
+            "reason": "evidence-not-found",
+            "detail": "quoted code does not appear in the file"
+          }
+        ]
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 1,
+        "blocked": true,
+        "target": {
+          "fingerprint": "89d6372af91da140",
+          "severity": "low",
+          "confidence": "high",
+          "verdict": "confirmed",
+          "blocking": true,
+          "matched": 2
+        },
+        "blocking": [
+          [
+            "dos",
+            "russh/src/kex/mod.rs",
+            0
+          ]
+        ],
+        "reported": 2,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 0.6229980000000002
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 230.868923542,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 28,
+          "output_tokens": 9909,
+          "cache_read_tokens": 270222,
+          "cache_write_tokens": 23871
+        },
+        "coverage": {
+          "changed": [
+            "russh/src/kex/curve25519.rs",
+            "russh/src/kex/mod.rs"
+          ],
+          "examined": [
+            "russh/src/kex/curve25519.rs",
+            "russh/src/kex/mod.rs"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "context_refusals": 0,
+          "context_would_refuse": 0,
+          "unreadable": [],
+          "deleted": [],
+          "whole_diff_delivered": true,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 1,
+    "size_delta": 0.03748306858761236,
+    "safe_findings": [
+      {
+        "category": "dos",
+        "file": "russh/src/kex/curve25519.rs",
+        "severity": "low",
+        "title": "Unchecked length before BigEndian::read_u32 in curve25519 server_dh panics on short KEX_ECDH_INIT",
+        "fingerprint": "e2e2d5cf59807a31",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "russh/src/kex/mod.rs",
+        "severity": "low",
+        "title": "Panic on all-zero mpint: remote pre-auth DoS via zero curve25519 point",
+        "fingerprint": "89d6372af91da140",
+        "blocking": true
+      },
+      {
+        "category": "dos",
+        "file": "russh/src/kex/curve25519.rs",
+        "severity": "low",
+        "title": "Missing length check before clone_from_slice panics on short/long peer key",
+        "fingerprint": "8fd4f7023fa8e1bd",
+        "blocking": false
+      }
+    ],
+    "cost": null,
+    "seconds": 237.823752667
+  }
+]

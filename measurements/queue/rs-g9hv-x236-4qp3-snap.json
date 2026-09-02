@@ -1,0 +1,250 @@
+[
+  {
+    "case_id": "rs-g9hv-x236-4qp3-snap",
+    "language": "rust",
+    "family": "dos",
+    "case_digest": "29c30f759e98bd5a",
+    "ran_at": "2026-09-02T05:44:23.370322+00:00",
+    "run_id": "4b879cf5c644439ea576f208696e2377",
+    "members": {
+      "safe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "e2e2d5cf59807a31",
+          "severity": "low",
+          "confidence": "low",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 1
+        },
+        "blocking": [],
+        "reported": 2,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5",
+            "claude-haiku-4-5-20251001"
+          ],
+          "model_substituted": true,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 2.010144
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 696.669895959,
+        "cost": null,
+        "usage": {
+          "reported": true,
+          "complete": false,
+          "unreported_stages": 1,
+          "requests": 1,
+          "input_tokens": 30,
+          "output_tokens": 37452,
+          "cache_read_tokens": 692980,
+          "cache_write_tokens": 72580
+        },
+        "coverage": {
+          "changed": [
+            "russh/src/kex/curve25519.rs",
+            "russh/src/kex/mod.rs"
+          ],
+          "examined": [
+            "russh/src/kex/curve25519.rs",
+            "russh/src/kex/ecdh_nistp.rs",
+            "russh/src/kex/hybrid_mlkem.rs",
+            "russh/src/kex/none.rs"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "context_refusals": 0,
+          "context_would_refuse": 0,
+          "unreadable": [],
+          "deleted": [],
+          "whole_diff_delivered": true,
+          "unopened": [
+            "russh/src/kex/mod.rs"
+          ],
+          "complete": false
+        },
+        "refuted": [],
+        "rejected_claims": [
+          {
+            "title": "Panic on short KEX_ECDH_INIT payload in curve25519 server_dh",
+            "file": "russh/src/kex/curve25519.rs",
+            "reason": "evidence-not-found",
+            "detail": "quoted code does not appear in the file"
+          }
+        ]
+      },
+      "unsafe": {
+        "complete": true,
+        "finished_explicitly": true,
+        "stop_reason": "completed",
+        "stop_detail": "",
+        "exit_code": 0,
+        "blocked": false,
+        "target": {
+          "fingerprint": "3b171a9f93af0186",
+          "severity": "low",
+          "confidence": "medium",
+          "verdict": "confirmed",
+          "blocking": false,
+          "matched": 3
+        },
+        "blocking": [],
+        "reported": 3,
+        "model": "claude-opus-5",
+        "provenance": {
+          "model_requested": "claude-opus-5",
+          "models_served": [
+            "claude-opus-5"
+          ],
+          "model_substituted": false,
+          "system_prompt_sha": "bd359730e26be159",
+          "verifier_prompt_sha": "4c3ea369c2d10317",
+          "schema_sha": "771225ae1a564f71",
+          "agent_version": "0.1.0",
+          "provider": "claude-cli",
+          "auth_method": "claude.ai",
+          "auth_subscription": "max",
+          "reported_cost_usd": 1.5053690000000002
+        },
+        "settings": {
+          "fail_on": "high",
+          "min_confidence": "medium",
+          "gate_pre_existing": false,
+          "gate_removed_controls": true,
+          "ungated_categories": [],
+          "verify": true,
+          "verify_votes": 1,
+          "effort": "high",
+          "scope": []
+        },
+        "seconds": 332.770973542,
+        "cost": 1.50397,
+        "usage": {
+          "reported": true,
+          "complete": true,
+          "unreported_stages": 0,
+          "requests": 1,
+          "input_tokens": 34,
+          "output_tokens": 25031,
+          "cache_read_tokens": 631230,
+          "cache_write_tokens": 56241
+        },
+        "coverage": {
+          "changed": [
+            "russh/src/kex/curve25519.rs",
+            "russh/src/kex/mod.rs"
+          ],
+          "examined": [
+            "russh/src/kex/curve25519.rs",
+            "russh/src/kex/ecdh_nistp.rs",
+            "russh/src/kex/hybrid_mlkem.rs",
+            "russh/src/kex/mod.rs",
+            "russh/src/kex/none.rs"
+          ],
+          "excluded": [],
+          "out_of_scope": [],
+          "diff_truncated": false,
+          "context_refusals": 0,
+          "context_would_refuse": 0,
+          "unreadable": [],
+          "deleted": [],
+          "whole_diff_delivered": true,
+          "unopened": [],
+          "complete": true
+        },
+        "refuted": [],
+        "rejected_claims": []
+      }
+    },
+    "unsafe_target_recall": true,
+    "safe_target_persistence": true,
+    "safe_incidental": [
+      {
+        "category": "crypto",
+        "file": "russh/src/kex/curve25519.rs",
+        "severity": "medium",
+        "title": "Curve25519 kex accepts low-order points; all-zero shared secret not rejected",
+        "fingerprint": "3f24553e96c9f56f",
+        "blocking": false
+      }
+    ],
+    "unsafe_incidental": [],
+    "safe_false_positive": true,
+    "unsafe_recall": true,
+    "pair_success": false,
+    "safe_exit": 0,
+    "unsafe_exit": 0,
+    "size_delta": 0.03748306858761236,
+    "safe_findings": [
+      {
+        "category": "crypto",
+        "file": "russh/src/kex/curve25519.rs",
+        "severity": "medium",
+        "title": "Curve25519 kex accepts low-order points; all-zero shared secret not rejected",
+        "fingerprint": "3f24553e96c9f56f",
+        "blocking": false
+      },
+      {
+        "category": "dos",
+        "file": "russh/src/kex/curve25519.rs",
+        "severity": "low",
+        "title": "Panic on short KEX_ECDH_INIT payload in curve25519 server_dh",
+        "fingerprint": "e2e2d5cf59807a31",
+        "blocking": false
+      }
+    ],
+    "unsafe_findings": [
+      {
+        "category": "dos",
+        "file": "russh/src/kex/curve25519.rs",
+        "severity": "low",
+        "title": "Short KEX_ECDH_INIT packet panics server_dh length read",
+        "fingerprint": "e2e2d5cf59807a31",
+        "blocking": false
+      },
+      {
+        "category": "dos",
+        "file": "russh/src/kex/curve25519.rs",
+        "severity": "low",
+        "title": "Unvalidated remote ephemeral length panics curve25519 compute_shared_secret",
+        "fingerprint": "3b171a9f93af0186",
+        "blocking": false
+      },
+      {
+        "category": "dos",
+        "file": "russh/src/kex/mod.rs",
+        "severity": "low",
+        "title": "Out-of-bounds index in encode_mpint on all-zero curve25519 shared secret",
+        "fingerprint": "89d6372af91da140",
+        "blocking": false
+      }
+    ],
+    "cost": null,
+    "seconds": 696.669895959
+  }
+]
