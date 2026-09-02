@@ -248,7 +248,10 @@ def verify_candidates(
             usage.merge(vote_usage)
             if provenance is not None:
                 for model in getattr(vote, "served_models", ()) or ():
-                    provenance.note_served(model)
+                    # `verifying=True`: this is the verifier's model, not the
+                    # reviewer's, and folding the two made a smaller model used
+                    # here read as the review having been substituted.
+                    provenance.note_served(model, verifying=True)
 
     # Votes are attached in a fixed order rather than completion order, so a
     # rerun of the same findings aggregates identically regardless of which

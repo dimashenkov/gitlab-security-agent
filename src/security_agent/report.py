@@ -681,12 +681,24 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
     lines += [
         "**Provenance:** model `{}`{} · prompts `{}`/`{}` · schema `{}` · agent `{}`".format(
             prov.model_requested,
-            " — **answered by {}**".format(", ".join(prov.models_served))
+            # The review's models only. A smaller model serving part of the
+            # verification is said separately below rather than in the same
+            # breath, because "answered by X" beside the requested model reads
+            # as the review having run on X.
+            " — **answered by {}**".format(", ".join(prov.review_models))
             if prov.model_substituted else "",
             prov.system_prompt_sha[:8], prov.verifier_prompt_sha[:8],
             prov.schema_sha[:8], prov.agent_version),
         "",
     ]
+    if prov.verifier_substituted:
+        lines += [
+            "Verification was served by {} rather than the requested model. "
+            "That is the verifier, not the review — said here rather than "
+            "beside the model above, where it would read as the review having "
+            "run on something else.".format(", ".join(prov.models_verified)),
+            "",
+        ]
     if prov.auth_method or prov.auth_subscription:
         # Only when the provider said something. A line reading "not
         # established" on every API run would be noise, and the honest silence

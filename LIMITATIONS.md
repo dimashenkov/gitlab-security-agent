@@ -133,6 +133,35 @@ the evidence available:
 | A dependency change | Not reviewed. `*.lock` is excluded by default, and nothing makes the manifest get read instead | None. The exclusion was a token decision, and for a while the code claimed the coverage had moved to the manifest — it had not. A bumped version that only a lockfile records is invisible to this tool. Use a dependency scanner alongside it |
 
 
+### A false authorization finding the verifier confirmed
+
+`rs-8rw6-p7m8-63jp`, measured 2026-09-02. On the fixed member the reviewer
+claims that `snapshot.get_or_insert_with(|| out.clone())` makes field SELECT
+permissions evaluate against a requester-controlled projection. The code says
+otherwise: `reduce_current` runs before the projection, and the permission
+expression is handed `Some(&self.current)` — the snapshot serves to enumerate
+the fields and the value, not as the authorization record context.
+
+It was reported `high`, one verifier confirmed it, it blocked the merge with
+exit 1, and it failed the pair. That is the expensive failure, not a scoring
+artefact: a tool that blocks a correct fix is a tool that gets switched off.
+
+What it shows is where the layers stop. The evidence check proves the quoted
+code exists; it does not establish that the conclusion follows from it. The
+verifier is the layer meant to refute the reasoning, and `_require_evidence`
+asks it to describe the control it searched for — not whether what it wrote
+follows. Both passed, and the finding was still wrong.
+
+**One frozen case. It establishes no rate.** Until something measures one,
+treat a finding of this shape — a claim about a trust boundary — by reading the
+arguments actually passed to the permission expression.
+
+The case stays in the corpus and stays a failure: it is recorded as a
+`known_failure` rather than a limitation, because it measures precisely the
+question above and removing it would close the accounting by throwing the test
+away.
+
+
 ## The fifteen measured misses
 
 Measured on 2026-08-30 across five languages and both constructions: 56 pairs,

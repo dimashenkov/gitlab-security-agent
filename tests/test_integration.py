@@ -389,6 +389,28 @@ class TestProvenanceIsRecorded:
         assert outcome.provenance.model_substituted
         assert "claude-opus-4-8" in outcome.provenance.models_served
 
+    def test_a_verifier_on_a_smaller_model_is_not_a_substituted_review(
+            self, cfg, ws):
+        """The two were one flag, and it read as the worse of the two.
+
+        On 2026-09-02 twelve paid reviews came back with `model_substituted:
+        true` and Haiku beside the requested Opus. That sentence means "this
+        result is not about the model it claims to be about" — a reason to
+        throw the numbers away. What had actually happened was the CLI serving
+        part of the *verification* with a smaller model, which changes nothing
+        about the review. Nothing in the artifact could tell the two apart.
+        """
+        client = FakeClient([FakeResponse([text("done")], stop_reason="end_turn")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        outcome.provenance.note_served("claude-haiku-4-5-20251001",
+                                       verifying=True)
+
+        assert not outcome.provenance.model_substituted, (
+            "a verifier's model was read as the review having been substituted")
+        assert outcome.provenance.verifier_substituted
+        assert outcome.provenance.review_models == ["claude-opus-5"]
+        assert "claude-haiku-4-5-20251001" in outcome.provenance.models_served
+
     def test_it_reaches_the_artifact_and_the_report(self, cfg, ws):
         client = FakeClient([FakeResponse([text("done")], stop_reason="end_turn")])
         outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")

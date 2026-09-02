@@ -225,7 +225,10 @@ class ClaudeCodeVerifier:
             candidate.votes.append(vote)
             if provenance is not None:
                 for model in vote.served_models:
-                    provenance.note_served(model)
+                    # `verifying=True`: this is the verifier's model, not the
+                    # reviewer's, and folding the two made a smaller model used
+                    # here read as the review having been substituted.
+                    provenance.note_served(model, verifying=True)
 
         for candidate in to_verify:
             for number, vote in enumerate(candidate.votes, start=1):

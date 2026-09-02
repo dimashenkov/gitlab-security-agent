@@ -62,7 +62,9 @@ TELEMETRY_PATHS: Tuple[str, ...] = (
     # detail (a dated variant, a fallback) that identity deliberately excludes.
     "model",
     "provenance.models_served",
+    "provenance.models_verified",
     "provenance.model_substituted",
+    "provenance.verifier_substituted",
     # The diagnostic under the stop reason. `stop_reason` itself is canonical:
     # "did this run finish" is the decision this project exists to protect.
     # The sentence explaining *how* it failed is provider prose.

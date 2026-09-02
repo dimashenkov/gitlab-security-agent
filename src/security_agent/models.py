@@ -1037,7 +1037,17 @@ class Provenance:
     """
 
     model_requested: str = ""
+    # Every model that answered anything, review and verification together, and
+    # `models_verified` says which of them were the verifier's. Kept apart
+    # because the two answer different questions and one flag was reading as
+    # both: on 2026-09-02 twelve paid reviews recorded `model_substituted:
+    # true` with Haiku beside the requested Opus, which reads as "the review
+    # ran on a different model" and would invalidate the measurement — while
+    # what had happened was the CLI serving part of the *verification* with a
+    # smaller model. The first is a reason to throw the numbers away; the
+    # second is noise. Nothing in the artifact could tell them apart.
     models_served: List[str] = field(default_factory=list)
+    models_verified: List[str] = field(default_factory=list)
     system_prompt_sha: str = ""
     verifier_prompt_sha: str = ""
     schema_sha: str = ""
@@ -1078,18 +1088,42 @@ class Provenance:
             return "the Claude Code login in use ({})".format(self.auth_method)
         return "not established by this run"
 
-    def note_served(self, model: str) -> None:
-        if model and model not in self.models_served:
+    def note_served(self, model: str, verifying: bool = False) -> None:
+        """Record a model that answered. `verifying` marks the verifier's."""
+        if not model:
+            return
+        if model not in self.models_served:
             self.models_served.append(model)
+        if verifying and model not in self.models_verified:
+            self.models_verified.append(model)
+
+    @property
+    def review_models(self) -> List[str]:
+        """The models that answered the *review*, verification excluded."""
+        return [m for m in self.models_served if m not in self.models_verified]
 
     @property
     def model_substituted(self) -> bool:
-        """Did anything other than the requested model answer?"""
-        return any(m != self.model_requested for m in self.models_served)
+        """Did anything other than the requested model answer the review?
+
+        The verifier's models are excluded on purpose. This flag decides
+        whether a result is about the model it claims to be about, and a
+        smaller model used for part of the verification does not change that —
+        while reading it as substitution would discard a run that is sound.
+        `verifier_substituted` asks the other question separately.
+        """
+        return any(m != self.model_requested for m in self.review_models)
+
+    @property
+    def verifier_substituted(self) -> bool:
+        """Did the verification run on something other than the review's model?"""
+        return any(m != self.model_requested for m in self.models_verified)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "model_requested": self.model_requested,
+            "models_verified": list(self.models_verified),
+            "verifier_substituted": self.verifier_substituted,
             "models_served": self.models_served,
             "model_substituted": self.model_substituted,
             "system_prompt_sha": self.system_prompt_sha,

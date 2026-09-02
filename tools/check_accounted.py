@@ -61,15 +61,43 @@ from artifact import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def rulings() -> set:
+def _adjudications() -> list:
     path = ROOT / "corpus-real" / "adjudications.yml"
     try:
         body = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, ValueError):
-        return set()
+        return []
     rows = body if isinstance(body, list) else body.get("adjudications") or []
-    return {r.get("case_id") for r in rows
-            if isinstance(r, dict) and r.get("case_is_malformed")}
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def rulings() -> set:
+    return {r.get("case_id") for r in _adjudications()
+            if r.get("case_is_malformed")}
+
+
+def known_failures() -> set:
+    """Cases whose failure is understood, explained, and **still measured**.
+
+    The fifth outcome, and it exists because D-008's four could not hold this
+    one. `rs-8rw6-p7m8-63jp` fails because the reviewer read the code correctly
+    and drew a false conclusion about a trust boundary, then blocked a correct
+    fix — the expensive failure, and the most useful regression test in the
+    corpus for exactly that reason.
+
+    Neither existing outcome fits. `invalid` means the case cannot measure
+    anything, and this one measures something precise: whether a semantically
+    wrong finding can survive the verifier and gate a merge. `limitation` means
+    the case is removed from measurement for good, and removing it closes the
+    accounting by discarding the test.
+
+    D-008 folded two independent questions into one — "does this case have an
+    explained outcome" and "should it be measured again". Here the answers are
+    yes and yes. Recorded in `adjudications.yml` as `known_failure: true`,
+    beside a line in `LIMITATIONS.md` saying what the failure is.
+    """
+    return {r.get("case_id") for r in _adjudications()
+            if r.get("known_failure")}
 
 
 def named_in_limitations() -> set:
@@ -239,12 +267,13 @@ def executed() -> set:
 
 def account(construction=None) -> dict:
     invalid = rulings()
+    understood = known_failures()
     limitations = named_in_limitations()
     answers = verdicts()
 
     measured = executed()
     buckets = {"pass": [], "limitation": [], "invalid": [], "unaccounted": [],
-               "unrun": [], "unadopted": []}
+               "unrun": [], "unadopted": [], "known_failure": []}
     for manifest in sorted((ROOT / "corpus-real").glob("*/case.yml")):
         case_id = manifest.parent.name
         body = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
@@ -264,6 +293,13 @@ def account(construction=None) -> dict:
             buckets["unrun"].append(case_id)
         elif answers[case_id]:
             buckets["pass"].append(case_id)
+        elif case_id in understood:
+            # Asked before `limitations`, because such a case is named in
+            # `LIMITATIONS.md` too — the line there says what the failure is,
+            # and this bucket says the case stays in the set. Read the other
+            # way round it would be filed as removed, which is what the ruling
+            # exists to prevent.
+            buckets["known_failure"].append(case_id)
         elif case_id in limitations:
             buckets["limitation"].append(case_id)
         else:
@@ -279,10 +315,12 @@ def main() -> int:
     buckets = account(args.construction)
     total = sum(len(v) for v in buckets.values())
 
-    print("{} case(s){}: {} pass, {} limitation(s), {} invalid, {} not run, "
-          "{} measured but not adopted, {} unaccounted".format(
+    print("{} case(s){}: {} pass, {} known failure(s), {} limitation(s), "
+          "{} invalid, {} not run, {} measured but not adopted, "
+          "{} unaccounted".format(
               total, " ({})".format(args.construction) if args.construction else "",
-              len(buckets["pass"]), len(buckets["limitation"]),
+              len(buckets["pass"]), len(buckets["known_failure"]),
+              len(buckets["limitation"]),
               len(buckets["invalid"]), len(buckets["unrun"]),
               len(buckets["unadopted"]), len(buckets["unaccounted"])))
 

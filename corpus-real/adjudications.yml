@@ -678,3 +678,117 @@ adjudications:
       identity.
     adjudicated_on: 2026-08-31
 
+  # Four Rust failures from the run of 2026-09-02, read line by line and then
+  # put to Codex, which disagreed with two of my four labels. Kept together
+  # because the reading of one informed the next.
+
+  - case_id: rs-g9hv-x236-4qp3
+    member: safe
+    file: russh/src/kex/curve25519.rs
+    fingerprint: e2e2d5cf59807a31
+    severity_reported: low
+    claim: Panic on short KEX_ECDH_INIT payload before BigEndian::read_u32
+    verdict: real
+    incidental: true
+    adjudicated_on: 2026-09-02
+    evidence: >-
+      In the fixed member `server_dh` checks only `payload.first() !=
+      Some(&msg::KEX_ECDH_INIT)` and then evaluates
+      `BigEndian::read_u32(&payload[1..])`; the guard
+      `payload.len() < 5 + pubkey_len` comes after it. A one-byte payload
+      passes the first check and the read panics. Nothing in the corpus
+      guarantees five bytes upstream, and `server_dh` takes an arbitrary
+      `&[u8]`.
+    note: >-
+      Real, and not this case's weakness. The advisory is the *client* path —
+      `compute_shared_secret`, `remote_pubkey_.len() != 32`,
+      `clone_from_slice` — which the fix does close. This is the server side,
+      which the fix never touched, and it lands in the same file and the same
+      category, which is all `is_target` looks at.
+
+  - case_id: rs-g9hv-x236-4qp3-snap
+    member: safe
+    file: russh/src/kex/curve25519.rs
+    fingerprint: 3f24553e96c9f56f
+    severity_reported: low
+    claim: Low-order X25519 points accepted; all-zero shared secret not rejected
+    verdict: real
+    case_is_malformed: true
+    adjudicated_on: 2026-09-02
+    evidence: >-
+      The fixed member rejects an all-zero *public key* and never checks the
+      resulting shared secret. Zero is one of several low-order encodings whose
+      scalar multiplication yields the all-zero shared secret, so the guard
+      closes one encoding and not the class. The control that closes it is a
+      check on `shared` itself.
+    note: >-
+      My first label was `incidental` and Codex refused it, correctly. This is
+      not a different weakness sitting in the same file; it is the same path
+      left half-closed — attacker point, zero shared secret, then the mpint
+      encoding the fix also touches. A safe member that still carries a
+      reachable form of the weakness cannot measure discrimination in either
+      direction, so the case is excluded rather than counted as a failure. The
+      short-payload DoS above is present here too and stays incidental; it is
+      not what makes this case unusable.
+
+  - case_id: rs-8rw6-p7m8-63jp
+    member: safe
+    file: surrealdb/core/src/doc/output.rs
+    fingerprint: 8b6083c3e996ed20
+    severity_reported: high
+    claim: Field SELECT permission evaluated against user-controlled projection
+    verdict: not_real
+    adjudicated_on: 2026-09-02
+    evidence: >-
+      The snapshot is a clone of `out` on purpose: `k` is a path in the final
+      output, so the value a permission decides about has to be the output
+      value that will be kept or cut. The permission expressions still receive
+      `Some(&self.current)`, so ordinary record references are not redirected
+      to the projection, and `reduce_current` runs before projection.
+    known_failure: true
+    note: >-
+      Changes no score, and this is the expensive kind of failure rather than a
+      scoring artefact: the agent described the lines accurately, drew the
+      wrong conclusion about the trust boundary, called it high, and blocked a
+      merge of a correct fix. A tool that does that is switched off.
+
+      `known_failure` rather than a limitation, and the difference is the whole
+      point. A limitation removes the case from measurement for good, and this
+      case measures something precise and valuable: whether a semantically
+      wrong finding can survive the verifier and gate a merge. Removing it
+      would close the accounting by discarding the best regression test in the
+      corpus for that question. It stays in the set, it stays a failure, and
+      `LIMITATIONS.md` says what the failure is.
+
+      There is no local fix to make. The deterministic layer proves the quoted
+      code exists, not that the conclusion follows from it; the verifier is the
+      layer meant to refute the reasoning and it agreed. A rule written for
+      `Some(&self.current)` in this file would be the corpus answering its own
+      question. What would change it is a prompt or verifier-policy change,
+      which produces a new version to be measured rather than a repair to be
+      confirmed.
+
+  - case_id: rs-8rw6-p7m8-63jp-snap
+    member: safe
+    file: surrealdb/core/src/doc/output.rs
+    fingerprint: 06bf0112168101e4
+    severity_reported: high
+    claim: Computed fields re-added after permission reduction leak via aliased projections
+    verdict: real
+    incidental: true
+    adjudicated_on: 2026-09-02
+    evidence: >-
+      Computed fields are evaluated, `reduce_current` removes the denied ones,
+      and `compute_fields(CurrentReduced, needed_roots)` can add them back when
+      the projection asks for them. The projection may place them under an
+      alias, and the final `apply_select_field_permissions` matches definitions
+      against paths in the projected `out`, where the protected name no longer
+      appears.
+    note: >-
+      Real, and a different leak from the one the case is about. `case.yml`
+      names the array element-level `field.*` SELECT leak; this is the
+      computed-field alias path in the same output pipeline. If the upstream
+      advisory turns out to cover both, this ruling is wrong and the case is a
+      genuine failure — the advisory has not been read, and that is stated
+      rather than assumed.
+

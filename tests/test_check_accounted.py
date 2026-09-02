@@ -241,3 +241,59 @@ class TestWhatWasBoughtVersusWhatWasDecided:
         assert check_accounted.verdicts() == {}
         assert check_accounted.executed() == set()
 
+
+class TestAFailureThatStaysInTheSet:
+    """The fifth outcome, and why four were not enough.
+
+    D-008 folded two independent questions into one: does this case have an
+    explained outcome, and should it be measured again. For a case the agent
+    genuinely failed — a false finding that survived the verifier and blocked a
+    correct fix — the answers are yes and yes, and neither existing bucket can
+    say that. `invalid` claims the case measures nothing; `limitation` removes
+    it from measurement for good.
+    """
+
+    def rule(self, root, **keys):
+        body = {"adjudications": [dict({"case_id": CASE, "member": "safe"},
+                                       **keys)]}
+        (root / "corpus-real" / "adjudications.yml").write_text(
+            yaml.safe_dump(body), encoding="utf-8")
+
+    def test_a_known_failure_is_accounted_for_without_being_removed(
+            self, corpus, capsys):
+        root, digest = corpus
+        write_rows(root, "r.json", row(digest=digest, passes=False))
+        self.rule(root, known_failure=True)
+
+        buckets = check_accounted.account()
+        assert buckets["known_failure"] == [CASE]
+        assert CASE not in buckets["limitation"]
+        assert CASE not in buckets["invalid"]
+        assert not buckets["unaccounted"]
+
+    def test_it_wins_over_a_line_in_limitations(self, corpus):
+        """Such a case is named in `LIMITATIONS.md` too — that line says what
+        the failure is. Read the other way round it would be filed as removed,
+        which is the one thing the ruling exists to prevent."""
+        root, digest = corpus
+        write_rows(root, "r.json", row(digest=digest, passes=False))
+        self.rule(root, known_failure=True)
+        (root / "LIMITATIONS.md").write_text(
+            "The reviewer is wrong about {}.\n".format(CASE), encoding="utf-8")
+
+        buckets = check_accounted.account()
+        assert buckets["known_failure"] == [CASE]
+        assert buckets["limitation"] == []
+
+    def test_it_is_not_confused_with_a_case_that_measures_nothing(self, corpus):
+        """`invalid` says the case cannot measure anything. A known failure
+        measures something precise — whether a semantically wrong finding can
+        survive the verifier and gate a merge."""
+        root, digest = corpus
+        write_rows(root, "r.json", row(digest=digest, passes=False))
+        self.rule(root, case_is_malformed=True)
+
+        buckets = check_accounted.account()
+        assert buckets["invalid"] == [CASE]
+        assert buckets["known_failure"] == []
+
