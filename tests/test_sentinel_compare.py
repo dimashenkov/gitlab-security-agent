@@ -28,7 +28,11 @@ def member(**overrides) -> dict:
                        "schema_sha": "ccc", "agent_version": "0.1.0",
                        "model_requested": "claude-sonnet-5",
                        "models_served": ["claude-sonnet-5"]},
-        "settings": {"verify_model": "claude-opus-5", "effort": "high"},
+        # `verify` is recorded by every real run, and the contract requires it
+        # to be on: the reference was produced with it on, and a challenger
+        # without it measures a different question.
+        "settings": {"verify": True, "verify_model": "claude-opus-5",
+                     "effort": "high"},
     }
     body.update(overrides)
     return body
@@ -418,8 +422,11 @@ def test_a_row_that_cannot_say_what_produced_it_is_refused(tmp_path):
     # Refused, and the first check to reach it names the first thing missing.
     # A blank member records neither a verifier nor a prompt digest; either
     # sentence is the same absence, refused rather than forgiven.
+    # Refused, and the first check to reach it names what is missing: a blank
+    # member records no verification, no verifier and no prompt digest, and
+    # any of those sentences is the same absence refused rather than forgiven.
     message = str(caught.value)
-    assert "records no" in message
+    assert "records no" in message or "verification is None" in message
 
 
 def test_the_threshold_comes_from_the_reference(tmp_path):
@@ -742,7 +749,11 @@ def test_a_row_that_verified_with_verification_off_is_refused(tmp_path):
     with pytest.raises(sentinel_compare.ComparisonError) as caught:
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
-    assert "did not happen" in str(caught.value)
+    # The stronger rule speaks first now: verification has to be *on*, not
+    # merely not-contradicted. Forbidding the impossible combination was the
+    # weaker half of the same question, and it let a run with the layer
+    # switched off through.
+    assert "verification is False" in str(caught.value)
 
 
 # ------------------------------- only the model may differ from the reference
@@ -963,4 +974,57 @@ def test_a_reference_with_no_environment_is_refused(tmp_path):
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
     assert "no environment" in str(caught.value)
+
+
+def test_a_challenger_with_verification_switched_off_is_refused(tmp_path):
+    """The mirror of the previous defect, and the one that survived it.
+
+    The check forbade the impossible combination — verification off with a
+    model recorded as having verified — and never asked for the thing itself.
+    So a challenger with the layer *switched off* and `verify_model` still
+    written down passed: both runs agreed, and a quiet `net: 0` came back for
+    "Sonnet with no verifier" measured against "Opus with one".
+    """
+    ref = reference(tmp_path)
+    unverified = member()
+    unverified["settings"] = dict(unverified["settings"], verify=False)
+    unverified["provenance"] = dict(unverified["provenance"],
+                                    models_verified=[])
+    rows = [row(c, True, members={"safe": unverified, "unsafe": unverified})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "Removing a layer" in str(caught.value)
+
+
+def test_a_challenger_that_does_not_record_verification_is_refused(tmp_path):
+    """Absent is not true. Nothing about a missing field says the layer ran."""
+    ref = reference(tmp_path)
+    silent = member()
+    silent["settings"] = dict(silent["settings"])
+    silent["settings"].pop("verify")
+    rows = [row(c, True, members={"safe": silent, "unsafe": silent})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "verification is None" in str(caught.value)
+
+
+def test_a_reference_that_names_no_verifier_is_refused(tmp_path):
+    """`if wanted_verifier:` skipped the whole contract when the field was
+    absent — the rule held only for references that happened to carry it."""
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    body.pop("verifier_model")
+    ref.write_text(json.dumps(body))
+
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "does not name the verifier" in str(caught.value)
 

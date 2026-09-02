@@ -324,20 +324,38 @@ def compare(reference_path: Path, run_paths: list) -> dict:
                 # have measured "Sonnet judged by Sonnet" and reported it as
                 # "Sonnet against Opus" — the wrong causality, arrived at by
                 # omission.
+                # Required, not merely permitted. The check forbade the
+                # impossible combination — verification off with a model
+                # recorded as having verified — and never asked for the thing
+                # itself, so a challenger with verification *switched off* and
+                # `verify_model` still written down sailed through: both passes
+                # agreed, and a quiet `net: 0` came back for "Sonnet with no
+                # verifier" measured against "Opus with one". Absent is not
+                # true either; nothing about a missing field says the layer ran.
+                if settings.get("verify") is not True:
+                    raise ComparisonError(
+                        "{}: verification is {!r} in this run and the "
+                        "reference was produced with it on. Removing a layer "
+                        "measures a different question.".format(
+                            case_id, settings.get("verify")))
+
                 wanted_verifier = reference.get("verifier_model")
-                if wanted_verifier:
-                    configured = settings.get("verify_model")
-                    if not configured:
-                        raise ComparisonError(
-                            "{}: the run records no `verify_model`, so nothing "
-                            "says the verifier was held at {}.".format(
-                                case_id, wanted_verifier))
-                    if configured != wanted_verifier:
-                        raise ComparisonError(
-                            "{}: the reference was verified by {} and this run "
-                            "was configured to verify with {}. Changing the "
-                            "verifier as well measures a different question."
-                            .format(case_id, wanted_verifier, configured))
+                if not wanted_verifier:
+                    raise ComparisonError(
+                        "the reference does not name the verifier it was "
+                        "produced with, so a challenger cannot be held to it")
+                configured = settings.get("verify_model")
+                if not configured:
+                    raise ComparisonError(
+                        "{}: the run records no `verify_model`, so nothing "
+                        "says the verifier was held at {}.".format(
+                            case_id, wanted_verifier))
+                if configured != wanted_verifier:
+                    raise ComparisonError(
+                        "{}: the reference was verified by {} and this run "
+                        "was configured to verify with {}. Changing the "
+                        "verifier as well measures a different question."
+                        .format(case_id, wanted_verifier, configured))
                 if verified and settings.get("verify") is False:
                     # An artifact that cannot be true. Verification was off, so
                     # nothing verified — a row saying otherwise is describing a
