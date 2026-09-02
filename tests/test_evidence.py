@@ -142,8 +142,16 @@ class TestChangedLines:
         remaining additions away to a file that does not exist. The chain this
         breaks is in `test_diff_structure.py`.
         """
-        diff = (DIFF.replace('+def get_user(request):',
-                             '+++ b/attacker/choice.py\n+def get_user(request):'))
+        # The forged line is an *added* line, so the header counts it — which
+        # is what git would write, and what `changed_lines` now requires. The
+        # first version of this test injected the line and left the count
+        # alone; that is a header claiming fewer lines than its body has, and
+        # the parser refuses one now for reasons that have nothing to do with
+        # the question here.
+        diff = (DIFF
+                .replace('@@ -10,6 +10,8 @@', '@@ -10,6 +10,9 @@')
+                .replace('+def get_user(request):',
+                         '+++ b/attacker/choice.py\n+def get_user(request):'))
         result = changed_lines(diff)
 
         assert "attacker/choice.py" not in result.files()
@@ -194,6 +202,11 @@ class TestExcerpt:
         assert excerpt("", 5) == ("", 0, 0)
 
 
+# The header says 8 old lines and 6 new, and the body has to have them. This
+# fixture was an abbreviation of the real diff — three context lines short —
+# and it passed only because the parser did not check. `changed_lines` refuses
+# a diff that ends inside a hunk now, so an abbreviated one would be refused
+# here for the same reason a truncated one is refused in production.
 DELETION_ONLY_DIFF = '''\
 diff --git a/git/refs/symbolic.py b/git/refs/symbolic.py
 --- a/git/refs/symbolic.py
@@ -204,6 +217,9 @@ diff --git a/git/refs/symbolic.py b/git/refs/symbolic.py
 -            raise ValueError(f"Invalid reference '{ref_path}'")
          tokens: Union[None, List[str], Tuple[str, str]] = None
          repodir = _git_dir(repo, ref_path)
+         path = join_path(repodir, ref_path)
+         if not os.path.isfile(path):
+             return (None, None)
 '''
 
 

@@ -24,14 +24,16 @@ not "not done yet"; it is a runner that fails a test it is expected to pass.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
+from xml.etree import ElementTree
 
 import yaml
 
@@ -39,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from artifact import (
     case_digest,
+    instant,
     is_target,
     legacy_case_digest,
     load_adjudications,
@@ -104,15 +107,35 @@ def _tests_mentioning(*needles: str) -> List[Path]:
     return hits
 
 
+_PASSED_COUNT = re.compile(r"(\d+) passed")
+
+
 def _pytest(paths: List[Path], run: bool) -> Optional[Tuple[bool, str]]:
-    """(passed, summary), or None when the caller asked not to spend the time."""
+    """(passed, summary), or None when the caller asked not to spend the time.
+
+    A green exit code is not the same as a test having run. `pytest` exits 0
+    when every test in a file is skipped — a `skipif` on a missing binary, an
+    xfail marker left behind after a rewrite — and this reported `done` with
+    the detail "13 skipped in 0.01s". The tracker's whole job is to say what is
+    covered, so an all-skipped file being counted as covered is the failure it
+    exists to catch, arriving from inside.
+
+    So: the exit code *and* at least one test that actually passed. A run that
+    collected nothing already exited 5; a run that skipped everything exits 0
+    and is now caught by the count.
+    """
     if not run or not paths:
         return None
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", *[str(p) for p in paths]],
         cwd=ROOT, capture_output=True, text=True, check=False)
     tail = [line for line in proc.stdout.strip().splitlines() if line.strip()]
-    return proc.returncode == 0, tail[-1] if tail else "no output"
+    summary = tail[-1] if tail else "no output"
+    match = _PASSED_COUNT.search(summary)
+    ran = bool(match) and int(match.group(1)) > 0
+    if proc.returncode == 0 and not ran:
+        return False, summary + " — no test passed"
+    return proc.returncode == 0, summary
 
 
 def _from_tests(names: List[Path], run: bool, subject: str) -> Result:
@@ -212,6 +235,156 @@ def probe_confinement(args) -> Result:
     return _from_tests(sorted(set(ambient + denied)), args.tests, "confinement")
 
 
+def _scenarios_with_a_test(files: List[Path]) -> List[str]:
+    """Scenario keys that name an actual test, read from the syntax tree.
+
+    `k in text` was the test, and the text includes every comment and every
+    docstring in the file. Deleting `test_auth_failure_is_not_a_clean_end` and
+    leaving the words "auth failure" — or the key itself — in the module
+    docstring kept the probe at 13/13: the tracker would report the scenario
+    covered by the sentence describing the test that used to cover it.
+
+    The same shape as the defect this function's own docstring already
+    warned about one line up, and the warning did not stop it: a check
+    satisfied by a substring is satisfied by prose. Function names are what
+    `pytest` collects, so they are what gets counted.
+    """
+    return _scenarios_named_by(_test_names(files))
+
+
+def _test_names(files: List[Path]) -> set:
+    """Function names `pytest` would collect — not every `def test…` in the file.
+
+    `ast.walk` descends into function bodies, so a helper defined inside
+    another function counted as a test, and pytest never sees one. Classes
+    nest, though — pytest collects `TestOuter::TestInner::test_x` — so the walk
+    follows class bodies to any depth and function bodies not at all.
+    """
+    return _test_names_in([
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body
+        for path in files])
+
+
+def _scenarios_named_by(names) -> List[str]:
+    return [key for key in CONFORMANCE_SCENARIOS
+            if any(key in name for name in names)]
+
+
+_CONDITIONAL = ("skip", "skipif", "xfail")
+
+
+def _conditionally_run(files: List[Path]) -> set:
+    """Tests carrying `skip`, `skipif` or `xfail`, by name.
+
+    The report cannot tell these apart from a pass on its own. A `<testcase>`
+    records its outcome by having a `failure`, `error` or `skipped` child, and
+    an **xpassed** test — marked `xfail` and succeeding anyway — has none of
+    them, so it is written exactly as an ordinary pass is. Thirteen scenarios
+    marked `xfail` and quietly succeeding would have read as thirteen covered.
+
+    So the marker is read where it is written, in the source, and a test that
+    carries one does not establish coverage whichever way it ends. A scenario
+    whose only test is conditional is a scenario nobody has committed to.
+    """
+    marked = set()
+
+    def named(node) -> str:
+        while isinstance(node, ast.Call):
+            node = node.func
+        while isinstance(node, ast.Attribute):
+            if node.attr in _CONDITIONAL:
+                return node.attr
+            node = node.value
+        return getattr(node, "id", "") if isinstance(node, ast.Name) else ""
+
+    def collect(body) -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                # A marker on the class applies to every test in it.
+                if any(named(d) in _CONDITIONAL for d in node.decorator_list):
+                    marked.update(_test_names_in([node.body]))
+                collect(node.body)
+            elif (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name.startswith("test")
+                    and any(named(d) in _CONDITIONAL
+                            for d in node.decorator_list)):
+                marked.add(node.name)
+
+    for path in files:
+        collect(ast.parse(path.read_text(encoding="utf-8"),
+                          filename=str(path)).body)
+    return marked
+
+
+def _test_names_in(bodies) -> set:
+    names = set()
+
+    def collect(body) -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                collect(node.body)
+            elif (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name.startswith("test")):
+                names.add(node.name)
+
+    for body in bodies:
+        collect(body)
+    return names
+
+
+def _passing_test_names(paths: List[Path]) -> Tuple[bool, str, Optional[set]]:
+    """One run, answering both questions: did it pass, and which tests passed.
+
+    A name in the file is not a test that ran. A scenario whose only test
+    carries `@pytest.mark.skip` — left behind after a rewrite, which is how
+    they get there — was counted as covered: the syntax tree says the function
+    exists and says nothing about pytest ever executing it. `_pytest` did not
+    catch it either, because it asks only whether *some* test in the file
+    passed, and twelve real ones answer that for the thirteenth.
+
+    Read from `--junit-xml` and not from the terminal. The first version parsed
+    `nodeid PASSED` lines out of `-v` output, which is written for a person: it
+    breaks on a path with a space, a parameter id containing `]`, a class
+    nested in a class, and any plugin that rewrites the status line. Every one
+    of those breakages reports a covered scenario as uncovered — conservative,
+    and still a wrong number in a tracker whose whole job is the number.
+
+    And **one** run, not two. Asking pytest twice let the summary come from one
+    execution and the coverage from another, so a flaky or differently-selected
+    second run could contradict the line printed beside it.
+
+    Returns `(passed, summary, names)`. `names` is None when the report could
+    not be read — which is not the same as no test having passed, and the
+    caller must not read it as coverage.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        report = Path(directory) / "report.xml"
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "--tb=no",
+             "--junit-xml={}".format(report), *[str(p) for p in paths]],
+            cwd=ROOT, capture_output=True, text=True, check=False)
+        tail = [line for line in proc.stdout.strip().splitlines() if line.strip()]
+        summary = tail[-1] if tail else "no output"
+        if not report.is_file():
+            return proc.returncode == 0, summary, None
+        try:
+            tree = ElementTree.parse(report)
+        except ElementTree.ParseError:
+            return proc.returncode == 0, summary, None
+        names = set()
+        for case in tree.iter("testcase"):
+            # A case that did not fail, error out or get skipped is one that
+            # passed. Asked as "no such child", because the outcome is recorded
+            # by the *presence* of a child element and there is no `<passed/>`.
+            if any(case.find(kind) is not None
+                   for kind in ("failure", "error", "skipped")):
+                continue
+            name = case.get("name") or ""
+            # `test_x[param]` — the id is the test, the brackets are the case.
+            names.add(name.split("[", 1)[0])
+        return proc.returncode == 0, summary, names
+
+
 def probe_conformance(args) -> Result:
     """Named file only, never a grep for the word.
 
@@ -219,26 +392,62 @@ def probe_conformance(args) -> Result:
     as `partial` the moment an unrelated file mentioned it in a docstring — a
     tracker inventing progress that does not exist, which is the failure this
     whole project is about. A probe that can be satisfied by prose is not a
-    measurement."""
+    measurement. Which the second version still was, one level down — see
+    `_scenarios_with_a_test`."""
     path = TESTS / "test_runner_conformance.py"
     files = [path] if path.exists() else []
     if not files:
         return Result(TODO, "0/13 — no test_runner_conformance.py")
-    text = "".join(p.read_text(encoding="utf-8") for p in files)
-    covered = [k for k in CONFORMANCE_SCENARIOS if k in text]
-    if len(covered) < len(CONFORMANCE_SCENARIOS):
+    try:
+        named = _scenarios_with_a_test(files)
+    except SyntaxError as exc:
+        return Result(BROKEN, "test_runner_conformance.py will not parse: "
+                              "{}".format(exc))
+    total = len(CONFORMANCE_SCENARIOS)
+
+    def missing(covered) -> str:
         absent = [CONFORMANCE_SCENARIOS[k] for k in CONFORMANCE_SCENARIOS
                   if k not in covered]
+        return "; ".join(absent[:3]) + ("…" if len(absent) > 3 else "")
+
+    if not args.tests:
+        # A name is an upper bound on coverage, never a measurement of it, and
+        # without running the tests that bound is all there is.
+        return Result(PARTIAL, "{}/{} named, not run — pass --tests{}".format(
+            len(named), total,
+            "" if len(named) == total else " · missing: " + missing(named)))
+
+    # Run *before* answering about coverage. The count came first, and returned
+    # `partial 12/13 — missing: …` for a file whose twelve tests all failed:
+    # the failure was invisible, and the line beside it read like progress. A
+    # broken check is not a coverage number, whatever its coverage happens to
+    # be.
+    passed, summary, ran = _passing_test_names(files)
+    if not passed:
+        return Result(BROKEN, "{}/{} named — {}".format(
+            len(named), total, summary))
+    if len(named) < total:
         return Result(PARTIAL, "{}/{} — missing: {}".format(
-            len(covered), len(CONFORMANCE_SCENARIOS),
-            "; ".join(absent[:3]) + ("…" if len(absent) > 3 else "")))
-    verdict = _pytest(files, args.tests)
-    if verdict is None:
-        return Result(PARTIAL, "{n}/{n} named, not run — pass --tests".format(
-            n=len(CONFORMANCE_SCENARIOS)))
-    passed, summary = verdict
-    return Result(DONE if passed else BROKEN, "{n}/{n} named — {s}".format(
-        n=len(CONFORMANCE_SCENARIOS), s=summary))
+            len(named), total, missing(named)))
+    if ran is None:
+        # Green, and the report that says *which* tests were green could not be
+        # read. Not the same as nothing having passed, and not evidence of
+        # coverage either — so neither `done` nor a count.
+        return Result(PARTIAL, "{n}/{n} named — {s}, but the run's report "
+                               "could not be read".format(n=total, s=summary))
+    if not ran:
+        # Green with nothing recorded as passing is the all-skipped file the
+        # old exit-code check let through, arriving by a different road.
+        return Result(BROKEN, "{n}/{n} named — {s}, and no test passed"
+                      .format(n=total, s=summary))
+
+    # An xpassed test is written into the report exactly as a passing one is,
+    # so the marker is read from the source and subtracted here.
+    covered = _scenarios_named_by(ran - _conditionally_run(files))
+    if len(covered) < total:
+        return Result(PARTIAL, "{}/{} passed — named but never passed: {}"
+                      .format(len(covered), total, missing(covered)))
+    return Result(DONE, "{n}/{n} named — {s}".format(n=total, s=summary))
 
 
 def probe_no_fallback(args) -> Result:
@@ -346,27 +555,6 @@ def rows_in(body) -> list:
             return [row for row in found if isinstance(row, dict)]
         return [body]
     return []
-
-
-def _instant(value) -> Optional[datetime]:
-    """The moment a row says it ran, or None if it does not say usefully.
-
-    Compared as an instant and not as text. `2026-08-28T14:00:00+03:00` is
-    *earlier* than `2026-08-28T12:00:00+00:00`, and sorting the two strings
-    puts them the other way round — so a lexicographic `max` would let an
-    earlier run supersede a later one whenever the offsets differ.
-
-    A value that will not parse, or one carrying no timezone, is treated as no
-    time at all rather than as a time that sorts somewhere. A malformed string
-    must not be able to win an ordering.
-    """
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        moment = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return moment if moment.tzinfo is not None else None
 
 
 def _settle(seen: list) -> set:
@@ -557,7 +745,7 @@ def probe_use(args) -> Result:
             # `bool("false")` is true, and a tracker that reads the string
             # "false" as a pass can be told the work is done by a typo.
             verdicts.setdefault(case_id, []).append(
-                (_instant(row.get("ran_at")), _pair_passed(row, case_id)))
+                (instant(row.get("ran_at")), _pair_passed(row, case_id)))
 
     # A later run supersedes an earlier one, by the time recorded *in the row*
     # — not by filename order, which is not run order, and not by modification
@@ -699,7 +887,7 @@ def _failing_cases() -> list:
             # and as "nothing to reconcile yet" under point 9. Both probes read
             # a row the same way or the tracker disagrees with itself.
             seen.setdefault(case_id, []).append(
-                (_instant(row.get("ran_at")), _pair_passed(row, case_id)))
+                (instant(row.get("ran_at")), _pair_passed(row, case_id)))
     # A case whose latest runs disagree is not settled as passing, so it is
     # still owed an explanation.
     return [case_id for case_id in sorted(seen)

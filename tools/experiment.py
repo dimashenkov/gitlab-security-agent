@@ -72,8 +72,13 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import round as round_tool
+
+# `artifact` is what puts `src` on the path, so it has to precede the
+# `security_agent` import below — which the grouping happens to give for free.
 from artifact import case_digest
 from sentinel import read_cases
+
+from security_agent.config import ConfigError
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = ROOT / "suites" / "sentinel.yml"
@@ -153,12 +158,40 @@ def reviewer_digest() -> str:
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+def requested_now() -> Dict[str, Any]:
+    """The models this shell would actually ask for, and whether it verifies.
+
+    Resolved through `Config.from_env` rather than read from the environment
+    here, because the resolution is not a lookup: an unset
+    `SECURITY_SCAN_VERIFY_MODEL` means *the reviewer's own model*, and an unset
+    `SECURITY_SCAN_MODEL` means Opus. Two copies of that rule is how one of
+    them ends up stale.
+
+    Recorded because `freeze` and `run` are separate commands and the shell
+    between them is not the same shell. The variables written in front of
+    `freeze` apply to a process that spends nothing; the two `run` invocations
+    that spend $13 read whatever their own environment holds, and unset means
+    Opus — the reference's own model. Every review would have been bought from
+    the model the experiment exists to replace, and the only thing that would
+    ever have said so is the comparator, at the end, with the money gone.
+    """
+    from security_agent.config import Config
+    cfg = Config.from_env()          # raises ConfigError; `main` refuses on it
+    return {
+        "model_requested": cfg.model,
+        "verifier_requested": cfg.verifier_model,
+        # A string, not a bool. `drift` prints `was -> now`, and `False -> True`
+        # in a list of digests reads as a digest that went missing.
+        "verify": "on" if cfg.verify else "off",
+    }
+
+
 def environment_now() -> Dict[str, Any]:
     """What the freeze records and what every check re-computes — one
     definition, because two is how the scorer digest ended up in the manifest
     and not in the check."""
     return dict(round_tool.environment(), scorer=scorer_digest(),
-                reviewer=reviewer_digest())
+                reviewer=reviewer_digest(), **requested_now())
 
 
 def build(name: str) -> Dict[str, Any]:
@@ -421,6 +454,24 @@ def run(name: str, label: str, limit: Optional[int]) -> int:
         print("  nothing left in this pass.")
         return 0
 
+    # Before anything is bought, and required rather than merely compared.
+    # `drift` walks the keys the manifest *has*, so a manifest frozen before
+    # these keys existed would be checked against nothing and read as agreeing
+    # — the shape this repository keeps finding in itself. A manifest that does
+    # not name its model cannot show that this shell asks for the same one, and
+    # "could not check" is not "matches".
+    if not (body["environment"].get("model_requested") or ""):
+        print("\nstopping: {} was frozen before the model was recorded, so "
+              "there is nothing here to check this shell against. Every review "
+              "in this pass would be bought from whatever SECURITY_SCAN_MODEL "
+              "happens to hold, and the comparator would only say so "
+              "afterwards. Freeze a new experiment.".format(name))
+        return 2
+    print("  model {} · verifier {} · verification {}".format(
+        body["environment"]["model_requested"],
+        body["environment"].get("verifier_requested", "?"),
+        body["environment"].get("verify", "?")))
+
     # Counted rather than enumerated: it is the number of cases this
     # The cases this invocation accepted, not the ones it attempted. The loop
     # returns early on drift without accepting the case it is on, so a counter
@@ -628,13 +679,28 @@ def main() -> int:
     done.add_argument("name")
 
     args = parser.parse_args()
-    if args.command == "freeze":
-        return freeze(args.name, args.dry_run)
-    if args.command == "verify":
-        return verify(args.name)
-    if args.command == "run":
-        return run(args.name, args.pass_label, args.cases)
-    return compare(args.name)
+    # `requested_now` resolves the models through the reviewer's own config,
+    # which validates *every* setting and not only the three recorded here. One
+    # bad value anywhere — `SECURITY_SCAN_FAIL_ON=bogus`, a malformed integer —
+    # raised out of `drift` and printed a traceback where a refusal belonged.
+    #
+    # Refused rather than recorded as a marker. A marker would be written by the
+    # freeze and computed again by the run, the two would match, and a shell
+    # whose configuration does not load would have been called unchanged — the
+    # absence read as agreement, arrived at through the fix for it.
+    try:
+        if args.command == "freeze":
+            return freeze(args.name, args.dry_run)
+        if args.command == "verify":
+            return verify(args.name)
+        if args.command == "run":
+            return run(args.name, args.pass_label, args.cases)
+        return compare(args.name)
+    except ConfigError as exc:
+        print("this shell's configuration does not load, so there is nothing "
+              "to freeze or to check against:\n  {}".format(exc),
+              file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

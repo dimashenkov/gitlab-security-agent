@@ -18,7 +18,25 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+# Both sides are captured, and the counts as well as the starts. The new-side
+# start is what numbers an addition; the two counts are what say where the hunk
+# body ends, which is the only thing that can close a hunk in a diff that
+# carries no `diff --git` line. See `changed_lines`.
+HUNK_HEADER = re.compile(
+    r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+class DiffFormatError(ValueError):
+    """A diff whose own structure does not add up.
+
+    Raised rather than worked around. Every consumer of `changed_lines` takes
+    the map as the whole change, and a finding outside it is reported as
+    pre-existing — which does not block. So a map built from a diff that
+    contradicts itself would turn a parsing failure into a quiet pass, the one
+    outcome this tool exists to prevent. Stopping is the honest answer:
+    "could not read the change" is a different thing from "the change is
+    clean", and they get different exit codes.
+    """
 
 
 def normalize(line: str) -> str:
@@ -226,10 +244,19 @@ def unquote_path(path: str) -> str:
     decode the path rather than trusting a configuration knob to make it
     unnecessary.
 
-    A malformed quoted string is returned as it arrived. Guessing at a repair
-    would invent a path, and a path that fails to match is the safe direction
-    here only because the caller treats an unmatched file as unattributed —
+    A malformed quoted string is returned as it arrived, and the earlier
+    wording here called that "the safe direction". It is not, and saying so
+    invited the next reader to relax the decoder: an unmatched key means
+    unattributed, unattributed means recorded as pre-existing, and pre-existing
+    does not block under the default `gate_pre_existing=False`. Both directions
+    are unsafe — a guessed repair names a file the change may not contain, and
+    returning the escaped form names a file nothing contains. Returning it
+    unchanged is chosen only because it is the one that cannot invent a match,
     which is why the decoding has to be right rather than best-effort.
+
+    Nothing malformed can arrive from git, which quotes with escapes it always
+    emits well-formed; every branch below is a guard against a producer that is
+    not git, and none of them has been reached.
     """
     if len(path) < 2 or not path.startswith('"') or not path.endswith('"'):
         return path
@@ -254,7 +281,14 @@ def unquote_path(path: str) -> str:
         octal = body[index:index + 3]
         if len(octal) != 3 or any(digit not in "01234567" for digit in octal):
             return path                      # not an escape git would emit
-        out.append(int(octal, 8))
+        byte = int(octal, 8)
+        # `\400` and above are three octal digits and not a byte. Git never
+        # writes one, and `bytearray.append` raised ValueError out of a path
+        # decoder — an exception escaping here aborts the whole changed-line
+        # map, so the change's own additions stop being attributed at all.
+        if byte > 0xFF:
+            return path                      # ditto
+        out.append(byte)
         index += 3
 
     # `surrogateescape` rather than `replace`: a byte sequence that is not
@@ -312,6 +346,21 @@ def changed_lines(diff_text: str) -> ChangedLines:
     even need an attacker: `--` opens a comment in SQL, Lua, Haskell and Ada,
     so deleting one such line from a migration was already invisible to the
     removed-control rule.
+
+    A hunk ends where its own header says it ends. `diff ` used to be the only
+    thing that closed one, which is true of `git diff` — the only producer this
+    code has — and false of a unified diff in general: `diff -ruN` and most
+    patch tools emit `--- `/`+++ ` pairs with no `diff ` line between them, and
+    every file after the first was then read as more body of file one. Its
+    `+++ ` header counted as an addition, its content was filed under the wrong
+    name, and a finding in any of those files came out pre-existing — which
+    does not block. Not reachable through `workspace.changed_line_map`, which
+    builds the diff with git itself; fixed because this function is documented
+    as parsing a unified diff and the failure is silent when it is not.
+
+    Counting the body cannot loosen the paragraph above: git writes the counts
+    from the body it emits, so the hunk closes on its last body line and the
+    next line is a real header or nothing.
     """
     added: Dict[str, Set[int]] = {}
     removed: Dict[str, Set[int]] = {}
@@ -320,6 +369,8 @@ def changed_lines(diff_text: str) -> ChangedLines:
     # Whether we are reading the body of a hunk, which is the only part of a
     # diff whose text an author chose. See `_header_path` for what that means.
     in_hunk = False
+    # Lines of the hunk body still owed to each side, from its header.
+    old_left = new_left = 0
 
     for line in diff_text.splitlines():
         # Column zero belongs to the diff's own structure. Every line of a hunk
@@ -333,8 +384,12 @@ def changed_lines(diff_text: str) -> ChangedLines:
             continue
         match = HUNK_HEADER.match(line)
         if match:
-            lineno = int(match.group(1))
-            in_hunk = True
+            lineno = int(match.group(3))
+            # A header with no count means one line, which is what the unified
+            # format says an omitted count is.
+            old_left = int(match.group(2)) if match.group(2) is not None else 1
+            new_left = int(match.group(4)) if match.group(4) is not None else 1
+            in_hunk = old_left > 0 or new_left > 0
             continue
         if not in_hunk:
             if line.startswith("+++ "):
@@ -343,24 +398,79 @@ def changed_lines(diff_text: str) -> ChangedLines:
                 if current is not None:
                     added.setdefault(current, set())
                     removed.setdefault(current, set())
+                continue
+            # Body text where the structure says there is none: the hunk closed
+            # on its own counts and the lines kept coming, so the header
+            # undercounted. That direction is the dangerous one — the surplus
+            # is read as structure, and a `+++ b/decoy.py` sitting in it would
+            # name the next hunk's additions after a file the author chose.
+            #
+            # Refused rather than skipped. A partial map is indistinguishable
+            # from a complete one to every caller, and a finding the map does
+            # not cover is reported as pre-existing, which does not block. `git
+            # diff` writes its counts from the body it emits, so this cannot
+            # fire on the only producer `changed_line_map` has.
+            if (line.startswith("-") and not line.startswith("--- ")) or \
+                    line.startswith("+") or line.startswith(" "):
+                raise DiffFormatError(
+                    "a hunk in this diff declares fewer lines than it has: "
+                    "{!r} appears where the header said the hunk had ended"
+                    .format(line[:60]))
             # `--- `, `index`, mode and similarity lines say nothing this map
             # needs; the new-side header alone names the file.
             continue
-        if current is None:
+        if line.startswith("\\"):
+            # `\ No newline at end of file` annotates the line before it and is
+            # not a line of either side, so it is not counted.
             continue
+        # Each side is checked on its own. Closing the hunk only when *both*
+        # counters reach zero let one of them go negative and be paid for by
+        # the other — a header saying `-0,0 +0,1` accepted a deletion followed
+        # by an addition, which is not a hunk any producer can write. The
+        # promise this function now makes is that a diff contradicting itself
+        # is refused, and it has to hold on each side separately or it is a
+        # promise about the sum.
+        owed = (new_left if line.startswith("+")
+                else old_left if line.startswith("-")
+                else min(old_left, new_left))
+        if owed <= 0:
+            raise DiffFormatError(
+                "a hunk in this diff has more lines on one side than its "
+                "header declares: {!r}".format(line[:60]))
         if line.startswith("+"):
-            added[current].add(lineno)
+            if current is not None:
+                added[current].add(lineno)
             lineno += 1
+            new_left -= 1
         elif line.startswith("-"):
             # A deleted line occupies no position in the new file, so anchor it
             # where the removal happened. max(1, ...) keeps a deletion at the
             # very top of a file from anchoring to line 0.
-            removed[current].add(max(1, lineno))
-        elif line.startswith("\\"):
-            continue
+            if current is not None:
+                removed[current].add(max(1, lineno))
+            old_left -= 1
         else:
             # Context line (leading space), or a blank line git emitted without one.
             lineno += 1
+            old_left -= 1
+            new_left -= 1
+        # Counted even where `current` is None — a deletion writes
+        # `+++ /dev/null` and its body still has to be walked past, or the file
+        # after it is read as more of it.
+        if old_left <= 0 and new_left <= 0:
+            in_hunk = False
+
+    if in_hunk:
+        # The other direction: the diff ran out while a hunk was still owed
+        # lines. Whatever it was going to say about this file is not here, and
+        # returning what was read so far hands the caller a map that looks
+        # complete. Truncation is exactly how a diff arrives when something cut
+        # it — a ceiling, a broken pipe — and this is the tool that must not
+        # call a half-read change a clean one.
+        raise DiffFormatError(
+            "this diff ends inside a hunk that still owed {} old and {} new "
+            "line(s), so the change it describes is not all here"
+            .format(max(0, old_left), max(0, new_left)))
 
     return ChangedLines(added=added, removed_at=removed)
 

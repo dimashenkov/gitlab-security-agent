@@ -51,7 +51,9 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from artifact import (
+    NO_MEMBERS,
     case_digest,
+    instant,
     is_target,
     legacy_case_digest,
     load_adjudications,
@@ -155,12 +157,18 @@ def about_this_version(case_id: str, row: dict) -> bool:
 
     A row with no digest at all predates the record and is not a verdict about
     today's case either.
+
+    A case with no members cannot be certified by anything. Its digest is not a
+    hash — see `artifact.NO_MEMBERS` — and the comparison is refused outright
+    rather than left to compare two sentinels and answer yes.
     """
     directory = ROOT / "corpus-real" / case_id
     if not (directory / "case.yml").is_file():
         return False
-    return row.get("case_digest") in {case_digest(directory),
-                                      legacy_case_digest(directory)}
+    today = {case_digest(directory), legacy_case_digest(directory)}
+    if NO_MEMBERS in today:
+        return False
+    return row.get("case_digest") in today
 
 
 def scorable(row) -> bool:
@@ -201,7 +209,7 @@ def verdicts() -> dict:
     `rb-g65v-27r3-5p6m` out of `LIMITATIONS.md` on the strength of a row nobody
     had checked against what the limitation actually says.
     """
-    latest = {}
+    seen = {}
     for path in (glob.glob(str(ROOT / "measurements" / "*.json"))
                  + glob.glob(str(ROOT / "measurements" / "queue" / "*.json"))):
         try:
@@ -220,18 +228,48 @@ def verdicts() -> dict:
             case_id = row["case_id"]
             if not about_this_version(case_id, row):
                 continue
-            when = row.get("ran_at") or ""
-            if case_id not in latest or when >= latest[case_id][0]:
-                latest[case_id] = (when, row)
+            seen.setdefault(case_id, []).append((instant(row.get("ran_at")), row))
 
     out = {}
-    for case_id, (_when, row) in latest.items():
+    for case_id, rows in seen.items():
         manifest = ROOT / "corpus-real" / case_id / "case.yml"
         if not manifest.is_file():
             continue
         case = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-        out[case_id] = passed(row, case)
+        out[case_id] = _standing(rows, case)
     return out
+
+
+def _standing(rows: list, case: dict) -> bool:
+    """The answer that stands for one case, ordered the way `stage2` orders it.
+
+    Three things this replaced, all in one line — `when >= latest[case_id][0]`
+    over `row.get("ran_at") or ""`.
+
+    Text, not instants. `…T14:00:00+03:00` is two hours *before*
+    `…T12:00:00+00:00` and sorts after it, so a run superseded a later one
+    whenever the offsets differed. Latent today — all 78 dated rows on disk are
+    `+00:00` — and one run from a machine on local time is all it takes.
+
+    `>=` and `""`. Undated rows all compared equal, and equal meant the last one
+    the glob happened to hand over won — an ordering nobody chose and nothing
+    printed. Now an undated row answers only when nothing dated does, which is
+    `stage2._settle`'s rule.
+
+    And a tie. `pair_corpus` stamps whole seconds, so two rows can share an
+    instant; `stage2` calls that unresolved and this tool picked a winner by
+    glob order, so the two readers of one measurement stream could report
+    opposite things about one case. Disagreement at the latest instant is not a
+    pass here — the case then falls to `unaccounted` unless something explains
+    it, which is the bucket that asks for a decision rather than making one.
+    """
+    dated = [(when, row) for when, row in rows if when is not None]
+    if dated:
+        latest = max(when for when, _row in dated)
+        answers = {passed(row, case) for when, row in dated if when == latest}
+    else:
+        answers = {passed(row, case) for _when, row in rows}
+    return answers == {True}
 
 
 def executed() -> set:

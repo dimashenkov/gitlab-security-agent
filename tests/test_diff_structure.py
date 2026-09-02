@@ -30,11 +30,11 @@ import subprocess
 import pytest
 
 from security_agent.config import Config, GitLabContext
-from security_agent.evidence import attribution, changed_lines
+from security_agent.evidence import DiffFormatError, attribution, changed_lines
 from security_agent.gate import EXIT_FINDINGS, decide
 from security_agent.models import ScanOutcome
 from security_agent.tools import REPORT_FINDING, Session, dispatch
-from security_agent.workspace import Workspace
+from security_agent.workspace import Workspace, WorkspaceError
 
 SINK = "return subprocess.run(user_input, shell=True)"
 
@@ -202,3 +202,224 @@ class TestDeletionsThatLookLikeHeaders:
 
         assert changed.removed_at["x.py"] == {1}
         assert changed.added["x.py"] == {1}
+
+
+class TestADiffWithNoGitHeaderLine:
+    """`diff ` was the only thing that ended a hunk, and not every diff has one.
+
+    The parser closed a hunk on a line beginning `diff `, which `git diff`
+    always writes and `diff -ruN` — and most patch tools — never do. Every file
+    after the first was then read as more body of file one: its `+++ ` header
+    counted as an addition to the wrong file, its content was filed under the
+    wrong name, and a finding in it came out with no attribution at all, which
+    is recorded as pre-existing and does not block under the default
+    `gate_pre_existing=False`.
+
+    Not reachable through `workspace.changed_line_map`, which shells out to git
+    itself — checked before this was written, and the reason it is filed as a
+    parser defect rather than a live hole. Fixed because the function is
+    documented as reading a unified diff and fails silently on one, and because
+    the next caller will not know to ask.
+
+    A hunk now ends where its own header says it ends.
+    """
+
+    PLAIN = (
+        "--- a/one.py\n"
+        "+++ b/one.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " x = 1\n"
+        "+import os\n"
+        " y = 2\n"
+        "--- a/two.py\n"
+        "+++ b/two.py\n"
+        "@@ -10,2 +10,3 @@\n"
+        " a = 1\n"
+        "+os.system(cmd)\n"
+        " b = 2\n"
+    )
+
+    def test_the_second_file_is_its_own_file(self):
+        """It used to be absent entirely: `two.py` never became a key, so
+        `attribution` answered "" for every line of it."""
+        changed = changed_lines(self.PLAIN)
+
+        assert changed.files() == {"one.py", "two.py"}
+        assert changed.added["one.py"] == {2}
+        assert changed.added["two.py"] == {11}
+
+    def test_the_added_sink_in_the_second_file_is_attributed(self):
+        """The step that reaches the gate. Before the fix this was "", which
+        the gate reads as a weakness that was already there."""
+        changed = changed_lines(self.PLAIN)
+
+        assert attribution("two.py", 11, 1, changed) == "added"
+
+    def test_the_first_file_is_not_credited_with_the_second_s_lines(self):
+        """The other half of the same error. `+++ b/two.py` begins with `+`,
+        so it was counted as an addition to `one.py` — at a line number nothing
+        in that file corresponds to, with every later number shifted by one."""
+        assert changed_lines(self.PLAIN).added["one.py"] == {2}
+
+    def test_a_forged_header_inside_a_hunk_is_still_content(self):
+        """The control, and the thing that must not be traded away for the
+        above. Git writes a hunk's line counts from the body it emits, so a
+        `+++ ` line an author added is inside the count and the hunk does not
+        end early. Had ending a hunk on its declared length reopened this, the
+        decoy at the top of this file would work again."""
+        diff = (
+            "diff --git a/app.py b/app.py\n"
+            "--- a/app.py\n"
+            "+++ b/app.py\n"
+            "@@ -1,1 +1,4 @@\n"
+            " keep\n"
+            "+++ b/attacker/choice.py\n"
+            "+import subprocess\n"
+            "+subprocess.run(cmd, shell=True)\n"
+        )
+        changed = changed_lines(diff)
+
+        assert "attacker/choice.py" not in changed.files()
+        assert changed.added["app.py"] == {2, 3, 4}
+
+    def test_a_deleted_file_does_not_swallow_the_one_after_it(self):
+        """`+++ /dev/null` leaves `current` unset, and the body still has to be
+        walked past. Counting only where a file is named would have left the
+        hunk open and eaten the next file in a diff with no `diff ` line."""
+        diff = (
+            "--- a/gone.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,2 +0,0 @@\n"
+            "-x = 1\n"
+            "-y = 2\n"
+            "--- a/kept.py\n"
+            "+++ b/kept.py\n"
+            "@@ -5,1 +5,2 @@\n"
+            " a = 1\n"
+            "+os.system(cmd)\n"
+        )
+        changed = changed_lines(diff)
+
+        assert changed.added["kept.py"] == {6}
+        assert "gone.py" not in changed.files()
+
+
+class TestAGitDiffThatFailedIsNotAnEmptyChange:
+    """`changed_line_map` asked git with `check=False`, and `git()` returns
+    whatever the process managed to write whatever its exit code.
+
+    So a `git diff` that was refused — a bad revision, a corrupt object, a
+    killed process — handed back a *structurally valid* map of however much it
+    got out, and the hunk accounting cannot see it: output stopping cleanly
+    between two files is well-formed. Every file git never reached is then
+    absent, findings there are attributed to nothing, and an unattributed
+    finding is reported as pre-existing, which does not block by default.
+
+    "Could not read the change" and "the change is clean" are different
+    answers. They have different exit codes and this is where they parted.
+    """
+
+    def test_a_refused_diff_stops_the_review(self, repo):
+        broken = Workspace(root=repo.root, diff_base="0" * 40,
+                           diff_head="HEAD")
+
+        with pytest.raises(WorkspaceError) as caught:
+            broken.changed_line_map()
+
+        assert "git diff" in str(caught.value)
+
+    def test_a_diff_git_answers_is_still_read(self, repo):
+        """The control: the refusal must not cost the ordinary case."""
+        assert repo.changed_line_map().added["src/app.py"]
+
+
+class TestCountsThatDoNotAddUpAreRefused:
+    """Counting the hunk body made the forgery defence depend on the counts
+    being honest, and nothing checked them.
+
+    The old rule closed a hunk on the next `diff ` line, so a `+++ b/decoy.py`
+    written *inside* a hunk was never read as a header, whatever the header
+    said. Counting restored the general unified-diff case and moved the
+    guarantee onto the numbers: a header claiming fewer lines than its body has
+    closes the hunk early, and the surplus body — attacker text — is then read
+    as structure. A `+++ b/decoy.py` in it names the next hunk's additions
+    after a file the author chose, and every finding in the real file comes
+    back unattributed, which does not block.
+
+    Refused rather than parsed as far as it goes: a partial map looks exactly
+    like a complete one to `attribution`, and `git diff` emits neither shape,
+    so nothing this tool actually reads can trip it.
+    """
+
+    def test_a_header_that_undercounts_its_body_is_refused(self):
+        diff = (
+            "--- a/one.py\n"
+            "+++ b/one.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            " kept\n"
+            "+surplus\n"
+            "+++ b/decoy.py\n"
+            "@@ -1,0 +1,1 @@\n"
+            "+evil()\n"
+        )
+
+        with pytest.raises(DiffFormatError) as caught:
+            changed_lines(diff)
+
+        assert "fewer lines than it has" in str(caught.value)
+
+    def test_one_side_overrunning_its_own_count_is_refused(self):
+        """Each side is checked on its own. Closing the hunk only when *both*
+        counters reached zero let one go negative and be paid for by the other,
+        so `-0,0 +0,1` accepted a deletion followed by an addition — a hunk no
+        producer can write, and the promise this parser makes is about each
+        side, not about the sum."""
+        diff = (
+            "--- a/one.py\n"
+            "+++ b/one.py\n"
+            "@@ -0,0 +0,1 @@\n"
+            "-gone\n"
+            "+new\n"
+        )
+
+        with pytest.raises(DiffFormatError) as caught:
+            changed_lines(diff)
+
+        assert "more lines on one side" in str(caught.value)
+
+    def test_a_diff_that_ends_inside_a_hunk_is_refused(self):
+        """Truncation is how a diff arrives when something cut it — a ceiling,
+        a broken pipe. Returning what was read hands the caller a map that
+        looks complete, and this is the tool that must not call a half-read
+        change a clean one."""
+        diff = (
+            "--- a/one.py\n"
+            "+++ b/one.py\n"
+            "@@ -1,4 +1,4 @@\n"
+            " a\n"
+        )
+
+        with pytest.raises(DiffFormatError) as caught:
+            changed_lines(diff)
+
+        assert "owed 3 old and 3 new" in str(caught.value)
+
+    def test_every_diff_git_writes_is_still_accepted(self):
+        """The control, and the one that decides whether this rule may ship: a
+        refusal on a real diff aborts a review that would otherwise have run.
+        Sixty commits of this repository, at the context width the reviewer
+        asks for."""
+        revisions = subprocess.run(
+            ["git", "log", "--format=%H", "-60"],
+            capture_output=True, text=True, check=True).stdout.split()
+        read = 0
+        for revision in revisions:
+            text = subprocess.run(
+                ["git", "show", "--format=", "--unified=12", revision],
+                capture_output=True, text=True, check=True).stdout
+            if not text.strip():
+                continue
+            changed_lines(text)
+            read += 1
+
+        assert read > 40

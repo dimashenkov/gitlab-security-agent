@@ -602,9 +602,23 @@ class Workspace:
 
                 self._changed_lines = ChangedLines()
             else:
+                # `check=True`. It was False, and `git` returns whatever it
+                # managed to write whatever its exit code — so a diff killed
+                # after one file's hunks, or refused outright, produced a
+                # *structurally valid* partial map. Every file git never got to
+                # is then absent from it, findings there are reported as
+                # pre-existing, and pre-existing does not block. The hunk
+                # accounting in `changed_lines` cannot see this: output that
+                # stops cleanly between files is well-formed.
+                #
+                # `git diff A B` exits non-zero only on a real failure here —
+                # `--exit-code`, which makes a difference exit 1, is not passed.
+                # So a failure raises, `cli` catches it, and the run ends at
+                # exit 2: the check did not run, which is a different answer
+                # from "the change is clean".
                 raw = self.git(
                     "diff", "--no-color", "--no-ext-diff", "-M", "--unified=0",
-                    self.diff_base, self.diff_head, check=False,
+                    self.diff_base, self.diff_head,
                 )
                 self._changed_lines = changed_lines(raw)
         return self._changed_lines

@@ -1012,3 +1012,252 @@ def test_the_tracker_measures_the_point_the_plan_now_states():
     # because the document is not what computes it.
     assert not re.search(r"\d", row[3]), row[3]
     assert not re.search(r"\d", check.target), check.target
+
+
+# --------------------------------------- a check satisfied by a substring
+
+
+class TestTheConformanceProbeCountsTestsAndNotProse:
+    """`covered = [k for k in CONFORMANCE_SCENARIOS if k in text]`.
+
+    `text` is the whole file, comments and docstrings included. So a scenario
+    counted as covered because the words describing it were present — and the
+    sentence most likely to contain them is the one written *about* the test
+    that used to cover it. Delete the test, keep the paragraph, and the tracker
+    goes on printing 13/13.
+
+    The probe's own docstring already warned against this shape one level up:
+    "A probe that can be satisfied by prose is not a measurement." It then was
+    one. Scenarios are now counted from the names `pytest` collects.
+    """
+
+    def stub(self, tmp_path, monkeypatch, body: str):
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_runner_conformance.py").write_text(body, encoding="utf-8")
+        monkeypatch.setattr(stage2, "TESTS", tests)
+
+    def all_thirteen(self) -> str:
+        return "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                       for key in stage2.CONFORMANCE_SCENARIOS)
+
+    def test_a_scenario_named_only_in_a_docstring_is_not_covered(
+            self, tmp_path, monkeypatch):
+        """The exact failure: one test removed, its name left behind in the
+        module docstring. 13/13 before, 12/13 after."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = '"""Covers {}, which used to have a test here."""\n\n\n'.format(
+            keys[0])
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        result = stage2.probe_conformance(Args())
+
+        assert result.state == PARTIAL
+        assert "12/13" in result.detail
+
+    def test_a_scenario_named_only_in_a_comment_is_not_covered(
+            self, tmp_path, monkeypatch):
+        """Same defect, cheaper to write by accident: a `# TODO: auth_failure`
+        left where the test was going to go."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = "# TODO: {}\n\n\n".format(keys[0])
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert "12/13" in stage2.probe_conformance(Args()).detail
+
+    def test_a_scenario_with_a_real_test_is_still_covered(
+            self, tmp_path, monkeypatch):
+        """The control. All thirteen have a real test in the repository today,
+        so a fix that under-counted would have shown up as a regression in the
+        tracker and not in this suite."""
+        self.stub(tmp_path, monkeypatch, self.all_thirteen())
+
+        result = stage2.probe_conformance(Args())
+
+        assert "13/13" in result.detail
+        assert result.state != PARTIAL or "missing" not in result.detail
+
+
+class TestANamedTestIsNotATestThatRan:
+    """The defect one level below the one above, and it survived the fix for it.
+
+    Counting the names `pytest` collects is not counting the tests that pass. A
+    scenario whose only test carries `@pytest.mark.skip` — left behind after a
+    rewrite, which is how they get there — has a name in the syntax tree and no
+    execution behind it. `_pytest` did not catch it either: it asks whether
+    *some* test in the file passed, and the other twelve answer that for the
+    thirteenth. The tracker printed `13/13 … 12 passed, 1 skipped` and `done`.
+
+    What it costs: this probe exists to say what is covered. A scenario the
+    tracker calls done is one nobody looks at again.
+    """
+
+    class Running:
+        tests = True
+        full = False
+
+    def stub(self, tmp_path, monkeypatch, body: str):
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_runner_conformance.py").write_text(body, encoding="utf-8")
+        monkeypatch.setattr(stage2, "TESTS", tests)
+
+    def test_a_scenario_whose_only_test_is_skipped_is_not_covered(
+            self, tmp_path, monkeypatch):
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = "import pytest\n\n\n"
+        body += ('@pytest.mark.skip(reason="left behind after a rewrite")\n'
+                 "def test_{}_is_handled():\n    pass\n\n\n".format(keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        result = stage2.probe_conformance(self.Running())
+
+        assert result.state == PARTIAL
+        assert "12/13 passed" in result.detail
+        assert "never passed" in result.detail
+
+    def test_all_thirteen_passing_is_still_done(self, tmp_path, monkeypatch):
+        """The control, and it has to run for the fix to mean anything: an
+        under-count here would read as the same refusal as a real gap."""
+        body = "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                       for key in stage2.CONFORMANCE_SCENARIOS)
+        self.stub(tmp_path, monkeypatch, body)
+
+        result = stage2.probe_conformance(self.Running())
+
+        assert result.state == DONE
+        assert "13/13" in result.detail
+
+    def test_a_test_in_a_nested_class_still_counts(self, tmp_path, monkeypatch):
+        """`pytest` collects `TestOuter::TestInner::test_x`. Reading only the
+        immediate body of a module-level class missed it and reported a covered
+        scenario as missing — a tracker inventing a gap, which costs the same
+        as one hiding a gap: the reader learns to skip the line."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ("class TestOuter:\n    class TestInner:\n"
+                "        def test_{}_is_handled(self):\n"
+                "            pass\n\n\n".format(keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    def test_a_parametrised_name_that_breaks_a_regex_still_counts(
+            self, tmp_path, monkeypatch):
+        """Read from `--junit-xml`, not from `-v` output written for a person.
+        A parameter id containing `]` cut the old regex short, and a path with
+        a space defeated it — both reporting a passing test as never having
+        run."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("v", ["a]b", "c d"])\n'
+                "def test_{}_is_handled(v):\n    pass\n\n\n".format(keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    def test_an_xpassed_test_does_not_establish_coverage(
+            self, tmp_path, monkeypatch):
+        """The report cannot tell an xpass from a pass. A `<testcase>` records
+        its outcome by *having* a `failure`, `error` or `skipped` child, and a
+        test marked `xfail` that succeeds anyway has none of them — so thirteen
+        scenarios marked `xfail` and quietly succeeding read as thirteen
+        covered. The marker is read from the source instead."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.xfail(reason="known")\n'
+                "def test_{}_is_handled():\n    assert True\n\n\n".format(keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        result = stage2.probe_conformance(self.Running())
+
+        assert result.state == PARTIAL
+        assert "12/13 passed" in result.detail
+
+    def test_failing_tests_are_broken_and_not_a_coverage_number(
+            self, tmp_path, monkeypatch):
+        """The count came first, so a file whose every test failed was reported
+        as `partial 12/13 — missing: …`. The failure was invisible and the line
+        beside it read like progress. A broken check is not a coverage number,
+        whatever its coverage happens to be."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = "".join("def test_{}_is_handled():\n    assert False\n\n\n"
+                       .format(key) for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        result = stage2.probe_conformance(self.Running())
+
+        assert result.state == BROKEN
+        assert "failed" in result.detail
+
+    def test_a_helper_defined_inside_a_test_is_not_itself_a_test(self):
+        """`ast.walk` descends into function bodies, so a nested `def test_…`
+        counted as collected. Pytest never sees one."""
+        import textwrap
+        path = Path(__file__).parent / "test_stage2.py"
+        del path
+        source = textwrap.dedent('''
+            def test_real():
+                def test_nested_helper():
+                    pass
+                test_nested_helper()
+
+            class TestGroup:
+                def test_method(self):
+                    pass
+        ''')
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            written = Path(directory) / "test_x.py"
+            written.write_text(source, encoding="utf-8")
+
+            assert stage2._test_names([written]) == {"test_real", "test_method"}
+
+
+class TestAGreenExitCodeIsNotATestHavingRun:
+    def test_a_file_where_every_test_is_skipped_is_not_passing(self, tmp_path):
+        """`_pytest` read `returncode == 0` as passing, and `pytest` exits 0
+        when every test in a file is skipped — a `skipif` on a missing binary,
+        an xfail marker left after a rewrite. The tracker then printed `done`
+        with the detail "2 skipped in 0.01s", which is the tracker inventing
+        coverage that does not exist: exactly what it is there to catch.
+        """
+        path = tmp_path / "test_all_skipped.py"
+        path.write_text(
+            "import pytest\n\n\n"
+            '@pytest.mark.skip(reason="not written yet")\n'
+            "def test_a():\n    pass\n\n\n"
+            '@pytest.mark.skip(reason="not written yet")\n'
+            "def test_b():\n    pass\n",
+            encoding="utf-8")
+
+        passed, summary = stage2._pytest([path], run=True)
+
+        assert passed is False
+        assert "skipped" in summary
+
+    def test_a_file_whose_tests_run_is_passing(self, tmp_path):
+        """The control, so the rule is "a test passed" and not "nothing was
+        skipped" — a real file may legitimately skip some of its tests."""
+        path = tmp_path / "test_one_runs.py"
+        path.write_text(
+            "import pytest\n\n\n"
+            '@pytest.mark.skip(reason="platform")\n'
+            "def test_a():\n    pass\n\n\n"
+            "def test_b():\n    assert True\n",
+            encoding="utf-8")
+
+        passed, _summary = stage2._pytest([path], run=True)
+
+        assert passed is True

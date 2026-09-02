@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import hashlib
 import sys
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -35,6 +37,32 @@ from security_agent.models import (
     quoted_lines,
     severity_rank,
 )
+
+
+def instant(value) -> Optional[datetime]:
+    """The moment a row says it ran, or None if it does not say usefully.
+
+    Compared as an instant and not as text. `2026-08-28T14:00:00+03:00` is
+    *earlier* than `2026-08-28T12:00:00+00:00`, and sorting the two strings
+    puts them the other way round — so a lexicographic `max` would let an
+    earlier run supersede a later one whenever the offsets differ.
+
+    A value that will not parse, or one carrying no timezone, is treated as no
+    time at all rather than as a time that sorts somewhere. A malformed string
+    must not be able to win an ordering.
+
+    Here rather than in `stage2.py`, where it was written, because
+    `check_accounted.py` was ordering the same rows by raw string comparison an
+    hour later. Two readers of one measurement stream, two orderings, and on a
+    tie they could report opposite things about one case.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
 
 
 def anchors(finding: dict) -> set:
@@ -345,7 +373,21 @@ def _files(case_dir, members_only: bool) -> list:
             for p in sorted((root / name).rglob("*")) if p.is_file()]
 
 
+# What `case_digest` says instead of a hash when there is nothing to hash. A
+# case directory with no `safe/` and no `unsafe/` made `rglob` return nothing
+# and the digest came out the empty-SHA constant `e3b0c44298fc1c14` — the same
+# value for every such case, so one stored row would answer
+# `about_this_version` for all of them. No case in `corpus-real/` reaches it
+# today (82 checked, all have members) and no stored row carries the constant;
+# this is a guard, not a repair. A word rather than a hash so it cannot collide
+# with a real digest, and so a row that somehow stored it is visible as what it
+# is.
+NO_MEMBERS = "no-members"
+
+
 def _digest_of(paths, root: Path) -> str:
+    if not paths:
+        return NO_MEMBERS
     sha = hashlib.sha256()
     for path in paths:
         sha.update(str(path.relative_to(root)).encode("utf-8"))

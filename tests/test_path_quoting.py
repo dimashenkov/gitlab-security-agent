@@ -171,6 +171,28 @@ def test_a_malformed_quoted_path_is_returned_as_it_arrived(malformed):
     assert unquote_path(malformed) == malformed
 
 
+@pytest.mark.parametrize("out_of_range", [
+    '"b/src/x\\400.py"',         # three octal digits, and not a byte
+    '"b/src/x\\777.py"',
+])
+def test_an_octal_escape_above_a_byte_does_not_raise(out_of_range):
+    """It raised `ValueError: byte must be in range(0, 256)`.
+
+    `\\400` passes the three-octal-digits test and `bytearray.append` then
+    rejects it, so the exception left a path decoder and travelled up through
+    `changed_lines` — which is called once for the whole change. The cost is
+    not one mis-keyed file: the changed-line map is never built, so *every*
+    finding in the change loses its attribution at once.
+
+    Git cannot emit one, which is why this had never been seen. Every other
+    branch here already treats "not an escape git would emit" as malformed and
+    returns the string; this one crashed instead.
+    """
+    from security_agent.evidence import unquote_path
+
+    assert unquote_path(out_of_range) == out_of_range
+
+
 def test_a_path_that_is_not_utf8_survives_as_a_key():
     """A byte sequence that is not UTF-8 is still a real path. Mangling it into
     replacement characters would produce a key matching nothing — which is the

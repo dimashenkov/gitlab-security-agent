@@ -443,6 +443,111 @@ class TestRunning:
         assert experiment.run("e", "c", None) == 2
 
 
+class TestTheModelIsPartOfTheFreeze:
+    """The defect: `freeze` records what produced the experiment and did not
+    record *which model would answer*, so the two paid `run` commands were free
+    to ask a different one.
+
+    What it cost: the plan for the Sonnet gate was written as
+
+        SECURITY_SCAN_MODEL=claude-sonnet-5 tools/experiment.py freeze …
+        tools/experiment.py run … a
+        tools/experiment.py run … b
+
+    and the variable applies only to `freeze`, which spends nothing. Both `run`
+    commands would have read an environment with no such variable, defaulted to
+    `claude-opus-5` — the reference's own model — and bought 52 reviews of the
+    model the experiment exists to replace. Nothing between the freeze and the
+    comparator would have said a word, and the comparator only runs after the
+    money is gone.
+    """
+
+    def test_the_freeze_records_the_model_and_the_verifier(
+            self, world, monkeypatch):
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        experiment.freeze("e", dry_run=False)
+
+        body = json.loads((world / "measurements" / "experiment-e"
+                           / "manifest.json").read_text(encoding="utf-8"))
+
+        assert body["environment"]["model_requested"] == "claude-sonnet-5"
+        # Unset means *the reviewer's own model*, not "none" — resolved the way
+        # the reviewer resolves it rather than read raw.
+        assert body["environment"]["verifier_requested"] == "claude-sonnet-5"
+        assert body["environment"]["verify"] == "on"
+
+    def test_a_pass_run_without_the_variable_stops_before_spending(
+            self, world, monkeypatch, capsys):
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        experiment.freeze("e", dry_run=False)
+
+        import pair_corpus
+        called = []
+        monkeypatch.setattr(pair_corpus, "run_case",
+                            lambda case, **kw: called.append(case) or {})
+        # The next shell — the one that pays — has no such variable.
+        monkeypatch.delenv("SECURITY_SCAN_MODEL")
+
+        assert experiment.run("e", "a", None) == 2
+        assert called == []
+        out = capsys.readouterr().out
+        assert "moved since the freeze" in out
+        assert "model_requested" in out
+
+    def test_a_different_verifier_stops_before_spending(
+            self, world, monkeypatch, capsys):
+        """The reviewer and the verifier are two choices, and swapping only the
+        second one changes what the comparison measures just as surely."""
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        experiment.freeze("e", dry_run=False)
+
+        import pair_corpus
+        called = []
+        monkeypatch.setattr(pair_corpus, "run_case",
+                            lambda case, **kw: called.append(case) or {})
+        monkeypatch.setenv("SECURITY_SCAN_VERIFY_MODEL", "claude-opus-5")
+
+        assert experiment.run("e", "a", None) == 2
+        assert called == []
+        assert "verifier_requested" in capsys.readouterr().out
+
+    def test_verification_switched_off_stops_before_spending(
+            self, world, monkeypatch, capsys):
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        experiment.freeze("e", dry_run=False)
+
+        import pair_corpus
+        called = []
+        monkeypatch.setattr(pair_corpus, "run_case",
+                            lambda case, **kw: called.append(case) or {})
+        monkeypatch.setenv("SECURITY_SCAN_VERIFY", "false")
+
+        assert experiment.run("e", "a", None) == 2
+        assert called == []
+
+    def test_a_manifest_that_never_named_a_model_is_refused(
+            self, world, monkeypatch, capsys):
+        """Absence is not agreement. `drift` walks the keys the manifest *has*,
+        so an experiment frozen before this record existed would be checked
+        against nothing and read as agreeing with any shell at all.
+        """
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        for key in ("model_requested", "verifier_requested", "verify"):
+            body["environment"].pop(key)
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        import pair_corpus
+        called = []
+        monkeypatch.setattr(pair_corpus, "run_case",
+                            lambda case, **kw: called.append(case) or {})
+
+        assert experiment.run("e", "a", None) == 2
+        assert called == []
+        assert "before the model was recorded" in capsys.readouterr().out
+
+
 class TestTheComparison:
     def test_agreement_and_a_flip_are_counted_and_named(self, world, capsys):
         experiment.freeze("e", dry_run=False)

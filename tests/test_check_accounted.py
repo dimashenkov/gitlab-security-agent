@@ -136,6 +136,128 @@ class TestDisagreementIsNotSettledByFileOrder:
         assert check_accounted.verdicts() == {CASE: True}
 
 
+class TestRowsAreOrderedTheSameWayStage2OrdersThem:
+    """`when >= latest[case_id][0]` over `row.get("ran_at") or ""`.
+
+    Raw string comparison, which `stage2._instant` exists specifically to
+    avoid, in the other reader of the same measurement stream. Three separate
+    ways to pick the wrong row, and the two tools could report opposite things
+    about one case — this one always produced a verdict, `stage2` reported the
+    same input as unresolved.
+
+    The comparison is now `artifact.instant`, one definition for both readers.
+    """
+
+    def test_a_later_run_in_another_offset_is_not_overturned_by_its_text(
+            self, corpus):
+        """`…T14:00:00+03:00` is 11:00 UTC — two hours *before*
+        `…T12:00:00+00:00` — and the strings sort the other way round. Latent
+        on today's disk, where all 78 dated rows are `+00:00`; one batch run on
+        a machine with a local-time clock is all it takes."""
+        root, digest = corpus
+        write_rows(root, "a.json", row(digest=digest, passes=True,
+                                       ran_at="2026-08-28T14:00:00+03:00"))
+        write_rows(root, "b.json", row(digest=digest, passes=False,
+                                       ran_at="2026-08-28T12:00:00+00:00"))
+
+        # The `+00:00` row is the later one, and it failed.
+        assert check_accounted.verdicts() == {CASE: False}
+
+    def test_an_undated_row_does_not_answer_over_a_dated_one(self, corpus):
+        """A control, said plainly: `"" >= "2026-…"` is false either way round,
+        so the rule this replaced already answered here. It guards the *new*
+        code — an undated row must answer only when nothing dated does, which
+        is `stage2._settle`'s rule — and it does not discriminate against the
+        defect."""
+        root, digest = corpus
+        write_rows(root, "aaa-undated.json", row(digest=digest, passes=True))
+        write_rows(root, "zzz-dated.json",
+                   row(digest=digest, passes=False,
+                       ran_at="2026-08-28T12:00:00+00:00"))
+
+        assert check_accounted.verdicts() == {CASE: False}
+
+    @pytest.mark.parametrize("passing_name,failing_name",
+                             [("aaa.json", "zzz.json"),
+                              ("zzz.json", "aaa.json")])
+    def test_two_undated_rows_that_disagree_are_not_a_pass(
+            self, corpus, passing_name, failing_name):
+        """Both compare `"" >= ""`, which is true, so the winner was whichever
+        file the glob handed over last — an ordering nobody chose and nothing
+        printed.
+
+        Both arrangements, because `glob.glob` is not sorted and one of them
+        passes against the defect on any given filesystem. Asserting one
+        ordering is how a test of a non-deterministic answer proves nothing.
+        """
+        root, digest = corpus
+        write_rows(root, passing_name, row(digest=digest, passes=True))
+        write_rows(root, failing_name, row(digest=digest, passes=False))
+
+        assert check_accounted.verdicts() == {CASE: False}
+        assert CASE in check_accounted.account()["unaccounted"]
+
+    @pytest.mark.parametrize("passing_name,failing_name",
+                             [("aaa.json", "zzz.json"),
+                              ("zzz.json", "aaa.json")])
+    def test_two_rows_at_the_same_instant_that_disagree_are_not_a_pass(
+            self, corpus, passing_name, failing_name):
+        """`pair_corpus` stamps whole seconds, so a tie is reachable. `stage2`
+        calls a tie unresolved and refuses to choose; this tool chose by glob
+        order and announced a verdict — the two readers of one stream saying
+        opposite things about one case.
+
+        Nothing here can tell which ran second, and a case whose two runs
+        disagree is what the `unaccounted` bucket is for. Both orderings, for
+        the reason above.
+        """
+        root, digest = corpus
+        when = "2026-08-28T14:00:00+00:00"
+        write_rows(root, passing_name,
+                   row(digest=digest, passes=True, ran_at=when))
+        write_rows(root, failing_name,
+                   row(digest=digest, passes=False, ran_at=when))
+
+        assert check_accounted.verdicts() == {CASE: False}
+        assert CASE in check_accounted.account()["unaccounted"]
+
+    def test_a_ran_at_that_is_not_a_time_cannot_win_an_ordering(self, corpus):
+        """As text, `"yesterday"` sorts after every ISO timestamp there will
+        ever be. It is not a time, so it does not sort anywhere."""
+        root, digest = corpus
+        write_rows(root, "a.json", row(digest=digest, passes=False,
+                                       ran_at="2026-08-28T14:00:00+00:00"))
+        write_rows(root, "b.json", row(digest=digest, passes=True,
+                                       ran_at="yesterday"))
+
+        assert check_accounted.verdicts() == {CASE: False}
+
+
+class TestAMemberLessCaseCannotBeCertified:
+    def test_the_empty_sha_constant_is_not_a_digest(self, corpus):
+        """`_files(members_only=True)` rglobs `safe/` and `unsafe/`; with
+        neither present it returns `[]` and the digest was the empty-SHA
+        constant `e3b0c44298fc1c14` — the same value for every such case, so
+        one stored row would answer `about_this_version` for all of them.
+
+        No case in `corpus-real/` reaches this today (82 checked, every one has
+        members) and no stored row carries the constant. A guard, and the test
+        says so: what it stops is a case being created without members later
+        and silently inheriting somebody else's verdict.
+        """
+        root, _digest = corpus
+        empty = root / "corpus-real" / "yy-empty-0000-0000"
+        empty.mkdir()
+        (empty / "case.yml").write_text("case_id: yy-empty-0000-0000\n",
+                                        encoding="utf-8")
+
+        assert case_digest(empty) != "e3b0c44298fc1c14"
+        assert not check_accounted.about_this_version(
+            "yy-empty-0000-0000", {"case_digest": "e3b0c44298fc1c14"})
+        assert not check_accounted.about_this_version(
+            "yy-empty-0000-0000", {"case_digest": case_digest(empty)})
+
+
 class TestTheVerdictIsRederived:
     def test_a_stored_pass_does_not_survive_a_key_that_now_disagrees(self, corpus):
         """`pair_success` in the file is what was true under the old key.
