@@ -68,6 +68,7 @@ def reference(tmp_path, cases=("one", "two", "three"), unstable=("wobbly",),
     path = tmp_path / "reference.json"
     path.write_text(json.dumps({
         "model": "claude-opus-5",
+        "verifier_model": "claude-opus-5",
         "environment": {"system_prompt": "aaa", "verifier_prompt": "bbb",
                         "findings_schema": "ccc", "agent_version": "0.1.0"},
         "cases": entries,
@@ -414,10 +415,11 @@ def test_a_row_that_cannot_say_what_produced_it_is_refused(tmp_path):
     with pytest.raises(sentinel_compare.ComparisonError) as caught:
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
-    # The contract check speaks first now, and names the first thing missing:
-    # a row recording no prompt digest cannot be shown to match the reference.
-    # Same absence, read one step earlier, and refused rather than forgiven.
-    assert "records no system_prompt" in str(caught.value)
+    # Refused, and the first check to reach it names the first thing missing.
+    # A blank member records neither a verifier nor a prompt digest; either
+    # sentence is the same absence, refused rather than forgiven.
+    message = str(caught.value)
+    assert "records no" in message
 
 
 def test_the_threshold_comes_from_the_reference(tmp_path):
@@ -881,4 +883,84 @@ def test_two_models_mixed_across_members_are_refused(tmp_path):
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
     assert "different models" in str(caught.value)
+
+
+def test_a_challenger_that_let_the_verifier_follow_is_refused(tmp_path):
+    """The one that turns the experiment inside out.
+
+    Only the *observed* verifier was checked, and only against what the
+    challenger itself recorded. Forget `SECURITY_SCAN_VERIFY_MODEL` and the
+    verifier follows the reviewer down to Sonnet: both passes agree with each
+    other, the served-verifier check passes, and a quiet `net: 0` comes back
+    for a run that changed both models at once. It would have measured "Sonnet
+    judged by Sonnet" and reported it as "Sonnet against Opus".
+    """
+    ref = reference(tmp_path)
+    followed = member()
+    followed["settings"] = dict(followed["settings"],
+                                verify_model="claude-sonnet-5")
+    followed["provenance"] = dict(followed["provenance"],
+                                  models_verified=["claude-sonnet-5"])
+    rows = [row(c, True, members={"safe": followed, "unsafe": followed})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "measures a different question" in str(caught.value)
+
+
+def test_a_challenger_that_records_no_verify_model_is_refused(tmp_path):
+    ref = reference(tmp_path)
+    silent = member()
+    silent["settings"] = dict(silent["settings"])
+    silent["settings"].pop("verify_model")
+    rows = [row(c, True, members={"safe": silent, "unsafe": silent})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "records no `verify_model`" in str(caught.value)
+
+
+def test_a_reference_with_one_outcome_per_case_is_refused(tmp_path):
+    """A reference carrying one pass never checked itself for stability, and
+    excluding the cases it disagreed with itself about rests on having two."""
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    body["cases"]["one"]["outcomes"] = {"pass-a": True}
+    ref.write_text(json.dumps(body))
+
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "takes two" in str(caught.value)
+
+
+def test_a_row_missing_a_member_says_so(tmp_path):
+    """One member missing was reported as a model or identity complaint, which
+    sends the reader to the wrong question."""
+    ref = reference(tmp_path)
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    rows[0]["members"] = {"safe": member()}
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "a safe and an unsafe member" in str(caught.value)
+
+
+def test_a_reference_with_no_environment_is_refused(tmp_path):
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    body["environment"] = {}
+    ref.write_text(json.dumps(body))
+
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "no environment" in str(caught.value)
 

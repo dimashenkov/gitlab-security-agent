@@ -193,8 +193,21 @@ def compare(reference_path: Path, run_paths: list) -> dict:
         raise ComparisonError(
             "a case is listed twice among the comparable ones, which counts "
             "one measurement more than once")
+    if not (reference.get("environment") or {}):
+        raise ComparisonError(
+            "the reference records no environment, so there is nothing for a "
+            "challenger to be held against")
     for case_id in comparable:
         entry = cases[case_id]
+        # Both passes, named. A reference carrying one outcome is a reference
+        # that never checked itself for stability, and the whole exclusion of
+        # unstable cases rests on having two.
+        outcomes = entry.get("outcomes") or {}
+        if set(outcomes) != {"pass-a", "pass-b"}:
+            raise ComparisonError(
+                "{}: the reference records {} outcome(s), and it takes two to "
+                "know whether it agreed with itself".format(
+                    case_id, len(outcomes)))
         for label, verdict in (entry.get("outcomes") or {}).items():
             if not isinstance(verdict, bool):
                 raise ComparisonError(
@@ -285,12 +298,46 @@ def compare(reference_path: Path, run_paths: list) -> dict:
     # there is a finding, and a case with none verified nothing.
     for run in runs:
         for case_id, row in run.items():
-            for block in (row.get("members") or {}).values():
+            members = row.get("members") or {}
+            if set(members) != {"safe", "unsafe"}:
+                # A pair is two members. One of them missing would otherwise be
+                # reported as a model or identity complaint, which sends the
+                # reader to the wrong question.
+                raise ComparisonError(
+                    "{}: a pair is a safe and an unsafe member, and this row "
+                    "has {}".format(case_id, ", ".join(sorted(members)) or
+                                    "neither"))
+            for block in members.values():
                 prov = (block or {}).get("provenance") or {}
                 wanted = ((block or {}).get("settings") or {}).get(
                     "verify_model") or prov.get("model_requested")
                 verified = prov.get("models_verified") or []
                 settings = (block or {}).get("settings") or {}
+
+                # The verifier the reference names is the verifier this run has
+                # to have been configured with. Only the *observed* verifier was
+                # compared, and only against what the challenger itself had
+                # recorded — so forgetting `SECURITY_SCAN_VERIFY_MODEL` let the
+                # verifier follow the reviewer down to Sonnet, both passes
+                # agreed with each other, and a quiet `net: 0` came back for a
+                # run that changed both models at once. The experiment would
+                # have measured "Sonnet judged by Sonnet" and reported it as
+                # "Sonnet against Opus" — the wrong causality, arrived at by
+                # omission.
+                wanted_verifier = reference.get("verifier_model")
+                if wanted_verifier:
+                    configured = settings.get("verify_model")
+                    if not configured:
+                        raise ComparisonError(
+                            "{}: the run records no `verify_model`, so nothing "
+                            "says the verifier was held at {}.".format(
+                                case_id, wanted_verifier))
+                    if configured != wanted_verifier:
+                        raise ComparisonError(
+                            "{}: the reference was verified by {} and this run "
+                            "was configured to verify with {}. Changing the "
+                            "verifier as well measures a different question."
+                            .format(case_id, wanted_verifier, configured))
                 if verified and settings.get("verify") is False:
                     # An artifact that cannot be true. Verification was off, so
                     # nothing verified — a row saying otherwise is describing a
