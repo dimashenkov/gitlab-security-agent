@@ -49,6 +49,11 @@ CORPUS = ROOT / "corpus-real"
 EXPERIMENT = ROOT / "measurements" / "experiment-noise-floor-2"
 SUITE = ROOT / "suites" / "sentinel.yml"
 PASSES = ("pass-a", "pass-b")
+# What this reference is about, and what the rows must show. Declared here and
+# then *checked* against every row, rather than written into the output and
+# believed.
+MODEL = "claude-opus-5"
+VERIFIER = "claude-opus-5"
 
 
 class ReferenceError(Exception):
@@ -67,11 +72,43 @@ def _row_of(path: Path, case_id: str) -> dict:
     """
     body = json.loads(path.read_text(encoding="utf-8"))
     rows = body if isinstance(body, list) else [body]
-    rows = [r for r in rows if isinstance(r, dict)]
-    if len(rows) != 1:
+    # Counted before the non-dicts are dropped. Filtering first accepted
+    # `[valid_row, garbage]` as one row and said nothing about the garbage.
+    if len(rows) != 1 or not isinstance(rows[0], dict):
         raise ReferenceError("{}: holds {} row(s), and a reference needs "
                              "exactly one".format(path.name, len(rows)))
     row = rows[0]
+
+    # What produced the row, proved rather than declared. The builder wrote
+    # `"model": "claude-opus-5"` and `"verifier_model": "claude-opus-5"` into
+    # the reference unconditionally, while checking nothing about the rows it
+    # was built from — so a directory of Sonnet rows, or of runs with
+    # verification off, would still have produced a reference claiming "Opus,
+    # verified by Opus". The comparator then holds a challenger to a contract
+    # the reference itself never met.
+    members = row.get("members") or {}
+    if set(members) != {"safe", "unsafe"}:
+        raise ReferenceError("{}: a pair is a safe and an unsafe member".format(
+            path.name))
+    for name, block in sorted(members.items()):
+        prov = (block or {}).get("provenance") or {}
+        settings = (block or {}).get("settings") or {}
+        if prov.get("model_requested") != MODEL:
+            raise ReferenceError(
+                "{}: the {} member asked for {!r} and this reference is about "
+                "{}".format(path.name, name, prov.get("model_requested"),
+                            MODEL))
+        served = prov.get("models_served")
+        if not served:
+            raise ReferenceError(
+                "{}: the {} member records no served model".format(
+                    path.name, name))
+        if settings.get("verify", True) is not True:
+            raise ReferenceError(
+                "{}: verification is {!r} in the {} member, and a reference "
+                "with a layer missing cannot hold a challenger to it".format(
+                    path.name, settings.get("verify"), name))
+
     if row.get("case_id") != case_id:
         raise ReferenceError("{}: the row inside is about {!r}".format(
             path.name, row.get("case_id")))
@@ -106,11 +143,37 @@ def _shape(row: dict) -> dict:
     number that lets either offset the other hides whichever the reader cares
     about. A rule over them has to say which one it ranks, out loud.
     """
-    return {
-        "missed": not bool(row.get("unsafe_recall")),
-        "false_alarm": bool(row.get("safe_false_positive")),
-        "exits": [row.get("safe_exit"), row.get("unsafe_exit")],
-    }
+    out = {}
+    for field, kind in (("unsafe_recall", "missed"),
+                        ("safe_false_positive", "false_alarm")):
+        value = row.get(field)
+        if not isinstance(value, bool):
+            # The comparator refuses these already; the freezer could still
+            # build them into the reference, where a missing `unsafe_recall`
+            # became a confirmed miss and the string "false" became a
+            # confirmed false alarm.
+            raise ReferenceError("{}: `{}` is {!r}, not a verdict".format(
+                row.get("case_id"), field, value))
+        out[kind] = (not value) if kind == "missed" else value
+    out["exits"] = [row.get("safe_exit"), row.get("unsafe_exit")]
+    return out
+
+
+def observed() -> dict:
+    """Every model that answered anything, by member, across the reference.
+
+    Read from the rows rather than declared. The reference used to state which
+    model verified it and check nothing; this is what actually served.
+    """
+    seen: dict = {}
+    cases = yaml.safe_load(SUITE.read_text(encoding="utf-8"))["cases"]
+    for case_id in cases:
+        for row in _rows(case_id).values():
+            for name, block in (row.get("members") or {}).items():
+                prov = (block or {}).get("provenance") or {}
+                seen.setdefault(name, set()).update(
+                    prov.get("models_served") or [])
+    return {name: sorted(models) for name, models in sorted(seen.items())}
 
 
 def build() -> dict:
@@ -154,12 +217,25 @@ def build() -> dict:
 
     return {
         "reference": "experiment-noise-floor-2",
-        "model": "claude-opus-5",
+        "model": MODEL,
         # The verifier followed the reviewer here, and the artifacts of that run
         # do not say so: `verify_model` was added to the recorded settings on
         # 2026-09-02, after these rows were written. Stated rather than derived,
         # so a later reader is not left to infer it from an absent field.
-        "verifier_model": "claude-opus-5",
+        "verifier_model": VERIFIER,
+        # What the machinery *did*, beside what it was asked for. Requiring the
+        # served models to be the requested one refused this reference's own
+        # rows: every unsafe member of all twenty-six carries Haiku beside
+        # Opus, and every safe member does not — Haiku appears exactly where
+        # there was a finding to verify. The CLI serves part of the
+        # verification with a smaller model, always, and demanding a purity
+        # neither run has would have refused the challenger for the same reason.
+        #
+        # So it is recorded as an observation and the comparator requires the
+        # challenger to have observed the same thing. That keeps the measuring
+        # instrument constant, which is the property that matters, instead of
+        # insisting it be something it is not.
+        "observed_models": observed(),
         "environment": manifest["environment"],
         # How this reference relates to the code as it stands, in the words
         # that survive being quoted. Three of the seven digests moved after it

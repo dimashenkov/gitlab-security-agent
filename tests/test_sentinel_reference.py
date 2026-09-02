@@ -44,6 +44,17 @@ def write_row(root: Path, label: str, case_id: str, passed: bool,
               digest=None, **overrides) -> None:
     directory = root / label
     directory.mkdir(parents=True, exist_ok=True)
+    # The provenance a real Opus row carries. The freezer proves what the
+    # reference is about from these rather than declaring it, so a directory of
+    # rows from another model — or from runs with verification off — cannot
+    # produce a reference claiming "Opus, verified by Opus".
+    member = {
+        "provenance": {"model_requested": "claude-opus-5",
+                       "models_served": ["claude-opus-5"],
+                       "models_verified": ["claude-opus-5"],
+                       "model_substituted": False},
+        "settings": {"verify": True, "verify_model": "claude-opus-5"},
+    }
     row = {
         "case_id": case_id,
         "pair_success": passed,
@@ -52,6 +63,7 @@ def write_row(root: Path, label: str, case_id: str, passed: bool,
         "safe_false_positive": False,
         "safe_exit": 0,
         "unsafe_exit": 1,
+        "members": {"safe": dict(member), "unsafe": dict(member)},
     }
     row.update(overrides)
     (directory / (case_id + ".json")).write_text(

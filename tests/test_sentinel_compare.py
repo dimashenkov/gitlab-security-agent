@@ -24,9 +24,13 @@ DIGEST = "d" * 16
 
 def member(**overrides) -> dict:
     body = {
+        # `model_substituted` is recorded by every real run, and the contract
+        # requires it to be present and false: a row that never recorded it,
+        # and was answered by another model, would otherwise pass.
         "provenance": {"system_prompt_sha": "aaa", "verifier_prompt_sha": "bbb",
                        "schema_sha": "ccc", "agent_version": "0.1.0",
                        "model_requested": "claude-sonnet-5",
+                       "model_substituted": False,
                        "models_served": ["claude-sonnet-5"]},
         # `verify` is recorded by every real run, and the contract requires it
         # to be on: the reference was produced with it on, and a challenger
@@ -73,6 +77,11 @@ def reference(tmp_path, cases=("one", "two", "three"), unstable=("wobbly",),
     path.write_text(json.dumps({
         "model": "claude-opus-5",
         "verifier_model": "claude-opus-5",
+        # What served the reference, by member. The challenger has to have been
+        # served the same set with its own model in place of the reference's —
+        # the machinery held constant beside the subject under test.
+        "observed_models": {"safe": ["claude-opus-5"],
+                            "unsafe": ["claude-opus-5"]},
         "environment": {"system_prompt": "aaa", "verifier_prompt": "bbb",
                         "findings_schema": "ccc", "agent_version": "0.1.0"},
         "cases": entries,
@@ -425,8 +434,14 @@ def test_a_row_that_cannot_say_what_produced_it_is_refused(tmp_path):
     # Refused, and the first check to reach it names what is missing: a blank
     # member records no verification, no verifier and no prompt digest, and
     # any of those sentences is the same absence refused rather than forgiven.
+    # Refused, and the first check to reach it names what is missing. A blank
+    # member records no substitution flag, no served model, no verification,
+    # no verifier and no prompt digest — every one of those sentences is the
+    # same absence, refused rather than forgiven.
     message = str(caught.value)
-    assert "records no" in message or "verification is None" in message
+    assert any(reason in message for reason in (
+        "records no", "verification is None",
+        "does not record whether the provider substituted"))
 
 
 def test_the_threshold_comes_from_the_reference(tmp_path):
@@ -661,19 +676,24 @@ def test_a_reference_shape_that_is_not_a_boolean_is_refused(tmp_path):
 
 
 def test_a_run_the_provider_answered_with_another_model_is_refused(tmp_path):
-    """The experiment is about which model was asked. A review the provider
-    answered with a different one did not measure the model it names — and
-    twelve of yesterday's paid reviews carried exactly that flag."""
+    """Still refused, and now by what actually served rather than by a flag.
+
+    The experiment is about which model was asked. A review the provider
+    answered with a different one did not measure the model it names — and it
+    shows as a served model the reference never saw, which is the same fact
+    read from the machinery instead of from a boolean.
+    """
     ref = reference(tmp_path)
     swapped = member()
-    swapped["provenance"] = dict(swapped["provenance"], model_substituted=True)
+    swapped["provenance"] = dict(swapped["provenance"],
+                                 models_served=["claude-opus-4-8"])
     rows = [row(c, True, members={"safe": swapped, "unsafe": swapped})
             for c in ("one", "two", "three")]
 
     with pytest.raises(sentinel_compare.ComparisonError) as caught:
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
-    assert "another model" in str(caught.value)
+    assert "the machinery has to be the same" in str(caught.value)
 
 
 def test_a_verifier_that_fires_on_some_cases_only_is_one_system(tmp_path):
@@ -1027,4 +1047,39 @@ def test_a_reference_that_names_no_verifier_is_refused(tmp_path):
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
     assert "does not name the verifier" in str(caught.value)
+
+
+def test_the_machinery_the_reference_saw_must_serve_the_challenger_too(
+        tmp_path):
+    """Every unsafe member of the real reference carries Haiku beside Opus and
+    every safe member does not: the CLI serves part of the verification with a
+    smaller model wherever there is a finding.
+
+    Demanding the requested model alone would refuse the challenger for the
+    same reason it refuses the reference. Ignoring it would let the instrument
+    change underneath the comparison. So it is compared: the same set, with the
+    challenger's model in place of the reference's.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    body["observed_models"]["unsafe"] = ["claude-haiku-4-5-20251001",
+                                         "claude-opus-5"]
+    ref.write_text(json.dumps(body))
+
+    helped = member()
+    helped["provenance"] = dict(helped["provenance"],
+                                models_served=["claude-sonnet-5",
+                                               "claude-haiku-4-5-20251001"])
+    matching = [row(c, True, members={"safe": member(), "unsafe": helped})
+                for c in ("one", "two", "three")]
+    result = sentinel_compare.compare(ref, [run(tmp_path, "a.json", matching),
+                                            run(tmp_path, "b.json", matching)])
+    assert result["verdict"] == "passes the gate"
+
+    # And the same run without the helper is a different instrument.
+    alone = [row(c, True) for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "c.json", alone),
+                                       run(tmp_path, "d.json", alone)])
+    assert "the machinery has to be the same" in str(caught.value)
 

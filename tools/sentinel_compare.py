@@ -276,26 +276,22 @@ def compare(reference_path: Path, run_paths: list) -> dict:
     # there is something to verify. Here it says the plain thing: a review the
     # provider answered with another model did not measure the model it names,
     # and this whole experiment is about which model was asked.
-    substituted = sorted({
-        case_id for run in runs for case_id, row in run.items()
-        for block in (row.get("members") or {}).values()
-        if (block or {}).get("provenance", {}).get("model_substituted")})
-    if substituted:
-        raise ComparisonError(
-            "the provider answered with another model in {}. A run that did "
-            "not use the model it names cannot measure that model.".format(
-                ", ".join(substituted)))
-
-    # And the verifier that actually ran has to be the one the run asked for.
-    # `model_substituted` above says the *reviewer* was answered by something
-    # else; nothing said it about the verifier, and holding the verifier still
-    # while the reviewer changes is the whole shape of this experiment. A
-    # provider swapping Opus for something smaller here would have produced a
-    # quiet `net: 0` — the cheaper reviewer looking fine because the comparison
-    # it was measured by had also been made cheaper.
-    #
-    # An empty `models_verified` stays allowed: the verifier only runs where
-    # there is a finding, and a case with none verified nothing.
+    # Required to be false and present, not merely not-true. A row that never
+    # recorded the flag, and was answered by another model, would otherwise
+    # pass — a green result for a change that was not executed.
+    for run in runs:
+        for case_id, row in run.items():
+            for block in (row.get("members") or {}).values():
+                prov = (block or {}).get("provenance") or {}
+                if prov.get("model_substituted") is None:
+                    raise ComparisonError(
+                        "{}: the run does not record whether the provider "
+                        "substituted the model".format(case_id))
+                served = prov.get("models_served")
+                if not served:
+                    raise ComparisonError(
+                        "{}: the run records no served model, so nothing says "
+                        "which model answered".format(case_id))
     for run in runs:
         for case_id, row in run.items():
             members = row.get("members") or {}
@@ -441,6 +437,49 @@ def compare(reference_path: Path, run_paths: list) -> dict:
             "the runs asked for {}, which is the reference's own model. There "
             "is no change here to measure.".format(reference.get("model")))
 
+    # What served, compared with what served the reference — not required to be
+    # the requested model alone. Every unsafe member of the reference carries
+    # Haiku beside Opus and every safe member does not: the CLI serves part of
+    # the verification with a smaller model wherever there is a finding. A rule
+    # demanding purity would refuse the challenger for the same reason it
+    # refuses the reference, and a rule ignoring it would let the measuring
+    # instrument change underneath the comparison.
+    expected_models = reference.get("observed_models") or {}
+    if expected_models:
+        seen: dict = {}
+        for run in runs:
+            for row in run.values():
+                for name, block in (row.get("members") or {}).items():
+                    prov = (block or {}).get("provenance") or {}
+                    seen.setdefault(name, set()).update(
+                        prov.get("models_served") or [])
+        for name, expected in expected_models.items():
+            # The challenger's own model replaces the reference's wherever it
+            # appears; everything else — the models the CLI brings along — has
+            # to match, or the instrument moved as well as the subject.
+            challenger = next(iter(asked))
+            substituted_expectation = {
+                challenger if m == reference.get("model") else m
+                for m in expected}
+            if seen.get(name, set()) != substituted_expectation:
+                raise ComparisonError(
+                    "the {} member was served {} and the reference was served "
+                    "{}. Beside the model under test, the machinery has to be "
+                    "the same or the comparison measures two changes.".format(
+                        name, sorted(seen.get(name, set())) or "nothing",
+                        sorted(substituted_expectation)))
+
+    # And the verifier that actually ran has to be the one the run asked for.
+    # `model_substituted` above says the *reviewer* was answered by something
+    # else; nothing said it about the verifier, and holding the verifier still
+    # while the reviewer changes is the whole shape of this experiment. A
+    # provider swapping Opus for something smaller here would have produced a
+    # quiet `net: 0` — the cheaper reviewer looking fine because the comparison
+    # it was measured by had also been made cheaper.
+    #
+    # An empty `models_verified` stays allowed: the verifier only runs where
+    # there is a finding, and a case with none verified nothing.
+
     identities = {_system_identity(row) for run in runs for row in run.values()}
     if "" in identities:
         raise ComparisonError(
@@ -476,7 +515,13 @@ def compare(reference_path: Path, run_paths: list) -> dict:
         failures = sum(1 for verdict in after if not verdict)
         passes = sum(1 for verdict in after if verdict)
 
-        if before and failures >= needed:
+        # Both directions confirmed is not an improvement, whichever branch
+        # is written first. With four runs a failing case can show two passes
+        # and two failures, and the improvement branch won by position — a
+        # case that reproduced its failure twice reported as fixed.
+        if failures >= needed and passes >= needed:
+            traded.append(case_id)
+        elif before and failures >= needed:
             regressed.append(case_id)
         elif not before and passes >= needed:
             improved.append(case_id)

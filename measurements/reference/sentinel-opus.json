@@ -2,6 +2,15 @@
  "reference": "experiment-noise-floor-2",
  "model": "claude-opus-5",
  "verifier_model": "claude-opus-5",
+ "observed_models": {
+  "safe": [
+   "claude-opus-5"
+  ],
+  "unsafe": [
+   "claude-haiku-4-5-20251001",
+   "claude-opus-5"
+  ]
+ },
  "environment": {
   "agent_version": "0.1.0",
   "system_prompt": "bd359730e26be159",
