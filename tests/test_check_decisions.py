@@ -14,6 +14,7 @@ and all of them leave a reader trusting a sentence that is no longer true.
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -183,3 +184,29 @@ def test_a_decision_id_is_never_reused(commit):
     body = DECISION.format(commit=commit)
     problems = check(body + "\n" + body, run_tests=False)
     assert any("used twice" in p for p in problems), problems
+
+
+def test_a_shallow_clone_says_it_cannot_check_rather_than_that_it_failed(
+        monkeypatch):
+    """CI clones at depth 20, and everything older is absent from the checkout
+    while present in the repository.
+
+    The tool reported nine entries as naming commits that do not exist — a
+    confident false verdict from the thing that exists to keep the record
+    honest, and the project's own distinction between "could not check" and
+    "checked and wrong" broken inside it.
+    """
+    import check_decisions
+
+    monkeypatch.setattr(check_decisions, "_shallow", lambda: True)
+    monkeypatch.setattr(check_decisions.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(returncode=1,
+                                                        stdout="", stderr=""))
+
+    problems = check_decisions.check(DOC.read_text(encoding="utf-8"),
+                                     run_tests=False)
+
+    assert problems, "a missing commit should still be reported"
+    assert all("not in this repository" not in p for p in problems)
+    assert any("shallow" in p for p in problems)
+

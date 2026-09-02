@@ -21,11 +21,6 @@ classifiers = [
     "Topic :: Security",
     "Topic :: Software Development :: Quality Assurance",
 ]
-
-[project.urls]
-Homepage = "https://github.com/dimashenkov/gitlab-security-agent"
-Source = "https://github.com/dimashenkov/gitlab-security-agent"
-Issues = "https://github.com/dimashenkov/gitlab-security-agent/issues"
 dependencies = [
     # Bounded on purpose — see requirements.txt for what an unbounded
     # `anthropic` did to the first CI run.
@@ -37,6 +32,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+
+# Keep this table last in the `[project]` block. A TOML table header ends the
+# table above it, so anything added below `[project.urls]` becomes a URL entry.
+# That is exactly how `dependencies` got reparented to `project.urls.dependencies`
+# in 0716088: the package then declared no runtime requirements at all, and
+# `pip install -e .` refused to build it. Ten days passed before a GitLab
+# pipeline ran and every install-bearing job failed at once.
+[project.urls]
+Homepage = "https://github.com/dimashenkov/gitlab-security-agent"
+Source = "https://github.com/dimashenkov/gitlab-security-agent"
+Issues = "https://github.com/dimashenkov/gitlab-security-agent/issues"
 
 [project.scripts]
 gitlab-security-agent = "security_agent.cli:main"

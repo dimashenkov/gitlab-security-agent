@@ -46,6 +46,14 @@ variables:
 .level-0: &level-0
   stage: test
   image: $PYTHON_IMAGE
+  variables:
+    # Full history, not the default depth of 20. `tools/check_decisions.py`
+    # resolves the commit every entry in DECISIONS.md cites, and the oldest of
+    # those is 55 commits back. In a shallow clone it does not find them and
+    # says "commit b19b7bf is not in this repository" — a verdict, where the
+    # truth is that it could not look. Nine entries failed that way on the
+    # first pipeline this repository ever ran.
+    GIT_DEPTH: "0"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH

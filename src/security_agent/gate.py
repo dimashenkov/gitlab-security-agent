@@ -121,6 +121,24 @@ def policy_excluded(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
 NEVER_FORGIVEN = frozenset({STOP_INCONCLUSIVE})
 
 
+def _readable_change(outcome: ScanOutcome) -> bool:
+    """Was there anything in this change a reviewer could have opened?
+
+    The first version of the branch below asked only whether anything changed,
+    and a change made entirely of binary files has no text: `get_diff` emits
+    `Binary files a/x and b/x differ` with no `+++` line, so no exposure is
+    recorded and none could be. Refusing that is refusing a review that did
+    everything available to it.
+
+    A rename of a text file is deliberately *not* exempt. The diff carries no
+    content for a pure rename either, but the file is readable and a rename can
+    move code out of a protected path — a reviewer that opened nothing has not
+    reviewed it.
+    """
+    unreadable = {path for path, _ in outcome.coverage.unreadable}
+    return bool(set(outcome.coverage.changed) - unreadable)
+
+
 def _reviewed_nothing(outcome: ScanOutcome) -> bool:
     """Did this run open no part of the change at all?
 
@@ -263,16 +281,39 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
                                           "the review could not conclude"))),
         )
 
-    if _partial(outcome) and _reviewed_nothing(outcome):
-        explanation = _why_partial(outcome)
+    # `or`, not `and`. The conjunction asked the question only of a run that
+    # had already admitted to stopping early — so a review that ended cleanly
+    # on its first turn, having opened nothing at all, walked past every branch
+    # below and came out as "No security findings." over a changed file nothing
+    # read. That is the sentence this product exists to prevent, reachable in
+    # the gate that prevents it: a reviewer that calls `finish_review`
+    # immediately, or a provider that returns `end_turn` before any tool call,
+    # produced a green pipeline over unread code.
+    #
+    # Every test that passed `exposures=[]` also passed a stop reason that made
+    # the run partial, so the combination that matters — finished, and nothing
+    # opened — was never asked about.
+    if _reviewed_nothing(outcome) and (_partial(outcome)
+                                       or _readable_change(outcome)):
         detail = " ({})".format(outcome.stop_detail) if outcome.stop_detail else ""
-        return Decision(
-            exit_code=EXIT_ERROR,
-            reason=(
+        if _partial(outcome):
+            reason = (
                 "{}{}, and no part of the change is recorded as having "
                 "reached the reviewer. There is no partial coverage to weigh, "
-                "so no setting makes it a pass.".format(explanation, detail)),
-        )
+                "so no setting makes it a pass.".format(
+                    _why_partial(outcome), detail))
+        else:
+            # A different sentence, because it is a different thing. The run
+            # did not stop early — it ended, saying it was done, having opened
+            # nothing. `_why_partial` would have guessed at a limit that was
+            # never hit and sent the reader to look for it.
+            reason = (
+                "the review reported itself finished{} without opening any "
+                "part of the change: {} file(s) changed and none reached the "
+                "reviewer. A verdict over code nothing read is not a verdict, "
+                "and no setting makes it a pass.".format(
+                    detail, len(outcome.coverage.changed)))
+        return Decision(exit_code=EXIT_ERROR, reason=reason)
 
     if _partial(outcome) and cfg.fail_on_incomplete:
         explanation = _why_partial(outcome)

@@ -137,14 +137,30 @@ def check(text: str, run_tests: bool) -> List[str]:
             proc = subprocess.run(("git", "cat-file", "-e", commit + "^{commit}"),
                                   cwd=ROOT, capture_output=True, check=False)
             if proc.returncode != 0:
+                # "Not fetched" is not "not in this repository", and this tool
+                # said the second about the first. CI clones at depth 20; every
+                # commit older than that is absent from the checkout and
+                # present in the repository, so nine entries were reported as
+                # naming commits that do not exist. A confident false verdict
+                # from the tool that exists to keep the record honest.
                 problems.append(
-                    "{}: commit {} is not in this repository".format(
-                        entry.id, commit))
+                    "{}: commit {} is {}".format(
+                        entry.id, commit,
+                        "not in this checkout — it is shallow, so this cannot "
+                        "be checked here" if _shallow()
+                        else "not in this repository"))
 
         problems += _check_supersession(entry, seen)
         problems += _check_references(entry, run_tests)
 
     return problems
+
+
+def _shallow() -> bool:
+    """Is this a truncated clone, where absence proves nothing?"""
+    proc = subprocess.run(("git", "rev-parse", "--is-shallow-repository"),
+                          cwd=ROOT, capture_output=True, text=True, check=False)
+    return proc.stdout.strip() == "true"
 
 
 def _check_supersession(entry: Entry, seen: Dict[str, Entry]) -> List[str]:

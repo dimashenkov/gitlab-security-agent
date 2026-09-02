@@ -396,3 +396,83 @@ class TestSomeEndingsAreNotTheOperatorsToForgive:
         from security_agent.gate import NEVER_FORGIVEN
 
         assert NEVER_FORGIVEN
+
+
+def test_a_finished_review_that_opened_nothing_is_not_a_pass(config):
+    """The hole this file exists to hold shut, found on 2026-09-02.
+
+    `_reviewed_nothing` was asked only of a run that had already admitted to
+    stopping early — `_partial(outcome) and _reviewed_nothing(outcome)` — so a
+    review that ended cleanly on its first turn, having opened nothing at all,
+    walked past every branch and came out `exit 0`, "No security findings.",
+    over a changed file nothing had read.
+
+    Every existing test that passes `exposures=[]` also passes a stop reason
+    that makes the run partial, so the combination that matters — finished, and
+    nothing opened — was never asked about. That is how a check written against
+    exactly this failure stayed green over it.
+    """
+    outcome = ScanOutcome(mode="diff", summary="Nothing looked suspicious.",
+                          stop_reason=STOP_COMPLETED, finished_explicitly=True)
+    outcome.reported = []
+    outcome.exposures = []
+    outcome.coverage = Coverage(changed=["src/app.py"], examined=[],
+                                whole_diff_delivered=True)
+
+    decision = decide(config, outcome)
+
+    assert decision.exit_code == EXIT_ERROR
+    assert "without opening any part of the change" in decision.reason
+    # And it says the true thing rather than guessing at a limit never hit.
+    assert "larger than the reviewer can be shown" not in decision.reason
+
+
+def test_a_review_that_opened_nothing_because_nothing_changed_still_passes(
+        config):
+    """The control. An empty change has nothing to open, and refusing it would
+    make every no-op merge request fail — a gate that fires on nothing is
+    switched off within a week."""
+    outcome = ScanOutcome(mode="diff", summary="No changes to review.",
+                          stop_reason=STOP_COMPLETED, finished_explicitly=True)
+    outcome.reported = []
+    outcome.exposures = []
+    outcome.coverage = Coverage(changed=[], examined=[],
+                                whole_diff_delivered=True)
+
+    assert decide(config, outcome).exit_code == EXIT_OK
+
+
+def test_a_change_made_only_of_binary_files_is_not_refused(config):
+    """A binary diff carries no text to open.
+
+    `git diff` emits `Binary files a/x and b/x differ` with no `+++` line, so
+    `_paths_in_diff` records no exposure and none could be recorded. The first
+    version of the branch above asked only whether anything changed, and would
+    have failed a review that did everything available to it.
+    """
+    outcome = ScanOutcome(mode="diff", summary="Only assets changed.",
+                          stop_reason=STOP_COMPLETED, finished_explicitly=True)
+    outcome.reported = []
+    outcome.exposures = []
+    outcome.coverage = Coverage(
+        changed=["assets/logo.png"], examined=[],
+        unreadable=[("assets/logo.png", "binary")],
+        whole_diff_delivered=True)
+
+    assert decide(config, outcome).exit_code == EXIT_OK
+
+
+def test_a_readable_file_beside_a_binary_one_is_still_refused(config):
+    """The exemption is for a change with nothing to read, not for a change
+    that happens to contain something unreadable."""
+    outcome = ScanOutcome(mode="diff", summary="Assets and code.",
+                          stop_reason=STOP_COMPLETED, finished_explicitly=True)
+    outcome.reported = []
+    outcome.exposures = []
+    outcome.coverage = Coverage(
+        changed=["assets/logo.png", "src/app.py"], examined=[],
+        unreadable=[("assets/logo.png", "binary")],
+        whole_diff_delivered=True)
+
+    assert decide(config, outcome).exit_code == EXIT_ERROR
+
