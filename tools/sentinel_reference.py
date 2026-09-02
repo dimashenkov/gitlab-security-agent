@@ -295,21 +295,33 @@ def build() -> dict:
             # reads as configuration. The comparator refuses a version it does
             # not implement, so a changed rule is a different question rather
             # than a silent one.
-            "rule_version": 1,
+            # Rule 2 stopped subtracting improvements. Rule 1 netted them, and
+            # the reference answers exactly two of its eleven cases with a
+            # failure — so exactly two improvements were available to pay for
+            # exactly two regressions, and the gate said "passes" over a
+            # reviewer that had reproduced two failures twice each. It also
+            # contradicted the comparator one screen up, which refuses to order
+            # a missed weakness against a false alarm *inside* a case and calls
+            # the exchange `traded`, then netted the same two harms across
+            # cases as if they were interchangeable. Nothing here weighs them,
+            # so nothing here trades them.
+            "rule_version": 2,
             # The prose stays, for a person. The numbers above are what runs.
             "in_words": "A case counts as regressed when it gives the worse "
                         "result in `confirmations_required` separate runs of "
-                        "the challenger under one system identity. Net is "
-                        "confirmed regressions minus confirmed improvements. "
-                        "At `reject_at_net` the change is rejected; at one, "
-                        "nothing is decided and the sample is widened; at "
-                        "zero it passes this gate, which is grounds to buy "
-                        "wider confirmation and not a verdict about the "
-                        "corpus. A case still failing counts downward only "
-                        "when a kind of failure it did not have appears; "
-                        "trading one kind for the other decides nothing. "
-                        "Cases the reference itself answered two ways are "
-                        "not counted.",
+                        "the challenger under one system identity. Net is the "
+                        "count of confirmed regressions; improvements are "
+                        "reported and do not cancel them, because finding a "
+                        "weakness in one case does not put back the weakness "
+                        "missed in another. At `reject_at_net` the change is "
+                        "rejected; at one, nothing is decided and the sample "
+                        "is widened; at zero it passes this gate, which is "
+                        "grounds to buy wider confirmation and not a verdict "
+                        "about the corpus. A case still failing counts "
+                        "downward only when a kind of failure it did not have "
+                        "appears; trading one kind for the other decides "
+                        "nothing. Cases the reference itself answered two ways "
+                        "are not counted.",
         },
         "not_answerable": "Thirteen cases are a tripwire, not a sample. "
                           "Passing says the wider measurement is worth buying; "
@@ -359,6 +371,17 @@ def main() -> int:
 
     if args.check:
         frozen = json.loads(Path(args.check).read_text(encoding="utf-8"))
+        # A retired reference is not a drifted one, and saying "drifted" sends
+        # the reader to fix a difference that is deliberate. It stays on disk
+        # because the rows in it were paid for and are still the record of what
+        # that run answered; it is not a baseline any longer, and the exit code
+        # says so.
+        retired = frozen.get("retired")
+        if retired:
+            print("\n{} is retired and is not a baseline: {}".format(
+                args.check, retired.get("why", "no reason recorded")),
+                file=sys.stderr)
+            return 2
         if frozen != body:
             print("\n{} does not match what the reference run says today. A "
                   "frozen reference that drifts is not a reference.".format(

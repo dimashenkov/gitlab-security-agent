@@ -90,8 +90,9 @@ def reference(tmp_path, cases=("one", "two", "three"), unstable=("wobbly",),
         "threshold": {
             "reject_at_net": 2,
             "confirmations_required": 2,
-            "rule_version": 1,
-            "in_words": "two confirmed net regressions reject the change",
+            "rule_version": 2,
+            "in_words": "two confirmed regressions reject the change; "
+                        "improvements are reported and do not cancel them",
         },
     }), encoding="utf-8")
     return path
@@ -161,9 +162,23 @@ def test_a_regression_in_only_one_run_is_not_confirmed(tmp_path):
     assert result["regressed"] == [] and result["verdict"] == "passes the gate"
 
 
-def test_improvements_net_off_regressions(tmp_path):
-    """Two worse and two better is a net of zero — and that is a statement
-    about the sample being too small, not a tidy cancellation."""
+def test_improvements_do_not_pay_for_regressions(tmp_path):
+    """Rule 1 subtracted improvements, and this test asserted the result: two
+    confirmed regressions and two confirmed improvements came back as `net: 0`
+    and **"passes the gate"** — a cheaper reviewer approved over two failures
+    it had reproduced twice each.
+
+    The arithmetic was not merely lenient, it was inconsistent with the
+    comparator twenty lines above it, which refuses to order a missed weakness
+    against a false alarm *inside* one case and calls the exchange `traded`,
+    then netted the same two harms across cases as perfectly fungible. Nothing
+    in this repository weighs them. Rule 2 weighs neither: improvements are
+    reported and do not cancel.
+
+    The reference answers exactly two of its eleven cases with a failure, so
+    exactly two improvements existed to buy exactly two regressions. The
+    permissive path was not a corner of the rule; it was its whole width.
+    """
     ref = reference(tmp_path, cases=("one", "two", "three", "four"),
                     failing=("three", "four"))
     rows = [row("one", False), row("two", False),
@@ -172,9 +187,79 @@ def test_improvements_net_off_regressions(tmp_path):
                                             run(tmp_path, "b.json", rows)])
 
     assert result["regressed"] == ["one", "two"]
-    assert result["improved"] == ["four", "three"] or sorted(
-        result["improved"]) == ["four", "three"]
-    assert result["net"] == 0 and result["verdict"] == "passes the gate"
+    assert sorted(result["improved"]) == ["four", "three"]
+    assert result["net"] == 2 and result["verdict"] == "reject"
+
+
+def test_a_retired_reference_is_refused_and_says_why(tmp_path):
+    """The one frozen reference on disk cannot separate the model that
+    reviewed from the model that verified — no row in `measurements/` carries
+    `models_verified` — so a challenger changing only the reviewer cannot be
+    held to it. Marked retired in the file rather than deleted: the rows behind
+    it were paid for and remain the record of what that run answered.
+
+    Asked before every other check, because otherwise the reader is handed a
+    complaint about a served-model set for a file that is not a baseline, and
+    goes off to fix the symptom.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text(encoding="utf-8"))
+    body["retired"] = {"on": "2026-09-02", "why": "it cannot separate roles"}
+    ref.write_text(json.dumps(body), encoding="utf-8")
+
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+
+    assert "retired" in str(caught.value)
+    assert "cannot separate roles" in str(caught.value)
+
+
+def test_the_reference_on_disk_is_not_offered_as_a_baseline(tmp_path):
+    """The rollout, not the rule. `RULE_VERSION` moved to 2 and the committed
+    reference still says 1, so the documented invocation would refuse the only
+    reference in the repository — with a message about arithmetic, for a file
+    whose real problem is that it cannot answer the question at all. This test
+    fails if the file is ever un-retired without being rebuilt."""
+    frozen = json.loads(
+        (Path(__file__).resolve().parents[1] / "measurements" / "reference"
+         / "sentinel-opus.json").read_text(encoding="utf-8"))
+
+    assert frozen.get("retired"), "the committed reference must say it is not one"
+    assert frozen["retired"]["why"]
+    assert frozen["retired"]["rule_version_frozen_under"] == 1
+
+
+def test_a_reference_frozen_under_the_old_arithmetic_is_refused(tmp_path):
+    """A rule change is not retroactive, and it is not silently applied either.
+    A reference frozen under rule 1 agreed to `regressions - improvements`;
+    deciding it under rule 2 would apply arithmetic the frozen file never
+    accepted, which is how a threshold gets fitted to the result it exists to
+    judge. Refused, so the change is a visible question."""
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text(encoding="utf-8"))
+    body["threshold"]["rule_version"] = 1
+    ref.write_text(json.dumps(body), encoding="utf-8")
+
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+
+    assert "rule version 1" in str(caught.value)
+
+
+def test_one_confirmed_regression_still_decides_nothing(tmp_path):
+    """The threshold is two. One reproduced failure widens the sample; it does
+    not reject, and it must not read as a pass either."""
+    ref = reference(tmp_path, cases=("one", "two", "three"))
+    rows = [row("one", False), row("two", True), row("three", True)]
+    result = sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                            run(tmp_path, "b.json", rows)])
+
+    assert result["regressed"] == ["one"]
+    assert result["net"] == 1 and result["verdict"] == "no decision"
 
 
 def test_a_case_the_reference_answered_two_ways_is_not_counted(tmp_path):

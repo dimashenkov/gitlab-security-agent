@@ -143,7 +143,7 @@ def test_the_threshold_is_written_before_any_challenger_runs(reference):
     # Versioned rather than described by flags. Three booleans stood here
     # saying what the comparison does and no code read them — a setting nobody
     # applies is a claim, and a claim in a frozen file reads as configuration.
-    assert threshold["rule_version"] == 1
+    assert threshold["rule_version"] == 2
     assert "reject" in threshold["in_words"]
     assert not [k for k in threshold if k.startswith("counts_")], (
         "a flag nothing reads is worse than no flag")

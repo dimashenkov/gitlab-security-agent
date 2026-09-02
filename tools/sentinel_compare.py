@@ -17,9 +17,19 @@ challenger runs of the same system identity. One run is never enough: the
 reference itself disagreed with itself on two of thirteen cases, so a single
 `pass -> fail` is as likely to be the suite moving as the model being worse.
 
-**Net** is confirmed regressions minus confirmed improvements. Two cases that
-got worse and two that got better is a net of zero and no decision — not a
-tidy cancellation, a signal that the sample is too small to say.
+**Net** is the count of confirmed regressions. Improvements are reported beside
+them and do not cancel them: finding a weakness in one case does not put back
+the weakness missed in another.
+
+Rule 1 did subtract, and this paragraph used to say so — two worse and two
+better was a net of zero and, the code decided, "passes the gate". The
+reference answers exactly two of its eleven cases with a failure, so exactly two
+improvements existed to buy exactly two regressions; the permissive path was the
+rule's whole width, not a corner of it. It also contradicted the paragraph below:
+this file refuses to order a missed weakness against a false alarm *inside* one
+case, then netted the same two harms across cases as interchangeable. Nothing
+here weighs them, so nothing here trades them. That is a policy choice a
+security gate is allowed, not a statistical claim.
 
 **Worse** is not one number. A case can fail by missing the weakness or by
 flagging the fix, and those are different harms; summing them lets one hide the
@@ -59,7 +69,13 @@ class ComparisonError(Exception):
 # one that decides.
 from baseline import _system_identity  # noqa: E402
 
-RULE_VERSION = 1
+# 2, because the arithmetic changed. Rule 1 computed `regressions -
+# improvements`; rule 2 counts regressions and reports improvements beside
+# them. A reference frozen under rule 1 is refused rather than re-decided —
+# its numbers were agreed to under different arithmetic, and applying today's
+# to yesterday's frozen file is how a threshold gets fitted to the result it
+# is supposed to judge.
+RULE_VERSION = 2
 
 
 def _shape(row: dict, where: str) -> dict:
@@ -159,6 +175,17 @@ def compare(reference_path: Path, run_paths: list) -> dict:
     reference = json.loads(Path(reference_path).read_text(encoding="utf-8"))
     cases = reference["cases"]
     comparable = list(reference["comparable"])
+    # Asked first, and asked of the reference rather than of the runs. A
+    # retired reference is one somebody has already established cannot answer
+    # the question, and every check below it would then report a *reason* — a
+    # served-model set, a verifier — for a file that is not a baseline at all,
+    # sending the reader to fix the symptom.
+    retired = reference.get("retired")
+    if retired:
+        raise ComparisonError(
+            "this reference is retired and is not a baseline: {}".format(
+                retired.get("why", "no reason recorded")))
+
     threshold = reference["threshold"]
 
     # The rule is versioned rather than described by flags. Three booleans sat
@@ -544,7 +571,25 @@ def compare(reference_path: Path, run_paths: list) -> dict:
         else:
             steady.append(case_id)
 
-    net = len(regressed) - len(improved)
+    # Rule 2 does not subtract. Rule 1 computed `len(regressed) -
+    # len(improved)` and rejected at 2, so two confirmed regressions paid for
+    # by two confirmed improvements came back as "passes the gate" — and the
+    # reference answers exactly two of its eleven cases with a failure, so
+    # exactly two improvements are available to buy exactly two regressions.
+    #
+    # It was also inconsistent with the code twenty lines above, which refuses
+    # to order a missed weakness against a false alarm *inside* one case and
+    # calls the exchange `traded`. Netting then treated the same two harms as
+    # perfectly fungible *across* cases. Nothing in this repository weighs them,
+    # so the honest rule weighs neither: a confirmed regression counts, an
+    # improvement elsewhere is reported and does not cancel it.
+    #
+    # This is an asymmetric policy choice, not a statistical claim. A security
+    # gate is allowed one: finding a weakness in case A does not put back the
+    # weakness missed in case B.
+    # `RULE_VERSION` is checked against the reference far above, so reaching
+    # here means the file was frozen under this arithmetic and no other.
+    net = len(regressed)
     reject_at = threshold["reject_at_net"]
     return {
         "comparable": comparable,
