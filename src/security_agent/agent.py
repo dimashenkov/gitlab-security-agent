@@ -527,6 +527,10 @@ def _provenance(cfg: Config) -> Provenance:
         # whether a local run was billed would have read an empty string.
         provider=cfg.provider,
         model_requested=cfg.model,
+        # Resolved, so a run that holds the verifier on a different model from
+        # the reviewer says which one it asked for. Unset it follows the
+        # reviewer, and `verifier_requested` then equals `model_requested`.
+        verifier_requested=cfg.verifier_model,
         system_prompt_sha=_sha(prompts / "system.md"),
         verifier_prompt_sha=_sha(prompts / "verifier.md"),
         schema_sha=_sha(prompts / "findings.schema.json"),

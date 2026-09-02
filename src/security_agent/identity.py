@@ -94,7 +94,14 @@ def review_identity(cfg: Any, revision: Any, provenance: Any,
             # ceiling decides how much of the change the reviewer saw.
             "fail_on_incomplete": bool(getattr(cfg, "fail_on_incomplete", True)),
             "verify_max_findings": getattr(cfg, "verify_max_findings", 0),
-            "verify_model": getattr(cfg, "verify_model", ""),
+            # The *resolved* verifier model, not the raw setting. Unset it
+            # falls back to the reviewer's model, so the raw value is `""` for
+            # every run whatever the reviewer is — two runs on two different
+            # models recorded the same empty string and read as the same
+            # verifier. That is exactly the comparison a model change is made
+            # to measure.
+            "verify_model": (getattr(cfg, "verifier_model", "")
+                             or getattr(cfg, "verify_model", "")),
             "verify_effort": getattr(cfg, "verify_effort", ""),
             "diff_ceiling_bytes": getattr(cfg, "diff_ceiling_bytes", 0),
             # What the run was answerable for. Without this a review of one

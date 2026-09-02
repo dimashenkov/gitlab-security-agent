@@ -954,6 +954,13 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
             "ungated_categories": list(cfg.ungated_categories),
             "verify": cfg.verify,
             "verify_votes": cfg.verify_votes,
+            # Which model cast the votes, resolved rather than as configured:
+            # unset, it is the reviewer's, so the raw setting is `""` on every
+            # run and says nothing. `baseline.py` digests this block to decide
+            # whether two results are comparable, and without it a run whose
+            # verifier moved with the reviewer is indistinguishable from one
+            # where only the reviewer moved.
+            "verify_model": cfg.verifier_model,
             "effort": cfg.effort,
             # An empty list means the whole change. Recorded either way, because
             # "no findings" from a scoped run and "no findings" from a full one

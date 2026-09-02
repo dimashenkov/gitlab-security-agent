@@ -353,11 +353,20 @@ def _system_identity(row: dict) -> str:
             str(prov.get("schema_sha", "")),
             str(prov.get("agent_version", "")),
             str(prov.get("provider", "")),
-            # Both. Reading only what was served folds two runs that asked
-            # for different models and were both served the same fallback into
-            # one system, which is two experiments counted as a repetition.
+            # What the run was *configured* to be, not what was observed
+            # happening during it. `models_served` and `models_verified` are
+            # observations: the verifier only runs when there is a finding to
+            # verify, so a case with none records an empty list and a case with
+            # one records a model. Folded into identity, two cases from the
+            # same run became two systems — and a comparison of two passes
+            # launched identically would have refused itself as "different
+            # systems", on real files, for a difference that is not one.
+            #
+            # The settings digest carries the resolved `verify_model`, so the
+            # verifier's configuration is here; what is absent is the accident
+            # of whether it fired. A substitution is a fact about the run and
+            # is checked as one, by name, rather than smuggled in here.
             str(prov.get("model_requested", "")),
-            ",".join(sorted(prov.get("models_served") or [])),
             digest_json(block.get("settings") or {}),
         ]))
     return "\n".join(parts)

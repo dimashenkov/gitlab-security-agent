@@ -1048,6 +1048,12 @@ class Provenance:
     # second is noise. Nothing in the artifact could tell them apart.
     models_served: List[str] = field(default_factory=list)
     models_verified: List[str] = field(default_factory=list)
+    # Which model the *verifier* was asked for. Empty means it follows the
+    # reviewer, which is the default. Recorded because "was the verifier the
+    # one we chose" cannot be answered from the reviewer's model when the two
+    # are deliberately different — and holding the verifier still is the whole
+    # shape of a model comparison.
+    verifier_requested: str = ""
     system_prompt_sha: str = ""
     verifier_prompt_sha: str = ""
     schema_sha: str = ""
@@ -1116,13 +1122,23 @@ class Provenance:
 
     @property
     def verifier_substituted(self) -> bool:
-        """Did the verification run on something other than the review's model?"""
-        return any(m != self.model_requested for m in self.models_verified)
+        """Did the verification run on something other than the model asked for?
+
+        Against `verifier_requested`, not against the reviewer's model. The
+        first version compared the two, and that is wrong in the one
+        arrangement this field exists for: a cheaper reviewer with the verifier
+        deliberately held where it was reads as a substitution on every run,
+        which makes the flag useless exactly where it is needed. A flag that
+        cries on the intended configuration is a flag nobody can act on.
+        """
+        wanted = self.verifier_requested or self.model_requested
+        return any(m != wanted for m in self.models_verified)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "model_requested": self.model_requested,
             "models_verified": list(self.models_verified),
+            "verifier_requested": self.verifier_requested,
             "verifier_substituted": self.verifier_substituted,
             "models_served": self.models_served,
             "model_substituted": self.model_substituted,

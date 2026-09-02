@@ -601,3 +601,28 @@ class TestTurnTelemetry:
 
         assert payload["turns_detail"][0]["stop_reason"] == "end_turn"
         assert "max_tokens" in payload["turns_detail"][0]
+
+
+def test_the_settings_record_which_model_verified(cfg, ws):
+    """Unset, the verifier follows the reviewer — so the raw setting is `""` on
+    every run and says nothing about what actually voted.
+
+    `baseline.py` digests this block to decide whether two results can be
+    compared. Recorded raw, a run where the reviewer moved to a cheaper model
+    and dragged the verifier with it is indistinguishable from one where only
+    the reviewer moved — which is precisely the difference a model comparison
+    exists to measure.
+    """
+    from security_agent.report import build_json
+
+    client = FakeClient([FakeResponse([text("done")], stop_reason="end_turn")])
+    outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+    settings = build_json(cfg, outcome, decide(cfg, outcome))["settings"]
+
+    assert settings["verify_model"] == cfg.model, (
+        "an unset verifier recorded nothing, so two models look like one")
+
+    cfg.verify_model = "claude-haiku-4-5-20251001"
+    settings = build_json(cfg, outcome, decide(cfg, outcome))["settings"]
+    assert settings["verify_model"] == "claude-haiku-4-5-20251001"
+

@@ -1046,3 +1046,64 @@ def test_a_row_with_no_stamp_does_not_lose_to_an_older_one(
     out = capsys.readouterr().out
     assert "unstable" in out
     assert "regressed" not in out
+
+
+def test_swapping_the_roles_by_configuration_is_two_systems(tmp_path, corpus,
+                                                            capsys):
+    """A cheaper reviewer with the verifier held is one experiment; the reverse
+    is another. The two are told apart by what the run was *set* to be — the
+    requested model and the resolved `verify_model` in the settings — because
+    that is what somebody chose."""
+    baseline = tmp_path / "b.json"
+    freeze(write(tmp_path, "before.json", [row("one")]), corpus, baseline)
+
+    reviewed = member()
+    reviewed["provenance"] = dict(reviewed["provenance"],
+                                  model_requested="claude-sonnet-5")
+    reviewed["settings"] = dict(reviewed["settings"],
+                                verify_model="claude-opus-5")
+    swapped = member()
+    swapped["provenance"] = dict(swapped["provenance"],
+                                 model_requested="claude-opus-5")
+    swapped["settings"] = dict(swapped["settings"],
+                               verify_model="claude-sonnet-5")
+
+    history = write(tmp_path, "after.json", [
+        row("one", passed=False, run_id="r1",
+            members={"safe": reviewed, "unsafe": reviewed}),
+        row("one", passed=False, run_id="r2",
+            members={"safe": swapped, "unsafe": swapped}),
+    ])
+
+    assert compare(history, corpus, baseline, force=True) == 2
+    assert "more than one system" in capsys.readouterr().out
+
+
+def test_a_verifier_that_only_sometimes_runs_is_not_a_second_system(
+        tmp_path, corpus):
+    """The defect that would have refused the real files.
+
+    `models_verified` is an observation: the verifier runs only when there is a
+    finding to verify, so a case with none records an empty list and a case
+    with one records a model. Folded into identity, two cases from the *same*
+    run became two systems — and two passes launched identically would have
+    refused themselves as "different systems", on real files, for a difference
+    that is not one.
+    """
+    baseline = tmp_path / "b.json"
+    freeze(write(tmp_path, "before.json", [row("one")]), corpus, baseline)
+
+    quiet = member()
+    quiet["provenance"] = dict(quiet["provenance"], models_verified=[])
+    verified = member()
+    verified["provenance"] = dict(verified["provenance"],
+                                  models_verified=["claude-opus-5"])
+
+    history = write(tmp_path, "after.json", [
+        row("one", passed=False, run_id="r1",
+            members={"safe": quiet, "unsafe": quiet}),
+        row("one", passed=False, run_id="r2",
+            members={"safe": verified, "unsafe": verified}),
+    ])
+
+    assert compare(history, corpus, baseline, force=False) == 1
