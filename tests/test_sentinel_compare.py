@@ -294,7 +294,13 @@ def test_two_runs_from_different_systems_are_refused(tmp_path, field, value):
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", first),
                                        run(tmp_path, "b.json", second)])
     message = str(caught.value)
-    assert "different systems" in message or "Only the model may differ" in message
+    # Refused, and which check speaks first depends on the field: a changed
+    # prompt breaks the contract with the reference, and a changed model is
+    # caught by the rule that one comparison measures one challenger. All
+    # three are correct refusals; the test is about the refusal.
+    assert any(reason in message for reason in (
+        "different systems", "Only the model may differ",
+        "different models"))
 
 
 def test_the_verifier_model_is_part_of_the_identity(tmp_path):
@@ -408,7 +414,10 @@ def test_a_row_that_cannot_say_what_produced_it_is_refused(tmp_path):
     with pytest.raises(sentinel_compare.ComparisonError) as caught:
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
-    assert "does not record enough" in str(caught.value)
+    # The contract check speaks first now, and names the first thing missing:
+    # a row recording no prompt digest cannot be shown to match the reference.
+    # Same absence, read one step earlier, and refused rather than forgiven.
+    assert "records no system_prompt" in str(caught.value)
 
 
 def test_the_threshold_comes_from_the_reference(tmp_path):
@@ -809,4 +818,67 @@ def test_a_challenger_that_is_the_reference_model_is_refused(tmp_path):
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
     assert "no change here to measure" in str(caught.value)
+
+
+# ------------------------------------------- absence is not agreement
+
+
+@pytest.mark.parametrize("field,name", [
+    ("system_prompt_sha", "system_prompt"),
+    ("verifier_prompt_sha", "verifier_prompt"),
+    ("schema_sha", "findings_schema"),
+    ("agent_version", "agent_version"),
+])
+def test_a_missing_environment_digest_is_refused(tmp_path, field, name):
+    """`if expected and recorded` forgave a row that recorded nothing.
+
+    `_system_identity` asks only for a prompt and a model, so two rows missing
+    the same digests confirmed each other and walked around the reference
+    entirely — the contract satisfied by what neither of them said.
+    """
+    ref = reference(tmp_path)
+    silent = member()
+    silent["provenance"] = dict(silent["provenance"])
+    silent["provenance"].pop(field)
+    rows = [row(c, True, members={"safe": silent, "unsafe": silent})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "records no {}".format(name) in str(caught.value)
+
+
+def test_a_run_that_names_no_model_is_refused(tmp_path):
+    """Discarding `None` first meant a run recording no model at all left an
+    empty set and skipped the check that it is a challenger."""
+    ref = reference(tmp_path)
+    nameless = member()
+    nameless["provenance"] = dict(nameless["provenance"], model_requested="")
+    rows = [row(c, True, members={"safe": nameless, "unsafe": nameless})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "records no `model_requested`" in str(caught.value)
+
+
+def test_two_models_mixed_across_members_are_refused(tmp_path):
+    """Opus on one member and Sonnet on the other produced a set of two, which
+    is not the reference's model either — so the challenger check passed, while
+    `_system_identity` saw one consistent system and let it through. One
+    comparison measures one challenger."""
+    ref = reference(tmp_path)
+    other = member()
+    other["provenance"] = dict(other["provenance"],
+                               model_requested="claude-opus-5",
+                               models_served=["claude-opus-5"])
+    rows = [row(c, True, members={"safe": other, "unsafe": member()})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "different models" in str(caught.value)
 

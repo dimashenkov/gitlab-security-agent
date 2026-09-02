@@ -15,7 +15,7 @@
   "reviewer": {
    "status": "accepted_by_static_analysis",
    "reference_digest": "aa3d401c17640eed",
-   "commit_range": "fa05463..HEAD",
+   "commit_range": "fa05463..79a7cb7",
    "rerun": false,
    "scope": "fresh review finding and decision path",
    "reading": "Accepted as a grandfathered baseline, not as an empirically identical rerun."

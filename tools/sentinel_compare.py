@@ -329,7 +329,19 @@ def compare(reference_path: Path, run_paths: list) -> dict:
                         ("findings_schema", prov.get("schema_sha")),
                         ("agent_version", prov.get("agent_version"))):
                     expected = environment.get(field)
-                    if expected and recorded and recorded != expected:
+                    if not expected:
+                        continue
+                    # Absence is not agreement. `if expected and recorded`
+                    # let a row that recorded nothing pass the contract, and
+                    # `_system_identity` asks only for a prompt and a model —
+                    # so two rows missing the same digests confirmed each
+                    # other and walked around the reference entirely.
+                    if not recorded:
+                        raise ComparisonError(
+                            "{}: the run records no {}, so it cannot be shown "
+                            "to match the reference's {}.".format(
+                                case_id, field, expected))
+                    if recorded != expected:
                         raise ComparisonError(
                             "{}: the reference was produced with {} {} and "
                             "this run used {}. Only the model may differ, or "
@@ -342,10 +354,23 @@ def compare(reference_path: Path, run_paths: list) -> dict:
     # change that never happened — then licenses buying the wider run on the
     # strength of it. The one difference the reference permits is also the one
     # it requires.
-    asked = {(block or {}).get("provenance", {}).get("model_requested")
+    asked = {(block or {}).get("provenance", {}).get("model_requested") or None
              for run in runs for row in run.values()
              for block in (row.get("members") or {}).values()}
-    asked.discard(None)
+    # Fail closed on all three shapes. Discarding `None` first meant a run that
+    # recorded no model at all left an empty set and skipped the check
+    # entirely; and a run mixing Opus and Sonnet across members produced a set
+    # of two, which is not the reference's model either, so it also passed —
+    # while `_system_identity` saw one consistent system and let it through.
+    if None in asked:
+        raise ComparisonError(
+            "a member records no `model_requested`, so nothing says which "
+            "model this run is a challenger for")
+    if len(asked) != 1:
+        raise ComparisonError(
+            "the runs asked for {} different models ({}). A comparison "
+            "against one reference measures one challenger.".format(
+                len(asked), ", ".join(sorted(asked))))
     if asked == {reference.get("model")}:
         raise ComparisonError(
             "the runs asked for {}, which is the reference's own model. There "

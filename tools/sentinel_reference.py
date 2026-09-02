@@ -178,7 +178,11 @@ def build() -> dict:
             "reviewer": {
                 "status": "accepted_by_static_analysis",
                 "reference_digest": "aa3d401c17640eed",
-                "commit_range": "fa05463..HEAD",
+                # A named commit, not `HEAD`: the range was written as
+                # `fa05463..HEAD` and its meaning changed with every commit
+                # after it, so the record would have claimed a reading of code
+                # nobody read.
+                "commit_range": "fa05463..79a7cb7",
                 "rerun": False,
                 "scope": "fresh review finding and decision path",
                 "reading": "Accepted as a grandfathered baseline, not as an "
