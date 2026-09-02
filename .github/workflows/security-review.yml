@@ -26,13 +26,22 @@ jobs:
       # 2026-08-22 before writing it down. The repository has no secrets set, so
       # the first pull request ever opened here would collect a green check from
       # a review that never ran.
+      # The condition lives in the shell, not in `if:`. The `secrets` context is
+      # not available to a step-level condition, and GitHub rejects the whole
+      # file rather than the line — so the first version of this guard made
+      # every push fail at parse time, and the tests passed because they read
+      # the YAML and looked for `exit 1` without asking whether the line was
+      # legal. A check satisfied by a shape rather than by the thing.
       - name: Refuse to benchmark without a key
-        if: ${{ secrets.CLAUDE_API_KEY == '' }}
+        env:
+          BENCHMARK_KEY: ${{ secrets.CLAUDE_API_KEY }}
         run: |
-          echo "CLAUDE_API_KEY is not set, so the benchmark cannot run."
-          echo "Not skipping quietly: the action would report success with"
-          echo "zero findings, which reads as a clean review."
-          exit 1
+          if [ -z "$BENCHMARK_KEY" ]; then
+            echo "CLAUDE_API_KEY is not set, so the benchmark cannot run."
+            echo "Not skipping quietly: the action would report success with"
+            echo "zero findings, which reads as a clean review."
+            exit 1
+          fi
 
       - uses: actions/checkout@v4
         with:

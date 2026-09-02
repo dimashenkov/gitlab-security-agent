@@ -125,7 +125,18 @@ def reviewing_steps(path: Path) -> list:
     for job, step in steps(path):
         handed = yaml.safe_dump({"with": step.get("with"),
                                  "env": step.get("env")})
-        if "API_KEY" in handed or "api-key" in handed:
+        if "API_KEY" not in handed and "api-key" not in handed:
+            continue
+        # A step that only asks whether the key is *there* is not reviewing
+        # with it. The guard is handed the secret through `env:` — that is the
+        # only context where GitHub makes it available — and does nothing but
+        # test it for emptiness: no action, no command that could call a model.
+        # Counted as a review it tripped the rule that a review must not gate
+        # the build, and that rule is about the benchmark, not about a guard
+        # whose whole purpose is to fail.
+        presence_check = (not step.get("uses")
+                          and '-z "$' in str(step.get("run") or ""))
+        if not presence_check:
             found.append((job, step))
     return found
 
@@ -442,11 +453,38 @@ def test_the_benchmark_refuses_to_run_without_a_key():
     check from a review that never ran. The guard fails the job instead, which
     is how "it did not run" stays visible."""
     workflow = ROOT / ".github" / "workflows" / "security-review.yml"
+    # Searched in the `run` body itself, not in a YAML dump of the step:
+    # `safe_dump` wraps at 80 columns and split "exit 1" across two lines, so
+    # the search found nothing and the assertion below fired for the wrong
+    # reason. A test that fails for a reason other than the one it names is a
+    # test nobody will trust the next time it fails.
     guard = [step for _, step in steps(workflow)
-             if "exit 1" in yaml.safe_dump(step)]
+             if "exit 1" in str(step.get("run") or "")]
 
     assert guard, "nothing stops the benchmark from running without a key"
     assert "CLAUDE_API_KEY" in yaml.safe_dump(guard[0]), (
         "the guard does not check the key the action is given")
-    assert guard[0].get("if"), (
-        "the guard runs unconditionally, so it fails even when a key is set")
+    assert '-z "$' in str(guard[0].get("run") or ""), (
+        "the guard does not test whether the key is empty")
+
+
+@pytest.mark.parametrize("path", GITHUB_YAML, ids=lambda p: p.name)
+def test_no_step_condition_reads_a_secret(path):
+    """`secrets` is not available to a step-level `if`, and GitHub rejects the
+    whole file rather than the line.
+
+    The first version of the guard above used `if: ${{ secrets.X == '' }}`.
+    Every push then failed at parse time — three of them before anyone looked —
+    while this suite stayed green, because the tests loaded the YAML and
+    searched it for `exit 1` without ever asking whether the line was legal.
+    A check satisfied by a shape rather than by the thing, which is the defect
+    this repository has now been caught by five times.
+
+    The condition belongs in the shell: the secret comes in through the step's
+    `env`, where the context *is* available, and `[ -z "$VAR" ]` decides.
+    """
+    for _job, step in steps(path):
+        condition = str(step.get("if") or "")
+        assert "secrets." not in condition, (
+            "{}: step {!r} reads `secrets` in its `if`, which GitHub refuses "
+            "to parse".format(path.name, step.get("name") or step.get("uses")))
