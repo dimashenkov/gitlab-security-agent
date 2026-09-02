@@ -161,6 +161,41 @@ def build() -> dict:
         # so a later reader is not left to infer it from an absent field.
         "verifier_model": "claude-opus-5",
         "environment": manifest["environment"],
+        # How this reference relates to the code as it stands, in the words
+        # that survive being quoted. Three of the seven digests moved after it
+        # was frozen, and leaving that implicit would have let a later reader
+        # take the comparison for one made under identical conditions.
+        #
+        # Two of the three were *measured*: the stored rows were re-scored
+        # under today's scorer and adjudications and nothing moved. The third
+        # was *argued*: the reviewer's diff over that range touches provenance
+        # attribution, comparability identity, telemetry and report
+        # serialisation, and no input, prompt, tool path, candidate
+        # construction, verification decision or gate. Buying a fresh Opus
+        # reference would cost about $26 and would mostly measure a new
+        # stochastic sample of the same model.
+        "environment_equivalence": {
+            "reviewer": {
+                "status": "accepted_by_static_analysis",
+                "reference_digest": "aa3d401c17640eed",
+                "commit_range": "fa05463..HEAD",
+                "rerun": False,
+                "scope": "fresh review finding and decision path",
+                "reading": "Accepted as a grandfathered baseline, not as an "
+                           "empirically identical rerun.",
+            },
+            "scorer_and_adjudications": {
+                "status": "rescored",
+                "rows": 26,
+                "changed_verdicts": 0,
+                "reading": "Equivalence for these stored rows under "
+                           "`hits_target`, not general equivalence of the "
+                           "scorer.",
+            },
+            "not_established": "Provider-side drift. Neither this reference "
+                               "nor a freshly bought one rules it out; a new "
+                               "one would only move the question to today.",
+        },
         "cases": entries,
         "missing": missing,
         "unstable_under_reference": unstable,

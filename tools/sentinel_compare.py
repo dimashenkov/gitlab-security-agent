@@ -336,6 +336,21 @@ def compare(reference_path: Path, run_paths: list) -> dict:
                             "the difference cannot be attributed to it."
                             .format(case_id, field, expected, recorded))
 
+    # And the challenger has to actually *be* a challenger. Forget the
+    # environment variable and both passes run the reference's own model,
+    # everything matches, and the comparison reports "passes the gate" for a
+    # change that never happened — then licenses buying the wider run on the
+    # strength of it. The one difference the reference permits is also the one
+    # it requires.
+    asked = {(block or {}).get("provenance", {}).get("model_requested")
+             for run in runs for row in run.values()
+             for block in (row.get("members") or {}).values()}
+    asked.discard(None)
+    if asked == {reference.get("model")}:
+        raise ComparisonError(
+            "the runs asked for {}, which is the reference's own model. There "
+            "is no change here to measure.".format(reference.get("model")))
+
     identities = {_system_identity(row) for run in runs for row in run.values()}
     if "" in identities:
         raise ComparisonError(

@@ -67,6 +67,7 @@ def reference(tmp_path, cases=("one", "two", "three"), unstable=("wobbly",),
 
     path = tmp_path / "reference.json"
     path.write_text(json.dumps({
+        "model": "claude-opus-5",
         "environment": {"system_prompt": "aaa", "verifier_prompt": "bbb",
                         "findings_schema": "ccc", "agent_version": "0.1.0"},
         "cases": entries,
@@ -789,4 +790,23 @@ def test_a_traded_case_is_not_reported_as_equivalence(tmp_path):
                                             run(tmp_path, "b.json", rows)])
     assert result["traded"] == ["one"]
     assert result["verdict"] == "below the threshold, and cases changed"
+
+
+def test_a_challenger_that_is_the_reference_model_is_refused(tmp_path):
+    """Forget the environment variable and both passes run Opus. Everything
+    matches, the comparison says "passes the gate" for a change that never
+    happened, and the wider run gets bought on the strength of it. The one
+    difference the reference permits is also the one it requires."""
+    ref = reference(tmp_path)
+    same = member()
+    same["provenance"] = dict(same["provenance"],
+                              model_requested="claude-opus-5",
+                              models_served=["claude-opus-5"])
+    rows = [row(c, True, members={"safe": same, "unsafe": same})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "no change here to measure" in str(caught.value)
 

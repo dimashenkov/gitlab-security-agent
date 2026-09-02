@@ -1105,8 +1105,18 @@ class Provenance:
 
     @property
     def review_models(self) -> List[str]:
-        """The models that answered the *review*, verification excluded."""
-        return [m for m in self.models_served if m not in self.models_verified]
+        """The models that answered the *review*.
+
+        Verification is excluded by subtraction, which drops a model that did
+        both jobs: run the reviewer and the verifier on one model and the list
+        comes back empty, so the run reads as having had no reviewer at all.
+        The requested model is always one of them when it answered, so it is
+        kept rather than subtracted away.
+        """
+        served = [m for m in self.models_served if m not in self.models_verified]
+        if self.model_requested in self.models_served and not served:
+            return [self.model_requested]
+        return served
 
     @property
     def model_substituted(self) -> bool:

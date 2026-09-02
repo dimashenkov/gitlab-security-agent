@@ -11,6 +11,23 @@
   "scorer": "803f7296f1670185",
   "reviewer": "aa3d401c17640eed"
  },
+ "environment_equivalence": {
+  "reviewer": {
+   "status": "accepted_by_static_analysis",
+   "reference_digest": "aa3d401c17640eed",
+   "commit_range": "fa05463..HEAD",
+   "rerun": false,
+   "scope": "fresh review finding and decision path",
+   "reading": "Accepted as a grandfathered baseline, not as an empirically identical rerun."
+  },
+  "scorer_and_adjudications": {
+   "status": "rescored",
+   "rows": 26,
+   "changed_verdicts": 0,
+   "reading": "Equivalence for these stored rows under `hits_target`, not general equivalence of the scorer."
+  },
+  "not_established": "Provider-side drift. Neither this reference nor a freshly bought one rules it out; a new one would only move the question to today."
+ },
  "cases": {
   "go-8r62-w5wh-fc5m": {
    "outcomes": {
