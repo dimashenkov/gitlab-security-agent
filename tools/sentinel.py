@@ -91,8 +91,12 @@ def recorded_outcomes(root: Path = MEASUREMENTS) -> dict:
     read as an outcome of the case as it stands. Closing that needs a case
     digest in the measurement rows, which the artifacts do not carry.
     """
+    # The queue's per-case files as well as the batches. Reading only the top
+    # level hid every case measured through `run_queue`, which is how the
+    # unmeasured ones are bought — so the pool this suite is drawn from would
+    # have been missing exactly the cases most recently paid for.
     seen = collections.defaultdict(set)
-    for path in sorted(root.glob("*.json")):
+    for path in sorted(root.glob("*.json")) + sorted((root / "queue").glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

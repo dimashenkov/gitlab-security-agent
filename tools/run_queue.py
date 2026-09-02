@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import yaml
+from check_accounted import about_this_version, scorable
 
 ROOT = Path(__file__).resolve().parents[1]
 QUEUE = ROOT / "measurements" / "queue"
@@ -137,6 +138,15 @@ def already_run(case_id: str, repeat: bool = False) -> bool:
     `pair_corpus` directly, because the corpus has been measured both ways and
     paying twice for one answer is the thing this is here to avoid.
 
+    Recorded *about today's version of the case*, which the first version did
+    not ask. `cli-batch-1` and `cli-batch-2` predate `case_digest` and carry
+    none, so `check_accounted` correctly refuses them as verdicts — while this
+    counted them and skipped the case. Three cases sat in exactly that state on
+    2026-09-02: the accounting said "not run", the queue said "already
+    recorded", and a run of the twelve would have bought nine and reported
+    twelve. The queue skipping a case is how "not measured" becomes invisible,
+    which is the same failure as a green gate over unread code.
+
     `repeat` is for a round that means to run the corpus again: it consults
     only this round's own directory, so the round still resumes after a refusal
     while earlier results do not silence it. Without it `--round` would queue
@@ -155,8 +165,15 @@ def already_run(case_id: str, repeat: bool = False) -> bool:
             rows = json.loads(own.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return False
-        return any(isinstance(r, dict) and not r.get("incomplete")
-                   for r in rows if isinstance(rows, list))
+        # The same three questions as the batch branch below, and this branch
+        # asked none of them: not whether the row is about *this* case, not
+        # whether it is about today's version of it, not whether it carries a
+        # result. A case edited after its queue file was written would have
+        # been skipped for ever through the shorter path — the defect this
+        # function was just fixed for, still live on the more direct route.
+        return any(scorable(r) and r["case_id"] == case_id
+                   and about_this_version(case_id, r)
+                   for r in (rows if isinstance(rows, list) else []))
     if repeat:
         # Nothing outside this round counts. A previous answer is what the
         # round exists to compare against, so it must not prevent the run that
@@ -169,8 +186,8 @@ def already_run(case_id: str, repeat: bool = False) -> bool:
             continue
         rows = body if isinstance(body, list) else body.get("results") or []
         for row in rows if isinstance(rows, list) else ():
-            if isinstance(row, dict) and row.get("case_id") == case_id \
-                    and not row.get("incomplete"):
+            if scorable(row) and row["case_id"] == case_id \
+                    and about_this_version(case_id, row):
                 return True
     return False
 

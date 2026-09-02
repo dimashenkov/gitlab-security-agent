@@ -47,7 +47,11 @@ def ledger(since):
 
 def reviews():
     """Corpus reviews, from the measurements. One row per member run."""
-    for path in glob.glob("measurements/*.json"):
+    # Including the queue's own files. Without them a run made through the
+    # queue counted as zero reviews, and this is what estimates how much of a
+    # window the work takes.
+    for path in (glob.glob("measurements/*.json")
+                 + glob.glob("measurements/queue/*.json")):
         try:
             with open(path, encoding="utf-8") as handle:
                 body = json.loads(handle.read())

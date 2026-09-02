@@ -289,6 +289,20 @@ def probe_scope(args) -> Result:
     return _from_tests([path], args.tests, "scope control")
 
 
+def result_files() -> list:
+    """Every file holding paid results, batches and queue alike.
+
+    The queue writes one file per case under `measurements/queue/`, and these
+    readers globbed only the top level — so a run made through the queue was
+    invisible to the tracker that reports how far the work has got. It reads as
+    "less has been done", which is the safer direction of the two and still
+    wrong: the stage numbers are what the owner reads to decide what to buy
+    next, and under-reporting them buys the same measurement twice.
+    """
+    return sorted((ROOT / "measurements").glob("*.json")) + sorted(
+        (ROOT / "measurements" / "queue").glob("*.json"))
+
+
 def _instant(value) -> Optional[datetime]:
     """The moment a row says it ran, or None if it does not say usefully.
 
@@ -429,7 +443,7 @@ def probe_use(args) -> Result:
                for name in cases}
     verdicts: Dict[str, set] = {}
     undated: Dict[str, int] = {}
-    for path in sorted((ROOT / "measurements").glob("*.json")):
+    for path in result_files():
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
@@ -575,7 +589,7 @@ def _failing_cases() -> list:
     # record is the tracker asking about something it has itself excluded.
     excluded = malformed_cases(ROOT / "corpus-real")
     seen: Dict[str, list] = {}
-    for path in sorted((ROOT / "measurements").glob("*.json")):
+    for path in result_files():
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
@@ -650,7 +664,7 @@ def probe_spend(args) -> Result:
     does not produce, which is the drift point 8 itself had.
     """
     rows = []
-    for path in sorted((ROOT / "measurements").glob("*.json")):
+    for path in result_files():
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):

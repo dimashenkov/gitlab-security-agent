@@ -311,6 +311,12 @@ def test_a_pair_that_did_not_finish_is_not_treated_as_recorded(tmp_path, monkeyp
     monkeypatch.setattr(run_queue, "QUEUE", tmp_path)
     monkeypatch.setattr(run_queue, "ROOT", tmp_path)
 
+    # Which version of the case the row is about is a separate question, asked
+    # by the test below; here it is held true so this one stays about the one
+    # thing it was written for.
+    monkeypatch.setattr(run_queue, "about_this_version",
+                        lambda case_id, row: True)
+
     unfinished = [{"case_id": "a-case", "incomplete": ["unsafe"],
                    "pair_success": None}]
     (tmp_path / "a-case.json").write_text(json.dumps(unfinished))
@@ -357,3 +363,42 @@ def test_a_window_records_which_compaction_it_ran_under(ledger, monkeypatch):
     # "default", not "" or None: absent must be a value somebody can filter on,
     # not an empty cell that reads as unknown.
     assert [r["autocompact_pct"] for r in rows] == ["default", "50"]
+
+
+def test_a_batch_row_about_an_older_case_does_not_skip_the_case(
+        tmp_path, monkeypatch):
+    """The queue and the accounting disagreed, and the queue was wrong.
+
+    `cli-batch-1` and `cli-batch-2` predate `case_digest` and carry none, so
+    `check_accounted` refuses them as verdicts — "it ran, but nothing recorded
+    which version of the case it saw". This counted them anyway and skipped the
+    case. On 2026-09-02 three cases sat in exactly that state: the tally said
+    "not run", the queue said "already recorded", and a run of the twelve would
+    have bought nine while reporting twelve.
+
+    A queue that skips a case is how "not measured" becomes invisible, which is
+    the same failure as a green gate over unread code — with money on it in the
+    other direction too, since the missing rows are bought later or never.
+    """
+    import json
+
+    import run_queue
+
+    measurements = tmp_path / "measurements"
+    measurements.mkdir()
+    monkeypatch.setattr(run_queue, "QUEUE", tmp_path / "queue")
+    monkeypatch.setattr(run_queue, "ROOT", tmp_path)
+    (tmp_path / "queue").mkdir()
+
+    (measurements / "cli-batch-1.json").write_text(json.dumps(
+        [{"case_id": "a-case", "pair_success": True}]))
+
+    monkeypatch.setattr(run_queue, "about_this_version",
+                        lambda case_id, row: False)
+    assert run_queue.already_run("a-case") is False, (
+        "a row that is not about today's case counted as a measurement")
+
+    monkeypatch.setattr(run_queue, "about_this_version",
+                        lambda case_id, row: True)
+    assert run_queue.already_run("a-case") is True
+

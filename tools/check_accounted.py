@@ -135,6 +135,22 @@ def about_this_version(case_id: str, row: dict) -> bool:
                                       legacy_case_digest(directory)}
 
 
+def scorable(row) -> bool:
+    """Is this row a finished measurement at all?
+
+    One definition for both readers. `executed` required a boolean
+    `pair_success` and `verdicts` asked only that the row was not `incomplete`,
+    so a finished-looking row carrying `null` there became a canonical verdict
+    in one and was invisible to the other — the same row, two answers, and the
+    verdict was the false one: `passed()` reads a row with no findings as a
+    failure.
+    """
+    return (isinstance(row, dict)
+            and bool(row.get("case_id"))
+            and not row.get("incomplete")
+            and isinstance(row.get("pair_success"), bool))
+
+
 def verdicts() -> dict:
     """The latest recorded answer per case, from every batch and the queue.
 
@@ -147,6 +163,15 @@ def verdicts() -> dict:
     the case are dropped first, which removes that comparison in the case that
     provoked it and, where it survives, leaves it between rows that at least
     measured the same thing.
+
+    Experiment results are deliberately **not** here — see `executed`. They
+    prove a case was run; they do not settle what its answer is. `experiment.py`
+    reads the prompts from a frozen copy and keeps its own identity for the
+    scorer, the reviewer and the answer key, none of which `about_this_version`
+    checks: it compares `case_digest` and nothing else. Folding those rows in
+    made a stability experiment's pass B the production verdict, and it moved
+    `rb-g65v-27r3-5p6m` out of `LIMITATIONS.md` on the strength of a row nobody
+    had checked against what the limitation actually says.
     """
     latest = {}
     for path in (glob.glob(str(ROOT / "measurements" / "*.json"))
@@ -155,10 +180,14 @@ def verdicts() -> dict:
             body = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        for row in body if isinstance(body, list) else []:
+        # A batch file is a list of rows; an experiment writes one row per file,
+        # as an object. Reading only lists dropped every experiment result
+        # silently — the file was opened, parsed, and then iterated as nothing.
+        rows = body if isinstance(body, list) else [body]
+        for row in rows:
             if not isinstance(row, dict) or not row.get("case_id"):
                 continue
-            if row.get("incomplete"):
+            if not scorable(row):
                 continue
             case_id = row["case_id"]
             if not about_this_version(case_id, row):
@@ -177,13 +206,45 @@ def verdicts() -> dict:
     return out
 
 
+def executed() -> set:
+    """Every case some paid run has produced a scorable row for, anywhere.
+
+    A different question from `verdicts`, and separating the two is the point.
+    "What is this case's answer" must come from the production stream; "do we
+    still owe a measurement for it" must count every review that was actually
+    bought, including the ones an experiment wrote under
+    `measurements/experiment-*/pass-*/`. Folded into one, the tally either
+    lets an experiment overwrite a verdict or asks the owner to pay again for
+    a case measured yesterday — and it did the second for two cases before this
+    existed, at about a dollar each.
+    """
+    seen = set()
+    for path in (glob.glob(str(ROOT / "measurements" / "*.json"))
+                 + glob.glob(str(ROOT / "measurements" / "queue" / "*.json"))
+                 + glob.glob(str(ROOT / "measurements" / "experiment-*"
+                                  / "pass-*" / "*.json"))):
+        try:
+            body = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for row in (body if isinstance(body, list) else [body]):
+            if not isinstance(row, dict) or not row.get("case_id"):
+                continue
+            if not scorable(row):
+                continue
+            if about_this_version(row["case_id"], row):
+                seen.add(row["case_id"])
+    return seen
+
+
 def account(construction=None) -> dict:
     invalid = rulings()
     limitations = named_in_limitations()
     answers = verdicts()
 
+    measured = executed()
     buckets = {"pass": [], "limitation": [], "invalid": [], "unaccounted": [],
-               "unrun": []}
+               "unrun": [], "unadopted": []}
     for manifest in sorted((ROOT / "corpus-real").glob("*/case.yml")):
         case_id = manifest.parent.name
         body = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
@@ -191,6 +252,14 @@ def account(construction=None) -> dict:
             continue
         if case_id in invalid:
             buckets["invalid"].append(case_id)
+        elif case_id not in answers and case_id in measured:
+            # Bought, but not through the production stream, so it has no
+            # verdict here. Not "not run" — that would ask for the same
+            # measurement to be paid for twice — and not a pass either, which
+            # is what folding experiment rows into `verdicts` produced.
+            # Adopting one is free and is a decision, so it stays visible until
+            # somebody makes it.
+            buckets["unadopted"].append(case_id)
         elif case_id not in answers:
             buckets["unrun"].append(case_id)
         elif answers[case_id]:
@@ -211,11 +280,11 @@ def main() -> int:
     total = sum(len(v) for v in buckets.values())
 
     print("{} case(s){}: {} pass, {} limitation(s), {} invalid, {} not run, "
-          "{} unaccounted".format(
+          "{} measured but not adopted, {} unaccounted".format(
               total, " ({})".format(args.construction) if args.construction else "",
               len(buckets["pass"]), len(buckets["limitation"]),
               len(buckets["invalid"]), len(buckets["unrun"]),
-              len(buckets["unaccounted"])))
+              len(buckets["unadopted"]), len(buckets["unaccounted"])))
 
     if buckets["unaccounted"]:
         print("\nfailed, and nothing says why:")
@@ -224,7 +293,17 @@ def main() -> int:
         print("\nEach needs one of: a fix that is then re-measured, a line in "
               "LIMITATIONS.md, or a ruling that the case cannot measure "
               "anything. There is no fourth.")
-    return 1 if buckets["unaccounted"] or buckets["unrun"] else 0
+    if buckets["unadopted"]:
+        print("\n{} case(s) were measured but their result is not the "
+              "record:\n  {}\n\nThe rows exist and were paid for; nothing has "
+              "said they are this case's answer. Adopting one is free and is a "
+              "decision — publish the row into the measurement stream, or rule "
+              "that it does not settle the case. Not exit 0: after the unrun "
+              "ones are bought this would otherwise announce that everything "
+              "is accounted for while two cases have no verdict.".format(
+                  len(buckets["unadopted"]), "\n  ".join(buckets["unadopted"])))
+    return 1 if (buckets["unaccounted"] or buckets["unrun"]
+                 or buckets["unadopted"]) else 0
 
 
 if __name__ == "__main__":

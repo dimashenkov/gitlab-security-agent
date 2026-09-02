@@ -150,3 +150,94 @@ class TestTheVerdictIsRederived:
             {"category": "path-traversal", "file": "app/other.py"}]
         write_rows(root, "current.json", stored)
         assert check_accounted.verdicts() == {CASE: False}
+
+
+class TestWhatWasBoughtVersusWhatWasDecided:
+    """Two questions the tally had folded into one.
+
+    "Do we still owe a measurement for this case" has to count every review
+    that was actually paid for. "What is this case's answer" must not — an
+    experiment freezes its own prompts, scorer and answer key, and
+    `about_this_version` compares neither: it checks `case_digest` alone.
+    """
+
+    def experiment_row(self, root, digest, passes):
+        directory = root / "measurements" / "experiment-noise" / "pass-a"
+        directory.mkdir(parents=True)
+        (directory / (CASE + ".json")).write_text(
+            json.dumps(row(digest=digest, passes=passes,
+                           ran_at="2026-09-01T11:00:00+00:00")),
+            encoding="utf-8")
+
+    def test_a_case_measured_only_by_an_experiment_is_not_bought_again(
+            self, corpus):
+        """It was called "not run" and would have been paid for twice.
+
+        Two cases stood in that state on 2026-09-02, each already measured
+        twice the day before, at about a dollar each.
+        """
+        root, digest = corpus
+        self.experiment_row(root, digest, passes=True)
+
+        buckets = check_accounted.account()
+        assert CASE not in buckets["unrun"]
+        assert CASE in buckets["unadopted"]
+
+    def test_an_experiment_row_is_not_the_case_s_verdict(self, corpus):
+        """The first fix folded them into `verdicts` and a limitation
+        disappeared: `rb-g65v-27r3-5p6m` moved out of `LIMITATIONS.md` because
+        an experiment's second pass was newer than the production row. What the
+        limitation says had not been checked, and a pass produced under frozen
+        prompts is not evidence that it no longer holds."""
+        root, digest = corpus
+        write_rows(root, "batch.json",
+                   row(digest=digest, passes=False,
+                       ran_at="2026-08-30T10:00:00+00:00"))
+        self.experiment_row(root, digest, passes=True)
+
+        assert check_accounted.verdicts() == {CASE: False}
+        assert CASE in check_accounted.executed()
+
+    def test_a_result_file_holding_one_row_as_an_object_is_read(self, corpus):
+        """`experiment.py` writes an object per case, and the reader iterated
+        `body if isinstance(body, list) else []` — so the file was opened,
+        parsed, and then walked as nothing at all."""
+        root, digest = corpus
+        self.experiment_row(root, digest, passes=True)
+
+        assert check_accounted.executed() == {CASE}
+
+    def test_a_measured_but_unadopted_case_is_not_exit_zero(self, corpus,
+                                                            capsys):
+        """The most reachable harm in the first version of this bucket.
+
+        The exit code asked only about `unaccounted` and `unrun`, so once the
+        unmeasured cases are bought the tool would announce that everything is
+        accounted for while two cases still have no verdict — the tally saying
+        "done" over work nobody decided.
+        """
+        root, digest = corpus
+        self.experiment_row(root, digest, passes=True)
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(sys, "argv", ["check_accounted.py"])
+        try:
+            assert check_accounted.main() == 1
+        finally:
+            monkeypatch.undo()
+        assert "not the record" in capsys.readouterr().out
+
+    def test_one_rule_decides_what_counts_as_a_measurement(self, corpus):
+        """`executed` demanded a boolean `pair_success` and `verdicts` asked
+        only that the row was not `incomplete`. A finished-looking row carrying
+        `null` there became a canonical verdict in one and was invisible to the
+        other — and the verdict was the false one, because `passed()` reads a
+        row with no findings as a failure."""
+        root, digest = corpus
+        half = row(digest=digest, passes=True)
+        half["pair_success"] = None
+        write_rows(root, "batch.json", half)
+
+        assert check_accounted.verdicts() == {}
+        assert check_accounted.executed() == set()
+
