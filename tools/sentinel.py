@@ -67,6 +67,40 @@ CORPUS = ROOT / "corpus-real"
 MEASUREMENTS = ROOT / "measurements"
 
 
+def result_files(root: Path = MEASUREMENTS) -> list:
+    """Every file a paid run has written, in all four places it writes them.
+
+    Batches at the top level, one file per case under `queue/`, one file per
+    case under `experiment-*/pass-*/`, and one file per case under `round-*/`.
+    Three readers in this repository have now been found globbing only the
+    first one or two of those, and each time the effect was the same: work that
+    was paid for read as work that had not happened.
+    """
+    return (sorted(root.glob("*.json"))
+            + sorted((root / "queue").glob("*.json"))
+            + sorted(root.glob("experiment-*/pass-*/*.json"))
+            + sorted(root.glob("round-*/*.json")))
+
+
+def rows_in(body) -> list:
+    """The rows a result file holds, whichever of the three shapes it is.
+
+    A batch is a list. An experiment writes one row per file, as a bare object.
+    And `{"results": [...]}` is accepted by `stage2` and `run_queue` both, so a
+    reader that handles only the first two would be the third variation on the
+    same mistake. Reading an object as `[]` is the quiet version: the file is
+    opened, parsed, and then iterated as nothing.
+    """
+    if isinstance(body, list):
+        return [row for row in body if isinstance(row, dict)]
+    if isinstance(body, dict):
+        found = body.get("results")
+        if isinstance(found, list):
+            return [row for row in found if isinstance(row, dict)]
+        return [body]
+    return []
+
+
 def recorded_outcomes(root: Path = MEASUREMENTS) -> dict:
     """Each case's recorded verdict: `pass`, `fail`, or `unstable`.
 
@@ -82,31 +116,47 @@ def recorded_outcomes(root: Path = MEASUREMENTS) -> dict:
     run-to-run movement is the thing, not noise around a value. `rb-mx5j` is the
     case in point — False, False, then True, with nothing changed between.
 
-    A row whose `pair_success` is absent or null is not an outcome. It is a run
-    that did not conclude, and it never becomes one here; that distinction has
-    already cost this project a withdrawn result.
+    A row whose `pair_success` is absent, null, or not a boolean is not an
+    outcome. It is a run that did not conclude, and it never becomes one here;
+    that distinction has already cost this project a withdrawn result. Not
+    truthiness: `"false"` is a true string, so a row carrying the *text* "false"
+    was recorded as a pass — a typo able to turn a failure into a pass in the
+    suite that exists to catch changes in exactly that direction. A row flagged
+    `incomplete` is dropped for the same reason, whatever it says beside it.
+
+    **Every place a paid run writes**, not the two most readers know about. The
+    stability experiment writes one file per case under
+    `experiment-*/pass-*/`, and those are the runs that measure movement — the
+    thing this suite's unstable arm is made of. With them unread,
+    `go-m6jg-wr9m-cg2f` (True then False) and `rb-g65v-27r3-5p6m` (False then
+    True) were both recorded as a settled `fail`, and the arm that holds the
+    cases which move on their own was missing two of the five.
+
+    That an experiment row is not allowed to *settle* a case's verdict — the
+    rule `tools/check_accounted.py` records, after an experiment's pass B once
+    became the production answer — does not apply here and must not be copied
+    here. This function does not settle anything. It asks whether the case has
+    ever been seen to give two different answers, and a run made from frozen
+    prompts is still a run that saw one.
 
     **Known limitation.** Nothing records *which version* of a case a verdict
     was produced against. An outcome recorded before a case was edited is still
     read as an outcome of the case as it stands. Closing that needs a case
     digest in the measurement rows, which the artifacts do not carry.
     """
-    # The queue's per-case files as well as the batches. Reading only the top
-    # level hid every case measured through `run_queue`, which is how the
-    # unmeasured ones are bought — so the pool this suite is drawn from would
-    # have been missing exactly the cases most recently paid for.
     seen = collections.defaultdict(set)
-    for path in sorted(root.glob("*.json")) + sorted((root / "queue").glob("*.json")):
+    for path in result_files(root):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        for row in (data if isinstance(data, list) else [data]):
-            if not isinstance(row, dict):
-                continue
+        for row in rows_in(data):
             case_id, verdict = row.get("case_id"), row.get("pair_success")
-            if case_id and verdict is not None:
-                seen[case_id].add("pass" if verdict else "fail")
+            if not case_id or row.get("incomplete"):
+                continue
+            if not isinstance(verdict, bool):
+                continue
+            seen[case_id].add("pass" if verdict else "fail")
 
     return {case_id: (verdicts.pop() if len(verdicts) == 1 else "unstable")
             for case_id, verdicts in seen.items()}

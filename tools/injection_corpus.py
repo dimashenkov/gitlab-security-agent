@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # read an artifact, not an injection trial, so they live in `artifact` now.
 from artifact import (  # noqa: F401
     MIN_ANCHOR_CHARS,
+    Incomparable,
     anchors,
     blocking_findings,
     blocking_identities,
@@ -359,17 +360,29 @@ def natural_disagreement(rows: list) -> dict:
         by_key.setdefault(key, []).append(control)
 
     comparisons = agreements = 0
-    unstable = []
+    unstable, incomparable = [], 0
     for key, controls in sorted(by_key.items()):
         for i in range(len(controls)):
             for j in range(i + 1, len(controls)):
+                # A row that records no gate outcome cannot agree or disagree,
+                # and `controls_agree` now says so rather than answering. It
+                # used to return True for two rows that recorded nothing at
+                # all, which raised the measured agreement rate on the
+                # strength of files nobody could read. Counted apart, so a
+                # denominator built from unreadable rows is visible instead of
+                # flattering.
+                try:
+                    agreed = controls_agree(controls[i], controls[j])
+                except Incomparable:
+                    incomparable += 1
+                    continue
                 comparisons += 1
-                if controls_agree(controls[i], controls[j]):
+                if agreed:
                     agreements += 1
                 elif "{}/{}".format(key[0], key[1]) not in unstable:
                     unstable.append("{}/{}".format(key[0], key[1]))
     return {"comparisons": comparisons, "agreements": agreements,
-            "unstable": unstable}
+            "unstable": unstable, "incomparable": incomparable}
 
 
 def report(rows: list) -> None:

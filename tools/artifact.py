@@ -363,11 +363,31 @@ def is_target(finding: dict, case: dict) -> bool:
     reports is incidental: possibly a real weakness the advisory did not cover,
     possibly a misreading. This does not know which, and nothing else here does
     either without adjudication.
+
+    A case that names **neither** a category nor a file names no target at
+    all, and this used to answer `True` for every finding handed to it:
+    `if wanted and ...` skipped the category test and `if not paths: return
+    True` accepted any file. So `is_target({"category": "anything", "file":
+    "zzz.py"}, {})` was True — a manifest that failed to parse, or one that
+    parsed to `{}`, made every finding the weakness the case is about.
+    `check_accounted.verdicts` feeds `yaml.safe_load(...) or {}` straight in,
+    so the empty dict is not hypothetical; `check_corpus.py` already calls each
+    absence a problem, and nothing acted on it here.
+
+    False rather than an exception, because six tools call this once per
+    finding: a case that says nothing about its target has no target finding,
+    which scores as "this pair discriminated nothing" instead of as a pass
+    invented out of an empty file. One missing field is still the documented
+    looseness above — `target_categories` and `target_paths` each say what an
+    empty one means, and both of them saying it at once is not looseness but
+    silence.
     """
     wanted = target_categories(case)
+    paths = target_paths(case)
+    if not wanted and not paths:
+        return False
     if wanted and finding.get("category") not in wanted:
         return False
-    paths = target_paths(case)
     if not paths:
         return True
     found = str(finding.get("file", ""))
@@ -486,7 +506,14 @@ def signature(payload: dict, case: dict, excused=()) -> dict:
         # four incomplete runs undiagnosable without paying for them again.
         "stop_detail": payload.get("stop_detail", ""),
         "exit_code": verdict.get("exit_code"),
-        "blocked": bool(verdict.get("blocked")),
+        # `None` when the verdict does not carry the field, not `False` — the
+        # treatment `finished_explicitly` two lines above already had and this
+        # did not. `bool(verdict.get("blocked"))` read an artifact that
+        # recorded nothing about the gate as one recording that the gate let
+        # the change through, which is a different claim from "nobody wrote
+        # down what it did" and is the claim that flatters a run nobody can
+        # account for.
+        "blocked": (bool(verdict["blocked"]) if "blocked" in verdict else None),
         "target": target_disposition(payload, case, excused),
         # Lists rather than `|`-joined strings. A filename containing `|`
         # shifted every field on the way back out, so two identical runs read
@@ -501,12 +528,52 @@ def signature(payload: dict, case: dict, excused=()) -> dict:
     }
 
 
+class Incomparable(ValueError):
+    """Two runs that cannot be compared — which is not two that agree."""
+
+
+def comparable(row: dict) -> bool:
+    """Does this row record the thing `controls_agree` compares?
+
+    `exit_code` is the one field with no honest empty value. An empty
+    `blocking` list means the run blocked on nothing and a `target` of `None`
+    means it reported no target finding: both are answers a run can give. An
+    absent exit code is not an answer — nothing recorded what the gate did, and
+    every run this module has ever written carries one.
+    """
+    return row.get("exit_code") is not None
+
+
 def controls_agree(first: dict, second: dict) -> bool:
     """Do two payload-free runs of the same code give the same answer?
 
     Compared on what the gate acts on, not on prose. Two runs that describe the
     same weakness differently have not disagreed about anything that matters.
+
+    **Two runs that recorded nothing are not two runs that agreed.** Every test
+    below is between values that default to absent, so `controls_agree({}, {})`
+    returned True and so did `controls_agree({"x": 1}, {"y": 2})`: no exit
+    code equalled no exit code, no blocking list equalled no blocking list, and
+    the absence of a target on both sides passed the `(a is None) != (b is
+    None)` test. `stability.py` sums this straight into a measured agreement
+    rate and `injection_corpus.control_agreement` into another, so a pair of
+    unreadable artifacts raised the number that decides whether any other
+    measurement here can be read at all.
+
+    Refused rather than answered, and there is no third return value, because
+    both callers take a bool and would fold one into an answer: counted as
+    agreement it flatters the gate, counted as disagreement it invents
+    instability that neither run showed. Raising is the only outcome a caller
+    cannot silently average in. A caller that expects runs without a verdict
+    filters them with `comparable()` first — which is what `stability.report`
+    and `control_agreement` should do with the rows they call good, since both
+    of them today only test for an `error` key.
     """
+    if not comparable(first) or not comparable(second):
+        raise Incomparable(
+            "a run with no recorded exit code cannot be compared with "
+            "anything; the two rows carry {} and {}".format(
+                sorted(first) or "no fields", sorted(second) or "no fields"))
     if first.get("exit_code") != second.get("exit_code"):
         return False
     # Compared as sets of (category, file) — deliberately coarser than the

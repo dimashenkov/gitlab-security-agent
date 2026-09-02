@@ -33,7 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from artifact import load_adjudications, ruled_incidental
-from injection_corpus import controls_agree, signature
+from injection_corpus import Incomparable, controls_agree, signature
 from pair_corpus import build_repo, cost_of, cost_summary, load_cases, review
 
 
@@ -88,11 +88,24 @@ def report(rows: list, case_id: str, member: str) -> int:
         print("\nFewer than two runs completed; nothing to compare.")
         return 2
 
-    pairs = agreements = 0
+    pairs = agreements = incomparable = 0
     for i in range(len(good)):
         for j in range(i + 1, len(good)):
+            # A run that recorded no gate outcome cannot agree or disagree.
+            # `controls_agree` used to answer True for two such rows, which
+            # raised the measured agreement rate on the strength of files
+            # nobody could read; it refuses now, and the refusals are counted
+            # apart rather than folded into either side.
+            try:
+                agreed = controls_agree(good[i], good[j])
+            except Incomparable:
+                incomparable += 1
+                continue
             pairs += 1
-            agreements += controls_agree(good[i], good[j])
+            agreements += agreed
+    if incomparable:
+        print("\n{} pair(s) could not be compared: a run recorded no gate "
+              "outcome. They are not counted as agreeing.".format(incomparable))
 
     exits = Counter(r.get("exit_code") for r in good)
 

@@ -71,6 +71,31 @@ class TestAFrozenRoundStaysFrozen:
         roundtool.freeze(1, "approved", dry_run=False)
         assert roundtool.freeze(1, "approved", dry_run=True) == 0
 
+    def test_a_round_of_no_cases_is_refused(self, frozen, monkeypatch, capsys):
+        """A scope that selects nothing froze, ran and compared without error.
+
+        `sentinel.read_cases` reads only lines beginning with `- `, so a suite
+        rewritten as a YAML flow list selects no case; `scope_cases("sentinel")`
+        then finds nothing missing, because it is comparing two empty sets. The
+        round is frozen over an empty denominator and the comparison reports
+        that nothing moved, with no review bought.
+        """
+        monkeypatch.setattr(roundtool, "scope_cases", lambda scope: [])
+        assert roundtool.freeze(1, "sentinel", dry_run=False) == 2
+        assert "selected no case" in capsys.readouterr().out
+        assert not roundtool.manifest_path(1).exists()
+
+    def test_an_empty_manifest_is_not_a_round_in_which_nothing_moved(
+            self, frozen, capsys):
+        """One frozen before `freeze` learned to refuse is still on disk."""
+        path = roundtool.manifest_path(1)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(
+            {"round": 1, "cases": [], "environment": {},
+             "counts": {"with_baseline": 0}}), encoding="utf-8")
+        assert roundtool.compare(1) == 2
+        assert "frozen with no cases" in capsys.readouterr().out
+
 
 class TestOnlyComparableCasesCountAsStability:
     def test_a_case_that_never_ran_answers_recall_only(self, frozen):
@@ -157,6 +182,57 @@ class TestComparing:
         assert roundtool.compare(9) == 2
         assert "none may be invented now" in capsys.readouterr().out
 
+    def test_a_crashed_review_is_not_agreement(self, frozen, capsys):
+        """A review that never produced an answer was counted as one.
+
+        `pair_corpus.run_case` writes `pair_success` only on the success path.
+        A pair that crashed carries `error` and neither that key nor
+        `incomplete`, so the filter that drops incomplete rows admits it — and
+        `bool(row.get("pair_success"))` turned the missing key into False,
+        which against a frozen baseline of False agreed. The paid pass then
+        reported "100% agreement" over a case whose review had fallen over.
+        """
+        roundtool.freeze(1, "approved", dry_run=False)
+        directory = frozen / "measurements" / "round-1"
+        (directory / "b-two.json").write_text(
+            json.dumps([{"case_id": "b-two",
+                         "error": "CalledProcessError: 1"}]), encoding="utf-8")
+        capsys.readouterr()
+        roundtool.compare(1)
+        out = capsys.readouterr().out
+        assert "0 agreed, 0 flipped" in out
+        assert "without producing a verdict" in out
+        assert "CalledProcessError" in out
+        assert "100% agreement" not in out
+
+    def test_a_stored_string_verdict_is_not_a_verdict(self, frozen, capsys):
+        """`"false"` is a non-empty string: `bool()` read it as a pass."""
+        roundtool.freeze(1, "approved", dry_run=False)
+        results_for(frozen, 1, **{"b-two": "false"})
+        capsys.readouterr()
+        roundtool.compare(1)
+        out = capsys.readouterr().out
+        assert "0 agreed, 0 flipped" in out
+        assert "without producing a verdict" in out
+
+    def test_a_baseline_that_is_not_a_verdict_does_not_become_a_flip(
+            self, frozen, capsys):
+        """The other half of the same comparison: a null baseline would make
+        every case flip against it, and the number would read as a finding."""
+        roundtool.freeze(1, "approved", dry_run=False)
+        path = roundtool.manifest_path(1)
+        body = json.loads(path.read_text(encoding="utf-8"))
+        for case in body["cases"]:
+            if case["case_id"] == "b-two":
+                case["baseline"] = {"pair_success": None}
+        path.write_text(json.dumps(body), encoding="utf-8")
+        results_for(frozen, 1, **{"b-two": True})
+        capsys.readouterr()
+        roundtool.compare(1)
+        out = capsys.readouterr().out
+        assert "0 agreed, 0 flipped" in out
+        assert "not a verdict" in out
+
     def test_an_incomplete_row_is_not_a_verdict(self, frozen, capsys):
         roundtool.freeze(1, "approved", dry_run=False)
         directory = frozen / "measurements" / "round-1"
@@ -202,3 +278,31 @@ def test_a_sentinel_case_the_queue_will_not_run_stops_the_freeze(monkeypatch):
         round_tool.scope_cases("sentinel")
 
     assert "will not run" in str(raised.value)
+
+
+def test_a_comparison_that_compared_nothing_is_not_exit_zero(tmp_path,
+                                                             monkeypatch,
+                                                             capsys):
+    """Exit 0 said "nothing wrong" about a round that measured nothing.
+
+    Every case missing, or every row running without a verdict, printed the
+    same green status as a round where everything agreed — and the exit code,
+    which is what a pipeline reads, could not tell them apart.
+    """
+    import round as round_tool
+
+    monkeypatch.setattr(round_tool, "ROOT", tmp_path)
+    home = tmp_path / "measurements" / "round-9"
+    home.mkdir(parents=True)
+    (home / "manifest.json").write_text(json.dumps({
+        "round": 9, "suite": "sentinel",
+        "counts": {"cases": 1, "with_baseline": 1},
+        "environment": {}, "cases": [
+            {"case_id": "one", "case_digest": "d" * 16, "pair_success": True,
+             "contributes_to": ["stability"]}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(round_tool, "environment", lambda: {})
+
+    assert round_tool.compare(9) == 2
+    assert "measured nothing" in capsys.readouterr().out
+

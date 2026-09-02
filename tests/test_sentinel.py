@@ -170,6 +170,103 @@ class TestWhatTheRuleRefuses:
         assert suite["outcomes"]["go-b"] == "unstable"
 
 
+class TestEveryPlaceAPaidRunWrites:
+    """The suite was drawn from two of the four directories results land in.
+
+    A run costs money once and is readable for ever after, so a reader that
+    cannot see one of the places they land does not report less — it reports
+    something false. Both of these were true against the real corpus: two cases
+    the stability experiment had seen flip were recorded as settled failures,
+    and the arm of the suite that exists to hold cases which move on their own
+    was missing two of its five.
+    """
+
+    def test_an_experiment_pass_is_read(self, world):
+        """`measurements/experiment-*/pass-*/` — 27 files, invisible.
+
+        `go-m6jg-wr9m-cg2f` was True in pass A and False in pass B and the tool
+        called it `fail`; `rb-g65v-27r3-5p6m` was False then True and it called
+        that `fail` too.
+        """
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        measured(measurements, [row("go-a", False)], name="batch-1.json")
+        pass_a = measurements / "experiment-noise-floor" / "pass-a"
+        pass_a.mkdir(parents=True)
+        (pass_a / "go-a.json").write_text(
+            json.dumps(row("go-a", True)), encoding="utf-8")
+
+        assert recorded_outcomes(measurements)["go-a"] == "unstable"
+
+    def test_an_experiment_file_is_an_object_not_a_list(self, world):
+        """The shape, stated on its own. `experiment.py` writes one row per
+        file as a bare object; a reader that iterates only lists opens the
+        file, parses it, and then iterates it as nothing."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        directory = measurements / "experiment-x" / "pass-b"
+        directory.mkdir(parents=True)
+        (directory / "go-a.json").write_text(
+            json.dumps(row("go-a", True)), encoding="utf-8")
+
+        assert recorded_outcomes(measurements) == {"go-a": "pass"}
+
+    def test_a_round_directory_is_read(self, world):
+        """`--round N` writes `measurements/round-N/<case>.json`."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        directory = measurements / "round-2"
+        directory.mkdir(parents=True)
+        (directory / "go-a.json").write_text(
+            json.dumps([row("go-a", True)]), encoding="utf-8")
+
+        assert recorded_outcomes(measurements) == {"go-a": "pass"}
+
+    def test_a_results_container_is_read(self, world):
+        """`{"results": [...]}` is a shape `stage2` and `run_queue` both
+        accept, so a reader here that did not would be the same defect a third
+        time."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        measured(measurements, [row("go-a", True)])
+        (measurements / "batch-2.json").write_text(
+            json.dumps({"results": [row("go-a", False)]}), encoding="utf-8")
+
+        assert recorded_outcomes(measurements)["go-a"] == "unstable"
+
+
+class TestAVerdictIsReadNotCoerced:
+    def test_the_string_false_is_not_a_pass(self, world):
+        """`bool("false")` is true. A typo in one field could turn a recorded
+        failure into a pass in the suite whose whole job is to notice a change
+        in that direction, and nothing would have printed."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        measured(measurements, [{"case_id": "go-a", "pair_success": "false"}])
+
+        assert recorded_outcomes(measurements) == {}
+
+    def test_a_number_is_not_a_verdict(self, world):
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        measured(measurements, [{"case_id": "go-a", "pair_success": 1}])
+
+        assert recorded_outcomes(measurements) == {}
+
+    def test_an_incomplete_row_contributes_nothing(self, world):
+        """A run that did not conclude is not a result. Left in, it makes a
+        case that later passes look like a case that moves on its own — the
+        noise floor measured on runs that were cut off."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        measured(measurements, [row("go-a", True)], name="batch-1.json")
+        measured(measurements,
+                 [{"case_id": "go-a", "pair_success": False, "incomplete": True}],
+                 name="batch-2.json")
+
+        assert recorded_outcomes(measurements)["go-a"] == "pass"
+
+
 class TestTheManifest:
     def test_the_written_list_round_trips(self, world, tmp_path):
         corpus, measurements = world
@@ -304,3 +401,18 @@ class TestTheRealSuite:
 
         assert "rb-mx5j-mp4f-g8jg" in read_cases(root / "suites" / "sentinel.yml")
         assert recorded_outcomes(root / "measurements")["rb-mx5j-mp4f-g8jg"] == "unstable"
+
+    def test_the_two_cases_the_experiment_saw_flip_are_unstable(self):
+        """Against the repository's own measurements, and the reason the glob
+        was widened.
+
+        Both are in `measurements/experiment-noise-floor-2/`, one verdict in
+        pass A and the opposite in pass B, with nothing changed between. While
+        those files were unread each was recorded as a settled `fail` — a case
+        known to move, filed under an arm that says it does not.
+        """
+        root = Path(__file__).resolve().parents[1]
+        outcomes = recorded_outcomes(root / "measurements")
+
+        assert outcomes["go-m6jg-wr9m-cg2f"] == "unstable"
+        assert outcomes["rb-g65v-27r3-5p6m"] == "unstable"

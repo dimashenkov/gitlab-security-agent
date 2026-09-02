@@ -290,17 +290,62 @@ def probe_scope(args) -> Result:
 
 
 def result_files() -> list:
-    """Every file holding paid results, batches and queue alike.
+    """The **production stream**: batches at the top level, and the queue.
 
-    The queue writes one file per case under `measurements/queue/`, and these
-    readers globbed only the top level — so a run made through the queue was
-    invisible to the tracker that reports how far the work has got. It reads as
-    "less has been done", which is the safer direction of the two and still
-    wrong: the stage numbers are what the owner reads to decide what to buy
-    next, and under-reporting them buys the same measurement twice.
+    It used to say "every file holding paid results", and that was false in
+    both directions at once. It is not every file — the experiment writes 27
+    more under `experiment-*/pass-*/` and `--round N` writes to `round-N/` —
+    and it must not be, for the readers that settle a verdict.
+
+    `tools/check_accounted.py` records why, and it was paid for: folding
+    experiment rows into the verdicts made a stability experiment's pass B the
+    production answer and moved `rb-g65v-27r3-5p6m` out of `LIMITATIONS.md` on
+    a row nobody had checked. `experiment.py` reads its prompts from a frozen
+    copy and keeps its own identity for the scorer, the reviewer and the answer
+    key — none of which `case_digest` compares — so an experiment row proves a
+    case was *run*, not what its answer is.
+
+    Which is why the name of this one now says production stream, and
+    `paid_result_files` below answers the other question separately. One list
+    could not answer both, and a docstring claiming it did was the whole
+    defect: a reader taking it at its word widens the glob and silently hands
+    the verdict to an experiment.
     """
     return sorted((ROOT / "measurements").glob("*.json")) + sorted(
         (ROOT / "measurements" / "queue").glob("*.json"))
+
+
+def paid_result_files() -> list:
+    """Every file a paid run has written, in all four places it writes them.
+
+    For the questions about money and about what was bought, where an
+    experiment run counts exactly as much as any other: it was billed the same
+    way, to the same account, and if one of them had been billed to an API key
+    a reader that cannot see the file could never say so.
+    """
+    measurements = ROOT / "measurements"
+    return sorted(set(result_files())
+                  | set(measurements.glob("experiment-*/pass-*/*.json"))
+                  | set(measurements.glob("round-*/*.json")))
+
+
+def rows_in(body) -> list:
+    """The rows a result file holds, whichever of the three shapes it is.
+
+    A batch is a list, `{"results": [...]}` is accepted here and by
+    `run_queue`, and an experiment writes one bare object per file. Handling
+    only the first two is how widening a glob changes nothing: the new files
+    are opened, parsed, and then read as no rows at all — the failure looks
+    exactly like the fix having worked.
+    """
+    if isinstance(body, list):
+        return [row for row in body if isinstance(row, dict)]
+    if isinstance(body, dict):
+        found = body.get("results")
+        if isinstance(found, list):
+            return [row for row in found if isinstance(row, dict)]
+        return [body]
+    return []
 
 
 def _instant(value) -> Optional[datetime]:
@@ -377,6 +422,40 @@ def _pair_passed(row: dict, case_id: str) -> bool:
     return found and not persists
 
 
+def measured_outside_the_stream(current: Dict[str, set]) -> set:
+    """Cases a paid run has a usable row for, in none of which is a verdict.
+
+    Two questions, and folding them into one costs money either way. "What is
+    this case's answer" has to come from the production stream. "Do we still
+    owe a measurement for it" has to count every review that was bought,
+    including the 27 an experiment wrote under `experiment-*/pass-*/` — and
+    while nothing asked the second question, a case measured only there read as
+    never run, which is a request to pay for it again. That happened twice
+    before `check_accounted.py` separated them, at about a dollar each.
+
+    Not a verdict, and deliberately not returned as one: what to do with such a
+    row is a decision, and it stays visible until somebody makes it.
+    """
+    stream = {path.resolve() for path in result_files()}
+    seen = set()
+    for path in paid_result_files():
+        if path.resolve() in stream:
+            continue
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        for row in rows_in(body):
+            case_id = row.get("case_id")
+            if not isinstance(case_id, str) or not case_id:
+                continue
+            if row.get("incomplete") or not isinstance(row.get("pair_success"), bool):
+                continue
+            if row.get("case_digest") in current.get(case_id, ()):
+                seen.add(case_id)
+    return seen
+
+
 def probe_use(args) -> Result:
     """Both members of every corpus pair run, and the decision preserved.
 
@@ -448,17 +527,7 @@ def probe_use(args) -> Result:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
             continue
-        if isinstance(body, list):
-            rows = body
-        elif isinstance(body, dict):
-            rows = body.get("results") or []
-        else:
-            continue                       # a scalar is not a batch result
-        if not isinstance(rows, list):
-            continue
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
+        for row in rows_in(body):
             case_id = row.get("case_id")
             if not isinstance(case_id, str) or not case_id:
                 continue
@@ -499,7 +568,16 @@ def probe_use(args) -> Result:
     split = [c for c in run if len(verdicts[c]) > 1]
     passing = [c for c in run if verdicts[c] == {True}]
     stale = sorted(set(undated) - set(verdicts))
+    # Bought, and with no verdict here. Named rather than counted as unrun: the
+    # difference between "nobody has paid for this" and "somebody paid and
+    # nothing adopted the result" is a dollar, and the tracker is what the
+    # owner reads to decide what to buy next.
+    unadopted = sorted(measured_outside_the_stream(
+        {name: current[name] for name in cases}) - set(run))
     beside = " (+{} snapshot)".format(snapshots) if snapshots else ""
+    if unadopted:
+        beside = ", {} measured outside the stream and not adopted: {}{}".format(
+            len(unadopted), ", ".join(unadopted[:2]), beside)
     if stale:
         beside = ", {} from an unrecorded corpus version{}".format(
             len(stale), beside)
@@ -594,12 +672,8 @@ def _failing_cases() -> list:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
             continue
-        rows = body if isinstance(body, list) else (
-            body.get("results") if isinstance(body, dict) else [])
-        if not isinstance(rows, list):
-            continue
-        for row in rows:
-            if not isinstance(row, dict) or row.get("incomplete"):
+        for row in rows_in(body):
+            if row.get("incomplete"):
                 continue
             case_id = row.get("case_id")
             if not isinstance(case_id, str) or not case_id:
@@ -663,16 +737,19 @@ def probe_spend(args) -> Result:
     however many more were run: a check pointed at a source the current work
     does not produce, which is the drift point 8 itself had.
     """
+    # Every place a paid run lands, not the production stream only. A billed
+    # run is a billed run wherever its file was written, and 27 of them — every
+    # review the stability experiment bought — were outside what this probe
+    # could read. It answered "each on an established subscription" over a set
+    # it had not opened, which is the same clean sheet over an unread corpus
+    # that this probe was rewritten once already to stop printing.
     rows = []
-    for path in result_files():
+    for path in paid_result_files():
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
             continue
-        found = body if isinstance(body, list) else (
-            body.get("results") if isinstance(body, dict) else None)
-        if isinstance(found, list):
-            rows.extend(r for r in found if isinstance(r, dict))
+        rows.extend(rows_in(body))
     if not rows:
         return Result(TODO, "no runs filed")
 

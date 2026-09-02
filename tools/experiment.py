@@ -218,6 +218,23 @@ def freeze(name: str, dry_run: bool) -> int:
 
     body = build(name)
     counts = body["counts"]
+    if not counts["cases"]:
+        # `sentinel.main` refuses an empty selection with exit 2; this had no
+        # equivalent, and every command below it succeeds over nothing.
+        # `sentinel.read_cases` recognises only lines that start with `- `, so
+        # writing the suite as a YAML flow list — `cases: [a, b]`, legal and
+        # meaning the same thing — selects no case, and the whole experiment
+        # then runs: `freeze` writes a manifest with `counts.cases: 0`,
+        # `verify` reports nothing has moved, `run` reports nothing left in
+        # this pass, and `compare` prints "No movement observed in one paired
+        # repetition" and exits 0. Zero reviews bought, reported as a suite
+        # that did not move.
+        print("the suite at {} names no case. Either its list is empty or it "
+              "is written in a form sentinel.read_cases does not read — it "
+              "takes only lines beginning with '- '. An experiment over no "
+              "case runs to the end and reports that nothing moved, having "
+              "bought no review at all.".format(SUITE.name), file=sys.stderr)
+        return 2
     print("experiment {} · passes {} and {}".format(name, *PASSES))
     print("  {} case(s) per pass, {} review(s) in total".format(
         counts["cases"], counts["reviews"]))
@@ -322,7 +339,17 @@ def load(name: str) -> Optional[Dict[str, Any]]:
     if not path.is_file():
         print("no experiment {} — freeze it first".format(name), file=sys.stderr)
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    body = json.loads(path.read_text(encoding="utf-8"))
+    if not body.get("cases"):
+        # `freeze` refuses to write one now; a manifest frozen before it did is
+        # still on disk, and every command reading it would succeed over
+        # nothing. Refused here as well, once, for all three of them.
+        print("experiment {} was frozen with no cases. Nothing was bought and "
+              "nothing can be compared; a pass over no case is not a pass in "
+              "which nothing moved. Re-freeze it with a suite that names "
+              "cases.".format(name), file=sys.stderr)
+        return None
+    return body
 
 
 def verify(name: str) -> int:
@@ -506,8 +533,12 @@ def verdicts(name: str, label: str, frozen: Dict[str, str]) -> Dict[str, Any]:
 def compare(name: str) -> int:
     body = load(name)
     if body is None:
-        print("It was never frozen, so there is no rule to compare against and "
-              "none may be invented now.", file=sys.stderr)
+        # Only when there is no manifest at all. `load` also refuses one frozen
+        # over no case, and telling that reader it was never frozen would send
+        # them looking for the wrong thing.
+        if not (home(name) / "manifest.json").is_file():
+            print("It was never frozen, so there is no rule to compare against "
+                  "and none may be invented now.", file=sys.stderr)
         return 2
 
     # Checked here as well as before each case. `run` closes the window up to

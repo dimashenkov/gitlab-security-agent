@@ -14,8 +14,8 @@ and all of them leave a reader trusting a sentence that is no longer true.
 from __future__ import annotations
 
 import sys
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 

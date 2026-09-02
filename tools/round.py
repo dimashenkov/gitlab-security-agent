@@ -223,6 +223,19 @@ def freeze(number: int, scope: str, dry_run: bool) -> int:
 
     body = build(number, scope)
     counts = body["counts"]
+    if not counts["cases"]:
+        # `sentinel.main` refuses an empty selection with exit 2 and this had
+        # no equivalent: `read_cases` reads only lines beginning with `- `, so
+        # a suite rewritten as a YAML flow list — legal, same meaning — selects
+        # nothing, and `scope_cases("sentinel")` then finds no case missing
+        # because it is comparing two empty sets. A round of nothing freezes,
+        # runs, and compares without error over an empty denominator.
+        print("scope {!r} selected no case. A round of nothing would freeze, "
+              "run and compare without error, and report agreement over an "
+              "empty denominator. Fix the scope — for `sentinel`, check that "
+              "suites/sentinel.yml still lists its cases one per line."
+              .format(scope))
+        return 2
     print("round {} · scope {}".format(number, scope))
     print("  {} case(s), {} review(s)".format(counts["cases"], counts["reviews"]))
     print("  {} with a baseline — the stability denominator".format(
@@ -252,6 +265,14 @@ def compare(number: int) -> int:
               .format(number))
         return 2
     body = json.loads(path.read_text(encoding="utf-8"))
+    if not body.get("cases"):
+        # A manifest frozen before `freeze` learned to refuse one. Reading it
+        # prints "0 agreed, 0 flipped" and a reader takes that for a round in
+        # which nothing moved.
+        print("Round {} was frozen with no cases. There is nothing to compare "
+              "and nothing was bought; this is not a round in which nothing "
+              "moved.".format(number))
+        return 2
 
     directory = path.parent
     results: Dict[str, Any] = {}
@@ -275,6 +296,7 @@ def compare(number: int) -> int:
 
     agreed = flipped = missing = 0
     moves: List[str] = []
+    unresolved: List[str] = []
     for case in body["cases"]:
         if "stability" not in case["contributes_to"]:
             continue
@@ -283,7 +305,30 @@ def compare(number: int) -> int:
             missing += 1
             continue
         before = case["baseline"]["pair_success"]
-        after = bool(row.get("pair_success"))
+        after = row.get("pair_success")
+        # `is True` / `is False`, the spelling `experiment.verdicts` already
+        # uses, and not `bool(row.get("pair_success"))`.
+        #
+        # `pair_corpus.run_case` writes `pair_success` only on the success
+        # path; a pair that crashed carries `error` and neither that key nor
+        # `incomplete`, so the filter above admits it. `bool(None)` is False,
+        # and against a baseline of False that counted a review which never
+        # produced an answer as evidence that nothing had moved — the one
+        # thing this file exists to measure, satisfied by the absence of the
+        # data rather than by the data. A stored `"false"` would have gone the
+        # other way and read as a pass.
+        if after is not True and after is not False:
+            unresolved.append("{}: {}".format(
+                case["case_id"],
+                row.get("error") or "pair_success={!r}".format(after)))
+            continue
+        # The other half of the same comparison. A hand-edited manifest whose
+        # baseline is null would make every case flip against it, and the
+        # number would look like a finding.
+        if before is not True and before is not False:
+            unresolved.append("{}: the frozen baseline is {!r}, not a verdict"
+                              .format(case["case_id"], before))
+            continue
         if before == after:
             agreed += 1
         else:
@@ -296,9 +341,29 @@ def compare(number: int) -> int:
     print("  {} agreed, {} flipped, {} not yet run".format(agreed, flipped, missing))
     for line in moves:
         print("    " + line)
+    if unresolved:
+        print("  {} ran without producing a verdict — neither agreement nor a "
+              "flip, and no observation of this case:".format(len(unresolved)))
+        for line in unresolved:
+            print("    " + line)
     if total:
         print("  {:.0%} agreement — one pass against one pass, so this bounds "
               "instability and cannot establish stability.".format(agreed / total))
+    if not total:
+        # Exit 0 said "nothing wrong" about a comparison that compared nothing.
+        # A round where every case is missing, or every row ran without
+        # producing a verdict, printed the same green status as one where
+        # everything agreed — and the reader who wanted the second cannot tell
+        # them apart from the exit code alone.
+        print("\n  No case produced both a baseline and a verdict, so this "
+              "measured nothing. Not exit 0: an empty comparison and a "
+              "comparison that found no movement are different answers.")
+        return 2
+    if unresolved:
+        # A run that produced no verdict is an absence, and absences are what
+        # this project refuses to read as agreement. Named above, and not
+        # green here.
+        return 2
     return 0
 
 

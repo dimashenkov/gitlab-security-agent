@@ -32,11 +32,25 @@ class Args:
     full = False
 
 
+TARGET = {"category": "injection", "file": "app.py"}
+
+
 def case(root: Path, case_id: str, construction: str = "regression") -> None:
+    """A case with an answer key, because a case without one scores nothing.
+
+    The manifest used to name only the id and the construction, and `is_target`
+    answered True for every finding when a case named neither a category nor a
+    file — so `unsafe_findings: [{}]`, a finding with no category and no file,
+    counted as having found the weakness. That is the defect these fixtures sat
+    on, not a shape any real case has: `check_corpus.py` calls both absences a
+    problem.
+    """
     directory = root / "corpus-real" / case_id
     directory.mkdir(parents=True)
     (directory / "case.yml").write_text(
-        "case_id: {}\nconstruction: {}\n".format(case_id, construction),
+        "case_id: {}\nconstruction: {}\nexpected_category: {}\n"
+        "expected_file: {}\n".format(case_id, construction,
+                                     TARGET["category"], TARGET["file"]),
         encoding="utf-8")
 
 
@@ -587,6 +601,114 @@ def test_an_api_run_is_not_a_local_run(root):
     assert probe_spend(Args()).state == TODO
 
 
+# --------------------------------------------- where a paid run actually lands
+
+
+def experiment_row(root: Path, case_id: str, row: dict,
+                   where: str = "experiment-noise-floor/pass-a") -> None:
+    """One row where `experiment.py` writes it: a bare object, one per file.
+
+    Two things have to be right for such a row to be read at all — the glob has
+    to reach the directory, and the reader has to accept an object where a
+    batch is a list. Get only the first and the file is opened, parsed, and
+    then iterated as nothing, which looks exactly like the fix having worked.
+    """
+    directory = root / "measurements" / where
+    directory.mkdir(parents=True, exist_ok=True)
+    if "case_digest" not in row:
+        case_dir = root / "corpus-real" / case_id
+        if case_dir.is_dir():
+            row["case_digest"] = case_digest(case_dir)
+    (directory / (case_id + ".json")).write_text(
+        json.dumps(dict(row, case_id=case_id)), encoding="utf-8")
+
+
+def test_the_production_stream_is_batches_and_the_queue_only(root):
+    """It is not "every file holding paid results", whatever the docstring used
+    to say, and it must not become that.
+
+    `check_accounted.py` records what it cost when the two were folded
+    together: a stability experiment's pass B became the production answer and
+    moved `rb-g65v-27r3-5p6m` out of `LIMITATIONS.md` on a row nobody had
+    checked. An experiment reads its prompts from a frozen copy and keeps its
+    own scorer, reviewer and answer key, none of which `case_digest` compares.
+    """
+    case(root, "one")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+    experiment_row(root, "one", {"pair_success": False})
+
+    names = {path.name for path in stage2.result_files()}
+
+    assert names == {"b.json"}
+
+
+def test_an_experiment_cannot_overturn_a_recorded_verdict(root):
+    """The property, at the level that matters. The experiment row here is the
+    later one by `ran_at`, so a reader that widened the glob would hand it the
+    verdict — quietly, and with the tracker turning green or red on it."""
+    case(root, "one")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True,
+                            "ran_at": "2026-09-01T09:00:00+00:00"}])
+    experiment_row(root, "one", {"pair_success": False,
+                                 "ran_at": "2026-09-01T13:00:00+00:00"})
+
+    assert probe_use(Args()).state == DONE
+
+
+def test_a_case_measured_only_by_an_experiment_is_not_reported_unrun(root):
+    """The money question, and the one the glob gap actually broke.
+
+    A case bought through an experiment and nowhere else read as never run, so
+    the tracker asked the owner to pay for it a second time. That happened
+    twice before `check_accounted.py` split the two questions, at about a
+    dollar each. It is not a pass either — nothing has adopted the row — so it
+    is named, and the naming is the decision somebody still has to make.
+    """
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+    experiment_row(root, "two", {"pair_success": True})
+
+    result = probe_use(Args())
+
+    assert "measured outside the stream and not adopted: two" in result.detail
+    assert result.state == PARTIAL
+
+
+def test_an_experiment_run_is_read_by_the_billing_probe(root):
+    """A billed run is a billed run wherever its file was written. 27 of them
+    were outside what this probe could open, and it printed "each on an
+    established subscription" over a set it had not read — the same clean sheet
+    over an unread corpus it was rewritten once already to stop printing."""
+    from stage2 import probe_spend
+
+    case(root, "one")
+    experiment_row(root, "one", {
+        "pair_success": True,
+        "members": {"unsafe": {"provenance": {"provider": "claude-cli",
+                                              "auth_method": "api-key"}}}})
+
+    result = probe_spend(Args())
+
+    assert result.state == "broken", result
+    assert "one" in result.detail
+
+
+def test_a_round_directory_is_read_by_the_billing_probe(root):
+    """`--round N` writes `measurements/round-N/<case>.json`, the fourth place
+    results land and the one no reader had heard of."""
+    from stage2 import probe_spend
+
+    case(root, "one")
+    experiment_row(root, "one", {
+        "pair_success": True,
+        "members": {"unsafe": {"provenance": {"provider": "claude-cli",
+                                              "auth_method": "api-key"}}}},
+        where="round-2")
+
+    assert probe_spend(Args()).state == "broken"
+
+
 def failing_row(root: Path, case_id: str) -> None:
     """A pair whose unsafe member found nothing, which is a failure."""
     batch(root, case_id + ".json", [{
@@ -768,7 +890,7 @@ def test_a_case_that_was_re_run_and_passed_is_no_longer_owed_an_explanation(root
 
     batch(root, "b.json", [{"case_id": "one", "pair_success": True,
                             "ran_at": "2026-08-28T14:00:00+00:00",
-                            "safe_findings": [], "unsafe_findings": [{}]}])
+                            "safe_findings": [], "unsafe_findings": [TARGET]}])
     assert probe_fixes(Args()).state == DONE
 
 
@@ -786,7 +908,7 @@ def test_a_case_that_was_re_run_and_broke_is_owed_one_again(root):
     case(root, "one")
     batch(root, "a.json", [{"case_id": "one", "pair_success": True,
                             "ran_at": "2026-08-28T10:00:00+00:00",
-                            "safe_findings": [], "unsafe_findings": [{}]}])
+                            "safe_findings": [], "unsafe_findings": [TARGET]}])
     batch(root, "b.json", [{"case_id": "one", "pair_success": False,
                             "ran_at": "2026-08-28T14:00:00+00:00",
                             "safe_findings": [], "unsafe_findings": []}])
@@ -805,7 +927,7 @@ def test_two_runs_that_disagree_at_one_instant_are_still_owed_an_explanation(roo
     case(root, "one")
     batch(root, "a.json", [{"case_id": "one", "pair_success": True,
                             "ran_at": "2026-08-28T14:00:00+00:00",
-                            "safe_findings": [], "unsafe_findings": [{}]}])
+                            "safe_findings": [], "unsafe_findings": [TARGET]}])
     batch(root, "b.json", [{"case_id": "one", "pair_success": False,
                             "ran_at": "2026-08-28T14:00:00+00:00",
                             "safe_findings": [], "unsafe_findings": []}])

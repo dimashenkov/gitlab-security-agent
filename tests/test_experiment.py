@@ -150,6 +150,70 @@ class TestTheFreeze:
         assert not (world / "measurements" / "experiment-e").exists()
 
 
+class TestAnEmptySuiteIsNotAnExperiment:
+    """A suite naming no case ran the whole tool and reported that it had not
+    moved.
+
+    `sentinel.read_cases` recognises only lines beginning with `- `. Rewrite
+    the suite as a YAML flow list — `cases: [go-a, py-a]`, legal and meaning
+    the same thing — and it selects nothing. `freeze` then wrote a manifest
+    with `counts.cases: 0`, `verify` reported nothing had moved over 0 cases,
+    `run` reported nothing left in this pass, and `compare` printed "No
+    movement observed in one paired repetition" and exited 0. Zero reviews
+    bought, reported as a suite that did not move. `sentinel.main` refuses an
+    empty selection with exit 2; this had no equivalent.
+    """
+
+    @pytest.fixture
+    def flow_list(self, world):
+        (world / "suites" / "sentinel.yml").write_text(
+            "cases: [go-a, py-a]\n", encoding="utf-8")
+        return world
+
+    def test_the_suite_still_parses_as_yaml_and_still_names_nothing(
+            self, flow_list):
+        import yaml
+        from sentinel import read_cases
+
+        text = (flow_list / "suites" / "sentinel.yml").read_text()
+        assert yaml.safe_load(text)["cases"] == ["go-a", "py-a"]
+        assert read_cases(flow_list / "suites" / "sentinel.yml") == []
+
+    def test_freezing_over_no_case_is_refused(self, flow_list, capsys):
+        assert experiment.freeze("e", dry_run=False) == 2
+        assert "names no case" in capsys.readouterr().err
+        assert not (flow_list / "measurements" / "experiment-e"
+                    / "manifest.json").exists()
+
+    def test_a_manifest_already_frozen_over_no_case_is_refused(
+            self, world, capsys):
+        """One frozen before `freeze` learned to refuse is still on disk, and
+        every command that reads it would otherwise succeed over nothing."""
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text())
+        body["cases"] = []
+        body["protocol"]["order"] = []
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        assert experiment.verify("e") == 2
+        assert experiment.run("e", "a", None) == 2
+        assert experiment.compare("e") == 2
+        err = capsys.readouterr().err
+        assert "frozen with no cases" in err
+        assert "never frozen" not in err
+
+    def test_no_movement_is_never_printed_over_no_case(self, world, capsys):
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text())
+        body["cases"] = []
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        experiment.compare("e")
+        assert "No movement observed" not in capsys.readouterr().out
+
+
 class TestPublishing:
     """Every file this tool writes goes through one function, and these are its
     properties. Three separate defects lived here before it existed."""
