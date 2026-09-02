@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security agent · review flow</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --ink:#141210; --soft:#57514a; --faint:#8d857a;
+    --ground:#f7f4ec; --card:#fffefb; --rule:#ddd5c6; --wire:#b5aa98;
+    --stop:#d93d1a; --stop-bg:#fde5dd;
+    --gate:#0f9d63; --gate-bg:#d6f4e6;
+    --paid:#d9820a; --paid-bg:#fdf0d4;
+    --loop:#2b7fd4; --loop-bg:#dcebfc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink:#f2ede4; --soft:#b9b1a5; --faint:#877f74;
+      --ground:#131110; --card:#1f1c18; --rule:#3b352e; --wire:#544c42;
+      --stop:#ff9573; --stop-bg:#40201a;
+      --gate:#3fd9a0; --gate-bg:#0f3529;
+      --paid:#ffbc4d; --paid-bg:#3a2b0e;
+      --loop:#6bb6ff; --loop-bg:#12283f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink:#f2ede4; --soft:#b9b1a5; --faint:#877f74;
+    --ground:#131110; --card:#1f1c18; --rule:#3b352e; --wire:#544c42;
+    --stop:#ff9573; --stop-bg:#40201a;
+    --gate:#3fd9a0; --gate-bg:#0f3529;
+    --paid:#ffbc4d; --paid-bg:#3a2b0e;
+    --loop:#6bb6ff; --loop-bg:#12283f;
+  }
+  html { -webkit-text-size-adjust:100%; }
+  body {
+    background:var(--ground); color:var(--ink); margin:0;
+    padding:2.5rem 1rem 4rem;
+    font:15px/1.55 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  }
+  .page { max-width:76rem; margin:0 auto; }
+  header { max-width:46rem; margin:0 auto 1.8rem; text-align:center; }
+  h1 { font-size:clamp(1.7rem,4vw,2.5rem); line-height:1.1; margin:0 0 .5rem;
+       letter-spacing:-.015em; text-wrap:balance; }
+  header p { color:var(--soft); margin:0 0 1rem; }
+  .lang { font:500 .72rem/1 ui-monospace,"SF Mono",Menlo,monospace;
+          color:var(--faint); margin:0 0 1rem; letter-spacing:.05em; }
+  .lang a { color:var(--loop); text-decoration:none;
+            border-bottom:1px solid currentColor; padding-bottom:1px; }
+  .key { display:flex; justify-content:center; flex-wrap:wrap; gap:.5rem 1.25rem;
+         font:500 .73rem/1 ui-monospace,"SF Mono",Menlo,monospace;
+         color:var(--soft); letter-spacing:.03em; }
+  .key span { display:flex; align-items:center; gap:.4rem; }
+  .sw { width:.75rem; height:.75rem; border-radius:2px; flex:none;
+        border:1px solid var(--rule); background:var(--card); }
+  .sw.loop { background:var(--loop-bg); border-color:var(--loop); }
+  .sw.paid { background:var(--paid-bg); border-color:var(--paid); }
+  .sw.gate { background:var(--gate-bg); border-color:var(--gate); }
+  .sw.stop { background:var(--stop-bg); border-color:var(--stop); }
+  .frame { overflow-x:auto; padding-bottom:.5rem; }
+  svg { display:block; margin:0 auto; min-width:56rem; max-width:100%; height:auto; }
+  .note { max-width:46rem; margin:1.6rem auto 0; color:var(--soft);
+          font-size:.92rem; border-top:1px solid var(--rule); padding-top:1.1rem; }
+  .note b { color:var(--ink); }
+  code { font:.88em ui-monospace,"SF Mono",Menlo,monospace; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <h1>Security agent · review flow</h1>
+  <p>What the agent does on one run — from merge request to exit code.</p>
+  <p class="lang"><a href="flow.html">Български</a> · ENGLISH</p>
+  <div class="key">
+    <span><i class="sw loop"></i> agent loop</span>
+    <span><i class="sw paid"></i> paid model call</span>
+    <span><i class="sw gate"></i> hallucination check / gate</span>
+    <span><i class="sw stop"></i> exit</span>
+  </div>
+</header>
+
+<div class="frame">
+<svg viewBox="0 0 1000 1250" role="img"
+     aria-label="Security agent flow: trigger, workspace, the agent loop with its tools, three hallucination layers, suppression, the gate and every exit code.">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--wire)"/>
+    </marker>
+    <marker id="astop" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--stop)"/>
+    </marker>
+    <marker id="agate" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--gate)"/>
+    </marker>
+    <marker id="aloop" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--loop)"/>
+    </marker>
+    <style>
+      .box   { fill:var(--card); stroke:var(--rule); stroke-width:1.3; }
+      .box.paid { fill:var(--paid-bg); stroke:var(--paid); stroke-width:1.6; }
+      .box.gate { fill:var(--gate-bg); stroke:var(--gate); stroke-width:1.6; }
+      .box.loop { fill:var(--loop-bg); stroke:var(--loop); stroke-width:1.6; }
+      .pen   { fill:none; stroke:var(--loop); stroke-width:1.6;
+               stroke-dasharray:7 5; }
+      .t     { font:600 15px "Iowan Old Style",Palatino,Georgia,serif; fill:var(--ink); }
+      .tm    { font:600 14px ui-monospace,"SF Mono",Menlo,monospace; fill:var(--ink); }
+      .s     { font:400 11px ui-monospace,"SF Mono",Menlo,monospace;
+               fill:var(--faint); letter-spacing:.02em; }
+      .sd    { font:400 12px "Iowan Old Style",Palatino,Georgia,serif; fill:var(--soft); }
+      .wire  { stroke:var(--wire); stroke-width:1.6; fill:none; }
+      .exit  { stroke:var(--stop); stroke-width:1.6; fill:none; stroke-dasharray:5 4; }
+      .pass  { stroke:var(--gate); stroke-width:2; fill:none; }
+      .cyc   { stroke:var(--loop); stroke-width:1.8; fill:none; }
+      .ebox  { fill:var(--stop-bg); stroke:var(--stop); stroke-width:1.4; }
+      .et    { font:600 11px ui-monospace,"SF Mono",Menlo,monospace; fill:var(--stop); }
+      .pt    { font:600 11px ui-monospace,"SF Mono",Menlo,monospace; fill:var(--gate); }
+      .lt    { font:600 10px ui-monospace,"SF Mono",Menlo,monospace;
+               fill:var(--loop); letter-spacing:.08em; }
+    </style>
+  </defs>
+
+  <rect class="box" x="350" y="20" width="300" height="46" rx="6"/>
+  <text class="tm" x="368" y="42">merge request</text>
+  <text class="s" x="368" y="58">GitLab · pushed or updated</text>
+
+  <path class="wire" d="M500 66 V112" marker-end="url(#a)"/>
+
+  <rect class="box" x="350" y="112" width="300" height="46" rx="6"/>
+  <text class="tm" x="368" y="134">CI job</text>
+  <text class="s" x="368" y="150">python -m security_agent</text>
+
+  <path class="wire" d="M500 158 V204" marker-end="url(#a)"/>
+
+  <rect class="box" x="350" y="204" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="226">workspace</text>
+  <text class="s" x="368" y="242">git diff BASE..HEAD · scope · excludes</text>
+  <text class="s" x="368" y="256">changed-line map — lines the change owns</text>
+
+  <path class="wire" d="M500 264 V310" marker-end="url(#a)"/>
+
+  <rect class="box" x="350" y="310" width="300" height="46" rx="6"/>
+  <text class="tm" x="368" y="332">briefing</text>
+  <text class="s" x="368" y="348">system prompt + what changed</text>
+
+  <path class="wire" d="M500 356 V400" marker-end="url(#a)"/>
+
+  <rect class="pen" x="196" y="400" width="608" height="238" rx="10"/>
+  <text class="lt" x="212" y="392">AGENT LOOP · agent.py · up to max_turns</text>
+
+  <rect class="box paid" x="352" y="420" width="296" height="54" rx="6"/>
+  <text class="tm" x="370" y="442">model</text>
+  <text class="s" x="370" y="458">reads, reasons, calls a tool</text>
+
+  <path class="cyc" d="M648 447 H716 V540" marker-end="url(#aloop)"/>
+  <path class="cyc" d="M352 540 H284 V447" marker-end="url(#aloop)"/>
+
+  <rect class="box loop" x="284" y="518" width="432" height="44" rx="6"/>
+  <text class="s" x="300" y="536">list_changed_files · get_diff · list_directory</text>
+  <text class="s" x="300" y="552">read_file · search_code · git_log · finish_review</text>
+
+  <rect class="box gate" x="284" y="580" width="432" height="44" rx="6"/>
+  <text class="tm" x="300" y="600">report_finding</text>
+  <text class="s" x="300" y="616">LAYER 1 — evidence not in the file is rejected</text>
+
+  <path class="wire" d="M500 638 V684" marker-end="url(#a)"/>
+
+  <rect class="box paid" x="350" y="684" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="706">verification</text>
+  <text class="s" x="368" y="722">LAYERS 2 and 3 · each finding is attacked</text>
+  <text class="s" x="368" y="736">verdict: confirmed · refuted · uncertain</text>
+
+  <path class="wire" d="M500 744 V790" marker-end="url(#a)"/>
+
+  <rect class="box gate" x="350" y="790" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="812">suppression · apply</text>
+  <text class="s" x="368" y="828">rules are read before the review</text>
+  <text class="s" x="368" y="842">a change cannot silence itself</text>
+
+  <path class="wire" d="M500 850 V896" marker-end="url(#a)"/>
+
+  <rect class="box gate" x="316" y="896" width="368" height="74" rx="6"
+        stroke-width="2.4"/>
+  <text class="tm" x="334" y="918">gate · decide()</text>
+  <text class="s" x="334" y="934">the only place that picks the exit code</text>
+  <text class="s" x="334" y="948">severity · confidence · attribution</text>
+  <text class="s" x="334" y="962">removed control блокира независимо от severity</text>
+
+  <path class="exit" d="M316 918 H236" marker-end="url(#astop)"/>
+  <rect class="ebox" x="30" y="896" width="206" height="60" rx="5"/>
+  <text class="et" x="46" y="916">EXIT 2</text>
+  <text class="sd" x="46" y="932">an unforgiven stop —</text>
+  <text class="sd" x="46" y="946">or a partial review</text>
+
+  <path class="exit" d="M316 956 H266 V990 H236" marker-end="url(#astop)"/>
+  <rect class="ebox" x="30" y="966" width="206" height="60" rx="5"/>
+  <text class="et" x="46" y="986">EXIT 2</text>
+  <text class="sd" x="46" y="1002">opened nothing, and there</text>
+  <text class="sd" x="46" y="1016">was something to read</text>
+
+  <path class="exit" d="M684 918 H764" marker-end="url(#astop)"/>
+  <rect class="ebox" x="764" y="896" width="206" height="46" rx="5"/>
+  <text class="et" x="780" y="916">EXIT 1</text>
+  <text class="sd" x="780" y="932">blocking finding</text>
+
+  <path class="pass" d="M500 970 V1002" marker-end="url(#agate)"/>
+  <rect class="box gate" x="350" y="1002" width="300" height="46" rx="6"/>
+  <text class="pt" x="368" y="1022">EXIT 0 · nothing blocking</text>
+  <text class="sd" x="368" y="1038">a skipped or forgiven run lands here too</text>
+
+  <path class="wire" d="M500 1048 V1094" marker-end="url(#a)"/>
+
+  <rect class="box" x="350" y="1094" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="1116">artifact</text>
+  <text class="s" x="368" y="1132">.security-scan/report.md + findings.json</text>
+  <text class="s" x="368" y="1146">provenance: model, prompts, digests</text>
+
+  <path class="exit" d="M650 1120 H764" marker-end="url(#astop)"/>
+  <rect class="ebox" x="764" y="1098" width="206" height="46" rx="5"/>
+  <text class="et" x="780" y="1118">EXIT 2</text>
+  <text class="sd" x="780" y="1134">artifact not written</text>
+
+  <path class="wire" d="M500 1154 V1194" marker-end="url(#a)"/>
+
+  <rect class="box" x="350" y="1194" width="300" height="46" rx="6"/>
+  <text class="tm" x="368" y="1216">MR comment</text>
+  <text class="s" x="368" y="1232">forge.py · the note on the merge request</text>
+
+  <path d="M836 420 V744" stroke="var(--paid)" stroke-width="2.4" fill="none"/>
+  <path d="M836 420 H826 M836 744 H826" stroke="var(--paid)" stroke-width="2.4"/>
+  <text class="s" x="848" y="576" fill="var(--paid)">the model</text>
+  <text class="s" x="848" y="592" fill="var(--paid)">calls</text>
+</svg>
+</div>
+
+<p class="note">
+  <b>Three hallucination layers, not one.</b> <code>report_finding</code>
+  rejects a finding whose evidence does not exist verbatim in the file — before
+  it becomes a finding. The other two are adversarial: the finding is handed
+  back with a mandate to refute it. That is why <code>unclear</code> is a real
+  verdict — a steady “cannot tell” costs less than a different guess every run.
+</p>
+
+</div>
+</body>
+</html>
