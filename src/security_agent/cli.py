@@ -111,7 +111,7 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         # and carried the label merged green with the question never asked.
         # Skipping your own review is scoped and logged; changing the judge is
         # neither.
-        refused = _prompt_guard_before_skipping(cfg, args, root, mode)
+        refused = _prompt_guard_before_skipping(cfg, args, root)
         if refused is not None:
             return refused
         # Not a bare `return EXIT_OK`. That wrote no artifact at all, so the
@@ -258,7 +258,23 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     # commit, is the case this exists for. It was exploitable with three lines
     # of YAML and no knowledge of the finding.
     ignore_touched = workspace.change_touches(str(cfg.ignore_file))
-    if ignore_touched and rules:
+    # And the same question asked of the filesystem, because `change_touches`
+    # asks git and git does not follow a symlink. A suppression file committed
+    # as a link is guarded under one name and read from another — see
+    # `reached_through_a_link`. The rules then do not apply to this change,
+    # which is the same answer as for a change that edits them directly: the
+    # entry still stands from the next change onward, and nothing is lost
+    # except the ability to use it on itself.
+    linked = workspace.reached_through_a_link(str(cfg.ignore_file))
+    if linked and rules:
+        log.warning(
+            "%s is reached through the symlink at %s, so git cannot say "
+            "whether this change wrote the rules it would be excused by — "
+            "they do not apply here. They take effect from the next change "
+            "onward, or move the file so it is not a link.",
+            cfg.ignore_file, linked)
+        ignore_touched = True
+    if ignore_touched and rules and not linked:
         log.warning(
             "%s is edited by this change, so its entries do not apply here — "
             "they take effect from the next change onward", cfg.ignore_file)
@@ -560,8 +576,19 @@ def _record_the_reuse(cfg: Config, args: argparse.Namespace,
         # merge request, disagreeing about the count, and neither of them was
         # the document on disk.
         stored = cfg.output_dir / "report.md"
-        if stored.is_file():
-            publish(cfg.gitlab, stored.read_text(encoding="utf-8"))
+        try:
+            document = stored.read_text(encoding="utf-8")
+        except OSError as exc:
+            # Not a silent `if is_file()`. The previous run's note stays on the
+            # merge request whatever happens here, and this path exists so that
+            # a reused run does not look like a review performed today — so the
+            # one thing it must not do is fail quietly and leave that note
+            # standing. The notice alone is a worse document than the stored
+            # one and a much better one than yesterday's verdict.
+            log.error("%s could not be read, so the merge request is getting "
+                      "the reuse notice without the report: %s", stored, exc)
+            document = reuse_notice(body)
+        publish(cfg.gitlab, document)
 
 
 def _now() -> str:
@@ -656,7 +683,7 @@ def _prompt_risk(cfg: Config, args: argparse.Namespace, root: Path):
 
 
 def _prompt_guard_before_skipping(
-    cfg: Config, args: argparse.Namespace, root: Path, mode: str
+    cfg: Config, args: argparse.Namespace, root: Path
 ) -> Optional[int]:
     """`EXIT_ERROR` when a skipped change chose its own prompts, else `None`.
 

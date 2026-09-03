@@ -15,11 +15,15 @@ The chain is tested here, not the links. A test that only asserted
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from security_agent.config import Config
 from security_agent.identity import review_identity
 from security_agent.workspace import Workspace, WorkspaceError
+
+PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 
 
 @pytest.fixture
@@ -121,6 +125,7 @@ class TestBothPathsGetIt:
             config_digest = "d"
 
         config = build_mcp_config(
+            prompt_dir=PROMPTS,
             repo=tmp_path, base_sha="a" * 40, head_sha="b" * 40,
             tool_set="reviewer", allowance=Allowance("review", 10),
             handoff=Handoff(), context_lines=40)

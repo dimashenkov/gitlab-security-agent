@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -854,6 +854,23 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
         )
 
     # --- accept, correcting the line number to where the code really is ---
+    #
+    # And the path, for the same reason. `repo_path` deliberately accepts
+    # `/src/app.py` and `./src/app.py` for `src/app.py` — its docstring says
+    # the model writes them — so both spellings reached here and produced the
+    # same candidate with a *different* fingerprint, because the digest was
+    # taken from `finding.file` raw. Four spellings, four identities for one
+    # weakness. Measured, on this code: they came back as four distinct
+    # digests.
+    #
+    # What that cost is the whole point of anchoring identity on code rather
+    # than on prose: an accepted-risk entry stops matching the next time the
+    # model spells the path differently, two reports of one weakness are not
+    # deduplicated, and a `path:` suppression rule silently fails to apply.
+    # The fingerprint moved off the title for exactly this reason and kept
+    # half of the problem.
+    if finding.file != rel_path:
+        finding = replace(finding, file=rel_path)
     span = evidence_span(finding.evidence)
     corrected_from = finding.line if finding.line != located else None
     changed = ws.changed_line_map()

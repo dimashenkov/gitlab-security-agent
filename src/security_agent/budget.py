@@ -288,7 +288,12 @@ class RunBudget:
         self.review_turns += 1
         limit = self.profile.review_turns
         if self.turns_enforced and limit is not None and self.review_turns >= limit:
-            self.stopped_by = STOPPED_TURNS
+            # `or`, as in `check()` below. Without it a ceiling reached
+            # *after* the run had already stopped overwrote the one that
+            # stopped it, and `why_stopped()` then sent the reader to raise
+            # the wrong limit — which is the reason `check()` orders its own
+            # tests in the first place.
+            self.stopped_by = self.stopped_by or STOPPED_TURNS
 
     def reserve_verifier(self) -> Optional[Allowance]:
         """Claim a verifier session and its own tool calls, or refuse.
@@ -302,7 +307,12 @@ class RunBudget:
         if self.check():
             return None
         if self.verifier_sessions >= self.profile.verifier_sessions:
-            self.stopped_by = STOPPED_VERIFIERS
+            # `or`, as in `check()` below. Without it a ceiling reached
+            # *after* the run had already stopped overwrote the one that
+            # stopped it, and `why_stopped()` then sent the reader to raise
+            # the wrong limit — which is the reason `check()` orders its own
+            # tests in the first place.
+            self.stopped_by = self.stopped_by or STOPPED_VERIFIERS
             return None
         allowance = Allowance(
             "verifier {}".format(self.verifier_sessions + 1),

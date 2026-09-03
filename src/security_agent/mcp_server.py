@@ -746,6 +746,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             diff_base=args.base or "",
             diff_head=args.head or "HEAD",
             tool_set=args.tools,
+            prompt_dir=Path(args.prompt_dir) if args.prompt_dir else None,
             max_tool_calls=args.max_tool_calls,
             scope=tuple(args.path or ()),
             crash_journal_path=(
@@ -1054,6 +1055,19 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("--base", metavar="REV",
                         help="Diff base revision. Without it the diff tools are not offered.")
     parser.add_argument("--head", metavar="REV", default="HEAD", help="Diff head revision.")
+    # Passed rather than inherited. `_inherited_env` is an allowlist —
+    # `PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, `SYSTEMROOT` — so
+    # `SECURITY_SCAN_PROMPT_DIR` never reached this process, and
+    # `build_tool_set` fell back to `Config()`, the *default* constructor,
+    # whose search finds the agent's own installed prompts. Measured: with the
+    # operator pointing at a frozen copy, the parent hashed
+    # `/private/tmp/frozen-prompts` into the artifact's provenance while this
+    # process built `report_finding` from the checkout's own
+    # `prompts/findings.schema.json`. The artifact named one schema and the
+    # model was handed another.
+    parser.add_argument("--prompt-dir", metavar="PATH",
+                        help="Directory holding the prompts and the finding "
+                             "schema. Must be the one the parent recorded.")
     parser.add_argument("--tools", choices=TOOL_SETS, default=REVIEWER,
                         help="Which set to offer; nothing outside it can be called.")
     parser.add_argument("--context-lines", type=int, default=12,

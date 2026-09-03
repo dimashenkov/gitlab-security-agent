@@ -1007,8 +1007,19 @@ def _refuse_symlinked_path(requested: Path) -> None:
             )
 
 
+# Every name this module writes, and the check is derived from it rather than
+# repeating it. `write_reused` writes through `findings.json.tmp`, which was
+# not in the pair below — so a committed `.security-scan/findings.json.tmp`
+# symlink was followed, the file it pointed at was overwritten with the
+# artifact by a job holding a forge token, and the rename then left the link
+# sitting where `findings.json` belongs. The two names were written down twice
+# and the second copy went stale, which is the shape this repository keeps
+# finding in itself.
+WRITTEN_NAMES = ("report.md", "findings.json", "findings.json.tmp")
+
+
 def _refuse_symlinked_targets(directory: Path) -> None:
-    for name in ("report.md", "findings.json"):
+    for name in WRITTEN_NAMES:
         target = directory / name
         if target.is_symlink():
             raise ReportError(
@@ -1067,6 +1078,12 @@ def write_reused(cfg: Config, body: Dict[str, Any], artifact: Path) -> None:
     out_dir = _safe_output_dir(cfg.output_dir)
     target = out_dir / artifact.name
     temporary = target.with_suffix(target.suffix + ".tmp")
+    # Asked again, next to the write. `_safe_output_dir` above checked the
+    # directory and the names as they stood a moment ago; this is the one that
+    # decides, and it costs a single `lstat`.
+    if temporary.is_symlink():
+        raise ReportError(
+            "refusing to write through {}: it is a symlink.".format(temporary))
     try:
         temporary.write_text(
             json.dumps(body, indent=2, ensure_ascii=False) + "\n",

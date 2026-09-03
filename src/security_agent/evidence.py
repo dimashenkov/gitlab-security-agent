@@ -267,7 +267,16 @@ def unquote_path(path: str) -> str:
     while index < len(body):
         char = body[index]
         if char != "\\":
-            out += char.encode("utf-8")
+            # `surrogateescape`, matching the decode. `workspace.git` reads
+            # git's stdout with `errors="surrogateescape"` on purpose — a file
+            # name is bytes and need not be UTF-8 — so a byte above 0x7f
+            # arrives here as a lone surrogate and a plain `encode` raised
+            # `UnicodeEncodeError`. That escaped `changed_lines`, so the run
+            # had **no changed-line map at all** and every finding was recorded
+            # as pre-existing, which does not block. This function's documented
+            # answer to anything it cannot decode is to hand the string back
+            # unchanged, never to take the review down.
+            out += char.encode("utf-8", "surrogateescape")
             index += 1
             continue
         index += 1
@@ -378,6 +387,17 @@ def changed_lines(diff_text: str) -> ChangedLines:
         # beginning `diff ` or `@@ ` cannot have come out of a file, whatever
         # an author wrote in it. These two are therefore trusted anywhere;
         # `+++ ` and `--- ` are not, and are read only outside a hunk body.
+        # Asked before either header is acted on. Both used to close an open
+        # hunk silently, so a header that under-delivered was caught only when
+        # it was the *last* one in the diff — everywhere else the map came back
+        # short with no way for a caller to tell it from a complete one.
+        # `DiffFormatError`'s own reasoning does not depend on where the bad
+        # header sits.
+        if in_hunk and (line.startswith("diff ") or HUNK_HEADER.match(line)):
+            raise DiffFormatError(
+                "a hunk in this diff ends at {!r} still owing {} old and "
+                "{} new line(s)".format(line[:40], max(0, old_left),
+                                        max(0, new_left)))
         if line.startswith("diff "):
             in_hunk = False
             current = None

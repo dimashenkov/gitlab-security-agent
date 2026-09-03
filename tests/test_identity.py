@@ -245,3 +245,42 @@ def test_reformatting_the_file_is_not_a_different_policy():
              Rule(fingerprint="ab12", reason="tracked in SEC-4412")]
 
     assert _suppression_digest(one) == _suppression_digest(other)
+
+
+def test_two_runs_that_could_not_hash_their_prompts_do_not_match():
+    """Absence read as agreement, in the field that decides whether a stored
+    result answers today's question.
+
+    `agent._sha` returns `""` when a prompt file cannot be read, and
+    `review_identity` folds a missing field to `""` as well. So two runs whose
+    prompts were both unreadable carried the same empty digest, matched, and
+    the second served the first's artifact — neither knowing what it had run
+    under, and that agreeing.
+
+    Reachable without an attacker: `_first_prompt_candidate` requires
+    `system.md` and `findings.schema.json` and never asks for `verifier.md`,
+    so a directory without it is chosen in silence.
+    """
+    identity = {
+        "agent_version": "0.1.0", "model_requested": "claude-opus-5",
+        "system_prompt_sha": "aaa", "verifier_prompt_sha": "",
+        "schema_sha": "ccc",
+    }
+    previous = {"complete": True, "coverage": {"exposures": ["app/views.py"]},
+                "identity": dict(identity)}
+
+    assert reusable(previous, dict(identity)) is False
+
+
+def test_a_fully_stated_identity_is_still_reusable():
+    """The control. Refusing everything would also make the test above pass,
+    and would quietly turn `--reuse` off for every project."""
+    identity = {
+        "agent_version": "0.1.0", "model_requested": "claude-opus-5",
+        "system_prompt_sha": "aaa", "verifier_prompt_sha": "bbb",
+        "schema_sha": "ccc",
+    }
+    previous = {"complete": True, "coverage": {"exposures": ["app/views.py"]},
+                "identity": dict(identity)}
+
+    assert reusable(previous, dict(identity)) is True

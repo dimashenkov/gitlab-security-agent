@@ -14,10 +14,14 @@ would read as enforced and enforce nothing.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from security_agent.config import Config, ConfigError, GitLabContext
 from security_agent.context_budget import ContextBudget
+
+PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 
 
 def _cfg(**kw) -> Config:
@@ -96,6 +100,7 @@ class TestItReachesTheProcessThatCanRefuse:
         from security_agent.runner_claude_code import Handoff, build_mcp_config
 
         config = build_mcp_config(
+            prompt_dir=PROMPTS,
             repo=tmp_path,
             base_sha="a" * 40,
             head_sha="b" * 40,

@@ -465,3 +465,81 @@ evidence, not carrying it forward.
 
 *Written 2026-08-25 against v0.1.0. If it disagrees with the README, this file
 is the one that was written to be pessimistic.*
+
+## A unified diff with no `diff --git` lines can hide a short hunk
+
+`evidence.changed_lines` refuses a hunk whose header declares more lines than
+its body carries — at the end of the diff, and at the next `diff ` or `@@`
+header. One shape escapes: with no `diff --git` separators, an under-delivering
+hunk followed by the next file's `--- a/x` header consumes that header as an
+ordinary deletion, because a line beginning `-` inside a hunk body *is* a
+deletion. `-- ` opens a comment in SQL, Lua, Haskell and Ada, which is why
+column zero is read as the diff's own structure and never as a header while a
+hunk is open.
+
+Detecting it would mean treating `--- `/`+++ ` as headers inside a hunk body,
+and that is the forgery the parser was rewritten to stop: an author writes
+`++ b/decoy.py`, git emits `+++ b/decoy.py`, and every addition after it is
+filed against a file that does not exist. Trading a live vulnerability for an
+unreachable one is not a trade.
+
+Unreachable is measured rather than assumed. `workspace.changed_line_map` is
+the only caller and it shells out to `git diff`, which writes a `diff --git`
+line per file section — 160 real diffs from this repository's own history parse
+without a refusal. Found on 2026-09-03 by a generated input, and the property
+in `tests/test_properties_more.py` states the exclusion in the assumption
+rather than in silence.
+
+## Hardcoded secrets: claimed, never measured — run a dedicated scanner
+
+`prompts/findings.schema.json` offers the agent two categories for this,
+`secrets` and `sensitive-data-exposure`, and `prompts/system.md` asks for them
+by name: "secrets committed to source, config, CI files, or fixtures". The
+corpus says what that is worth:
+
+| category | cases |
+|---|---|
+| `secrets` | **0** |
+| `sensitive-data-exposure` | 2 |
+| all categories | 90 |
+
+So the capability is **stated and unmeasured**, which is the shape this project
+exists to refuse everywhere else. Nothing here establishes a recall figure for
+committed credentials, and the two `sensitive-data-exposure` cases are about
+data reaching logs and responses, not about a key in the source.
+
+**Three reasons it is the wrong tool for this, independent of the corpus:**
+
+* **It reasons; it does not enumerate.** There is no entropy test, no pattern
+  list for AWS, GitHub, Stripe or JWT shapes, no baseline of known-good
+  strings. A key that does not look like a key to a reader does not look like
+  one to the model either, and the answer varies between runs — which is the
+  property `tools/sentinel.py` exists to measure and the reason
+  `LIMITATIONS.md` carries a noise floor at all.
+* **It reads the change, not the repository.** In `diff` mode the review sees
+  `BASE..HEAD`. A credential committed last year is in no diff, and the git
+  history is never walked. A secret scanner's whole value is the opposite:
+  every blob, every branch, every commit.
+* **The excludes hide exactly where keys hide.** `DEFAULT_EXCLUDES` drops
+  lockfiles, minified bundles and vendored trees for token cost. A token in
+  `package-lock.json` or a bundled `.min.js` is never read — and, until
+  2026-09-03, `diff()` handed the model excluded content anyway on the default
+  path, so the exclusion did not even hold in the direction it was written for.
+
+**Run a dedicated job instead.** `Snyk Code` covers hardcoded secrets and runs
+as an ordinary CI/CD job beside this one; `gitleaks` and `trufflehog` are the
+open-source equivalents and additionally scan history. They are deterministic:
+the same commit gives the same answer every time, which is the property this
+agent cannot offer and does not claim.
+
+The division is not a workaround, it is the design. Everything that can be
+decided by a pattern should be decided by a pattern — the project's own rule is
+that whatever can be deterministic must not be paid for. This agent is for the
+weaknesses that need a reader: whether a check can be skipped, whether a sink
+is reachable, whether a guard that was deleted mattered. A regular expression
+cannot answer those, and a model should not be asked to do a regular
+expression's job.
+
+**Not fixed, and deliberately.** Adding secret cases to the corpus would
+measure a capability that should be delivered elsewhere, and buying that
+measurement costs real money. The honest entry is this one.

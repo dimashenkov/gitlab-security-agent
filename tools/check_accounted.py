@@ -120,6 +120,30 @@ def named_in_limitations() -> set:
     return out
 
 
+def findings_list(row: dict, key: str):
+    """The findings under `key`, or `None` when the row does not hold a list.
+
+    `row.get(key) or []` was the reading, and it keeps a truthy dict or string:
+    iterating a dict yields its keys, `is_target` calls `.get` on a key, and an
+    `AttributeError` comes out of the tally. `None` here is the third answer —
+    not "no findings", which would score the row as a miss, but "this row does
+    not say", which is a different thing and belongs to a different bucket.
+    """
+    value = row.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return None
+    if any(not isinstance(item, dict) for item in value):
+        # Filtering them out scored the row as a *miss*, which is the wrong
+        # answer in the same way `False` was: `["bad"]` is a findings field
+        # this cannot read, not a run that found nothing. The first version of
+        # this function said so in its own docstring — "a list of strings does
+        # the same thing" — and then dropped the strings and answered anyway.
+        return None
+    return value
+
+
 def passed(row: dict, case: dict) -> bool:
     """Did this pair discriminate, judged by the key in force **now**?
 
@@ -135,12 +159,19 @@ def passed(row: dict, case: dict) -> bool:
     """
     if "safe_findings" not in row or "unsafe_findings" not in row:
         return row.get("pair_success") is True
+    unsafe = findings_list(row, "unsafe_findings")
+    safe = findings_list(row, "safe_findings")
+    if unsafe is None or safe is None:
+        # Not `False`. A row whose findings cannot be read has not said the
+        # agent missed the weakness — it has said nothing, and scoring it as a
+        # failure would put a wrong answer where an absent one belongs.
+        return None
     excused = ruled_incidental(
         load_adjudications(ROOT / "corpus-real"), row.get("case_id"), "safe")
-    found = any(is_target(f, case) for f in row.get("unsafe_findings") or [])
+    found = any(is_target(f, case) for f in unsafe)
     persists = any(is_target(f, case)
                    and f.get("fingerprint") not in excused
-                   for f in row.get("safe_findings") or [])
+                   for f in safe)
     return found and not persists
 
 
@@ -187,8 +218,8 @@ def scorable(row) -> bool:
             and isinstance(row.get("pair_success"), bool))
 
 
-def verdicts() -> dict:
-    """The latest recorded answer per case, from every batch and the queue.
+def standings() -> dict:
+    """The latest recorded answer per case, `None` where there is none, from every batch and the queue.
 
     Two rows for one case are ordered by `ran_at`. When neither carries one the
     comparison is `"" >= ""`, which is true, so the winner used to be whichever
@@ -240,7 +271,20 @@ def verdicts() -> dict:
     return out
 
 
-def _standing(rows: list, case: dict) -> bool:
+def verdicts() -> dict:
+    """The cases that have an answer. `None` is not one.
+
+    One walk, two views. `standings()` keeps the third state so a caller can
+    tell "this case has no production row" from "its rows cannot be read", and
+    this drops it so every existing reader keeps seeing only real verdicts.
+    Two walks would be two answers to one question, which is how the readers
+    of this stream disagreed before.
+    """
+    return {case_id: answer for case_id, answer in standings().items()
+            if answer is not None}
+
+
+def _standing(rows: list, case: dict):
     """The answer that stands for one case, ordered the way `stage2` orders it.
 
     Three things this replaced, all in one line — `when >= latest[case_id][0]`
@@ -269,6 +313,25 @@ def _standing(rows: list, case: dict) -> bool:
         answers = {passed(row, case) for when, row in dated if when == latest}
     else:
         answers = {passed(row, case) for _when, row in rows}
+    # `None` is `passed` saying the row does not answer — its findings are not
+    # a list, so nothing can be re-judged from it. Dropped rather than folded
+    # in: `answers == {True}` turned a row that said nothing into a row that
+    # said the agent missed the weakness, which is a wrong answer where an
+    # absent one belongs. If nothing is left, the case has no standing verdict
+    # and falls to `unaccounted`, the bucket that asks for a decision instead
+    # of making one.
+    # `None` alone means the case has no verdict; `None` beside a real answer
+    # means the latest instant is unresolved, and an unresolved instant is not
+    # a pass here — the rule this function already applies to two rows that
+    # disagree outright. Discarding it unconditionally let one readable row
+    # settle a case whose other row at the same moment could not be read.
+    if None in answers:
+        # Alone it means the case has no verdict. Beside a real answer it means
+        # the latest instant is unresolved — and `answers == {True}` read that
+        # as `False`, which is a verdict about the agent drawn from a row that
+        # said nothing. Both readings end here as "no standing answer", which
+        # sends the case to a bucket that asks rather than one that decides.
+        return None
     return answers == {True}
 
 
@@ -307,7 +370,13 @@ def account(construction=None) -> dict:
     invalid = rulings()
     understood = known_failures()
     limitations = named_in_limitations()
-    answers = verdicts()
+    # One walk. `verdicts()` calls `standings()`, so asking for both meant two
+    # reads of every measurement file — and, worse, two snapshots: a run
+    # writing results between them would give `answers` and `standing`
+    # different pictures of the same case.
+    standing = standings()
+    answers = {case_id: answer for case_id, answer in standing.items()
+               if answer is not None}
 
     measured = executed()
     buckets = {"pass": [], "limitation": [], "invalid": [], "unaccounted": [],
@@ -319,6 +388,28 @@ def account(construction=None) -> dict:
             continue
         if case_id in invalid:
             buckets["invalid"].append(case_id)
+        elif standing.get(case_id, "absent") is None:
+            # Its production rows exist and none of them answers — a findings
+            # field that is not a list, or one holding something that is not a
+            # finding. Not `unadopted`, which says "a measurement is waiting to
+            # be adopted" and sends somebody to adopt a row nothing can read.
+            # `unaccounted` is the bucket that asks for a decision rather than
+            # making one.
+            #
+            # And *after* the rulings, not before. A malformed row does not
+            # revoke a limitation or a known failure — those are decisions a
+            # person made about the case, and a broken measurement is not an
+            # argument against them. Placed first, one unreadable row erased a
+            # human ruling — so the ruling is named here rather than the
+            # case being excluded from this branch, which merely moved it to
+            # `unadopted` and said "adopt this measurement" about the same
+            # unreadable row.
+            if case_id in understood:
+                buckets["known_failure"].append(case_id)
+            elif case_id in limitations:
+                buckets["limitation"].append(case_id)
+            else:
+                buckets["unaccounted"].append(case_id)
         elif case_id not in answers and case_id in measured:
             # Bought, but not through the production stream, so it has no
             # verdict here. Not "not run" — that would ask for the same

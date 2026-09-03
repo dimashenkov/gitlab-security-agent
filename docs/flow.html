@@ -81,8 +81,8 @@
 </header>
 
 <div class="frame">
-<svg viewBox="0 0 1000 1250" role="img"
-     aria-label="Flow на security агента: trigger, workspace, agent loop с tools, три hallucination layer-а, suppression, gate и exit кодовете.">
+<svg viewBox="0 0 1000 2092" role="img"
+     aria-label="Flow на security агента: merge request, preflight на output директорията, skip label и prompt guard, workspace, приети рискове, reuse, agent loop с tools, suppression преди verification, gate и exit кодовете.">
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5"
             markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -137,105 +137,185 @@
   <path class="wire" d="M500 158 V204" marker-end="url(#a)"/>
 
   <rect class="box" x="350" y="204" width="300" height="60" rx="6"/>
-  <text class="tm" x="368" y="226">workspace</text>
-  <text class="s" x="368" y="242">git diff BASE..HEAD · scope · excludes</text>
-  <text class="s" x="368" y="256">changed-line map — кой ред е на промяната</text>
+  <text class="tm" x="368" y="226">output dir · preflight</text>
+  <text class="s" x="368" y="242">report.py · preflight_output_dir</text>
+  <text class="s" x="368" y="258">проверява се преди skip-а и преди разход</text>
+  <path class="exit" d="M650 234 H744" marker-end="url(#astop)"/>
+  <rect class="ebox" x="744" y="210" width="226" height="46" rx="5"/>
+  <text class="et" x="760" y="232">EXIT 2</text>
+  <text class="sd" x="760" y="248">output dir е symlink</text>
 
   <path class="wire" d="M500 264 V310" marker-end="url(#a)"/>
 
-  <rect class="box" x="350" y="310" width="300" height="46" rx="6"/>
-  <text class="tm" x="368" y="332">briefing</text>
-  <text class="s" x="368" y="348">system prompt + какво е променено</text>
+  <rect class="box" x="350" y="310" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="332">skip label</text>
+  <text class="s" x="368" y="348">cli.py · _skip_requested</text>
+  <text class="s" x="368" y="364">label-ът спира review-то на промяната</text>
+  <path class="pass" d="M650 340 H706 V373 H744" marker-end="url(#agate)"/>
+  <rect class="box gate" x="744" y="343" width="226" height="60" rx="6"/>
+  <text class="tm" x="760" y="365">prompt guard</text>
+  <text class="s" x="760" y="381">същата проверка, преди label-а</text>
+  <text class="s" x="760" y="397">label пропуска review, не това</text>
+  <path class="pass" d="M857 403 V423" marker-end="url(#agate)"/>
+  <rect class="box gate" x="744" y="423" width="226" height="64" rx="6"/>
+  <text class="pt" x="760" y="445">EXIT 0 · без review</text>
+  <text class="s" x="760" y="461">cli.py · _nothing_to_review</text>
+  <text class="sd" x="760" y="477">artifact и бележка пак има</text>
 
-  <path class="wire" d="M500 356 V400" marker-end="url(#a)"/>
+  <path class="wire" d="M500 370 V496" marker-end="url(#a)"/>
 
-  <rect class="pen" x="196" y="400" width="608" height="238" rx="10"/>
-  <text class="lt" x="212" y="392">AGENT LOOP · agent.py · до max_turns</text>
+  <rect class="box" x="350" y="496" width="300" height="74" rx="6"/>
+  <text class="tm" x="368" y="518">workspace · diff range</text>
+  <text class="s" x="368" y="534">cli.py · _resolve_range</text>
+  <text class="s" x="368" y="550">BASE..HEAD · scope · excludes</text>
+  <text class="s" x="368" y="566">changed-line map — кой ред е нов</text>
 
-  <rect class="box paid" x="352" y="420" width="296" height="54" rx="6"/>
-  <text class="tm" x="370" y="442">model</text>
-  <text class="s" x="370" y="458">чете, разсъждава, вика tool</text>
+  <path class="wire" d="M500 570 V616" marker-end="url(#a)"/>
 
-  <path class="cyc" d="M648 447 H716 V540" marker-end="url(#aloop)"/>
-  <path class="cyc" d="M352 540 H284 V447" marker-end="url(#aloop)"/>
+  <rect class="box gate" x="350" y="616" width="300" height="74" rx="6"/>
+  <text class="tm" x="368" y="638">prompt guard</text>
+  <text class="s" x="368" y="654">cli.py · _prompt_risk</text>
+  <text class="s" x="368" y="670">байтовете на prompt-ите срещу baseline</text>
+  <text class="s" x="368" y="686">незаписана редакция също се хваща</text>
+  <path class="exit" d="M350 638 H236" marker-end="url(#astop)"/>
+  <rect class="ebox" x="30" y="616" width="206" height="60" rx="5"/>
+  <text class="et" x="46" y="638">EXIT 2</text>
+  <text class="sd" x="46" y="654">промяната избира</text>
+  <text class="sd" x="46" y="670">prompt-ите си</text>
 
-  <rect class="box loop" x="284" y="518" width="432" height="44" rx="6"/>
-  <text class="s" x="300" y="536">list_changed_files · get_diff · list_directory</text>
-  <text class="s" x="300" y="552">read_file · search_code · git_log · finish_review</text>
+  <path class="wire" d="M500 690 V736" marker-end="url(#a)"/>
 
-  <rect class="box gate" x="284" y="580" width="432" height="44" rx="6"/>
-  <text class="tm" x="300" y="600">report_finding</text>
-  <text class="s" x="300" y="616">LAYER 1 — цитат, който го няма, се отхвърля</text>
+  <rect class="box" x="350" y="736" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="758">приети рискове</text>
+  <text class="s" x="368" y="774">suppress.py · load</text>
+  <text class="s" x="368" y="790">четат се преди review-то и преди reuse</text>
 
-  <path class="wire" d="M500 638 V684" marker-end="url(#a)"/>
+  <path class="wire" d="M500 796 V842" marker-end="url(#a)"/>
 
-  <rect class="box paid" x="350" y="684" width="300" height="60" rx="6"/>
-  <text class="tm" x="368" y="706">verification</text>
-  <text class="s" x="368" y="722">LAYERS 2 и 3 · всяка finding се оборва</text>
-  <text class="s" x="368" y="736">verdict: confirmed · refuted · uncertain</text>
+  <rect class="box" x="350" y="842" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="864">reuse?</text>
+  <text class="s" x="368" y="880">cli.py · _reuse</text>
+  <text class="s" x="368" y="896">същият код, prompt-и, модел и правила</text>
+  <path class="pass" d="M650 872 H744" marker-end="url(#agate)"/>
+  <rect class="box gate" x="744" y="842" width="226" height="74" rx="6"/>
+  <text class="pt" x="760" y="864">REUSE · старият exit code</text>
+  <text class="sd" x="760" y="880">artifact-ът се презаписва</text>
+  <text class="sd" x="760" y="896">с reuse блок, бележката</text>
+  <text class="sd" x="760" y="912">се публикува наново</text>
 
-  <path class="wire" d="M500 744 V790" marker-end="url(#a)"/>
+  <path class="wire" d="M500 902 V1002" marker-end="url(#a)"/>
 
-  <rect class="box gate" x="350" y="790" width="300" height="60" rx="6"/>
-  <text class="tm" x="368" y="812">suppression · apply</text>
-  <text class="s" x="368" y="828">правилата се четат преди review-то</text>
-  <text class="s" x="368" y="842">diff-ът не може да заглуши сам себе си</text>
+  <rect class="box" x="350" y="1002" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="1024">briefing</text>
+  <text class="s" x="368" y="1040">briefing.py · build</text>
+  <text class="s" x="368" y="1056">system prompt + какво е променено</text>
 
-  <path class="wire" d="M500 850 V896" marker-end="url(#a)"/>
+  <path class="wire" d="M500 1062 V1108" marker-end="url(#a)"/>
 
-  <rect class="box gate" x="316" y="896" width="368" height="74" rx="6"
-        stroke-width="2.4"/>
-  <text class="tm" x="334" y="918">gate · decide()</text>
-  <text class="s" x="334" y="934">единственото място, което избира exit code</text>
-  <text class="s" x="334" y="948">severity · confidence · attribution</text>
-  <text class="s" x="334" y="962">removed control блокира независимо от severity</text>
+  <rect class="pen" x="196" y="1108" width="608" height="272" rx="10"/>
+  <text class="lt" x="212" y="1100">AGENT LOOP · до max_turns</text>
 
-  <path class="exit" d="M316 918 H236" marker-end="url(#astop)"/>
-  <rect class="ebox" x="30" y="896" width="206" height="60" rx="5"/>
-  <text class="et" x="46" y="916">EXIT 2</text>
-  <text class="sd" x="46" y="932">спиране без прошка —</text>
-  <text class="sd" x="46" y="946">или непростен partial</text>
+  <rect class="box paid" x="352" y="1128" width="296" height="68" rx="6"/>
+  <text class="tm" x="370" y="1150">model</text>
+  <text class="s" x="370" y="1166">agent.py · SecurityAgent</text>
+  <text class="s" x="370" y="1182">чете, разсъждава, вика tool</text>
 
-  <path class="exit" d="M316 956 H266 V990 H236" marker-end="url(#astop)"/>
-  <rect class="ebox" x="30" y="966" width="206" height="60" rx="5"/>
-  <text class="et" x="46" y="986">EXIT 2</text>
-  <text class="sd" x="46" y="1002">нищо не е отворено,</text>
-  <text class="sd" x="46" y="1016">а е имало какво</text>
+  <path class="cyc" d="M648 1162 H716 V1262" marker-end="url(#aloop)"/>
+  <path class="cyc" d="M352 1262 H284 V1162" marker-end="url(#aloop)"/>
 
-  <path class="exit" d="M684 918 H764" marker-end="url(#astop)"/>
-  <rect class="ebox" x="764" y="896" width="206" height="46" rx="5"/>
-  <text class="et" x="780" y="916">EXIT 1</text>
-  <text class="sd" x="780" y="932">blocking finding</text>
+  <rect class="box loop" x="284" y="1240" width="432" height="44" rx="6"/>
+  <text class="s" x="300" y="1258">list_changed_files · get_diff · list_directory</text>
+  <text class="s" x="300" y="1274">read_file · search_code · git_log · finish_review</text>
 
-  <path class="pass" d="M500 970 V1002" marker-end="url(#agate)"/>
-  <rect class="box gate" x="350" y="1002" width="300" height="46" rx="6"/>
-  <text class="pt" x="368" y="1022">EXIT 0 · нищо blocking</text>
-  <text class="sd" x="368" y="1038">пропуснат или простен run също е тук</text>
+  <rect class="box gate" x="284" y="1302" width="432" height="60" rx="6"/>
+  <text class="tm" x="300" y="1324">report_finding</text>
+  <text class="s" x="300" y="1340">tools.py · _handle_report_finding</text>
+  <text class="s" x="300" y="1356">LAYER 1 — цитат, който го няма, се отхвърля</text>
 
-  <path class="wire" d="M500 1048 V1094" marker-end="url(#a)"/>
+  <path class="wire" d="M500 1380 V1426" marker-end="url(#a)"/>
 
-  <rect class="box" x="350" y="1094" width="300" height="60" rx="6"/>
-  <text class="tm" x="368" y="1116">artifact</text>
-  <text class="s" x="368" y="1132">.security-scan/report.md + findings.json</text>
-  <text class="s" x="368" y="1146">provenance: model, prompts, digests</text>
+  <rect class="box gate" x="350" y="1426" width="300" height="88" rx="6"/>
+  <text class="tm" x="368" y="1448">suppression · apply</text>
+  <text class="s" x="368" y="1464">suppress.py · apply</text>
+  <text class="s" x="368" y="1480">остават само неприетите — преди verify</text>
+  <text class="s" x="368" y="1496">приетите: not verified, и се броят</text>
+  <text class="s" x="368" y="1512">промяната не може да заглуши себе си</text>
 
-  <path class="exit" d="M650 1120 H764" marker-end="url(#astop)"/>
-  <rect class="ebox" x="764" y="1098" width="206" height="46" rx="5"/>
-  <text class="et" x="780" y="1118">EXIT 2</text>
-  <text class="sd" x="780" y="1134">artifact не се записа</text>
+  <path class="wire" d="M500 1514 V1560" marker-end="url(#a)"/>
 
-  <path class="wire" d="M500 1154 V1194" marker-end="url(#a)"/>
+  <rect class="box paid" x="350" y="1560" width="300" height="74" rx="6"/>
+  <text class="tm" x="368" y="1582">verification</text>
+  <text class="s" x="368" y="1598">verify.py · verify_candidates</text>
+  <text class="s" x="368" y="1614">LAYERS 2 и 3 · само оставените</text>
+  <text class="s" x="368" y="1630">verdict: confirmed · refuted · uncertain</text>
 
-  <rect class="box" x="350" y="1194" width="300" height="46" rx="6"/>
-  <text class="tm" x="368" y="1216">MR comment</text>
-  <text class="s" x="368" y="1232">forge.py · бележката на merge request-а</text>
+  <path class="wire" d="M500 1634 V1680" marker-end="url(#a)"/>
 
-  <path d="M836 420 V744" stroke="var(--paid)" stroke-width="2.4" fill="none"/>
-  <path d="M836 420 H826 M836 744 H826" stroke="var(--paid)" stroke-width="2.4"/>
-  <text class="s" x="848" y="576" fill="var(--paid)">тук се вика</text>
-  <text class="s" x="848" y="592" fill="var(--paid)">моделът</text>
+  <rect class="box gate" x="316" y="1680" width="368" height="88" rx="6" stroke-width="2.4"/>
+  <text class="tm" x="334" y="1702">gate · decide</text>
+  <text class="s" x="334" y="1718">gate.py · decide</text>
+  <text class="s" x="334" y="1734">единственото място, което избира exit code</text>
+  <text class="s" x="334" y="1750">severity · confidence · attribution</text>
+  <text class="s" x="334" y="1766">removed control блокира независимо от severity</text>
+
+  <path class="exit" d="M316 1702 H236" marker-end="url(#astop)"/>
+  <rect class="ebox" x="30" y="1680" width="206" height="60" rx="5"/>
+  <text class="et" x="46" y="1702">EXIT 2</text>
+  <text class="sd" x="46" y="1718">спиране без прошка —</text>
+  <text class="sd" x="46" y="1734">или непростен partial</text>
+
+  <path class="exit" d="M316 1740 H266 V1774 H236" marker-end="url(#astop)"/>
+  <rect class="ebox" x="30" y="1750" width="206" height="60" rx="5"/>
+  <text class="et" x="46" y="1772">EXIT 2</text>
+  <text class="sd" x="46" y="1788">нищо не е отворено,</text>
+  <text class="sd" x="46" y="1804">а е имало какво</text>
+
+  <path class="exit" d="M684 1702 H744" marker-end="url(#astop)"/>
+  <rect class="ebox" x="744" y="1680" width="226" height="46" rx="5"/>
+  <text class="et" x="760" y="1702">EXIT 1</text>
+  <text class="sd" x="760" y="1718">blocking finding</text>
+
+  <path class="pass" d="M500 1768 V1800" marker-end="url(#agate)"/>
+  <rect class="box gate" x="350" y="1800" width="300" height="46" rx="6"/>
+  <text class="pt" x="368" y="1822">EXIT 0 · нищо blocking</text>
+  <text class="sd" x="368" y="1838">пропуснат или простен run също е тук</text>
+
+  <path class="wire" d="M500 1846 V1892" marker-end="url(#a)"/>
+
+  <rect class="box" x="350" y="1892" width="300" height="74" rx="6"/>
+  <text class="tm" x="368" y="1914">artifact</text>
+  <text class="s" x="368" y="1930">report.py · write_artifacts</text>
+  <text class="s" x="368" y="1946">.security-scan/report.md + findings.json</text>
+  <text class="s" x="368" y="1962">provenance: model, prompts, digests</text>
+  <path class="exit" d="M650 1922 H744" marker-end="url(#astop)"/>
+  <rect class="ebox" x="744" y="1898" width="226" height="46" rx="5"/>
+  <text class="et" x="760" y="1920">EXIT 2</text>
+  <text class="sd" x="760" y="1936">artifact не се записа</text>
+
+  <path class="wire" d="M500 1966 V2012" marker-end="url(#a)"/>
+
+  <rect class="box" x="350" y="2012" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="2034">MR comment</text>
+  <text class="s" x="368" y="2050">forge.py · publish</text>
+  <text class="s" x="368" y="2066">бележката на merge request-а</text>
+
+  <path d="M836 1128 V1634" stroke="var(--paid)" stroke-width="2.4" fill="none"/>
+  <path d="M836 1128 H826 M836 1634 H826" stroke="var(--paid)" stroke-width="2.4"/>
+  <text class="s" x="848" y="1375" fill="var(--paid)">тук се вика</text>
+  <text class="s" x="848" y="1391" fill="var(--paid)">моделът</text>
 </svg>
 </div>
+
+<p class="note">
+  <b>Редът е част от твърдението.</b> <code>preflight_output_dir</code>
+  стои над skip-а и над всеки разход: директорията, от която се чете и в която
+  се пише, се проверява преди да е платено нещо. <code>prompt guard</code>
+  сравнява байтовете на prompt файловете срещу baseline ревизия, така че
+  редакция, която стои само в checkout-а, също се хваща — и label-ът не я
+  пропуска. И <code>suppression</code> върви <b>преди</b> verification:
+  проверяват се само находките, които още могат да стигнат до gate-а, а приетият
+  риск се записва като <code>not verified</code>, а не като потвърден.
+</p>
 
 <p class="note">
   <b>Три hallucination layer-а, не един.</b> <code>report_finding</code>

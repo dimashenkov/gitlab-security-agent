@@ -364,6 +364,37 @@ class Workspace:
         )
         return [path for path, _ in _parse_name_status(raw)]
 
+    def reached_through_a_link(self, relative: str) -> Optional[str]:
+        """The first symlink between the root and `relative`, or `None`.
+
+        `change_touches` asks **git** whether a path was edited, and git never
+        follows a link — it reports the link's own blob. The loaders ask the
+        **filesystem**, which does follow it. So a file committed as a symlink
+        is guarded under one name and read from another, and the guard that
+        stops a change from suppressing its own findings goes quiet while the
+        change supplies the rules through the destination.
+
+        Two merge requests and no knowledge of the finding: commit
+        `.security-agent-ignore.yml` as a link to `docs/notes.yml`, which reads
+        as tidying; then put the weakness and the entry excusing it into
+        `docs/notes.yml`. Git reports only `docs/notes.yml`, the guard sees its
+        own name untouched, and the rule applies to the change that wrote it.
+        Verified on a real repository before this existed.
+
+        Lexical, on the path as named, and every component: resolving first
+        would follow the link that is the whole question.
+        """
+        try:
+            named = self.repo_path(relative)
+        except WorkspaceError:
+            return None
+        walked = self.root
+        for part in named.split("/"):
+            walked = walked / part
+            if walked.is_symlink():
+                return str(walked.relative_to(self.root))
+        return None
+
     def change_touches(self, relative: str) -> bool:
         """Does the change under review edit this exact file?
 

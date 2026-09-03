@@ -104,7 +104,7 @@ diff --git a/app/views.py b/app/views.py
 index 1111111..2222222 100644
 --- a/app/views.py
 +++ b/app/views.py
-@@ -10,6 +10,8 @@ def index():
+@@ -10,5 +10,8 @@ def index():
      return render(request)
 
 
@@ -149,7 +149,7 @@ class TestChangedLines:
         # the parser refuses one now for reasons that have nothing to do with
         # the question here.
         diff = (DIFF
-                .replace('@@ -10,6 +10,8 @@', '@@ -10,6 +10,9 @@')
+                .replace('@@ -10,5 +10,8 @@', '@@ -10,5 +10,9 @@')
                 .replace('+def get_user(request):',
                          '+++ b/attacker/choice.py\n+def get_user(request):'))
         result = changed_lines(diff)

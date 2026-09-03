@@ -573,9 +573,56 @@ def _settle(seen: list) -> set:
     """
     dated = [(when, ok) for when, ok in seen if when is not None]
     if not dated:
-        return {ok for _when, ok in seen}
+        return _without_silence({ok for _when, ok in seen})
     latest = max(when for when, _ok in dated)
-    return {ok for when, ok in dated if when == latest}
+    return _without_silence({ok for when, ok in dated if when == latest})
+
+
+def _without_silence(answers: set) -> set:
+    """Drop `None` only when it is the *whole* answer.
+
+    `None` is `_pair_passed` saying the row does not answer — its findings are
+    not a list, or hold something that is not a finding. Two wrong readings of
+    that, one after the other:
+
+    * keeping it made `{None} != {True}`, so a row that said nothing was
+      counted as a row that said "missed";
+    * discarding it always made `{True, None}` collapse to `{True}`, so a
+      readable row at the same instant *settled* the case — and the unreadable
+      one may have been a disagreeing run whose answer cannot be recovered. It
+      is not evidence for the other; it is a missing answer beside it.
+
+    So: alone it means "no verdict", and beside a real answer it means the
+    instant is unresolved — which is the same rule this module already applies
+    to two rows that disagree outright.
+    """
+    if answers == {None}:
+        return set()
+    return answers
+
+
+def findings_list(row: dict, key: str):
+    """The findings under `key`, or `None` when the row does not hold a list.
+
+    `row.get(key) or []` was the reading, and it keeps a truthy dict or string:
+    iterating a dict yields its keys, `is_target` calls `.get` on a key, and an
+    `AttributeError` comes out of the tally. `None` here is the third answer —
+    not "no findings", which would score the row as a miss, but "this row does
+    not say", which is a different thing and belongs to a different bucket.
+    """
+    value = row.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return None
+    if any(not isinstance(item, dict) for item in value):
+        # Filtering them out scored the row as a *miss*, which is the wrong
+        # answer in the same way `False` was: `["bad"]` is a findings field
+        # this cannot read, not a run that found nothing. The first version of
+        # this function said so in its own docstring — "a list of strings does
+        # the same thing" — and then dropped the strings and answered anyway.
+        return None
+    return value
 
 
 def _pair_passed(row: dict, case_id: str) -> bool:
@@ -594,6 +641,13 @@ def _pair_passed(row: dict, case_id: str) -> bool:
     """
     if "safe_findings" not in row or "unsafe_findings" not in row:
         return row.get("pair_success") is True
+    unsafe = findings_list(row, "unsafe_findings")
+    safe = findings_list(row, "safe_findings")
+    if unsafe is None or safe is None:
+        # Not `False`. A row whose findings cannot be read has not said the
+        # agent missed the weakness — it has said nothing, and scoring it as a
+        # failure would put a wrong answer where an absent one belongs.
+        return None
 
     case_dir = ROOT / "corpus-real" / case_id
     try:
@@ -603,10 +657,10 @@ def _pair_passed(row: dict, case_id: str) -> bool:
 
     excused = ruled_incidental(
         load_adjudications(ROOT / "corpus-real"), case_id, "safe")
-    found = any(is_target(f, case) for f in row.get("unsafe_findings") or [])
+    found = any(is_target(f, case) for f in unsafe)
     persists = any(is_target(f, case)
                    and f.get("fingerprint") not in excused
-                   for f in row.get("safe_findings") or [])
+                   for f in safe)
     return found and not persists
 
 

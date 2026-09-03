@@ -342,6 +342,10 @@ def build_mcp_config(
     tool_set: str,
     allowance: Allowance,
     handoff: "Handoff",
+    # Required, with no default. A default would fall back to the child's own
+    # search, which is the defect this closes — and a caller that forgets it
+    # would get the old behaviour in silence rather than a `TypeError`.
+    prompt_dir: Path,
     scope: Sequence[str] = (),
     python: str = "",
     context_lines: int = 12,
@@ -375,6 +379,14 @@ def build_mcp_config(
         "--max-context", str(max_context_tokens),
         "--max-context-soft", str(max_context_soft_tokens),
         "--max-context-mode", max_context_mode,
+        # The schema `report_finding` is built from, named rather than left to
+        # the child's own search. `_inherited_env` does not carry
+        # `SECURITY_SCAN_PROMPT_DIR`, so the child was finding the agent's
+        # installed prompts while the parent hashed the configured ones into
+        # provenance — the artifact naming one schema and the model being
+        # handed another. Same reasoning as `--context-lines` above, and the
+        # same failure it was written to prevent.
+        "--prompt-dir", str(prompt_dir),
     ]
     if base_sha:
         arguments += ["--base", base_sha]
@@ -556,6 +568,7 @@ class ClaudeCodeRunner:
         revision: Revision,
     ) -> ScanOutcome:
         handoff.mcp_config.write_text(json.dumps(build_mcp_config(
+            prompt_dir=self.cfg.resolved_prompt_dir(),
             repo=self.ws.root,
             base_sha=revision.base_sha,
             # Not `or "HEAD"`. The child stamps the document with what it is

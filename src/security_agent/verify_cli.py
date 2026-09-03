@@ -317,6 +317,7 @@ class ClaudeCodeVerifier:
         handoff = runner.Handoff(root / "vote-{}".format(slot), run_id,
                                  self.config_digest)
         handoff.mcp_config.write_text(json.dumps(runner.build_mcp_config(
+            prompt_dir=self.cfg.resolved_prompt_dir(),
             repo=self.ws.root,
             base_sha=self.revision.base_sha,
             head_sha=self.revision.head_sha,

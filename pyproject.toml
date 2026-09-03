@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "hypothesis>=6.100"]
 
 # Keep this table last in the `[project]` block. A TOML table header ends the
 # table above it, so anything added below `[project.urls]` becomes a URL entry.

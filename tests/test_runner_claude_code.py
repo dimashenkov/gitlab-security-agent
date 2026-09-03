@@ -210,6 +210,7 @@ class TestTheClientNeverSeesTheRepository:
         """The one place a path into the checkout appears is the argument list
         of our own server, in a different process."""
         config = build_mcp_config(
+            prompt_dir=PROMPTS,
             repo=tmp_path / "repo", base_sha="a" * 40, head_sha="b" * 40,
             tool_set="reviewer", allowance=RunBudget(PROFILES["normal"]).review,
             handoff=handoff)
@@ -228,6 +229,7 @@ class TestTheClientNeverSeesTheRepository:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-also-secret")
 
         config = build_mcp_config(
+            prompt_dir=PROMPTS,
             repo=tmp_path / "repo", base_sha="", head_sha="HEAD",
             tool_set="reviewer", allowance=RunBudget(PROFILES["normal"]).review,
             handoff=handoff)
@@ -239,6 +241,7 @@ class TestTheClientNeverSeesTheRepository:
 
     def test_the_scope_is_passed_through(self, handoff, tmp_path):
         config = build_mcp_config(
+            prompt_dir=PROMPTS,
             repo=tmp_path / "repo", base_sha="", head_sha="HEAD",
             tool_set="reviewer", allowance=RunBudget(PROFILES["normal"]).review,
             handoff=handoff, scope=("app", "*.md"))
@@ -264,6 +267,7 @@ class TestTheTwoSidesOfTheHandoffAgree:
         from security_agent.mcp_server import _parse_args
 
         config = build_mcp_config(
+            prompt_dir=PROMPTS,
             repo=tmp_path / "repo", base_sha="a" * 40, head_sha="b" * 40,
             tool_set="reviewer", allowance=RunBudget(PROFILES["normal"]).review,
             handoff=handoff, scope=("app",))
@@ -293,6 +297,7 @@ class TestTheTwoSidesOfTheHandoffAgree:
         describing different code. The child defaults its own `--head`.
         """
         config = build_mcp_config(
+            prompt_dir=PROMPTS,
             repo=tmp_path / "repo", base_sha="", head_sha="",
             tool_set="reviewer", allowance=RunBudget(PROFILES["normal"]).review,
             handoff=handoff)
@@ -306,6 +311,7 @@ class TestTheTwoSidesOfTheHandoffAgree:
 
         budget = RunBudget(PROFILES["normal"])
         config = build_mcp_config(
+            prompt_dir=PROMPTS,
             repo=tmp_path / "repo", base_sha="", head_sha="HEAD",
             tool_set="reviewer", allowance=budget.review, handoff=handoff)
         parsed = _parse_args(config["mcpServers"][runner.SERVER_KEY]["args"][2:])

@@ -13,6 +13,7 @@ evidence for believing it. Only candidates gate the pipeline.
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -481,6 +482,21 @@ _RESPONSE_FIELDS = (
 )
 
 
+def _is_count(value: Any) -> bool:
+    """A number this can turn into a token count, and nothing else.
+
+    `isinstance(v, (int, float))` was the whole test, and `json.loads` parses
+    the bare literals `NaN` and `Infinity` by default — `runner_claude_code`
+    reads the CLI's stdout with it — so `int(nan)` raised `ValueError` and
+    `int(inf)` `OverflowError` out of a function whose documented answer to a
+    shape it does not recognise is "this runner reported nothing". A bool was
+    already excluded, for the same reason: `True` is an `int` and is not a
+    count.
+    """
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value))
+
+
 @dataclass
 class Usage:
     """What a run used, and how much of that is actually known.
@@ -596,8 +612,7 @@ class Usage:
         if not isinstance(block, dict):
             return cls.unreported_stage()
         values = [block.get(name) for name in cls.CLI_FIELDS]
-        if any(not isinstance(v, (int, float)) or isinstance(v, bool)
-               for v in values):
+        if not all(_is_count(v) for v in values):
             return cls.unreported_stage()
         return cls(input_tokens=int(values[0]), output_tokens=int(values[1]),
                    cache_write_tokens=int(values[2]),
@@ -738,7 +753,7 @@ class Usage:
 
         def count(key: str) -> int:
             value = body.get(key)
-            return int(value) if isinstance(value, (int, float)) else 0
+            return int(value) if _is_count(value) else 0
 
         return cls(
             unreported_stages=count("unreported_stages"),

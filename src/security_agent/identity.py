@@ -146,4 +146,20 @@ def reusable(previous: Dict[str, Any], current: Dict[str, Any]) -> bool:
         return False
     if not (previous.get("coverage") or {}).get("exposures"):
         return False
+    # And the identity has to *say* what it ran under. `_sha` in `agent.py`
+    # returns `""` when a prompt file cannot be read, and the fields below
+    # collapse a missing one to `""` as well — so two runs whose prompts were
+    # both unreadable carried the same empty digest, matched, and the second
+    # served the first's artifact. Neither knew what it had run under, and
+    # that agreed.
+    #
+    # A missing `verifier.md` is the reachable case: `_first_prompt_candidate`
+    # requires `system.md` and `findings.schema.json` and does not ask for the
+    # third, so a directory without it is chosen silently.
+    for field in ("system_prompt_sha", "verifier_prompt_sha", "schema_sha",
+                  "agent_version", "model_requested"):
+        if not (previous.get("identity") or {}).get(field):
+            return False
+        if not current.get(field):
+            return False
     return digest(previous.get("identity") or {}) == digest(current)

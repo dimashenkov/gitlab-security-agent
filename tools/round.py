@@ -56,7 +56,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import check_accounted  # noqa: E402
 import run_queue  # noqa: E402
-from artifact import case_digest, legacy_case_digest  # noqa: E402
+from artifact import (  # noqa: E402
+    case_digest,
+    instant,
+    legacy_case_digest,
+)
 
 FIVE_LANGUAGES = ("go", "php", "py", "ts", "js")
 
@@ -275,17 +279,45 @@ def compare(number: int) -> int:
         return 2
 
     directory = path.parent
-    results: Dict[str, Any] = {}
+    # Every row for a case, not the last file's. `results[case_id] = row` kept
+    # whichever row came out of the last name in `sorted(glob("*.json"))`, so
+    # renaming two files holding one case swapped this file's primary number
+    # between "0 agreed, 1 flipped" and "1 agreed, 0 flipped" with nothing else
+    # changed. `sentinel.recorded_outcomes` documents and refuses exactly that
+    # trap and `check_accounted` refuses it too; this reader had not learned it.
+    collected: Dict[str, list] = {}
     for result in sorted(directory.glob("*.json")):
         if result.name == "manifest.json":
             continue
         try:
-            rows = json.loads(result.read_text(encoding="utf-8"))
+            stored = json.loads(result.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        for row in rows if isinstance(rows, list) else []:
-            if isinstance(row, dict) and row.get("case_id") and not row.get("incomplete"):
-                results[row["case_id"]] = row
+        # A batch file is a list of rows; an experiment writes one row per
+        # file, as an object. Reading only lists opened the file, parsed it and
+        # then iterated it as nothing.
+        rows = stored if isinstance(stored, list) else [stored]
+        for row in rows:
+            if (isinstance(row, dict) and row.get("case_id")
+                    and not row.get("incomplete")):
+                collected.setdefault(row["case_id"], []).append(row)
+
+    results: Dict[str, Any] = {}
+    disagreed = set()
+    for case_id, rows in collected.items():
+        stamped = [(instant(row.get("ran_at")), row) for row in rows]
+        dated = [(when, row) for when, row in stamped if when is not None]
+        if dated:
+            latest = max(when for when, _row in dated)
+            pool = [(when, row) for when, row in dated if when == latest]
+        else:
+            pool = stamped
+        if len({row.get("pair_success") for _when, row in pool}) > 1:
+            # Two rows sharing the latest instant and disagreeing. Naming it is
+            # the answer; picking one is what glob order used to do.
+            disagreed.add(case_id)
+            continue
+        results[case_id] = pool[0][1]
 
     now = environment()
     drifted = [k for k, v in body["environment"].items() if now.get(k) != v]
@@ -299,6 +331,11 @@ def compare(number: int) -> int:
     unresolved: List[str] = []
     for case in body["cases"]:
         if "stability" not in case["contributes_to"]:
+            continue
+        if case["case_id"] in disagreed:
+            unresolved.append(
+                "{}: two rows at the same instant disagree".format(
+                    case["case_id"]))
             continue
         row = results.get(case["case_id"])
         if row is None:

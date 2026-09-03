@@ -16,3 +16,8 @@ CLAUDE.md
 
 # Permissions and environment for one machine, not a property of the product.
 .claude/settings.local.json
+
+# Hypothesis's example database — generated, machine-local, ~1 MB. The
+# counterexamples worth keeping are the named regression tests beside the
+# properties, not this cache.
+.hypothesis/

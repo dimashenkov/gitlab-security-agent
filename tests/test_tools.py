@@ -419,3 +419,54 @@ class TestExposureIsNotTheSameAsOpening:
         dispatch(ws, session, "list_directory", {})
 
         assert not session.exposures
+
+
+class TestOneWeaknessHasOneIdentity:
+    """The fingerprint was taken from the model's raw spelling of the path.
+
+    `Workspace.repo_path` deliberately accepts `/src/app.py` and `./src/app.py`
+    for `src/app.py` — its docstring says the model writes them that way — so
+    both spellings produced the same candidate with a *different* fingerprint.
+    Measured on the code before this: four spellings, four distinct digests for
+    one weakness.
+
+    What it cost is the whole point of anchoring identity on code rather than
+    on prose. An accepted-risk entry stops matching the next time the model
+    spells the path differently; two reports of one weakness are not
+    deduplicated; a `path:` suppression rule silently fails to apply. The
+    fingerprint was moved off the title to end exactly this, and kept half of
+    it.
+    """
+
+    SPELLINGS = ("app/views.py", "/app/views.py", "./app/views.py",
+                 "app//views.py")
+
+    def test_every_spelling_of_one_path_gives_one_fingerprint(self, ws):
+        digests = set()
+        for spelling in self.SPELLINGS:
+            session = Session()
+            result = report(ws, session, file=spelling,
+                            evidence=REAL_EVIDENCE, line=3)
+            assert not result.is_error, "{} was rejected: {}".format(
+                spelling, result.content[:80])
+            digests.add(session.candidates[0].fingerprint)
+
+        assert len(digests) == 1, \
+            "one weakness got {} identities".format(len(digests))
+
+    def test_the_same_weakness_spelled_twice_is_a_duplicate(self, ws, session):
+        report(ws, session, file="app/views.py", evidence=REAL_EVIDENCE, line=3)
+        again = report(ws, session, file="./app/views.py",
+                       evidence=REAL_EVIDENCE, line=3)
+
+        assert "Already recorded" in again.content
+        assert len(session.candidates) == 1
+
+    def test_the_stored_path_is_the_canonical_one(self, ws, session):
+        """Not only the digest. The path travels into the report, into
+        `suppress.Rule.matches`, and into the artifact — so the candidate has
+        to carry the spelling everything else will use."""
+        report(ws, session, file="/app/views.py", evidence=REAL_EVIDENCE,
+               line=3)
+
+        assert session.candidates[0].finding.file == "app/views.py"

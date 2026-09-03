@@ -81,8 +81,8 @@
 </header>
 
 <div class="frame">
-<svg viewBox="0 0 1000 1250" role="img"
-     aria-label="Security agent flow: trigger, workspace, the agent loop with its tools, three hallucination layers, suppression, the gate and every exit code.">
+<svg viewBox="0 0 1000 2092" role="img"
+     aria-label="Security agent flow: merge request, the output directory preflight, the skip label and the prompt guard, the workspace, accepted risks, reuse, the agent loop with its tools, suppression before verification, the gate and every exit code.">
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5"
             markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -137,105 +137,186 @@
   <path class="wire" d="M500 158 V204" marker-end="url(#a)"/>
 
   <rect class="box" x="350" y="204" width="300" height="60" rx="6"/>
-  <text class="tm" x="368" y="226">workspace</text>
-  <text class="s" x="368" y="242">git diff BASE..HEAD · scope · excludes</text>
-  <text class="s" x="368" y="256">changed-line map — lines the change owns</text>
+  <text class="tm" x="368" y="226">output dir · preflight</text>
+  <text class="s" x="368" y="242">report.py · preflight_output_dir</text>
+  <text class="s" x="368" y="258">checked before the skip and any spending</text>
+  <path class="exit" d="M650 234 H744" marker-end="url(#astop)"/>
+  <rect class="ebox" x="744" y="210" width="226" height="46" rx="5"/>
+  <text class="et" x="760" y="232">EXIT 2</text>
+  <text class="sd" x="760" y="248">the output dir is a symlink</text>
 
   <path class="wire" d="M500 264 V310" marker-end="url(#a)"/>
 
-  <rect class="box" x="350" y="310" width="300" height="46" rx="6"/>
-  <text class="tm" x="368" y="332">briefing</text>
-  <text class="s" x="368" y="348">system prompt + what changed</text>
+  <rect class="box" x="350" y="310" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="332">skip label</text>
+  <text class="s" x="368" y="348">cli.py · _skip_requested</text>
+  <text class="s" x="368" y="364">the label switches this review off</text>
+  <path class="pass" d="M650 340 H706 V373 H744" marker-end="url(#agate)"/>
+  <rect class="box gate" x="744" y="343" width="226" height="60" rx="6"/>
+  <text class="tm" x="760" y="365">prompt guard</text>
+  <text class="s" x="760" y="381">the same check runs first</text>
+  <text class="s" x="760" y="397">it skips a review, not this</text>
+  <path class="pass" d="M857 403 V423" marker-end="url(#agate)"/>
+  <rect class="box gate" x="744" y="423" width="226" height="64" rx="6"/>
+  <text class="pt" x="760" y="445">EXIT 0 · not reviewed</text>
+  <text class="s" x="760" y="461">cli.py · _nothing_to_review</text>
+  <text class="sd" x="760" y="477">an artifact and a note anyway</text>
 
-  <path class="wire" d="M500 356 V400" marker-end="url(#a)"/>
+  <path class="wire" d="M500 370 V496" marker-end="url(#a)"/>
 
-  <rect class="pen" x="196" y="400" width="608" height="238" rx="10"/>
-  <text class="lt" x="212" y="392">AGENT LOOP · agent.py · up to max_turns</text>
+  <rect class="box" x="350" y="496" width="300" height="74" rx="6"/>
+  <text class="tm" x="368" y="518">workspace · diff range</text>
+  <text class="s" x="368" y="534">cli.py · _resolve_range</text>
+  <text class="s" x="368" y="550">BASE..HEAD · scope · excludes</text>
+  <text class="s" x="368" y="566">changed-line map — lines the change owns</text>
 
-  <rect class="box paid" x="352" y="420" width="296" height="54" rx="6"/>
-  <text class="tm" x="370" y="442">model</text>
-  <text class="s" x="370" y="458">reads, reasons, calls a tool</text>
+  <path class="wire" d="M500 570 V616" marker-end="url(#a)"/>
 
-  <path class="cyc" d="M648 447 H716 V540" marker-end="url(#aloop)"/>
-  <path class="cyc" d="M352 540 H284 V447" marker-end="url(#aloop)"/>
+  <rect class="box gate" x="350" y="616" width="300" height="74" rx="6"/>
+  <text class="tm" x="368" y="638">prompt guard</text>
+  <text class="s" x="368" y="654">cli.py · _prompt_risk</text>
+  <text class="s" x="368" y="670">the prompt bytes against a baseline rev</text>
+  <text class="s" x="368" y="686">an uncommitted edit is caught too</text>
+  <path class="exit" d="M350 638 H236" marker-end="url(#astop)"/>
+  <rect class="ebox" x="30" y="616" width="206" height="60" rx="5"/>
+  <text class="et" x="46" y="638">EXIT 2</text>
+  <text class="sd" x="46" y="654">the change picks the</text>
+  <text class="sd" x="46" y="670">prompts it is judged by</text>
 
-  <rect class="box loop" x="284" y="518" width="432" height="44" rx="6"/>
-  <text class="s" x="300" y="536">list_changed_files · get_diff · list_directory</text>
-  <text class="s" x="300" y="552">read_file · search_code · git_log · finish_review</text>
+  <path class="wire" d="M500 690 V736" marker-end="url(#a)"/>
 
-  <rect class="box gate" x="284" y="580" width="432" height="44" rx="6"/>
-  <text class="tm" x="300" y="600">report_finding</text>
-  <text class="s" x="300" y="616">LAYER 1 — evidence not in the file is rejected</text>
+  <rect class="box" x="350" y="736" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="758">accepted risks</text>
+  <text class="s" x="368" y="774">suppress.py · load</text>
+  <text class="s" x="368" y="790">read before the review and before reuse</text>
 
-  <path class="wire" d="M500 638 V684" marker-end="url(#a)"/>
+  <path class="wire" d="M500 796 V842" marker-end="url(#a)"/>
 
-  <rect class="box paid" x="350" y="684" width="300" height="60" rx="6"/>
-  <text class="tm" x="368" y="706">verification</text>
-  <text class="s" x="368" y="722">LAYERS 2 and 3 · each finding is attacked</text>
-  <text class="s" x="368" y="736">verdict: confirmed · refuted · uncertain</text>
+  <rect class="box" x="350" y="842" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="864">reuse?</text>
+  <text class="s" x="368" y="880">cli.py · _reuse</text>
+  <text class="s" x="368" y="896">same code, prompts, model and rules</text>
+  <path class="pass" d="M650 872 H744" marker-end="url(#agate)"/>
+  <rect class="box gate" x="744" y="842" width="226" height="74" rx="6"/>
+  <text class="pt" x="760" y="864">REUSE · the earlier verdict</text>
+  <text class="sd" x="760" y="880">the artifact is rewritten</text>
+  <text class="sd" x="760" y="896">with a reuse block, and the</text>
+  <text class="sd" x="760" y="912">note is posted again</text>
 
-  <path class="wire" d="M500 744 V790" marker-end="url(#a)"/>
+  <path class="wire" d="M500 902 V1002" marker-end="url(#a)"/>
 
-  <rect class="box gate" x="350" y="790" width="300" height="60" rx="6"/>
-  <text class="tm" x="368" y="812">suppression · apply</text>
-  <text class="s" x="368" y="828">rules are read before the review</text>
-  <text class="s" x="368" y="842">a change cannot silence itself</text>
+  <rect class="box" x="350" y="1002" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="1024">briefing</text>
+  <text class="s" x="368" y="1040">briefing.py · build</text>
+  <text class="s" x="368" y="1056">system prompt + what changed</text>
 
-  <path class="wire" d="M500 850 V896" marker-end="url(#a)"/>
+  <path class="wire" d="M500 1062 V1108" marker-end="url(#a)"/>
 
-  <rect class="box gate" x="316" y="896" width="368" height="74" rx="6"
-        stroke-width="2.4"/>
-  <text class="tm" x="334" y="918">gate · decide()</text>
-  <text class="s" x="334" y="934">the only place that picks the exit code</text>
-  <text class="s" x="334" y="948">severity · confidence · attribution</text>
-  <text class="s" x="334" y="962">a removed control blocks on its own</text>
+  <rect class="pen" x="196" y="1108" width="608" height="272" rx="10"/>
+  <text class="lt" x="212" y="1100">AGENT LOOP · up to max_turns</text>
 
-  <path class="exit" d="M316 918 H236" marker-end="url(#astop)"/>
-  <rect class="ebox" x="30" y="896" width="206" height="60" rx="5"/>
-  <text class="et" x="46" y="916">EXIT 2</text>
-  <text class="sd" x="46" y="932">an unforgiven stop —</text>
-  <text class="sd" x="46" y="946">or a partial review</text>
+  <rect class="box paid" x="352" y="1128" width="296" height="68" rx="6"/>
+  <text class="tm" x="370" y="1150">model</text>
+  <text class="s" x="370" y="1166">agent.py · SecurityAgent</text>
+  <text class="s" x="370" y="1182">reads, reasons, calls a tool</text>
 
-  <path class="exit" d="M316 956 H266 V990 H236" marker-end="url(#astop)"/>
-  <rect class="ebox" x="30" y="966" width="206" height="60" rx="5"/>
-  <text class="et" x="46" y="986">EXIT 2</text>
-  <text class="sd" x="46" y="1002">opened nothing, and there</text>
-  <text class="sd" x="46" y="1016">was something to read</text>
+  <path class="cyc" d="M648 1162 H716 V1262" marker-end="url(#aloop)"/>
+  <path class="cyc" d="M352 1262 H284 V1162" marker-end="url(#aloop)"/>
 
-  <path class="exit" d="M684 918 H764" marker-end="url(#astop)"/>
-  <rect class="ebox" x="764" y="896" width="206" height="46" rx="5"/>
-  <text class="et" x="780" y="916">EXIT 1</text>
-  <text class="sd" x="780" y="932">blocking finding</text>
+  <rect class="box loop" x="284" y="1240" width="432" height="44" rx="6"/>
+  <text class="s" x="300" y="1258">list_changed_files · get_diff · list_directory</text>
+  <text class="s" x="300" y="1274">read_file · search_code · git_log · finish_review</text>
 
-  <path class="pass" d="M500 970 V1002" marker-end="url(#agate)"/>
-  <rect class="box gate" x="350" y="1002" width="300" height="46" rx="6"/>
-  <text class="pt" x="368" y="1022">EXIT 0 · nothing blocking</text>
-  <text class="sd" x="368" y="1038">a skipped or forgiven run lands here too</text>
+  <rect class="box gate" x="284" y="1302" width="432" height="60" rx="6"/>
+  <text class="tm" x="300" y="1324">report_finding</text>
+  <text class="s" x="300" y="1340">tools.py · _handle_report_finding</text>
+  <text class="s" x="300" y="1356">LAYER 1 — evidence not in the file is rejected</text>
 
-  <path class="wire" d="M500 1048 V1094" marker-end="url(#a)"/>
+  <path class="wire" d="M500 1380 V1426" marker-end="url(#a)"/>
 
-  <rect class="box" x="350" y="1094" width="300" height="60" rx="6"/>
-  <text class="tm" x="368" y="1116">artifact</text>
-  <text class="s" x="368" y="1132">.security-scan/report.md + findings.json</text>
-  <text class="s" x="368" y="1146">provenance: model, prompts, digests</text>
+  <rect class="box gate" x="350" y="1426" width="300" height="88" rx="6"/>
+  <text class="tm" x="368" y="1448">suppression · apply</text>
+  <text class="s" x="368" y="1464">suppress.py · apply</text>
+  <text class="s" x="368" y="1480">only what is kept goes on to verify</text>
+  <text class="s" x="368" y="1496">an accepted one: not verified, counted</text>
+  <text class="s" x="368" y="1512">a change cannot silence itself</text>
 
-  <path class="exit" d="M650 1120 H764" marker-end="url(#astop)"/>
-  <rect class="ebox" x="764" y="1098" width="206" height="46" rx="5"/>
-  <text class="et" x="780" y="1118">EXIT 2</text>
-  <text class="sd" x="780" y="1134">artifact not written</text>
+  <path class="wire" d="M500 1514 V1560" marker-end="url(#a)"/>
 
-  <path class="wire" d="M500 1154 V1194" marker-end="url(#a)"/>
+  <rect class="box paid" x="350" y="1560" width="300" height="74" rx="6"/>
+  <text class="tm" x="368" y="1582">verification</text>
+  <text class="s" x="368" y="1598">verify.py · verify_candidates</text>
+  <text class="s" x="368" y="1614">LAYERS 2 and 3 · only what was kept</text>
+  <text class="s" x="368" y="1630">verdict: confirmed · refuted · uncertain</text>
 
-  <rect class="box" x="350" y="1194" width="300" height="46" rx="6"/>
-  <text class="tm" x="368" y="1216">MR comment</text>
-  <text class="s" x="368" y="1232">forge.py · the note on the merge request</text>
+  <path class="wire" d="M500 1634 V1680" marker-end="url(#a)"/>
 
-  <path d="M836 420 V744" stroke="var(--paid)" stroke-width="2.4" fill="none"/>
-  <path d="M836 420 H826 M836 744 H826" stroke="var(--paid)" stroke-width="2.4"/>
-  <text class="s" x="848" y="576" fill="var(--paid)">the model</text>
-  <text class="s" x="848" y="592" fill="var(--paid)">calls</text>
+  <rect class="box gate" x="316" y="1680" width="368" height="88" rx="6" stroke-width="2.4"/>
+  <text class="tm" x="334" y="1702">gate · decide</text>
+  <text class="s" x="334" y="1718">gate.py · decide</text>
+  <text class="s" x="334" y="1734">the only place that picks the exit code</text>
+  <text class="s" x="334" y="1750">severity · confidence · attribution</text>
+  <text class="s" x="334" y="1766">a removed control blocks on its own</text>
+
+  <path class="exit" d="M316 1702 H236" marker-end="url(#astop)"/>
+  <rect class="ebox" x="30" y="1680" width="206" height="60" rx="5"/>
+  <text class="et" x="46" y="1702">EXIT 2</text>
+  <text class="sd" x="46" y="1718">an unforgiven stop —</text>
+  <text class="sd" x="46" y="1734">or a partial review</text>
+
+  <path class="exit" d="M316 1740 H266 V1774 H236" marker-end="url(#astop)"/>
+  <rect class="ebox" x="30" y="1750" width="206" height="60" rx="5"/>
+  <text class="et" x="46" y="1772">EXIT 2</text>
+  <text class="sd" x="46" y="1788">opened nothing, and there</text>
+  <text class="sd" x="46" y="1804">was something to read</text>
+
+  <path class="exit" d="M684 1702 H744" marker-end="url(#astop)"/>
+  <rect class="ebox" x="744" y="1680" width="226" height="46" rx="5"/>
+  <text class="et" x="760" y="1702">EXIT 1</text>
+  <text class="sd" x="760" y="1718">blocking finding</text>
+
+  <path class="pass" d="M500 1768 V1800" marker-end="url(#agate)"/>
+  <rect class="box gate" x="350" y="1800" width="300" height="46" rx="6"/>
+  <text class="pt" x="368" y="1822">EXIT 0 · nothing blocking</text>
+  <text class="sd" x="368" y="1838">a skipped or forgiven run lands here too</text>
+
+  <path class="wire" d="M500 1846 V1892" marker-end="url(#a)"/>
+
+  <rect class="box" x="350" y="1892" width="300" height="74" rx="6"/>
+  <text class="tm" x="368" y="1914">artifact</text>
+  <text class="s" x="368" y="1930">report.py · write_artifacts</text>
+  <text class="s" x="368" y="1946">.security-scan/report.md + findings.json</text>
+  <text class="s" x="368" y="1962">provenance: model, prompts, digests</text>
+  <path class="exit" d="M650 1922 H744" marker-end="url(#astop)"/>
+  <rect class="ebox" x="744" y="1898" width="226" height="46" rx="5"/>
+  <text class="et" x="760" y="1920">EXIT 2</text>
+  <text class="sd" x="760" y="1936">artifact not written</text>
+
+  <path class="wire" d="M500 1966 V2012" marker-end="url(#a)"/>
+
+  <rect class="box" x="350" y="2012" width="300" height="60" rx="6"/>
+  <text class="tm" x="368" y="2034">MR comment</text>
+  <text class="s" x="368" y="2050">forge.py · publish</text>
+  <text class="s" x="368" y="2066">the note on the merge request</text>
+
+  <path d="M836 1128 V1634" stroke="var(--paid)" stroke-width="2.4" fill="none"/>
+  <path d="M836 1128 H826 M836 1634 H826" stroke="var(--paid)" stroke-width="2.4"/>
+  <text class="s" x="848" y="1375" fill="var(--paid)">the model</text>
+  <text class="s" x="848" y="1391" fill="var(--paid)">is called here</text>
 </svg>
 </div>
+
+<p class="note">
+  <b>The order is part of the claim.</b> <code>preflight_output_dir</code>
+  sits above the skip and above every purchase: the directory this run reads
+  from and writes to is checked before anything is bought. The
+  <code>prompt guard</code> compares the prompt files' bytes against a baseline
+  revision, so an edit that only exists in the checkout is caught too — and the
+  skip label does not waive it. And <code>suppression</code> runs
+  <b>before</b> verification: only findings that can still reach the gate are
+  verified, and an accepted risk is recorded as <code>not verified</code>
+  rather than as confirmed.
+</p>
 
 <p class="note">
   <b>Three hallucination layers, not one.</b> <code>report_finding</code>

@@ -139,7 +139,7 @@ def test_deleting_the_file_counts_as_touching_it(repo):
     git("commit", "-qm", "accept a risk")
     second = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
-    (root / IGNORE).unlink()
+    (root / IGNORE).unlink(missing_ok=True)
     git("add", "-A")
     git("commit", "-qm", "remove it")
 
@@ -256,3 +256,51 @@ def test_a_git_failure_is_raised_rather_than_read_as_untouched(repo, monkeypatch
 
     with pytest.raises(WorkspaceError):
         ws.change_touches(IGNORE)
+
+
+def test_a_symlinked_ignore_file_is_seen_as_reached_through_a_link(repo):
+    """The route around the guard that needs no knowledge of the finding.
+
+    `change_touches` asks **git**, which never follows a symlink and reports
+    the link's own blob. The loader asks the **filesystem**, which does follow
+    it. So a suppression file committed as a link is guarded under one name and
+    read from another.
+
+    Two merge requests, both innocuous in isolation: commit
+    `.security-agent-ignore.yml` as a link to `docs/notes.yml`, which reads as
+    tidying; then put the weakness and the entry excusing it into
+    `docs/notes.yml`. Git reports only `docs/notes.yml`, `change_touches` is
+    `False`, and the rule applies to the change that wrote it.
+    """
+    root, _base, git = repo
+    (root / IGNORE).unlink(missing_ok=True)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs" / "notes.yml").write_text("ignore: []\n", encoding="utf-8")
+    (root / IGNORE).symlink_to(Path("docs") / "notes.yml")
+    git("add", "-A")
+    git("commit", "-qm", "tidy the notes")
+    # The fixture's `git` returns nothing, so the sha is read separately.
+    after_the_link = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True).stdout.strip()
+
+    (root / "docs" / "notes.yml").write_text(BLANKET, encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "accept a risk, through the link")
+
+    from security_agent.workspace import Workspace
+
+    ws = Workspace(root=root, diff_base=after_the_link, diff_head="HEAD")
+
+    # The old question, still answering the way that let this through.
+    assert ws.change_touches(IGNORE) is False
+    # The one that closes it.
+    assert ws.reached_through_a_link(IGNORE) == IGNORE
+
+
+def test_an_ordinary_ignore_file_is_not_reported_as_linked(repo):
+    """The control. Over-firing here would switch suppression off for every
+    project that has a plain file, which is all of them."""
+    ws = _ws(repo)
+
+    assert ws.reached_through_a_link(IGNORE) is None

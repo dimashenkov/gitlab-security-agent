@@ -346,9 +346,24 @@ def drift(body: Dict[str, Any]) -> List[str]:
     """What has moved since the freeze, in words a reader can act on."""
     moved = []
     now = environment_now()
+    absent = object()
     for key, was in body["environment"].items():
-        if now.get(key) != was:
-            moved.append("{}: {} -> {}".format(key, was, now.get(key)))
+        # A sentinel, not `now.get(key)`. `get` answers `None` for a key that
+        # has left the environment, so a manifest freezing `None` and an
+        # environment that no longer records the key at all compared *equal* —
+        # `drift` returned "nothing has moved" and `verify` exited 0, which is
+        # the permission to spend. The repository's own recurring defect, in
+        # the one function whose exit code authorises money.
+        #
+        # Latent today: every producer of `environment_now` returns a string,
+        # so no manifest on disk holds a `None`. Found by a generated input,
+        # which is the point of generating them.
+        current = now.get(key, absent)
+        if current is absent:
+            moved.append("{}: {} -> the environment no longer records it"
+                         .format(key, was))
+        elif current != was:
+            moved.append("{}: {} -> {}".format(key, was, current))
     if digest_file(SUITE) != body["suite"]["digest"]:
         moved.append("the sentinel suite file has been rewritten")
     for row in body["cases"]:

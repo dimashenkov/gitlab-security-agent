@@ -275,6 +275,11 @@ def _inside(path: Path, root: Path) -> bool:
 # to read.
 PROMPT_FILES = ("system.md", "verifier.md", "findings.schema.json")
 
+# Distinct from `None`, which means "the file is not there". A file that
+# exists and cannot be read is a third state, and folding it into the
+# second is what let an unread file be called byte-for-byte identical.
+UNREADABLE = object()
+
 
 class PromptRisk:
     """What the guard concluded, as a value rather than a sentence to parse.
@@ -414,18 +419,41 @@ def prompt_content_risk(prompt_dir, repo_root, resolve_baseline, at_baseline):
             "SECURITY_SCAN_PROMPT_DIR outside the checkout.".format(prompt_dir))
 
     relative = prompt_dir.relative_to(repo_root)
-    differing = []
+    differing, unreadable = [], []
     for name in PROMPT_FILES:
         path = prompt_dir / name
+        # Three states, not two. `disk = None` on an unreadable file made
+        # "could not read it" compare equal to "it was not there at the
+        # baseline" — and the pair `unreadable now / absent then` came back
+        # `warn`, saying the prompts are "byte-for-byte what <sha> had, so this
+        # review is sound" about bytes nothing had read.
+        #
+        # A merge request can produce it without any job step: a symlink loop
+        # at `prompts/verifier.md` makes `is_file()` answer `False` — `ELOOP`
+        # is on pathlib's ignore list — so the file reads as absent while the
+        # link sits in the tree. The symlink walk above refuses links between
+        # the anchor and the prompt directory, never one at a file inside it.
         try:
             disk = path.read_bytes() if path.is_file() else None
+            if disk is None and path.is_symlink():
+                disk = UNREADABLE
         except OSError:
-            disk = None
+            disk = UNREADABLE
         key = name if str(relative) == "." else "{}/{}".format(relative, name)
-        if disk != at_baseline(key):
+        if disk is UNREADABLE:
+            unreadable.append(key)
+        elif disk != at_baseline(key):
             differing.append(key)
 
     short = baseline[:12] or baseline
+    if unreadable:
+        return PromptRisk(
+            "refuse",
+            "{} could not be read, so nothing establishes that this change "
+            "did not write them — and they are the prompts this review would "
+            "run under. A file that cannot be read is not a file that matches."
+            .format(", ".join(unreadable)),
+            baseline=baseline, differing=unreadable)
     if differing:
         return PromptRisk(
             "refuse",
@@ -869,15 +897,27 @@ class Config:
         candidates.append(Path("/opt/security-agent/prompts"))
 
         for candidate in candidates:
-            if (candidate / "system.md").is_file() and (
-                candidate / "findings.schema.json"
-            ).is_file():
+            # All three, not two. `verifier.md` was never asked for, so a
+            # directory holding only the other two was accepted — and accepted
+            # *first*, ahead of the agent's own complete one further down the
+            # list. Traced end to end: `_sha` answers `""` on the missing file,
+            # the report renders an empty code span nobody can read as "absent",
+            # and `verify` raises `FileNotFoundError` — on the API path after
+            # the whole review is paid for, on the CLI path swallowed per vote
+            # so every finding comes back "verification could not run" while
+            # the footer still says the findings were independently verified.
+            #
+            # The gate itself fails closed, so nothing unsafe merges. What is
+            # lost is the refutation side: no false alarm is ever dropped, and
+            # the run still calls itself complete.
+            if all((candidate / name).is_file() for name in PROMPT_FILES):
                 return candidate
 
         raise ConfigError(
-            "cannot find the prompt directory (needs system.md and "
-            "findings.schema.json). Looked in: {}. Set SECURITY_SCAN_PROMPT_DIR "
+            "cannot find the prompt directory (needs {}). Looked in: {}. "
+            "Set SECURITY_SCAN_PROMPT_DIR "
             "to the agent's own prompts directory — never to a path inside the "
             "repository being reviewed.".format(
+                ", ".join(PROMPT_FILES),
                 ", ".join(str(c) for c in candidates))
         )

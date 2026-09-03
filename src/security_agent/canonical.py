@@ -217,7 +217,16 @@ def _diff(left: Any, right: Any, path: str) -> List[str]:
         for index, (a, b) in enumerate(zip(left, right)):
             out += _diff(a, b, "{}[{}]".format(path, index))
         return out
-    return [] if left == right else ["{}: {!r} vs {!r}".format(path, left, right)]
+    # Compared as they will be *written*, not as Python compares them.
+    # `identical` is a byte comparison of the JSON, and `left == right` is not
+    # the same question: `-0.0 == 0.0` is true and `json.dumps` writes them
+    # differently, so a byte comparison failed while this returned `[]` — a
+    # conformance failure naming no differing path, which is the one thing
+    # `differences` exists to prevent. Encoding both here makes the two answers
+    # agree by construction rather than by a list of special cases.
+    if json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True):
+        return []
+    return ["{}: {!r} vs {!r}".format(path, left, right)]
 
 
 def telemetry_leaks(canonical: Dict[str, Any]) -> List[str]:
