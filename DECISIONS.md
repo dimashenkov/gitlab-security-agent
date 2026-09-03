@@ -1,867 +1,925 @@
-# Решенията и защо
+# The decisions, and why
 
-`AUDIT.md` казва какво е било счупено. `LIMITATIONS.md` — какво не може. Тук е
-**защо сме избрали така**: това, което после никой не помни и се преоткрива на
-грешна цена.
+`AUDIT.md` says what was broken. `LIMITATIONS.md` — what cannot be done. Here is
+**why we chose it this way**: the part nobody remembers afterwards and
+rediscovers at the wrong price.
 
-## Как се пише запис
+## How an entry is written
 
-Всеки запис минава през Codex, преди да влезе. Не за одобрение — за възражение,
-и възражението се записва. „Codex го прегледа" не е запис; записано е това,
-което е казал.
+Every entry goes through Codex before it lands. Not for approval — for
+objection, and the objection is recorded. "Codex reviewed it" is not a record;
+what is recorded is what it said.
 
-Полетата не са украса. Първата версия на този файл беше отхвърлена изцяло,
-защото нямаше `Състояние` и `Проверено срещу` — а без тях един остарял запис
-изглежда като действащо правило. Codex го формулира така: *без тези състояния
-файлът става по-лош от липсваща памет — става уверена остаряла памет.*
+The fields are not decoration. The first version of this file was rejected
+outright because it had no `State` and no `Checked against` — and without them a
+stale entry looks like a live rule. Codex put it this way: *without these states
+the file becomes worse than missing memory — it becomes confidently stale
+memory.*
 
-    ID              D-001, никога преизползван
-    Състояние       действащо | предложено | заменено | оттеглено
-    Обхват          коя част от системата
-    Решено          какво
-    Отхвърлено      какво не, и защо не
-    Причина         защо
-    Наложено от     символ или тест, който го прави вярно
-    Доказателство   артефакт или команда, която читателят пуска
-    Проверено срещу commit
-    Възражение      какво каза Codex
-    Преразглежда се когато
+    ID              D-001, never reused
+    State           active | proposed | superseded | withdrawn
+    Scope           which part of the system
+    Decided         what
+    Rejected        what not, and why not
+    Reason          why
+    Enforced by     a symbol or a test that makes it true
+    Evidence        an artifact or a command the reader runs
+    Checked against commit
+    Objection       what Codex said
+    Revisited when
 
-Записът със състояние `предложено` не е решение и стои отделно, най-долу.
-
----
-
-## D-001 · Изходният код разграничава три неща, не две
-
-| | |
-|---|---|
-| **Състояние** | действащо |
-| **Известна дупка** | `AUDIT.md` блокиращо 9 — виж Възражение |
-| **Обхват** | `src/security_agent/gate.py`, изходен код на процеса |
-| **Проверено срещу** | `b19b7bf` |
-
-**Решено.** `0` = проверено и чисто. `1` = блокираща находка. `2` = не е
-стигнало до отговор.
-
-**Отхвърлено.** Двоично „мина / не мина", както правят линтерите. Няма къде да
-сложи прекъснатото пускане, а прекъснатите са около една пета от мереното.
-
-**Причина.** „Не можах да проверя" и „чисто е" изглеждат еднакво отвън. Срив с
-кода за „намерени уязвимости" праща човека да търси несъществуващо; срив с `0`
-го праща да не търси нищо.
-
-**Наложено от.** `gate.decide`; `gate._reviewed_nothing` за пускането, до което
-нищо не е стигнало. `tests/test_gate.py`.
-
-**Доказателство.** `python3 -m pytest tests/test_gate.py -q`. Шест отделни
-дефекта, всеки водещ до `exit 0` над непроверен код, изброени в `AUDIT.md`.
-
-**Възражение (Codex, 2026-08-29).** Записът твърди повече, отколкото кодът
-налага. Пътят през Messages API приема `end_turn` за завършен преглед, без
-рецензентът да се е подписал — тоест „не е стигнало до отговор" не се засича в
-този случай. Дупката е `AUDIT.md` блокиращо 9 и стои отворена нарочно: за
-затягането ѝ трябва процентът на подписалите се прегледи, а той се събира от
-следващите batch-ове.
-
-**Преразглежда се когато** `finished_explicitly` е записано за поне двайсет
-завършили прегледа. Решаващото число е делът, който **не** се е подписал: под
-5% — затягаме, и `end_turn` без `finish_review` става непълно пускане; над 20%
-— затягането би провалило прегледи, които са наред, и вместо това се променя
-prompt-ът. Между двете: мери още.
+An entry in state `proposed` is not a decision and stands apart, at the bottom.
 
 ---
 
-## D-002 · Самоличността на находка никога не се вързва за проза
+## D-001 · The exit code distinguishes three things, not two
 
 | | |
 |---|---|
-| **Състояние** | действащо |
-| **Обхват** | `tools/artifact.py`, сравнение между пускания |
-| **Проверено срещу** | `b19b7bf` |
+| **State** | active |
+| **Known hole** | `AUDIT.md` blocking 9 — see Objection |
+| **Scope** | `src/security_agent/gate.py`, the exit code of the process |
+| **Checked against** | `b19b7bf` |
 
-**Решено.** `identity(finding)` е `(категория, файл)`. `blocking_identities`
-добавя **пореден номер**, който носи само бройка — че две находки в един файл
-са две, а не една.
+**Decided.** `0` = checked and clean. `1` = a blocking finding. `2` = it never
+got to an answer.
 
-**Отхвърлено.** Отпечатък от заглавието: даде пет различни стойности за една
-находка в пет пускания и счупи приемането на риск — приетият риск изчезваше при
-следващото пускане, защото моделът беше преформулирал изречението. Отхвърлен и
-лексикографски най-малкият цитиран ред: зависи колко от конструкцията моделът е
-решил да цитира. Отхвърлено и само `(категория, файл)` за блокиращите — слива
-две различни находки в един файл в една.
+**Rejected.** A binary "pass / fail", the way linters do it. It has nowhere to
+put an interrupted run, and interrupted runs are about a fifth of what has been
+measured.
 
-**Причина.** Ключът трябва да зависи от кода, който е проверено че съществува,
-не от начина, по който е описан.
+**Reason.** "I could not check" and "it is clean" look identical from outside. A
+crash carrying the code for "vulnerabilities found" sends a person hunting for
+something that does not exist; a crash carrying `0` sends them to look for
+nothing at all.
 
-**Наложено от.** `tools/artifact.py:identity`, `blocking_identities`;
+**Enforced by.** `gate.decide`; `gate._reviewed_nothing` for the run that nothing
+reached. `tests/test_gate.py`.
+
+**Evidence.** `python3 -m pytest tests/test_gate.py -q`. Six separate defects,
+each one leading to `exit 0` over unreviewed code, listed in `AUDIT.md`.
+
+**Objection (Codex, 2026-08-29).** The entry claims more than the code enforces.
+The path through the Messages API accepts `end_turn` as a finished review
+without the reviewer having signed off — that is, "it never got to an answer" is
+not detected in that case. The hole is `AUDIT.md` blocking 9 and it is left open
+deliberately: closing it needs the share of reviews that sign off, and that is
+collected from the coming batches.
+
+**Revisited when** `finished_explicitly` has been recorded for at least twenty
+finished reviews. The deciding number is the share that did **not** sign off:
+under 5% — we tighten, and `end_turn` without `finish_review` becomes an
+incomplete run; over 20% — tightening would fail reviews that are fine, and the
+prompt is changed instead. Between the two: measure more.
+
+---
+
+## D-002 · A finding's identity is never tied to prose
+
+| | |
+|---|---|
+| **State** | active |
+| **Scope** | `tools/artifact.py`, comparison between runs |
+| **Checked against** | `b19b7bf` |
+
+**Decided.** `identity(finding)` is `(category, file)`. `blocking_identities`
+adds an **ordinal**, which carries a count and nothing more — that two findings
+in one file are two and not one.
+
+**Rejected.** A fingerprint of the title: it gave five different values for one
+finding across five runs and broke risk acceptance — the accepted risk vanished
+on the next run, because the model had reworded the sentence. Also rejected: the
+lexicographically smallest quoted line — it depends on how much of the construct
+the model decided to quote. And `(category, file)` on its own is rejected for
+the blocking ones — it merges two different findings in one file into one.
+
+**Reason.** The key has to depend on code that has been checked to exist, not on
+the way it was described.
+
+**Enforced by.** `tools/artifact.py:identity`, `blocking_identities`;
 `tests/test_injection_corpus.py::test_two_blocking_findings_in_one_file_stay_two`
-и `::test_the_ordinal_says_how_many_and_never_which_one`.
+and `::test_the_ordinal_says_how_many_and_never_which_one`.
 
-**Доказателство.** `python3 -m pytest tests/test_injection_corpus.py -q`.
-Проверено със саботаж срещу двете отхвърлени реализации: с `(категория, файл)`
-падат два теста, с най-малката котва — други два.
+**Evidence.** `python3 -m pytest tests/test_injection_corpus.py -q`. Checked by
+sabotage against both rejected implementations: with `(category, file)` two
+tests fail, with the smallest anchor — two others.
 
-**Възражение (Codex, 2026-08-29).** Първата версия на този запис беше
-подвеждаща: пишеше, че самоличността е тройка навсякъде. Не е — `identity` е
-двойка, поредният номер съществува само в `blocking_identities`. Поправено.
+**Objection (Codex, 2026-08-29).** The first version of this entry was
+misleading: it said the identity is a triple everywhere. It is not — `identity`
+is a pair, and the ordinal exists only in `blocking_identities`. Fixed.
 
-**Преразглежда се когато** се появи по-фина котва, която издържи проверката:
-две пускания на един случай ѝ дават един ключ, а две различни находки в един
-файл — различни. Мери се с `tools/stability.py` върху поне десет случая.
-
----
-
-## D-003 · Корпусът е двойки, не примери
-
-| | |
-|---|---|
-| **Състояние** | действащо |
-| **Обхват** | `corpus-real/`, `tools/pair_corpus.py` |
-| **Проверено срещу** | `b19b7bf` |
-
-**Решено.** Всеки случай е истинска поправка на уязвимост, от която правим два
-члена: с поправката и без нея. Всеки член се преглежда отделно, без да знае за
-другия. Оценява се дали двата отговора се различават.
-
-**Отхвърлено.** Ръчно писани примери с примамки. Одит показа, че такъв корпус
-се решава от правило, което не чете код изобщо: „повече редове коментар значи
-безопасно" даде 48 от 48.
-
-**Причина.** Само върху опасния член „намери нещо" не значи нищо — може да
-намира нещо навсякъде. Проверката е дали ще замълчи за поправеното.
-
-**Наложено от.** `tools/corpus_adversary.py` (правилата вътре в член се
-засичат); `tools/check_corpus.py` (случай с непочистен файл в променената част
-не се приема).
-
-**Доказателство.** `python3 tools/corpus_adversary.py corpus/ corpus-real/` —
-днес нито едно правило вътре в член не се задейства достатъчно, за да съди.
-`python3 tools/check_corpus.py corpus/ corpus-real/` — 105 случая, 0 проблема.
-
-**Възражение (Codex, 2026-08-29).** 48-те от 48 са исторически и не се
-възпроизвеждат от днешния корпус — онзи корпус е сменен. Числото е причина за
-решението, не текущо състояние, и записът трябва да го казва. Казва го.
-
-**Преразглежда се когато** правило между членове стигне 6 задействания и над
-65% верни — праговете, които `tools/corpus_adversary.py` вече използва за
-правилата вътре в член. Днес „повече импорти" е 24 задействания и 96%, но е
-между членове, а рецензентът никога не вижда двата.
+**Revisited when** a finer anchor appears that survives the check: two runs of
+one case give it one key, and two different findings in one file — different
+ones. Measured with `tools/stability.py` over at least ten cases.
 
 ---
 
-## D-004 · Две конструкции, никога събирани в едно число
+## D-003 · The corpus is pairs, not examples
 
 | | |
 |---|---|
-| **Състояние** | действащо |
-| **Обхват** | оценяване, `tools/stage2.py` |
-| **Проверено срещу** | `b19b7bf` |
+| **State** | active |
+| **Scope** | `corpus-real/`, `tools/pair_corpus.py` |
+| **Checked against** | `b19b7bf` |
 
-**Решено.** `regression` (поправката е махната) и `snapshot` (кодът отпреди
-поправката) се броят поотделно и никога не се сумират.
+**Decided.** Every case is a real fix of a vulnerability, out of which we make
+two members: with the fix and without it. Each member is reviewed separately,
+without knowing about the other. What is scored is whether the two answers
+differ.
 
-**Отхвърлено.** Един общ процент. Той крие, че двете не мерят едно и също.
+**Rejected.** Hand-written examples with decoys. An audit showed that such a
+corpus is solved by a rule that does not read code at all: "more comment lines
+means safe" gave 48 out of 48.
 
-**Причина.** При regression опасният член е код, от който нещо е извадено — а
-това само по себе си е подсказка, независима от съдържанието.
+**Reason.** On the unsafe member alone, "it found something" means nothing — it
+may be finding something everywhere. The check is whether it will stay silent
+about the fixed one.
 
-**Наложено от.** `tools/harvest_pairs.py` го казва в кода; `probe_use` в
-`tools/stage2.py` показва snapshot-ите отделно, до дроба.
+**Enforced by.** `tools/corpus_adversary.py` (rules inside a member are caught);
+`tools/check_corpus.py` (a case with an uncleaned file in the changed part is
+not accepted).
 
-**Доказателство, и то опроверга очакването ми.** Предполагах, че snapshot ще е
-по-лесен, защото няма следа от изваждане. go даде **2 от 6** при regression
-(`measurements/cli-batch-5-go.json`) и **1 от 7** при snapshot
-(`measurements/cli-batch-10-go-snap.json`). Обратното на предвиденото.
+**Evidence.** `python3 tools/corpus_adversary.py corpus/ corpus-real/` — today
+not one rule inside a member fires often enough to judge.
+`python3 tools/check_corpus.py corpus/ corpus-real/` — 105 cases, 0 problems.
 
-**Възражение (Codex, 2026-08-29).** Записаното опровержение е полезно само ако
-се чете като наблюдение върху един език, а не като установен факт: n=13 двойки
-на един език не установява коя конструкция е по-трудна. Прието — затова е
-записано като „опроверга очакването ми", а не като „snapshot е по-труден".
+**Objection (Codex, 2026-08-29).** The 48 out of 48 is historical and is not
+reproduced by today's corpus — that corpus has been replaced. The number is the
+reason for the decision, not the current state, and the entry has to say so. It
+says so.
 
-**Преразглежда се когато** и четирите езика имат двете конструкции измерени.
+**Revisited when** a rule between members reaches 6 firings and over 65% correct
+— the thresholds `tools/corpus_adversary.py` already uses for the rules inside a
+member. Today "more imports" is 24 firings and 96%, but it is between members,
+and the reviewer never sees both.
 
 ---
 
-## D-005 · Доказателството за преглед е `exposures`
+## D-004 · Two constructions, never added into one number
 
 | | |
 |---|---|
-| **Състояние** | действащо |
-| **Обхват** | `gate.py`, `identity.py`, `report.py` |
-| **Проверено срещу** | `b19b7bf` |
+| **State** | active |
+| **Scope** | scoring, `tools/stage2.py` |
+| **Checked against** | `b19b7bf` |
 
-**Решено.** `exposures` — `(път, канал)` за всеки файл, чиито байтове са
-стигнали до модела — е единственият запис, че нещо е било прегледано. Пускане с
-празен списък не се преизползва от кеша.
+**Decided.** `regression` (the fix has been removed) and `snapshot` (the code
+from before the fix) are counted separately and are never summed.
 
-**Отхвърлено.** Брой на извикванията: доказва дейност, не че е видяно нещо за
-анализ. Докладвана находка: доказва, че цитатът съществува — факт за цитата.
+**Rejected.** One combined percentage. It hides that the two do not measure the
+same thing.
 
-**Причина.** Пускане, спряно от етикет или от празна промяна, завършва „чисто" и
-изглежда като преглед. `complete` не ги различава, защото пропускането също
-завършва.
+**Reason.** In a regression the unsafe member is code that something has been
+taken out of — and that on its own is a hint, independent of the content.
 
-**Наложено от.** `identity.reusable`; `terminal._banner` (`NOT REVIEWED` вместо
-зелено `PASSED`); `report.build_json` записва списъка в артефакта.
+**Enforced by.** `tools/harvest_pairs.py` says it in the code; `probe_use` in
+`tools/stage2.py` shows the snapshots separately, down to the fraction.
 
-**Доказателство.**
+**Evidence, and it refuted my expectation.** I assumed snapshot would be easier,
+because there is no trace of a removal. go gave **2 out of 6** on regression
+(`measurements/cli-batch-5-go.json`) and **1 out of 7** on snapshot
+(`measurements/cli-batch-10-go-snap.json`). The opposite of what was predicted.
+
+**Objection (Codex, 2026-08-29).** The recorded refutation is useful only if it
+is read as an observation about one language and not as an established fact:
+n=13 pairs in one language does not establish which construction is harder.
+Accepted — which is why it is recorded as "it refuted my expectation" and not as
+"snapshot is harder".
+
+**Revisited when** all four languages have both constructions measured.
+
+---
+
+## D-005 · The proof of a review is `exposures`
+
+| | |
+|---|---|
+| **State** | active |
+| **Scope** | `gate.py`, `identity.py`, `report.py` |
+| **Checked against** | `b19b7bf` |
+
+**Decided.** `exposures` — `(path, channel)` for every file whose bytes reached
+the model — is the only record that anything was reviewed. A run with an empty
+list is not reused from the cache.
+
+**Rejected.** A count of the calls: it proves activity, not that anything
+analysable was seen. A reported finding: it proves the quote exists — a fact
+about the quote.
+
+**Reason.** A run stopped by a label or by an empty change finishes "clean" and
+looks like a review. `complete` does not tell them apart, because a skip also
+finishes.
+
+**Enforced by.** `identity.reusable`; `terminal._banner` (`NOT REVIEWED` instead
+of a green `PASSED`); `report.build_json` writes the list into the artifact.
+
+**Evidence.**
 `python3 -m pytest tests/test_identity.py::test_an_artifact_from_a_run_that_examined_nothing_is_never_reused tests/test_terminal.py -q`
 
-**Възражение (Codex, 2026-08-29).** Записът твърдеше повече, отколкото налага:
-`gate._reviewed_nothing` спира `exit 0` само когато пускането е и **непълно**.
-Пускане, което е завършило и не е отворило нищо — пропуснатото по етикет — още
-излиза с `0`, по избор: инструментът е направил каквото му е казано. Пази се
-кешът и екранът, не изходният код.
+**Objection (Codex, 2026-08-29).** The entry claimed more than is enforced:
+`gate._reviewed_nothing` stops `exit 0` only when the run is **also incomplete**.
+A run that finished and opened nothing — the one skipped by label — still exits
+with `0`, by choice: the tool did what it was told. What is protected is the
+cache and the screen, not the exit code.
 
-**Преразглежда се когато** се добави режим на пропускане, който твърди, че е
-проверил нещо — днешните два (етикет, празна промяна) не твърдят. Или ако
-пускане завърши с празен `exposures` при непразна промяна и без пропускане:
-това е счупен MCP сървър, който днес би излязъл с `0`.
+**Revisited when** a skip mode is added that claims to have checked something —
+today's two (label, empty change) do not claim it. Or if a run finishes with an
+empty `exposures` on a non-empty change and without a skip: that is a broken MCP
+server, which today would exit with `0`.
 
 ---
 
-## D-006 · Липсващото се записва като липсващо, не като нула
+## D-006 · What is missing is recorded as missing, not as zero
 
 | | |
 |---|---|
-| **Състояние** | действащо |
-| **Обхват** | `models.Usage`, `tools/pair_corpus.py` |
-| **Проверено срещу** | `b19b7bf` |
+| **State** | active |
+| **Scope** | `models.Usage`, `tools/pair_corpus.py` |
+| **Checked against** | `b19b7bf` |
 
-**Решено.** `Usage` има три състояния — съобщено, непълно, нищо не е съобщено —
-изведени от записани събития. Блокът на CLI-я се чете **само ако носи и
-четирите полета**; иначе е липса, не част.
+**Decided.** `Usage` has three states — reported, incomplete, nothing reported —
+derived from recorded events. The CLI's block is read **only if it carries all
+four fields**; otherwise it is an absence, not a part.
 
-**Отхвърлено.** Булев флаг `reported`, който писачът задава: „проверка,
-удовлетворена от форма, а не от нещото" — дефектът, който този проект
-произвежда най-често. Отхвърлено и частично четене: двата обикновени брояча без
-двата за кеша занижават цената със **95%** в реално пускане (12k срещу 200k
-токена) и заниженото се чете като измерено.
+**Rejected.** A boolean flag `reported` that the writer sets: "a check satisfied
+by the shape and not by the thing" — the defect this project produces most
+often. Also rejected: partial reading — the two ordinary counters without the
+two for the cache understate the cost by **95%** in a real run (12k against 200k
+tokens), and the understated figure reads as measured.
 
-**Причина.** Всичките 38 запазени пускания записваха пет нули, защото полето се
-разчиташе и никой не го четеше. Проектът не можеше да каже какво е струвал
-собственият му batch — от собствените си артефакти.
+**Reason.** All 38 saved runs recorded five zeros, because the field was being
+parsed and nobody was reading it. The project could not say what its own batch
+had cost — out of its own artifacts.
 
-**Наложено от.** `models.Usage.from_provider`, `reported`, `recorded`,
+**Enforced by.** `models.Usage.from_provider`, `reported`, `recorded`,
 `complete`; `pair_corpus.cost_summary`.
 
-**Доказателство.** Кръстосана проверка в `measurements/cli-batch-5-go.json`:
-нашата сметка `0.528108` срещу `provenance.reported_cost_usd` `0.529055` за
-`go-qqff-5854-px68/safe` — 0.2% разлика. Пуска се с:
+**Evidence.** A cross-check in `measurements/cli-batch-5-go.json`: our figure
+`0.528108` against `provenance.reported_cost_usd` `0.529055` for
+`go-qqff-5854-px68/safe` — a 0.2% difference. Run it with:
 
     python3 -c "import json; b=json.load(open('measurements/cli-batch-5-go.json')); \
     m=[r for r in b if r['case_id']=='go-qqff-5854-px68'][0]['members']['safe']; \
     print(m['cost'], m['provenance']['reported_cost_usd'])"
 
-**Възражение (Codex, 2026-08-29).** Имената на четирите полета са прочетени от
-локалните записи на CLI-я — данни, които читателят на този файл няма. Затова
-доказателството горе е кръстосаната проверка, която се възпроизвежда от repo-то,
-а не проучването. Отделно: терминалният обект е друг документ от същата
-програма и че съвпада, е извод, не наблюдение — затова четенето е „и четирите
-или нищо", така че грешката дава липса, не число.
+**Objection (Codex, 2026-08-29).** The names of the four fields were read out of
+the CLI's local records — data the reader of this file does not have. That is
+why the evidence above is the cross-check, which reproduces from the repository,
+and not the investigation. Separately: the terminal object is another document
+from the same program, and that it agrees is an inference, not an observation —
+which is why the reading is "all four or nothing", so that an error yields an
+absence and not a number.
 
-**Преразглежда се когато** проверяващият (verifier) също започне да съобщава
-разход — днес той е второ извикване, което не връща нищо, и заради него
-двойката често не може да се остойности.
-
----
-
-## D-007 · Отказът се измерва, не се предвижда
-
-| | |
-|---|---|
-| **Състояние** | действащо |
-| **Обхват** | `tools/run_queue.py`, `tools/session_ledger.py` |
-| **Проверено срещу** | 3201bab |
-
-**Решено.** Опашката върви до отказ. Отказът се записва, чете се часът на
-нулиране от самото съобщение, спи се, продължава се. Без таван и без оценка на
-оставащата квота.
-
-**Отхвърлено.** Таван на брой пускания в прозорец, в три различни версии: по
-размер на batch-а, по условна цена, и по брой агентски цикли. Всяка беше число,
-мерещо друго нещо. Отхвърлена и алармата на 25 цикъла — праг без подкрепено
-условие е шум с авторитет.
-
-**Причина.** Оставащата квота не се вижда: няма подкоманда, нищо не се пази
-под `~/.claude`, а `--debug api` логва заявките, не отговорите — проверени и
-трите. Отказът обаче е наблюдаем и струва малко: петте измерени бяха отхвърлени
-при ръкостискането, 12.5 секунди и нула токена, срещу 225 секунди за завършено
-пускане. Таван при лимит около 28 хвърля цял прозорец, за да спести толкова.
-
-**Какво точно установява един отказ, защото това се сбърка два пъти.** Отказът
-измерва лимита **в този прозорец, при този смесен товар**. Не измерва постоянна
-величина, защото не се знае дали има такава: три прозореца дадоха 25·34·26
-цикъла, а преместването на границата им ги направи 32·38·43 — и трите се качиха
-заедно, тоест числото зависи от избора къде свършва прозорецът. По-слабо от
-„извадка от едно число" и по-силно от „само ограничава". От него **не следва
-таван** след няколко прозореца.
-
-**Наложено от.** `tools/run_queue.py:classify` — пет състояния, и само
-валидиран отказ води до спане; `raw_rows` — по един ред на извикване, четирите
-броя токени поотделно, нищо сумирано; `tools/session_ledger.py` за ходовете на
-самия разговор, който върви в друг процес.
-
-**Доказателство.** `python3 -m pytest tests/test_run_queue.py -q`.
-Покритието на разговора е проверено, не прието: `python3
-tools/session_ledger.py --since 2026-08-29 --count` дава 339 хода от тази сесия
-със закъснение около 97 секунди.
-
-**Възражение (Codex, 2026-08-29).** Единайсет неща в плана още са снимка,
-представена за правило. Най-съществените: „отказът е евтин" важи за пет
-ръкостискания и е записано като поле, за да се преизмерва; „два отказа
-отговарят на въпроса дали прозорецът е плъзгащ" — не отговарят, а стесняват
-хипотезите, затова точка 5 записва изхода, не заключение; и `unknown` не
-означава „думите са сменени" — може да е таймаут, отрязан документ, дефект в
-разбора или локален срив, което е причината да спира вместо да гадае.
-
-**Известно и неразрешено.** Нищо не се изпълнява, докато машината спи.
-Поправката от 2026-08-30 маха преспиването (`time.sleep` брои по часовник,
-който спира заедно с машината — опашката спа 5ч45 вместо 3ч), но не може да
-накара заспал компютър да изпълнява код. Нощно пускане свършва в часа, в който
-се вдигне капакът, освен ако нещо държи машината будна: `caffeinate -dimsu`
-държи, отворен капак на ток държи, затворен капак не държи каквото и да е
-поискано от `caffeinate`.
-
-**Преразглежда се когато** пет прозореца са записани с суровите редове от
-трите източника, или когато се появи начин квотата да се види.
-
-**Сметнато и отхвърлено, за да не се смята пак.** `--provider anthropic-api`
-не минава през CLI-я изобщо — SDK през `ANTHROPIC_API_KEY`, а ключът се маха
-от детето на `src/security_agent/runner_claude_code.py` точно за да е доказано, че двата пътя
-са изолирани. Значи там няма сесиен прозорец и остатъкът се вижда в заглавките.
-Цената за остатъка от корпуса: **$53 по медианата, $167 по горния край**
-(76 прегледа × $0.703 и × $2.195, от `provenance.reported_cost_usd`), плюс
-повторните. Отхвърлено: абонаментът е платен и повторните пускания при него не
-струват нищо. Записано, за да не се преизчислява.
+**Revisited when** the verifier also starts reporting its spend — today it is a
+second call that returns nothing, and because of it the pair often cannot be
+priced.
 
 ---
 
-## D-008 · Краят е „няма провал без изход", не число
+## D-007 · The refusal is measured, not predicted
 
 | | |
 |---|---|
-| **Състояние** | действащо |
-| **Обхват** | точка 9 от плана, `tools/check_accounted.py` |
-| **Проверено срещу** | 8a92d09 |
+| **State** | active |
+| **Scope** | `tools/run_queue.py`, `tools/session_ledger.py` |
+| **Checked against** | 3201bab |
 
-**Решено.** Меренето свършва, когато всеки случай има ред. Четири изхода и
-никакъв пети: минава, поправен и премерен наново, записан в `LIMITATIONS.md`,
-или отсъден за невалиден. Сборът трябва да е броят случаи. Отчетът, който казва
-че работата е готова, се чете така: *34 случая: 20 минават, 8 поправени и
-премерени, 4 записани като ограничения, 2 отсъдени за невалидни.*
+**Decided.** The queue runs until it is refused. The refusal is recorded, the
+reset hour is read out of the message itself, we sleep, we carry on. No cap and
+no estimate of the remaining quota.
 
-**Допълнено 2026-09-01.** Изходът „поправен и премерен наново" го няма в кода:
-`tools/check_accounted.py` има кошници `pass`, `limitation`, `invalid`,
-`not run` и `unaccounted`, а поправен случай пада в `pass`. Решението остава
-както е записано; несъответствието е описано в D-010 и в docstring-а на самия
-инструмент, вместо да се измисля кошница, която нищо не може да напълни.
+**Rejected.** A cap on the number of runs in a window, in three different
+versions: by batch size, by notional cost, and by number of agent turns. Each
+one was a number measuring something else. Also rejected: the alarm at 25 turns
+— a threshold with no supported condition is noise with authority.
 
-**Отхвърлено.** Праг върху дробта — „спираме на 80%". Той не казва какво да се
-прави с останалите 20% и оставя провали без ред, което е състоянието, довело до
-седемнайсет неотчетени провала, докато дробта изглеждаше здрава.
+**Reason.** The remaining quota is not visible: there is no subcommand, nothing
+is kept under `~/.claude`, and `--debug api` logs the requests, not the
+responses — all three checked. The refusal, though, is observable and costs
+little: the five that were measured were refused at the handshake, 12.5 seconds
+and zero tokens, against 225 seconds for a finished run. A cap at a limit of
+around 28 throws away a whole window to save that much.
 
-**Причина, и защо е краен по конструкция.** Два от четирите изхода изваждат
-случая **завинаги**: ограничение не се премерва, невалиден случай не се оценява.
-Значи пулът може да расте само ако поправка счупи нещо друго. Ако всеки кръг
-изважда повече, отколкото връща, редицата свършва. Ако не изважда — това само по
-себе си е сигнал, че поправките не работят, и е основание да се спре, а не да се
-продължи.
+**What exactly one refusal establishes, because this was got wrong twice.** A
+refusal measures the limit **in this window, under this mixed load**. It does not
+measure a constant, because it is not known that there is one: three windows
+gave 25·34·26 turns, and moving their boundary made them 32·38·43 — all three
+rose together, which means the number depends on the choice of where the window
+ends. Weaker than "a sample of one number" and stronger than "it only bounds
+it". A **cap does not follow** from it after a few windows.
 
-**Трите спирачки, фиксирани предварително.**
+**Enforced by.** `tools/run_queue.py:classify` — five states, and only a
+validated refusal leads to sleeping; `raw_rows` — one row per call, the four
+token counts separately, nothing summed; `tools/session_ledger.py` for the turns
+of the conversation itself, which runs in another process.
 
-Първо, **броят кръгове е един**. Втори — само след като разсейването е измерено
-и подобрението излиза извън интервала му. Днес разсейването на реален код не е
-мерено изобщо (`LIMITATIONS.md` го казва), значи разлика от два случая е
-неразличима от шум, а гоненето на кръгове е гонене на шум. Трети кръг — не, без
-нова причина, записана **преди** меренето.
+**Evidence.** `python3 -m pytest tests/test_run_queue.py -q`. The conversation's
+coverage is checked, not assumed: `python3
+tools/session_ledger.py --since 2026-08-29 --count` gives 339 turns from this
+session with a lag of about 97 seconds.
 
-Второ, **един случай се поправя най-много веднъж**. Ако провалът се върне след
-поправката, случаят вече не е кандидат за поправка — става ред в
-`LIMITATIONS.md`. Това е правилото, което буквално прави цикъла краен: никой
-случай не може да обиколи повече от два пъти.
+**Objection (Codex, 2026-08-29).** Eleven things in the plan are still a
+snapshot presented as a rule. The most substantial: "a refusal is cheap" holds
+for five handshakes and is recorded as a field so that it gets re-measured; "two
+refusals answer the question of whether the window slides" — they do not, they
+narrow the hypotheses, which is why point 5 records the outcome and not a
+conclusion; and `unknown` does not mean "the wording has changed" — it may be a
+timeout, a truncated document, a parsing defect or a local crash, which is the
+reason it stops instead of guessing.
 
-Трето, **часовник, не резултат**. Ако след уговорения брой прозорци пулът не е
-празен, останалото се записва като ограничения и се спира. Времето е
-ограничението, което не преговаря с числото.
+**Known and unresolved.** Nothing executes while the machine is asleep. The fix
+from 2026-08-30 removes the oversleeping (`time.sleep` counts by a clock that
+stops together with the machine — the queue slept 5h45 instead of 3h), but it
+cannot make a sleeping computer execute code. A nightly run finishes at the hour
+the lid is raised, unless something keeps the machine awake: `caffeinate -dimsu`
+keeps it, an open lid on mains keeps it, a closed lid keeps nothing at all,
+whatever is asked of `caffeinate`.
 
-**Наложено от.** `tools/check_accounted.py` — изброява четирите кошници, излиза
-с 1, докато има случай без ред, и назовава всеки от тях.
+**Revisited when** five windows have been recorded with the raw rows from the
+three sources, or when a way to see the quota appears.
 
-**Доказателство.** `python3 tools/check_accounted.py`. Днес: 82 случая, 31
-минават, 1 ограничение, 6 невалидни, 12 непуснати, **32 без обяснение**.
-
-**Възражение (собственикът, 2026-08-30).** Първата ми формулировка беше процес,
-не условие за спиране — „чети провалите, поправяй, мери пак" няма край. Краят е
-състояние на записа, а не стъпка в него, и трите спирачки горе са неговите, не
-мои.
-
-**Преразглежда се когато** кошницата „без обяснение" е празна, или когато
-уговореният брой прозорци изтече — което дойде първо.
+**Computed and rejected, so that it is not computed again.**
+`--provider anthropic-api` does not go through the CLI at all — the SDK through
+`ANTHROPIC_API_KEY`, and the key is stripped from the child of
+`src/security_agent/runner_claude_code.py` precisely so that the two paths are
+demonstrably isolated. So there is no session window there and the remainder is
+visible in the headers. The price for the rest of the corpus: **$53 at the
+median, $167 at the upper end** (76 reviews × $0.703 and × $2.195, from
+`provenance.reported_cost_usd`), plus the reruns. Rejected: the subscription is
+paid for and reruns under it cost nothing. Recorded so that it is not
+recalculated.
 
 ---
 
-## D-009 · Разсейването не се мери без поправка, която да сравни
+## D-008 · The end is "no failure without an outcome", not a number
 
 | | |
 |---|---|
-| **Състояние** | действащо |
-| **Обхват** | мерене в началото на следващия кръг (D-010), `tools/measure_variance.py` |
-| **Проверено срещу** | 9ae7061 |
+| **State** | active |
+| **Scope** | point 9 of the plan, `tools/check_accounted.py` |
+| **Checked against** | 8a92d09 |
 
-**Решено.** Цикълът спира след първия кръг. Разсейването **не** се мери сега.
+**Decided.** Measuring ends when every case has a row. Four outcomes and no
+fifth: it passes, it was fixed and re-measured, it was recorded in
+`LIMITATIONS.md`, or it was adjudicated invalid. The sum has to be the number of
+cases. The report that says the work is done reads like this: *34 cases: 20
+pass, 8 fixed and re-measured, 4 recorded as limitations, 2 adjudicated
+invalid.*
 
-**Отхвърлено.** Дизайнът, който предложих: четири случая по три пускания, 24
-прегледа, един прозорец. Отхвърлен по три причини, всяка от които сама стига.
-При три пускания случай е или 3-0, или 2-1 — единствената разделителна
-способност е „никога не се обърна" срещу „обърна се веднъж", което е монета,
-облечена като измерване. Изборът на четирите случая е мой, което ги прави
-четливи и точно затова не извадка. И сравняването със стария резултат смесва
-разсейването с промяна в модела между двете пускания.
+**Amended 2026-09-01.** The outcome "fixed and re-measured" does not exist in the
+code: `tools/check_accounted.py` has the buckets `pass`, `limitation`,
+`invalid`, `not run` and `unaccounted`, and a fixed case falls into `pass`. The
+decision stands as recorded; the mismatch is described in D-010 and in the
+docstring of the tool itself, instead of inventing a bucket that nothing can
+fill.
 
-**Причина, и тя е по-обща от дизайна.** Числото, което правилото иска, е дали
-„+3 случая" е извън шума. За него трябва разпределението на разликата **върху
-целия корпус** — поне едно пълно повторно пускане на 56-те двойки при замразени
-условия, за предпочитане две, преплетени във времето. Това са няколко прозореца.
-Четири удобни случая дават число, което звучи като праг и не е такъв.
+**Rejected.** A threshold on the fraction — "we stop at 80%". It does not say
+what to do with the remaining 20% and leaves failures without a row, which is
+the state that led to seventeen unaccounted failures while the fraction looked
+healthy.
 
-И по-просто: няма какво да се сравнява. Нула поправки бяха направени, защото не
-се намери ограничена намеса с предвидим ефект. Разсейване, измерено без
-поправка, е число, което няма къде да отиде.
+**Reason, and why it terminates by construction.** Two of the four outcomes take
+the case out **for good**: a limitation is not re-measured, an invalid case is
+not scored. So the pool can only grow if a fix breaks something else. If every
+round takes out more than it puts back, the sequence ends. If it does not take
+anything out — that in itself is a signal that the fixes are not working, and
+grounds to stop rather than to carry on.
 
-**Наложено от.** `tools/check_accounted.py` — кръгът е затворен, когато няма
-случай без ред; днес в петте езика няма. Нищо не изисква втори кръг.
+**The three brakes, fixed in advance.**
 
-**Доказателство.** `python3 tools/check_accounted.py` — 40 минават, 16
-ограничения, 12 невалидни, и петте останали са извън петте езика.
+First, **the number of rounds is one**. A second — only after the variance has
+been measured and the improvement falls outside its interval. Today the variance
+on real code has not been measured at all (`LIMITATIONS.md` says so), so a
+difference of two cases is indistinguishable from noise, and chasing rounds is
+chasing noise. A third round — no, not without a new reason recorded **before**
+the measuring.
 
-**Възражение (Codex, 2026-08-30).** Гласува за спиране: *„Предложеният прозорец
-създава число, но не числото, което правилото ти иска."* Даде и втори допустим
-път — шест случая по две пускания, наречен „търсене на нестабилност", не
-измерване на шума: може да разкрие сериозен проблем, но не може да утвърди праг.
-Не е избран, защото няма поправка, която да го оправдае.
+Second, **a case is fixed at most once**. If the failure comes back after the
+fix, the case is no longer a candidate for fixing — it becomes a row in
+`LIMITATIONS.md`. This is the rule that literally makes the cycle finite: no
+case can go round more than twice.
 
-**Формата, ако някога се появи поправка.** Не сравнявай с днешния резултат.
-Замрази корпуса, оценителя, отсъжданията и модела; преплети пускания със стария
-и с новия prompt в случаен ред; сравни едни и същи случаи; дръж контролна група
-без промяна; съди по посоката на преминаванията, не по двете общи числа.
+Third, **a clock, not a result**. If the pool is not empty after the agreed
+number of windows, the rest is recorded as limitations and it stops. Time is the
+constraint that does not negotiate with the number.
 
-**Преразглежда се когато** се появи конкретна поправка, за която някой е готов
-да похарчи няколко прозореца.
+**Enforced by.** `tools/check_accounted.py` — it lists the four buckets, exits
+with 1 while there is a case without a row, and names every one of them.
+
+**Evidence.** `python3 tools/check_accounted.py`. Today: 82 cases, 31 pass, 1
+limitation, 6 invalid, 12 not run, **32 with no explanation**.
+
+**Objection (the owner, 2026-08-30).** My first formulation was a process, not a
+stopping condition — "read the failures, fix, measure again" has no end. The end
+is a state of the record, not a step in it, and the three brakes above are his,
+not mine.
+
+**Revisited when** the "no explanation" bucket is empty, or when the agreed
+number of windows runs out — whichever comes first.
 
 ---
 
-# Предложения
-
-Не са решения. Стоят тук, за да не се преоткриват, и се местят горе само когато
-станат измерване.
-
-## P-003 · Потребителят да вижда какво му струва агентът
+## D-009 · Variance is not measured without a fix to compare against
 
 | | |
 |---|---|
-| **Състояние** | предложено |
-| **Основание** | искане на собственика, 2026-08-31 |
-| **Обхват** | `journal/`, отчетът в merge request-а, `tools/journal.py` |
+| **State** | active |
+| **Scope** | measuring at the start of the next round (D-010), `tools/measure_variance.py` |
+| **Checked against** | 9ae7061 |
 
-**Предложено.** Прегледът да казва какво е струвал, и това да се сумира във
-времето, за да може човек да види разхода за месец, за хранилище или за
-конкретна промяна.
+**Decided.** The cycle stops after the first round. The variance is **not**
+measured now.
 
-**Какво вече имаме.** Всяко пускане записва употребата в артефакта, а
-`journal/` го пази локално. Тоест суровината е налична и не се събира отначало.
-Липсва сглобяването и показването.
+**Rejected.** The design I proposed: four cases by three runs, 24 reviews, one
+window. Rejected for three reasons, each of which is enough on its own. At three
+runs a case is either 3-0 or 2-1 — the only resolving power is "it never
+flipped" against "it flipped once", which is a coin dressed up as a measurement.
+The choice of the four cases is mine, which makes them readable and for exactly
+that reason not a sample. And comparing against the old result mixes the
+variance with a change in the model between the two runs.
 
-**Какво трябва да се реши, и е по-важно от кода.** Разграничението, което този
-проект вече плати, за да научи: `total_cost_usd` при абонамент е **условна**
-цена по ценоразписа на API-то, а не сметка. Три грешни правила за седмичния
-лимит бяха построени точно върху смесването на двете. Числото трябва да носи
-кой е платил — иначе показваме на потребителя долари, които никой не му е взел.
+**Reason, and it is more general than the design.** The number the rule wants is
+whether "+3 cases" is outside the noise. For that you need the distribution of
+the difference **over the whole corpus** — at least one full rerun of the 56
+pairs under frozen conditions, preferably two, interleaved in time. That is
+several windows. Four convenient cases give a number that sounds like a
+threshold and is not one.
 
-**Откъде дойде.** От телеметрията на `usestrix/strix`. Тя изпраща при тях
-`llm_cost`, входните и изходните думи, броя заявки, продължителността и дали
-пускането е през ключ или през абонамент.
+And more simply: there is nothing to compare. Zero fixes were made, because no
+bounded intervention with a predictable effect was found. Variance measured
+without a fix is a number with nowhere to go.
 
-Забележката, която върви със заимстването: **тяхното README не изброява цената
-и думите.** В раздела „какво следим" пише само „кой модел и дали е ключ или
-абонамент". Разликата между описанието и кода е точно дефектът, който този
-проект търси в собствените си файлове, и е причина да се вземе идеята, но не и
-формата ѝ.
+**Enforced by.** `tools/check_accounted.py` — the round is closed when there is
+no case without a row; today, across the five languages, there is none. Nothing
+requires a second round.
 
-**Формата за нас е локална.** Инструмент за сигурност, който чете чужд частен
-код и после звъни навън, много организации няма да пуснат изобщо. `journal/`
-вече записва същото на машината на потребителя; разликата е кой го вижда.
-Изпращане навън не се предлага.
+**Evidence.** `python3 tools/check_accounted.py` — 40 pass, 16 limitations, 12
+invalid, and the remaining five are outside the five languages.
 
-**Възражение (Codex).** Още не е гледано. Влиза в кръга, когато се предложи за
-работа, не докато стои тук.
+**Objection (Codex, 2026-08-30).** Votes for stopping: *"The proposed window
+creates a number, but not the number your rule wants."* It also gave a second
+admissible path — six cases by two runs, called "a search for instability", not
+a measurement of the noise: it may reveal a serious problem, but it cannot
+establish a threshold. Not chosen, because there is no fix that would justify
+it.
 
-**Става решение когато** някой поиска отчета и се реши какво точно показва —
-условна цена, време, или и двете с етикет кой ги плаща.
+**The shape, if a fix ever appears.** Do not compare against today's result.
+Freeze the corpus, the scorer, the adjudications and the model; interleave runs
+with the old and the new prompt in random order; compare the same cases; keep a
+control group with no change; judge by the direction of the flips, not by the
+two totals.
 
-## P-002 · Колко тревоги вдига по код, в който няма нищо
+**Revisited when** a concrete fix appears that somebody is willing to spend
+several windows on.
 
-| | |
-|---|---|
-| **Състояние** | предложено |
-| **Основание** | липсва измерване, не наблюдение |
-| **Обхват** | нов корпус от обикновени промени; `pair_corpus.py` не става както е |
+---
 
-**Предложено.** Да се измери колко пъти агентът вдига тревога по **обикновени**
-промени — преименуване, нов бутон, поправен тест — в които няма известна
-уязвимост.
+# Proposals
 
-**Защо го няма.** Днес лъжливите тревоги се мерят само върху „безопасния" член
-на двойка. Това е същият файл със сложена кръпка, тоест код, който е бил опасен
-преди един ред. Истинските merge request-и не приличат на това.
+They are not decisions. They stand here so that they are not rediscovered, and
+they move up only when they become a measurement.
 
-**Защо е важно.** Това е числото, което решава дали инструментът остава пуснат.
-Инструмент, който намира 6 от 10 и мълчи по чистия код, е полезен. Инструмент,
-който намира 9 от 10 и крещи на всеки трети невинен merge request, го изключват
-след седмица — и тогава намира 0 от 10.
-
-**Какво се мери, и това е поправено след възражението.** Не „находки на
-промяна". Основното число е **делът промени, получили поне една блокираща
-находка, която при прочит се оказва неоснователна**. Докладва се групирано по
-хранилище — средното хранилище и най-шумното — защото независимата единица е
-хранилището, не промяната. Едно шумно хранилище може да произведе всички тревоги
-и общо число го скрива. „Находки на промяна" и разпределението по тежест остават
-като второстепенни.
-
-**Три капана.**
-
-Тишината не е автоматично вярна. Част от обикновените промени наистина съдържат
-незабелязана слабост; находка там е резултат, не лъжлива тревога.
-
-Прочитът на находките сам е отговорник и трябва да се пази като такъв: рубрика,
-обявена **преди** четенето, с четири изхода — истинска и приложима, истинска но
-извън обхвата, предположение без опора, и невярна. Иначе граничните случаи ще се
-съдят със знанието кой отговор е желан.
-
-Подборът се обявява преди събирането и е механичен. Ако ги избирам аз, ще
-избера промени, които изглеждат чисти.
-
-**Възражение (Codex, 2026-08-31).** Пет неща, две от които са поправки на грешки
-в самото предложение.
-
-*Грешка първа, моя:* твърдях, че числото зависи от `SECURITY_SCAN_FAIL_ON`. Тази
-настройка мени **какво блокира**, не какво агентът докладва. Замразява се за
-блокиращото число и е без значение за суровия брой находки. Заедно с нея се
-замразяват моделът, prompt-ът, таванът на diff-а и правилото за незавършен
-преглед.
-
-*Грешка втора, моя:* „30–40 несвързани промени" купуват по-голям знаменател и не
-могат да оценят точно това, което ни трябва — концентрацията. По-малко
-хранилища, по няколко механично избрани промени във всяко, плюс повторни
-пускания на малка подгрупа.
-
-*И три ограничения, които влизат в доклада, а не се премълчават:* публичните
-слети промени носят отклонение от оцеляването — зрял отворен код, приет,
-публично рецензируем — и пропускат частен код, отхвърлени промени и хранилища,
-пълни с генерирани файлове. Резултатът се обявява като „върху тази извадка от
-публични хранилища", никога като очакван шум в производство. Едно пускане на
-промяна смесва шума с нестабилността, затова подгрупата се повтаря. И старите
-`measurements/` не могат да отговорят: техните безопасни членове са подбрани
-около известни поправки за сигурност.
-
-*За реда:* „подреди го, но не го финансирай преди стабилността. Стабилността е
-предпоставка за тълкуването на шума при едно пускане. След нея това трябва да
-изпревари ново широко мерене на намирането, освен ако то не отговаря на
-конкретен въпрос, който спира издание: намиране без оценка на цената на
-приемане оптимизира инструмент, чиято поносима работна точка е неизвестна."
-
-**Става решение когато** стабилността е измерена, правилото за подбор е обявено
-и някой е готов да похарчи прозореца.
-
-## P-001 · Отсъждането не е един въпрос, а три
+## P-003 · The user should see what the agent costs him
 
 | | |
 |---|---|
-| **Състояние** | предложено |
-| **Основание** | n=1 |
-| **Обхват** | `corpus-real/adjudications.yml`, оценяване |
+| **State** | proposed |
+| **Grounds** | the owner's request, 2026-08-31 |
+| **Scope** | `journal/`, the report in the merge request, `tools/journal.py` |
 
-**Предложено.** Едно отсъждане да отговаря на три отделни неща: истинска ли е
-находката, целта на случая ли е, и различава ли двата члена.
+**Proposed.** That the review says what it cost, and that this is summed over
+time, so that a person can see the spend for a month, for a repository or for a
+particular change.
 
-**Наблюдение.** `py-p43p-whwx-q52h`: advisory-то е отказ от услуга през
-неограничено записване на потребителско име (CWE-400). Агентът описа верния ред
-и го кръсти `injection` — „неекранирано" вместо „неограничено". Ключът чака
-`dos`, значи е отчетено като пропуск.
+**What we already have.** Every run records the usage in the artifact, and
+`journal/` keeps it locally. So the raw material is there and is not being
+collected from scratch. What is missing is the assembling and the showing.
 
-**Защо не го броим за намерено.** Читателят действа по **името**. „Инжекция в
-лога" се отлага; „всеки може да свали сървъра, без да влиза" се поправя днес.
-Находка, описала механизма вярно и последицата грешно, е подвела читателя.
+**What has to be decided, and it matters more than the code.** The distinction
+this project has already paid to learn: `total_cost_usd` under a subscription is
+a **notional** price at the API's list rates, not a bill. Three wrong rules about
+the weekly limit were built on exactly that conflation. The number has to carry
+who paid — otherwise we are showing the user dollars nobody took off him.
 
-**Възражение (Codex, 2026-08-29).** И двете са верни едновременно и затова
-дробът не е мястото да се решава: находката локализира механизма вярно и
-пропуска последицата. Предложената форма — да се докладват два числа, „намерен
-механизъм" и „назована последица" — запазва и двете, вместо да избира. И: не
-създава несъответствие с отсъждането на страничната находка в `ts-m9mq`, защото
-„истинска" и „целта" са различни въпроси.
+**Where it came from.** From the telemetry of `usestrix/strix`. It sends them
+`llm_cost`, the input and output words, the number of requests, the duration and
+whether the run was through a key or through a subscription.
 
-**Става решение когато** има поне пет случая, в които механизмът съвпада, а
-последицата не — днес е един.
+The note that comes with the borrowing: **their README does not list the cost
+and the words.** The "what we track" section says only "which model and whether
+it is a key or a subscription". The gap between the description and the code is
+exactly the defect this project hunts for in its own files, and it is a reason
+to take the idea but not its form.
 
+**For us the form is local.** A security tool that reads someone else's private
+code and then phones out is one that many organisations will not allow at all.
+`journal/` already records the same thing on the user's own machine; the
+difference is who sees it. Sending anything out is not proposed.
 
-## D-010 · Повторното мерене е началото на следващия кръг, не краят на този
+**Objection (Codex).** Not looked at yet. It enters the round when it is put up
+for work, not while it sits here.
 
-| | |
-|---|---|
-| **Състояние** | действащо |
-| **Обхват** | диаграмата на цикъла, `CLAUDE.md`, отчетите |
-| **Решено от** | собственика, 2026-09-01 |
-| **Проверено срещу** | `610721a` |
+**Becomes a decision when** somebody asks for the report and it is settled what
+exactly it shows — notional cost, time, or both with a label saying who pays
+them.
 
-**Решено.** Цикълът има три станции — мерене, етикетиране, поправка или ред в
-`LIMITATIONS.md` — и стрелка обратно към меренето. „Повторно мерене" не е
-четвърта станция: то *е* мерене, с по-тесен обхват, и с него започва следващият
-кръг.
-
-**Отхвърлено.** Четиристъпната рисунка от 2026-08-30, която завършваше с
-„повторно мерене → спираме". Тя брои една и съща работа два пъти и рисува права
-линия със спирка там, където има кръг.
-
-**Какво мени.** Броенето, и то в посока, която прави отчетите разбираеми. По
-старата рисунка кръг 1 беше „спрян на трета от четири стъпки" — незавършен. По
-новата кръг 1 е **завършен**: минал е и трите станции. Следващият кръг не е
-започнал, защото първата му станция е мерене, а то не е пускано (D-009).
-
-**Причина.** Броят кръгове е числото, което собственикът чете, за да знае къде
-сме. Рисунка, в която едно и също действие е ту край, ту начало, дава две
-различни числа за едно и също състояние — и точно това стана: „нула завъртания"
-и „един кръг" в един и същ разговор, за едно и също.
-
-**Наложено от.** Нищо в кода — това е решение за рисунката и за броенето, а не
-за поведение. Единственото място, което го налага, е `CLAUDE.md`, който се чете
-дословно всяка сесия, и `tools/check_decisions.py`, който държи този запис
-пълен. Записано изрично, защото решение без изпълнител е точно това, което
-собственикът разкритикува същия ден: правило, което стои някъде и не прави нищо.
-
-**Доказателство.** `python3 tools/check_accounted.py` — печата състоянието, по
-което се определя къде е маркерът. Че старата рисунка дава две числа за едно
-състояние, се вижда в самия разговор от 2026-09-01: „нула завъртания" и „един
-кръг" за кръг 1, според това коя рисунка се чете.
-
-Изходът от кръга остава този от D-008: спираме, когато всеки случай има ред, а
-не на дроб.
-
-**Границата, изрично.** Поправката е станция 3 на кръг N. Меренето, което я
-потвърждава, е станция 1 на кръг N+1 — и едва след него случаят получава изход
-„поправен". „Кръгът завърши" не значи „поправката е отчетена": между двете стои
-едно платено мерене, което още не е направено.
-
-**Възражение (Codex, 2026-09-01).** Решението е смислово защитимо, но diff-ът
-не беше вътрешно последователен: D-009 още сочеше „стъпка 4 от цикъла", а
-границата между кръговете оставаше двусмислена — „кръгът завърши след
-поправката" може да се прочете като „поправката е отчетена преди проверката".
-И двете са поправени по-горе. Codex провери и че старата четиристъпна рисунка не
-е останала другаде в repo-то.
-
-**Преразглежда се когато** втори кръг наистина започне и се окаже, че границата
-не е там, където този запис я слага — тоест ако потвърждаващото мерене на
-поправка се наложи да върви заедно с поправката, а не като следваща станция.
-
-**И едно, което този запис оставя видимо нерешено.** D-008 и docstring-ът на
-`tools/check_accounted.py` описват пет изхода, единият от които е `fixed` —
-такава кошница в кода няма. Успешно премерена поправка пада в `pass` и от
-тавата не се различава от случай, който никога не е падал. Не е сгрешено от
-D-010 и не се поправя тук: досега поправките са нула, така че кошницата би била
-празна във всички случаи, а измислянето ѝ без запис кой случай е поправен би
-било число без основание. Записано, за да не се чете отчетът като нещо, което не
-казва.
-
-
-## D-011 · Не сменяме доставчика на модел заради цена
+## P-002 · How many alarms it raises on code with nothing in it
 
 | | |
 |---|---|
-| **Състояние** | действащо |
-| **Обхват** | `src/security_agent/config.py` provider-ите, `runner_claude_code.py` |
-| **Решено от** | собственика, 2026-09-01 |
-| **Проверено срещу** | `eb727e1` |
+| **State** | proposed |
+| **Grounds** | a missing measurement, not an observation |
+| **Scope** | a new corpus of ordinary changes; `pair_corpus.py` will not do as it is |
 
-**Решено.** Агентът остава на Claude през абонамент (`claude-cli`). Модел на
-OpenAI не се въвежда — нито през API, нито като `codex-cli` provider.
+**Proposed.** To measure how often the agent raises an alarm on **ordinary**
+changes — a rename, a new button, a fixed test — in which there is no known
+vulnerability.
 
-**Отхвърлено.** Двете форми на предложението: OpenAI през API ключ, което и без
-това нарушава решението от 2026-08-30; и `codex exec` като втори provider, който
-би минал през вече платения ChatGPT абонамент.
+**Why it does not exist.** Today false alarms are measured only on the "safe"
+member of a pair. That is the same file with the patch applied, that is, code
+that was dangerous one line ago. Real merge requests do not look like that.
 
-**Причина.** Числото, което би се спестило, не се плаща. По обявени тарифи
-съпоставимият модел (GPT-5.6 Sol, $4/$20) е с 20% под Opus 5 ($5/$25) — върху
-вчерашното пускане това е $25.58 → $20.46, тоест **$5.12 условно**, при
-действително платени $0, защото работим през абонамент. По-евтиният модел в
-същата таблица изобщо не е техен: Sonnet 5 е $2/$10, два и половина пъти под
-Opus и два пъти под Sol.
+**Why it matters.** This is the number that decides whether the tool stays
+switched on. A tool that finds 6 out of 10 and stays quiet on clean code is
+useful. A tool that finds 9 out of 10 and shouts at every third innocent merge
+request gets switched off within a week — and then it finds 0 out of 10.
 
-**Наложено от.** Нищо в кода — това е решение да не се строи. Единственото, което
-го налага, е този запис и липсата на втори provider в `config.py`.
+**What is measured, and this is corrected after the objection.** Not "findings
+per change". The headline number is **the share of changes that got at least one
+blocking finding which, on reading, turns out to be unfounded**. It is reported
+grouped by repository — the average repository and the noisiest one — because
+the independent unit is the repository, not the change. One noisy repository can
+produce every alarm and a single total hides it. "Findings per change" and the
+distribution by severity stay as secondary.
 
-**Доказателство.** `measurements/experiment-noise-floor-2/` — 52 прегледа,
-условно $25.58, `provider: claude-cli`, `auth_method: claude.ai`, отделно
-платено $0.
+**Three traps.**
 
-**Възражение (Codex, 2026-09-01).** Възразява срещу миграцията и назовава три
-неща отвъд цената. Първо, най-сериозното: при Claude изпълнителят доказуемо
-маха всички вградени инструменти и оставя само нашите четири; `codex exec
---sandbox read-only` значи „инструментите са ограничени", не „няма инструменти",
-така че собствен shell може да заобиколи `read_file` и `get_diff` — и с тях
-отчитането какво е прочетено. Второ, от 1281-те реда на изпълнителя 550–650 са
-специфични за Claude, и това е по-рисковата половина. Трето, всяко измерено
-число отпада: 82 случая и 38 минаващи важат за този доставчик и този модел, а
-повторното измерване е $40 в долния край. Дословно: *„Миграция заради тези $5
-условни спестявания е икономически необоснована. Разумен мотив би бил доказано
-по-добро качество, по-голям наличен капацитет на абонамента или стратегическа
-нужда от втори доставчик. Нито едно от тях още не е установено."*
+Silence is not automatically right. Some of the ordinary changes really do
+contain an unnoticed weakness; a finding there is a result, not a false alarm.
 
-**Преразглежда се когато** се появи някое от трите: седмичната квота спре да
-събира работата в един абонамент; измерено по-добро качество на друг модел; или
-нужда от втори доставчик по причина, различна от цената.
+The reading of the findings is itself accountable and has to be guarded as such:
+a rubric declared **before** the reading, with four outcomes — true and
+actionable, true but out of scope, a guess with nothing behind it, and false.
+Otherwise the borderline cases will be judged with the knowledge of which answer
+is wanted.
 
-**Отделно и все още отворено.** По-евтин *модел* при същия доставчик не е
-отхвърлен с този запис. Sonnet 5 е два и половина пъти под Opus 5, смяната е
-една променлива (`SECURITY_SCAN_MODEL`) и не иска нито ред нов код. Цената ѝ е
-измервателна, не инженерна: нищо измерено под Opus не важи за Sonnet, така че
-въпросът се отговаря с пускане на едни и същи случаи под двата модела.
+The selection is declared before the collecting and is mechanical. If I pick
+them, I will pick changes that look clean.
 
+**Objection (Codex, 2026-08-31).** Five things, two of them corrections of
+errors in the proposal itself.
 
-## D-012 · Пети изход: провал, който остава в набора
+*Error one, mine:* I claimed the number depends on `SECURITY_SCAN_FAIL_ON`. That
+setting changes **what blocks**, not what the agent reports. It is frozen for the
+blocking number and is irrelevant to the raw count of findings. Frozen along
+with it: the model, the prompt, the diff cap and the rule for an unfinished
+review.
+
+*Error two, mine:* "30–40 unrelated changes" buy a bigger denominator and cannot
+estimate precisely the thing we need — the concentration. Fewer repositories, a
+few mechanically chosen changes in each, plus reruns of a small subgroup.
+
+*And three limitations that go into the report rather than being passed over:*
+public merged changes carry survivorship bias — mature open source, accepted,
+publicly reviewable — and they miss private code, rejected changes and
+repositories full of generated files. The result is announced as "over this
+sample of public repositories", never as expected noise in production. One run
+per change mixes the noise with the instability, which is why the subgroup is
+repeated. And the old `measurements/` cannot answer it: their safe members were
+selected around known security fixes.
+
+*On the order:* "line it up, but do not fund it before the stability. Stability
+is a precondition for interpreting the noise from a single run. After it, this
+should come ahead of a new broad measurement of finding, unless that answers a
+specific question that is holding up a release: finding without an estimate of
+the cost of acceptance optimises a tool whose tolerable operating point is
+unknown."
+
+**Becomes a decision when** the stability has been measured, the selection rule
+has been declared and somebody is willing to spend the window.
+
+## P-001 · The adjudication is not one question, but three
 
 | | |
 |---|---|
-| **Състояние** | действащо |
-| **Обхват** | `tools/check_accounted.py`, `corpus-real/adjudications.yml` |
-| **Решено от** | Codex, 2026-09-02; препоръката ми беше оборена |
-| **Проверено срещу** | `75bf0e5` |
+| **State** | proposed |
+| **Grounds** | n=1 |
+| **Scope** | `corpus-real/adjudications.yml`, scoring |
 
-**Решено.** Към четирите изхода на D-008 се добавя пети: `known_failure` —
-случай, чийто провал е разбран и записан, и който **остава** в набора за
-следващи мерения. Отбелязва се с `known_failure: true` в `adjudications.yml`,
-редом с ред в `LIMITATIONS.md`, който казва какъв е провалът.
+**Proposed.** That one adjudication answer three separate things: is the finding
+true, is it the point of the case, and does it separate the two members.
 
-**Отхвърлено.** Моята препоръка: ред в `LIMITATIONS.md` и толкоз. По D-008
-ограничението изважда случая завинаги, а `rs-8rw6-p7m8-63jp` мери точно нещо
-ценно — може ли смислово невярна находка да преживее проверителя и да спре
-merge. Дословното възражение на Codex: *„това затваря счетоводството чрез
-загуба на най-полезния бъдещ тест — административно последователно,
-измервателно нечестно"*.
+**Observation.** `py-p43p-whwx-q52h`: the advisory is a denial of service through
+unbounded recording of a user name (CWE-400). The agent described the right line
+and named it `injection` — "unescaped" instead of "unbounded". The key expects
+`dos`, so it was counted as a miss.
 
-**Причина.** D-008 слива две независими оси: „има ли случаят обяснен изход" и
-„трябва ли да участва в следващо мерене". За четирите изхода отговорите винаги
-съвпадаха. Тук не съвпадат: изходът е обяснен, и случаят трябва да се мери пак.
-Кошница, която не може да изрази това, кара честния отговор да се натъпче в
-неподходящо място — а именно това правило беше добавено да предотврати.
+**Why we do not count it as found.** The reader acts on the **name**. "Log
+injection" gets deferred; "anybody can bring the server down without logging in"
+gets fixed today. A finding that described the mechanism correctly and the
+consequence wrongly has misled the reader.
 
-**Наложено от.** `check_accounted.known_failures()`; клонът стои **преди**
-`limitations`, защото такъв случай е назован и в двата файла и обратният ред би
-го подал като изваден. `tests/test_check_accounted.py::TestAFailureThatStaysInTheSet`.
+**Objection (Codex, 2026-08-29).** Both are true at the same time, and that is
+why the fraction is not the place to settle it: the finding localises the
+mechanism correctly and misses the consequence. The proposed form — reporting
+two numbers, "mechanism found" and "consequence named" — keeps both instead of
+choosing. And: it does not create an inconsistency with the adjudication of the
+side finding in `ts-m9mq`, because "true" and "the point" are different
+questions.
 
-**Доказателство.** `python3 tools/check_accounted.py` — 82 случая: 48 минават,
-1 известен провал, 18 ограничения, 13 невалидни, 0 непуснати, 2 неприети, 0
-неотчетени.
+**Becomes a decision when** there are at least five cases in which the mechanism
+matches and the consequence does not — today there is one.
 
-**Възражение (Codex, 2026-09-02).** Няма — това е неговото предложение, а
-оборената страна е моята. Той обаче държи и на второто: липсва същото
-разграничение и другаде — поправените случаи се сливат с обикновено минаващите,
-което DECISIONS.md вече признава. Не се поправя тук.
 
-**Преразглежда се когато** втори случай попадне в тази кошница по различна
-причина от този — тогава се проверява дали „известен провал" не се е превърнал
-в място, където се трупа необяснена работа.
+## D-010 · Re-measuring is the start of the next round, not the end of this one
 
-## D-013 — Правило за спиране: груб детектор на катастрофа, и защо не повече
+| | |
+|---|---|
+| **State** | active |
+| **Scope** | the diagram of the cycle, `CLAUDE.md`, the reports |
+| **Decided by** | the owner, 2026-09-01 |
+| **Checked against** | `610721a` |
 
-**Решено 2026-09-03.** Проектът нямаше изход, при който отговорът е „това не
-работи". Всеки провал ставаше поправка или ред в `LIMITATIONS.md`, а проект,
-който не може да се провали, не може и да успее.
+**Decided.** The cycle has three stations — measuring, labelling, a fix or a row
+in `LIMITATIONS.md` — and an arrow back to the measuring. "Re-measuring" is not a
+fourth station: it *is* measuring, with a narrower scope, and the next round
+begins with it.
 
-Първата версия на това решение имаше праг за **успех**. Codex го обори и е
-прав: с 78 двойки такъв праг не може да се докаже, и да се преструва, че може,
-е по-лошо от липсата му. Написаното тук е това, което данните носят.
+**Rejected.** The four-step drawing from 2026-08-30, which ended with
+"re-measure → we stop". It counts the same work twice and draws a straight line
+with a stop where there is a circle.
 
-### Какво измерваме, и какво е измерено
+**What it changes.** The counting, and in a direction that makes the reports
+intelligible. Under the old drawing round 1 was "stopped at the third of four
+steps" — unfinished. Under the new one round 1 is **finished**: it has been
+through all three stations. The next round has not started, because its first
+station is measuring, and that has not been run (D-009).
 
-78 двойки, последният резултат за всеки случай, от артефактите:
+**Reason.** The number of rounds is the number the owner reads in order to know
+where we are. A drawing in which one and the same action is now an end, now a
+beginning, gives two different numbers for one and the same state — and that is
+exactly what happened: "zero turns" and "one round" in one and the same
+conversation, about one and the same thing.
+
+**Enforced by.** Nothing in the code — this is a decision about the drawing and
+the counting, not about behaviour. The only place that enforces it is
+`CLAUDE.md`, which is read verbatim every session, and
+`tools/check_decisions.py`, which keeps this entry complete. Recorded
+explicitly, because a decision with no enforcer is exactly what the owner
+criticised the same day: a rule that sits somewhere and does nothing.
+
+**Evidence.** `python3 tools/check_accounted.py` — it prints the state from
+which the position of the marker is determined. That the old drawing gives two
+numbers for one state is visible in the conversation of 2026-09-01 itself: "zero
+turns" and "one round" for round 1, depending on which drawing is read.
+
+The exit from the round stays the one from D-008: we stop when every case has a
+row, and not on a fraction.
+
+**The boundary, explicitly.** The fix is station 3 of round N. The measuring that
+confirms it is station 1 of round N+1 — and only after it does the case get the
+outcome "fixed". "The round finished" does not mean "the fix is accounted for":
+between the two stands one paid measurement that has not been made yet.
+
+**Objection (Codex, 2026-09-01).** The decision is defensible on the substance,
+but the diff was not internally consistent: D-009 still pointed at "step 4 of the
+cycle", and the boundary between the rounds stayed ambiguous — "the round
+finished after the fix" can be read as "the fix is accounted for before the
+check". Both are fixed above. Codex also checked that the old four-step drawing
+has not been left anywhere else in the repository.
+
+**Revisited when** a second round actually begins and the boundary turns out not
+to be where this entry puts it — that is, if the confirming measurement of a fix
+has to run together with the fix, rather than as the next station.
+
+**And one thing this entry leaves visibly unresolved.** D-008 and the docstring
+of `tools/check_accounted.py` describe five outcomes, one of which is `fixed` —
+there is no such bucket in the code. A successfully re-measured fix falls into
+`pass` and out of the tray it is indistinguishable from a case that never
+failed. It is not D-010's mistake and it is not fixed here: so far the fixes are
+zero, so the bucket would be empty in every case, and inventing it with no
+record of which case was fixed would be a number with no basis. Recorded so that
+the report is not read as saying something it does not say.
+
+
+## D-011 · We do not change the model provider over price
+
+| | |
+|---|---|
+| **State** | active |
+| **Scope** | the providers in `src/security_agent/config.py`, `runner_claude_code.py` |
+| **Decided by** | the owner, 2026-09-01 |
+| **Checked against** | `eb727e1` |
+
+**Decided.** The agent stays on Claude through the subscription (`claude-cli`).
+No OpenAI model is brought in — neither through the API nor as a `codex-cli`
+provider.
+
+**Rejected.** Both forms of the proposal: OpenAI through an API key, which
+breaks the decision of 2026-08-30 anyway; and `codex exec` as a second provider,
+which would go through the already-paid ChatGPT subscription.
+
+**Reason.** The number that would be saved is not being paid. At published rates
+the comparable model (GPT-5.6 Sol, $4/$20) is 20% below Opus 5 ($5/$25) — over
+yesterday's run that is $25.58 → $20.46, that is **$5.12 notional**, against $0
+actually paid, because we work through a subscription. The cheaper model in the
+same table is not theirs at all: Sonnet 5 is $2/$10, two and a half times below
+Opus and twice below Sol.
+
+**Enforced by.** Nothing in the code — this is a decision not to build. The only
+thing that enforces it is this entry and the absence of a second provider in
+`config.py`.
+
+**Evidence.** `measurements/experiment-noise-floor-2/` — 52 reviews, $25.58
+notional, `provider: claude-cli`, `auth_method: claude.ai`, separately $0 paid.
+
+**Objection (Codex, 2026-09-01).** It objects to the migration and names three
+things beyond the price. First, the most serious: with Claude the runner
+demonstrably strips every built-in tool and leaves only our four; `codex exec
+--sandbox read-only` means "the tools are restricted", not "there are no tools",
+so its own shell could bypass `read_file` and `get_diff` — and with them the
+accounting of what was read. Second, of the runner's 1281 lines, 550–650 are
+Claude-specific, and that is the riskier half. Third, every measured number
+falls away: 82 cases and 38 passing hold for this provider and this model, and
+re-measuring is $40 at the low end. Verbatim: *"A migration for these $5 of
+notional savings is economically unjustified. A reasonable motive would be
+demonstrably better quality, more available capacity on the subscription or a
+strategic need for a second provider. Not one of them has been established
+yet."*
+
+**Revisited when** one of the three appears: the weekly quota stops collecting
+the work into one subscription; measured better quality on another model; or a
+need for a second provider for a reason other than price.
+
+**Separate, and still open.** A cheaper *model* with the same provider is not
+rejected by this entry. Sonnet 5 is two and a half times below Opus 5, the change
+is one variable (`SECURITY_SCAN_MODEL`) and it asks for not one line of new code.
+Its price is a measuring one, not an engineering one: nothing measured under
+Opus holds for Sonnet, so the question is answered by running the same cases
+under both models.
+
+
+## D-012 · A fifth outcome: a failure that stays in the set
+
+| | |
+|---|---|
+| **State** | active |
+| **Scope** | `tools/check_accounted.py`, `corpus-real/adjudications.yml` |
+| **Decided by** | Codex, 2026-09-02; my recommendation was overturned |
+| **Checked against** | `75bf0e5` |
+
+**Decided.** A fifth is added to D-008's four outcomes: `known_failure` — a case
+whose failure is understood and recorded, and which **stays** in the set for
+subsequent measurements. It is marked with `known_failure: true` in
+`adjudications.yml`, alongside a row in `LIMITATIONS.md` that says what the
+failure is.
+
+**Rejected.** My recommendation: a row in `LIMITATIONS.md` and that is all.
+Under D-008 a limitation takes the case out for good, and `rs-8rw6-p7m8-63jp`
+measures precisely something valuable — whether a semantically false finding can
+survive the verifier and stop a merge. Codex's objection, verbatim: *"this
+closes the accounting by losing the most useful future test — administratively
+consistent, dishonest as measurement"*.
+
+**Reason.** D-008 merges two independent axes: "does the case have an explained
+outcome" and "should it take part in a further measurement". For the four
+outcomes the answers always coincided. Here they do not: the outcome is
+explained, and the case has to be measured again. A bucket that cannot express
+this forces the honest answer into an unsuitable place — and that is the very
+thing this rule was added to prevent.
+
+**Enforced by.** `check_accounted.known_failures()`; the branch stands
+**before** `limitations`, because such a case is named in both files and the
+reverse order would file it as taken out.
+`tests/test_check_accounted.py::TestAFailureThatStaysInTheSet`.
+
+**Evidence.** `python3 tools/check_accounted.py` — 82 cases: 48 pass, 1 known
+failure, 18 limitations, 13 invalid, 0 not run, 2 not accepted, 0 unaccounted.
+
+**Objection (Codex, 2026-09-02).** None — this is his proposal, and the side that
+was overturned is mine. He does, however, also insist on the second point: the
+same distinction is missing elsewhere too — fixed cases are merged with the
+ordinarily passing ones, which DECISIONS.md already admits. Not fixed here.
+
+**Revisited when** a second case lands in this bucket for a reason different
+from this one — then it is checked whether "known failure" has not turned into a
+place where unexplained work piles up.
+
+## D-013 — The stop rule: a crude detector of catastrophe, and why not more
+
+**Decided 2026-09-03.** The project had no outcome in which the answer is "this
+does not work". Every failure became a fix or a row in `LIMITATIONS.md`, and a
+project that cannot fail cannot succeed either.
+
+The first version of this decision had a threshold for **success**. Codex
+overturned it and is right: with 78 pairs such a threshold cannot be proved, and
+pretending that it can is worse than not having one. What is written here is
+what the data carries.
+
+### What we measure, and what has been measured
+
+78 pairs, the last result for each case, out of the artifacts:
 
 ```
-                    вдига тревога   мълчи
-уязвима версия           61          17
-поправена                20          58
+                     raises alarm   silent
+vulnerable version        61          17
+fixed                     20          58
 ```
 
-| мярка | стойност | 95% CI (Wilson) |
+| measure | value | 95% CI (Wilson) |
 |---|---|---|
 | recall | 78% | 68–86% |
-| тревога върху поправката | 26% | 17–36% |
+| alarm on the fix | 26% | 17–36% |
 
-**Това е регресионен корпус, не доказателство за приемане.** `precision`,
-смятана от него, не е precision в употреба: корпусът е 50/50 уязвими и
-поправени, а в истински pipeline уязвимите промени са малцинство. Числото
-75%, което по-ранна версия на този документ цитираше, се изтегля по тази
-причина.
+**This is a regression corpus, not proof of acceptability.** `precision`
+computed from it is not precision in use: the corpus is 50/50 vulnerable and
+fixed, whereas in a real pipeline the vulnerable changes are a minority. The
+figure of 75% that an earlier version of this document quoted is withdrawn for
+that reason.
 
-### Катастрофалният стоп
+### The catastrophic stop
 
-Замразява се една конфигурация — модел, prompts, схема, verifier, порта,
-scorer, ревизия. Пуска се целият корпус, двете половини.
+One configuration is frozen — model, prompts, schema, verifier, gate, scorer,
+revision. The whole corpus is run, both halves.
 
-**Отхвърля се, ако recall падне под 65% или тревогата върху поправката
-надхвърли 40%.**
+**The configuration is rejected if recall falls below 65% or the alarm on the
+fix exceeds 40%.**
 
-Това е спад от 13 и от 14 точки. Избрани са не защото са добри прагове, а
-защото са **единствените, които 78 случая виждат надеждно**.
+That is a drop of 13 and of 14 points. They are chosen not because they are good
+thresholds, but because they are **the only ones that 78 cases see reliably**.
 
-### Какво това правило не може, обявено, а не премълчано
+### What this rule cannot do, declared and not passed over in silence
 
-* **Не установява успех.** Няма клон „минава". Приемането иска проспективен
-  набор, който не съществува.
-* **Не вижда спад под 13 точки.** За спад от 78% на 73% силата му е ≈26% —
-  в три от четири случая истинско влошаване минава незабелязано.
-* **Праговете са избрани, след като числата са видени.** Това е нагласяне на
-  правилото към резултата и не се поправя с преизчисляване; поправя се само с
-  нови случаи.
+* **It does not establish success.** There is no "passes" branch. Acceptance
+  needs a prospective set, which does not exist.
+* **It does not see a drop below 13 points.** For a drop from 78% to 73% its
+  power is ≈26% — in three cases out of four a real deterioration goes
+  unnoticed.
+* **The thresholds were chosen after the numbers had been seen.** That is fitting
+  the rule to the result, and it is not repaired by recalculating; it is
+  repaired only by new cases.
+* **"The alarm on the fix" is not a false-alarm rate** (established 2026-09-03).
+  `artifact.is_target` compares only the category and the file — there is no
+  judgement of whether the finding is true. The fixed file almost always carries
+  something true from the same category, so 40% is a ceiling on "this category
+  is still being reported in the fixed file". The threshold stays at 40%,
+  because it is comparable between runs and because moving it now would be a
+  second fitting after a number has been seen — but it is not quoted as a
+  percentage of wrong findings.
+* **The number depends on when the verdicts were written, and the row does not
+  say which it is.** `stop_rule` reads the recorded rows; `pair_corpus` applies
+  the verdicts while it scores. Today the 26% is raw — all ten cases with an
+  applicable excuse stand with `alert: True`, because the verdicts were written
+  after the runs. The next run gives 10 instead of 20 for the same corpus.
+  `stop_rule` prints both denominators, but it judges **by the raw one only**:
+  the second is built on verdicts the model wrote for itself, and a verdict must
+  not produce a decision to stop. Under the second row it says how many of the
+  verdicts are independent — zero.
 
-За твърдението „recall е над 70%" трябват ≈200 независими уязвими случая; за
-„виждам спад от 5 точки" — ≈450. Днес има 78. Собственикът реши на 2026-09-03,
-че няма седмици за строене на такъв набор, и това е приетата цена.
+For the claim "recall is above 70%" ≈200 independent vulnerable cases are
+needed; for "I can see a drop of 5 points" — ≈450. Today there are 78. The owner
+decided on 2026-09-03 that there are no weeks for building such a set, and that
+is the accepted price.
 
-### Второто правило: обикновените промени
+### The second rule: the ordinary changes
 
-Остава както Codex го формулира, защото там 100 случая **стигат** за границата,
-която има значение — и точно това правило решава дали някой ще търпи
-инструмента в pipeline-а си.
+It stays as Codex formulated it, because there 100 cases **are enough** for the
+boundary that matters — and it is precisely that rule which decides whether
+anybody will put up with the tool in their pipeline.
 
-> 100 механично подбрани обикновени промени от поне 10 публични repo-та, не
-> повече от 10 от едно, избрани по възпроизводим хеш, преди да е видян какъвто
-> и да е резултат. Промяната е шумна, ако произведе поне една отсъдена
-> неоснователна находка, представена като действена.
+> 100 mechanically selected ordinary changes from at least 10 public
+> repositories, no more than 10 from any one, chosen by a reproducible hash,
+> before any result whatsoever has been seen. A change is noisy if it produces at
+> least one adjudicated unfounded finding presented as actionable.
 >
-> При 100 промени: **до 9 шумни — минава; 21 и повече — пада; между тях —
-> нерешено.** Отделно: завършили под лимитите поне 90%.
+> With 100 changes: **up to 9 noisy — passes; 21 and more — fails; between them —
+> undecided.** Separately: at least 90% finished under the limits.
 >
-> След като резултатът е видян, **никаква настройка** — нито на prompt-а, нито
-> на verifier-а, модела, схемата, scorer-а или правилата за допустимост.
+> Once the result has been seen, **no tuning whatsoever** — not of the prompt,
+> nor of the verifier, the model, the schema, the scorer or the admissibility
+> rules.
 
-Обикновена промяна е такава, която никога не е била уязвима: преименуване,
-рефактор, нов тест. Не може да се докаже, че не съдържа слабост — затова
-неясните се броят отделно и не влизат нито в числителя, нито в знаменателя.
+An ordinary change is one that has never been vulnerable: a rename, a refactor,
+a new test. It cannot be proved not to contain a weakness — which is why the
+unclear ones are counted separately and enter neither the numerator nor the
+denominator.
 
-### Когато двете не са съгласни
+### When the two do not agree
 
-**Всяко падане е падане.** Корпусът пада → не става за целта, за която е
-писан. Обикновените промени падат → не става за pipeline, дори корпусът да
-минава. Което и да е нерешено → общият резултат е нерешен, не „минава".
+**Every failure is a failure.** The corpus fails → it is not fit for the purpose
+it was written for. The ordinary changes fail → it is not fit for a pipeline,
+even if the corpus passes. Either one undecided → the overall result is
+undecided, not "passes".
 
-### Редът
+### The order
 
-1. Замрази конфигурацията и това правило.
-2. Построй и двойно отсъди 30 обикновени промени, **без нито едно извикване на
-   модел**.
-3. Ако под 5 са неясни → разшири механично до 100 и пусни.
-4. Успоредно и безплатно: класифицирай 22-те тревоги върху поправката.
-5. Настройвай само ако обикновените промени са близо до границата **и** 22-те
-   покажат широка, независимо повторена причина.
+1. Freeze the configuration and this rule.
+2. Build and doubly adjudicate 30 ordinary changes, **without a single model
+   call**.
+3. If fewer than 5 are unclear → extend mechanically to 100 and run it.
+4. In parallel and free of charge: classify the 22 alarms on the fix.
+5. Tune only if the ordinary changes are close to the boundary **and** the 22
+   show a broad, independently repeated cause.
 
-Портата Sonnet отива след всичко това: тя мери измерващата машина, а въпросът
-на проекта е друг.
+The Sonnet gate goes after all of this: it measures the measuring machine, and
+the project's question is a different one.

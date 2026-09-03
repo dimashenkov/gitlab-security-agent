@@ -44,6 +44,8 @@ TEXT = re.compile(r'<text class="([a-z]+)"[^>]*x="([\d.]+)" y="([\d.]+)"[^>]*>'
 RECT = re.compile(r'<rect class="([^"]+)" x="([\d.]+)" y="([\d.]+)" '
                   r'width="([\d.]+)" height="([\d.]+)"')
 PATH = re.compile(r'<path[^>]*\sd="([^"]+)"')
+# The Cyrillic block range this file matches against. A compared literal, not
+# prose: these two characters are the range bounds, so they stay as written.
 CYRILLIC = re.compile(r"[Ѐ-ӿԀ-ԯ]")
 
 # Advance per character, measured against the fonts the page asks for. The

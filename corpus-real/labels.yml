@@ -1,214 +1,219 @@
-# Всеки провал, етикетиран преди да е пипнат код
+# Every failure, labelled before any code was touched
 #
-# Стъпка 2 от цикъла. Етикетът е **четене**, не присъда: той казва каква форма
-# има провалът, за да се знае каква поправка иска и колко струва. Промяна в
-# числото не минава оттук — минава през `adjudications.yml`, вързана за
-# отпечатъка на находката. Codex беше изричен: `is_target` остава груб
-# генератор на кандидати, а всяко изключение, което мести резултат, минава през
-# слоя за отсъждане.
+# Step 2 of the cycle. A label is a **reading**, not a verdict: it says what
+# shape the failure has, so that what fix it wants and what it costs are known.
+# A change to the number does not go through here — it goes through
+# `adjudications.yml`, anchored to the finding's fingerprint. Codex was
+# explicit: `is_target` stays a coarse candidate generator, and every exception
+# that moves a result goes through the adjudication layer.
 #
-# Етикетите:
+# The labels:
 #
-#   missed                 нищо в опасния член не съвпада с ключа
-#   incidental_candidate   безопасният член има находка, която ключът също
-#                          хваща, но описва друга слабост — кандидат за
-#                          отсъждане, не установен факт
-#   incomplete_fix         безопасният член описва същия механизъм като целта;
-#                          ако е вярно, поправката на автора е непълна и
-#                          случаят не може да мери нищо
-#   unread                 още не е прочетен
+#   missed                 nothing in the unsafe member matches the key
+#   incidental_candidate   the safe member has a finding the key also catches,
+#                          but it describes a different weakness — a candidate
+#                          for adjudication, not an established fact
+#   incomplete_fix         the safe member describes the same mechanism as the
+#                          target; if that is true, the author's fix is
+#                          incomplete and the case cannot measure anything
+#   unread                 not read yet
 #
-# Симетрията, която прави това честно: същият въпрос е зададен и на 29-те
-# минаващи двойки — дали преброената находка е слабостта от advisory-то, или
-# съседна. Всичките издържаха. Процедура, която пита само за провалите, може
-# само да подобрява числото.
+# The symmetry that makes this honest: the same question was put to the 29
+# passing pairs too — is the counted finding the weakness from the advisory, or
+# a neighbouring one. All of them held. A procedure that asks only about the
+# failures can only improve the number.
 
 labels:
 
   # ---------------------------------------------------------------- missed
-  # Опасният член не даде находка, която ключът разпознава. Осем от тях
-  # докладваха *друга* слабост, седем не докладваха нищо — разликата има
-  # значение за поправката и е отбелязана.
+  # The unsafe member produced no finding the key recognises. Eight of them
+  # reported a *different* weakness, seven reported nothing — the difference
+  # matters for the fix and is noted.
 
   - case_id: go-m6jg-wr9m-cg2f
     label: missed
-    note: нищо в опасния член
+    note: nothing in the unsafe member
   - case_id: go-qmcq-xw74-w667
     label: missed
-    note: нищо в опасния член
+    note: nothing in the unsafe member
   - case_id: go-w67g-5rqw-f597-snap
     label: missed
-    note: нищо в опасния член
+    note: nothing in the unsafe member
   - case_id: php-7mpf-4465-7fc2-snap
     label: missed
-    note: нищо в опасния член
+    note: nothing in the unsafe member
   - case_id: py-p43p-whwx-q52h-snap
     label: missed
-    note: нищо в опасния член
+    note: nothing in the unsafe member
   - case_id: ts-cqmq-8755-7xvh-snap
     label: missed
-    note: нищо в опасния член
+    note: nothing in the unsafe member
   - case_id: ts-q7m3-rhxg-7vxr
     label: missed
-    note: нищо в опасния член
+    note: nothing in the unsafe member
   - case_id: ts-v667-gc2r-2xm7-snap
     label: missed
-    note: нищо в опасния член; и двата члена празни
+    note: nothing in the unsafe member; both members empty
 
   - case_id: go-8r62-w5wh-fc5m-snap
     label: missed
     note: >-
-      целта е заобикаляне на проверката за произход (authn-authz); докладвано е
-      dos за ограничението на тялото на заявката
+      the target is a bypass of the origin check (authn-authz); what was
+      reported is dos on the request body limit
   - case_id: go-m6jg-wr9m-cg2f-snap
     label: missed
     note: >-
-      целта е path traversal в hooks.go; докладвано е supply-chain — обърната
-      проверка на подпис
+      the target is path traversal in hooks.go; what was reported is
+      supply-chain — an inverted signature check
   - case_id: go-qmcq-xw74-w667-snap
     label: missed
-    note: целта е инжекция през EDITOR; докладвано е supply-chain
+    note: the target is injection through EDITOR; what was reported is supply-chain
   - case_id: php-p2ch-c2c3-4xm5-snap
     label: missed
     note: >-
-      целта е csrf/authn-authz; докладвано е path-traversal, критично — по-тежко
-      от търсеното и още неотсъдено
+      the target is csrf/authn-authz; what was reported is path-traversal,
+      critical — heavier than what was sought and not yet adjudicated
   - case_id: php-pg62-f8g4-4wqh-snap
     label: missed
-    note: целта е authn-authz; докладвано е csrf
+    note: the target is authn-authz; what was reported is csrf
   - case_id: py-p43p-whwx-q52h
     label: missed
     note: >-
-      верният ред код, назован като injection вместо dos. Записано е в
-      LIMITATIONS.md като „правилният код, грешната опасност" и остава пропуск:
-      читателят действа по името
+      the right line of code, named as injection instead of dos. Recorded in
+      LIMITATIONS.md as "the right code, the wrong danger" and it stays a miss:
+      the reader acts on the name
   - case_id: ts-m9mq-7m7q-xc6p-snap
     label: missed
     note: >-
-      целта е path traversal; докладвано е ssrf — и тази находка е прочетена и
-      е истинска, но не е целта
+      the target is path traversal; what was reported is ssrf — and that finding
+      too was read and is real, but it is not the target
 
   # ------------------------------------------------ incidental_candidate
-  # Безопасният член има находка, която ключът хваща, но която описва друг
-  # механизъм. Кандидат за отсъждане като странична находка — не установено.
+  # The safe member has a finding the key catches, but which describes a
+  # different mechanism. A candidate for adjudication as an incidental finding
+  # — not established.
 
   - case_id: go-qqff-5854-px68
     label: incidental_candidate
     state: read
     note: >-
-      целта е неограничено заделяне по брой части; безопасният съобщава липсваща
-      *долна* граница на индекса — обратната посока на същата проверка
+      the target is unbounded allocation by part count; the safe member reports
+      a missing *lower* bound on the index — the opposite direction of the same
+      check
   - case_id: go-r553-m4fv-5v97-snap
     label: incidental_candidate
     state: read
     note: >-
-      целта е памет при четене на ред без LF; безопасният съобщава блокиращо
-      обратно DNS търсене в цикъла за приемане
+      the target is memory when reading a line without LF; the safe member
+      reports a blocking reverse DNS lookup in the accept loop
   - case_id: go-xhj3-7xw9-vr34
     label: incomplete_fix
     state: read
     was: incidental_candidate
     note: >-
-      Прочетено 2026-08-30 и етикетът е поправен. Поправката добавя
-      `maxSliceMapToSliceGap` и проверка `key < 0`. Находката в безопасния член
-      е за препълване на цяло число, което **заобикаля тъкмо новата защита** —
-      същият механизъм, атакуван през самата поправка. Трети случай, в който
-      четенето по заглавие ме подведе, и трети път в същата посока: рецензентът
-      е бил по-прав, отколкото съм му признал.
+      Read 2026-08-30 and the label is corrected. The fix adds
+      `maxSliceMapToSliceGap` and a `key < 0` check. The finding in the safe
+      member is about an integer overflow that **bypasses exactly the new
+      guard** — the same mechanism, attacked through the fix itself. The third
+      case where reading by title misled me, and the third time in the same
+      direction: the reviewer was more right than I gave it credit for.
   - case_id: go-xhj3-7xw9-vr34-snap
     label: incidental_candidate
     state: read
     note: >-
-      целта е разредени индекси; безопасният съобщава непроверено привеждане на
-      тип, което предизвиква паника
+      the target is sparse indices; the safe member reports an unchecked type
+      assertion that causes a panic
   - case_id: py-g7gc-gmgp-wgqg
     label: incidental_candidate
     state: read
     note: >-
-      целта е вложени скоби в Received; безопасният съобщава квадратично
-      пресканиране на адреси в тялото — друго място, друг механизъм
+      the target is nested parentheses in Received; the safe member reports
+      quadratic rescanning of addresses in the body — another place, another
+      mechanism
   - case_id: py-qr67-gv47-xwwh-snap
     label: incidental_candidate
     state: read
     note: >-
-      целта е %u в AuthorizedKeysFile; безопасният съобщава Include, който
-      изтича Match състояние в родителската конфигурация
+      the target is %u in AuthorizedKeysFile; the safe member reports Include,
+      which leaks Match state into the parent configuration
 
   # ------------------------------------------------------- incomplete_fix
-  # Безопасният член описва същия механизъм като целта. Ако е вярно, поправката
-  # на автора не затваря собствената си слабост и случаят не може да мери
-  # дискриминация в никоя посока — същото основание като вече отсъдените шест.
-  # Всеки от тях иска четене на кода, преди да стане отсъждане.
+  # The safe member describes the same mechanism as the target. If that is true,
+  # the author's fix does not close its own weakness and the case cannot measure
+  # discrimination in either direction — the same grounds as the six already
+  # adjudicated. Each of these needs the code read before it becomes an
+  # adjudication.
 
   - case_id: py-g7gc-gmgp-wgqg-snap
     label: incidental_candidate
     state: read
     was: incomplete_fix
     note: >-
-      Прочетено 2026-08-30 и етикетът е поправен. Поправката заменя цикъл от
-      регулярни замени — квадратичният, за който е advisory-то — с един линеен
-      обход по знаци, и маха `noparenthesis_regex` съвсем. Находката в
-      безопасния член е за *друга*, динамично построена регулярка. Сходни думи,
-      различен код: четенето по заглавие ме подведе.
+      Read 2026-08-30 and the label is corrected. The fix replaces a loop of
+      regex substitutions — the quadratic one the advisory is about — with a
+      single linear pass over characters, and drops `noparenthesis_regex`
+      entirely. The finding in the safe member is about a *different*,
+      dynamically built regex. Similar words, different code: reading by title
+      misled me.
   - case_id: ts-w4mq-xh27-6xpx-snap
     label: incidental_candidate
     state: read
     was: incomplete_fix
     note: >-
-      Прочетено 2026-08-30 и етикетът е поправен. Advisory-то е за глобалното
-      `Mustache.escape = ...`, което изключва екранирането за целия процес;
-      поправката го прави локално за едно извикване. Находката в безопасния
-      член казва, че `createdBy` се третира като шаблон — вярно и в двата члена
-      и незасегнато от поправката, тоест друга слабост.
+      Read 2026-08-30 and the label is corrected. The advisory is about the
+      global `Mustache.escape = ...`, which turns escaping off for the whole
+      process; the fix makes it local to one call. The finding in the safe
+      member says `createdBy` is treated as a template — true in both members
+      and untouched by the fix, so a different weakness.
   - case_id: py-8x5v-cpv7-8jjp-snap
     label: incomplete_fix
     state: read
     note: >-
-      Прочетено докрай 2026-08-30. `_is_global_addr` разгъва NAT64, 6to4,
-      Teredo и ipv4-mapped правилно — самата проверка е добра. Но резолверът се
-      вика само при разрешаване на *име*: aiohttp прескача резолвера, когато
-      хостът вече е буквален адрес, и тогава нищо не проверява. Пренасочване
-      към буквален вътрешен адрес минава покрай оградата — същият изход като
-      advisory-то, по маршрут, който поправката не затваря.
+      Read to the end 2026-08-30. `_is_global_addr` unwraps NAT64, 6to4, Teredo
+      and ipv4-mapped correctly — the check itself is good. But the resolver is
+      only called when a *name* is resolved: aiohttp skips the resolver when the
+      host is already a literal address, and then nothing checks it. A redirect
+      to a literal internal address walks past the fence — the same outcome as
+      the advisory, by a route the fix does not close.
     caveat: >-
-      Поведението на aiohttp при буквален адрес е от общо знание, не е
-      прочетено от източника тук. Преди отсъждане си струва да се провери в
-      кода на инсталираната версия.
+      aiohttp's behaviour with a literal address is common knowledge here, not
+      read from the source. Worth checking in the installed version's code
+      before adjudicating.
   - case_id: php-gvrw-qqp5-jgc5
     label: incomplete_fix
     state: read
     note: >-
-      Прочетено 2026-08-30 и етикетът остава. Поправката добавя
-      `removeDangerousAttributes` със списък от разрешени атрибути; находката в
-      безопасния член е за *този нов код* — че списъкът се заобикаля. Тоест
-      същият механизъм, за който е advisory-то. Твърдението е правдоподобно:
-      външната регулярка е закотвена — `#^<iframe...#` — значи хваща iframe
-      само ако е първото нещо в html-а, а обвивка или интервал преди него
-      оставя цялата защита неприложена. Кандидат за отсъждане `case_is_malformed`
-      след проверка на регулярката.
+      Read 2026-08-30 and the label stands. The fix adds
+      `removeDangerousAttributes` with an allowlist of attributes; the finding
+      in the safe member is about *that new code* — that the list is bypassed.
+      That is the same mechanism the advisory is about. The claim is plausible:
+      the outer regex is anchored — `#^<iframe...#` — so it catches an iframe
+      only if it is the first thing in the html, and a wrapper or a space before
+      it leaves the whole guard unapplied. A candidate for a
+      `case_is_malformed` adjudication once the regex is checked.
 
-  # ---------------------------------------- прочетени по-късно
-  # Codex посочи, че за `php-pg62` съм гледал недовършения ред — има и завършен.
+  # ---------------------------------------- read later
+  # Codex pointed out that for `php-pg62` I had looked at the unfinished run —
+  # there is a finished one too.
 
   - case_id: php-pg62-f8g4-4wqh
     label: incomplete_fix
     state: read
     note: >-
-      Прочетено 2026-08-30. Опасният член намира целта правилно. Поправката
-      добавя проверка в `updatePermissions` — че не можеш да дадеш право, което
-      нямаш. Находката в безопасния член е за `updateMembers`, друг метод, който
-      добавя към група без същата проверка: различен маршрут, същият изход —
-      повишаване на права. Точно основанието, на което `py-6x92` и `cs-q939` са
-      вече отсъдени: „същият изход по втори маршрут, който поправката не
-      затваря".
+      Read 2026-08-30. The unsafe member finds the target correctly. The fix
+      adds a check in `updatePermissions` — that you cannot grant a right you do
+      not have. The finding in the safe member is about `updateMembers`, another
+      method, which adds to a group without the same check: a different route,
+      the same outcome — privilege escalation. Exactly the grounds on which
+      `py-6x92` and `cs-q939` are already adjudicated: "the same outcome by a
+      second route the fix does not close".
   - case_id: ts-v667-gc2r-2xm7
     label: incomplete_fix
     state: read
     note: >-
-      Прочетено 2026-08-30, и е най-силната находка от всичките. Поправката
-      добавя `/open/user/init` в списъка — и в същото извикване сменя
-      `pathLower` на `req.path`, с което **губи привеждането към малки букви**.
-      Тоест `/API/user/init` вече не съвпада и минава покрай проверката.
-      Находката в безопасния член казва точно това. Рецензентът е намерил
-      регресия, въведена от самата поправка — не пропуск на автора, а дефект в
-      неговото решение.
+      Read 2026-08-30, and it is the strongest finding of them all. The fix adds
+      `/open/user/init` to the list — and in the same call swaps `pathLower` for
+      `req.path`, which **loses the lowercasing**. So `/API/user/init` no longer
+      matches and walks past the check. The finding in the safe member says
+      exactly that. The reviewer found a regression introduced by the fix
+      itself — not an omission by the author, but a defect in his solution.

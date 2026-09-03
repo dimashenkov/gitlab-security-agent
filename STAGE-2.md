@@ -1,351 +1,360 @@
-# Етап 2 — агентът, проверен срещу известни advisory-та
+# Stage 2 — the agent, checked against known advisories
 
-**Целта не е нова функция. Целта е агентът да се пуска често върху код с
-известни слабости, и разминаването да се поправя.**
+**The goal is not a new feature. The goal is for the agent to be run often over
+code with known weaknesses, and for the discrepancy to be fixed.**
 
-Пречката беше цената: всяко пускане струва пари по API-то, а правилото на
-проекта е, че козметична промяна не оправдава пускане. Затова прегледите чакаха
-повод, а повод нямаше. Етап 2 маха тази пречка — втори runner през `claude -p`,
-който върви под входа, който този CLI вече има — а колко струва това е
-свойство на входа, което пускането пита и записва, вместо да предполага.
-CI остава непокътнат на API-то.
+The obstacle was the price: every run costs money over the API, and the rule of
+this project is that a cosmetic change does not justify a run. So reviews waited
+for an occasion, and there was no occasion. Stage 2 removes that obstacle — a
+second runner through `claude -p`, which runs under the login this CLI already
+has — and what that costs is a property of the login, which the run asks about
+and records instead of assuming. CI stays untouched on the API.
 
-Codex, кръг 21, дословно: *build the thin dogfood runner, not the full
+Codex, round 21, verbatim: *build the thin dogfood runner, not the full
 second-provider feature. Preserve the explicit `claude-cli` identity, keep CI
 untouched, use zero-verifier probes only as leads, and require real use before
 investing in polish.*
 
-Тънък (thin) означава: не е втори доставчик с равни права, а начин авторът да
-пуска собствения си инструмент. Затова има явна идентичност `claude-cli` в
-артефакта, затова CI не се пипа, и затова полирането идва **след** употребата,
-не преди нея.
+Thin means: not a second provider with equal rights, but a way for the author to
+run his own tool. That is why there is an explicit `claude-cli` identity in the
+artifact, why CI is not touched, and why polish comes **after** use, not before
+it.
 
-**Смяна на 2026-08-27, точка 8.** Първоначално етапът се мереше с двадесет
-прегледа на промени в това repository, отсъдени на ръка. Въпросът, на който
-това отговаряше, е „беше ли ти полезно" — а на него може да отговори само
-авторът на кода. Кодът тук е мой, значи и въпросът, и отговорът са мои, и не
-значат нищо. Затова `journal/` не е мярка за нищо в този етап, а работата се
-мери срещу двадесет и четири двойки от публикувани advisory-та, чиято истина е
-поправката на самите поддържащи. Виж точка 8.
+**Change on 2026-08-27, point 8.** Originally the stage was measured with twenty
+reviews of changes in this repository, adjudicated by hand. The question that
+answered is "was it useful to you" — and only the author of the code can answer
+that. The code here is mine, so both the question and the answer are mine, and
+they mean nothing. That is why `journal/` is not a measure of anything in this
+stage, and the work is measured against twenty-four pairs from published
+advisories, whose truth is the fix by the maintainers themselves. See point 8.
 
 ---
 
-## Точки
+## Points
 
-Всяка точка казва какво е и кога е готова. „Готово" е нещо, което се проверява
-с команда, не с преценка.
+Every point says what it is and when it is done. "Done" is something that is
+checked with a command, not with judgement.
 
-### 1. Бюджет — `budget.py`
+### 1. Budget — `budget.py`
 
-Един `RunBudget` за целия преглед: стенен часовник, брой извиквания на
-инструменти, брой verifier-сесии. Verifier-капацитетът се **запазва** преди
-сесията да тръгне, а не се брои след нея — verifier-ите вървят едновременно и
-броенето след завършване позволява три от тях да видят място за още един и да
-тръгнат заедно.
+One `RunBudget` for the whole review: wall clock, number of tool calls, number of
+verifier sessions. Verifier capacity is **reserved** before the session starts
+rather than counted after it — verifiers run concurrently, and counting after
+completion lets three of them see room for one more and start together.
 
-Изчерпан бюджет е exit 2 с изречение, че това не е твърдение за кода.
+An exhausted budget is exit 2 with a sentence saying that this is not a statement
+about the code.
 
-Профили: `probe` (6 хода, 0 verifier-а, 5 мин, никога не заключава), `normal`
-(20 хода, 3 verifier-а, 20 мин), `deep` (40 хода, 3 verifier-а, 30 мин).
+Profiles: `probe` (6 turns, 0 verifiers, 5 min, never conclusive), `normal`
+(20 turns, 3 verifiers, 20 min), `deep` (40 turns, 3 verifiers, 30 min).
 
-Два отказа от първоначалната спецификация, потвърдени от Codex:
+Two refusals from the original specification, confirmed by Codex:
 
-- **`max_verifiers: 2` е забранено в конструктора.** Двама не правят
-  мнозинство; точно тази конфигурация даде три блокирания и едно пропускане в
-  четири еднакви пускания. Профил, който тихо слага две, отменя измерена
-  поправка, докато изглежда като бюджетен избор.
-- **`probe` е с нула verifier-а, не с един.** Един verifier произвежда обект с
-  форма на присъда зад който стои едно непроверено мнение. Нула е по-честно:
-  каквото `probe` намери е следа, не находка.
+- **`max_verifiers: 2` is forbidden in the constructor.** Two do not make a
+  majority; exactly that configuration gave three blocks and one pass in four
+  identical runs. A profile that quietly sets two undoes a measured fix while
+  looking like a budget choice.
+- **`probe` has zero verifiers, not one.** One verifier produces an object shaped
+  like a verdict behind which stands a single unchecked opinion. Zero is more
+  honest: whatever `probe` finds is a lead, not a finding.
 
-*Готово когато:* `pytest tests/test_budget.py` е зелен и покрива отказа при
-четен панел, запазването преди старт, и exit 2 при изчерпване.
+*Done when:* `pytest tests/test_budget.py` is green and covers the refusal of an
+even panel, the reservation before the start, and exit 2 on exhaustion.
 
-**Състояние: кодът е написан, тестовете липсват.**
+**State: the code is written, the tests are missing.**
 
-### 2. Разделяне на резултата на три
+### 2. Splitting the result into three
 
 ```
-canonical_result     ← сравнява се байт по байт между runner-ите
-provider_telemetry   ← проверява се по схема, стойностите не се сравняват
-raw_artifact         ← не се сравнява
+canonical_result     ← compared byte by byte between the runners
+provider_telemetry   ← checked against a schema, the values are not compared
+raw_artifact         ← not compared
 ```
 
-Днес артефактът е един обект и телеметрията е размесена с решението. Без това
-разделяне conformance-тестът (т. 5) би трябвало да носи списък с изключения,
-разпръснат из проверките — а разпръснатото изключение е начинът, по който
-разминаване минава незабелязано.
+Today the artifact is one object and the telemetry is mixed in with the decision.
+Without that split the conformance test (point 5) would have to carry a list of
+exceptions scattered through the checks — and a scattered exception is the way a
+discrepancy passes unnoticed.
 
-В `canonical_result` влиза всичко, което може да промени решението: резултати
-от инструменти и класификация на грешките, броене на извиквания, поведение при
-запазване на verifier-капацитет, приемане или отхвърляне на цитат, нормализирани
-пътища, валидация на схемата, нормализация на severity и confidence, изведена
-severity, fingerprint-и, подредба на кандидатите, агрегация на гласовете,
-confirmed/refuted/disputed, блокиращи fingerprint-и, предупреждения и
-заключения в доклада, наличие на артефакт на всеки терминален път, и правилото
-че незавършено пускане не може да изглежда чисто.
+Into `canonical_result` goes everything that can change the decision: tool
+results and the classification of errors, call counting, the behaviour when
+reserving verifier capacity, acceptance or rejection of a citation, normalized
+paths, schema validation, normalization of severity and confidence, derived
+severity, fingerprints, the ordering of the candidates, vote aggregation,
+confirmed/refuted/disputed, blocking fingerprints, warnings and conclusions in
+the report, the presence of an artifact on every terminal path, and the rule that
+an unfinished run cannot look clean.
 
-В `provider_telemetry` — доставчик, поискан и обслужен модел, суров stop-статус,
-идентификатор на сесия, време и продължителност, токени и цена (включително
-„не са докладвани"), брой ходове по броенето на доставчика, кеш, диагностика
-под каноничната причина за спиране.
+Into `provider_telemetry` — provider, requested and served model, raw stop
+status, session identifier, time and duration, tokens and cost (including "not
+reported"), number of turns by the provider's own count, cache, diagnostics
+underneath the canonical stop reason.
 
-**Как е решено (различно от първоначалната скица):** артефактът **не** се
-преструктурира. `findings.json` остава какъвто е — шест инструмента го четат и
-всички стари артефакти щяха да станат нечетими. Вместо това `canonical.py` е
-чиста функция, която го разделя на две при сравнението. Списъкът с изключенията
-живее на едно място, не разпръснат из теста — точно предупреждението на Codex.
+**How it was decided (different from the first sketch):** the artifact is **not**
+restructured. `findings.json` stays as it is — six tools read it and every old
+artifact would have become unreadable. Instead `canonical.py` is a pure function
+that splits it in two at comparison time. The list of exceptions lives in one
+place, not scattered through the test — exactly Codex's warning.
 
-Посоката на отказа е нарочна: **поле, което никой не е класифицирал, се
-сравнява.** `TELEMETRY_PATHS` е списък на позволеното да се различава, не на
-забраненото. Ново поле утре пада в сравняваната половина, тестът пада, и някой
-поглежда. Обратното — да пада в игнорираната половина — не прави нищо, а точно
-това е случаят, който после не се открива.
+The direction of the failure is deliberate: **a field nobody has classified gets
+compared.** `TELEMETRY_PATHS` is a list of what is allowed to differ, not of what
+is forbidden. A new field tomorrow falls into the compared half, the test fails,
+and somebody looks. The opposite — falling into the ignored half — does nothing,
+and that is exactly the case that is not discovered afterwards.
 
-*Готово когато:* `tests/test_canonical.py` е зелен върху артефакт, произведен
-от истинско пускане, а не от речник, написан на ръка.
+*Done when:* `tests/test_canonical.py` is green over an artifact produced by a
+real run, not by a dictionary written out by hand.
 
-**Състояние: готово.** 9 пътя телеметрия, 21 теста.
+**State: done.** 9 telemetry paths, 21 tests.
 
 ### 3. `ClaudeCodeRunner`
 
-`claude -p` като подпроцес, `--output-format json`. Инструментите се подават през
-MCP мост към съществуващия `dispatch()` — същият код, който API-пътят използва,
-без втора реализация. Проверено на тази машина (CLI 2.1.231): `--print`,
-`--output-format json`, `--mcp-config`, `--strict-mcp-config`, `--allowedTools`,
-`--disallowedTools`, `--permission-mode`, `--system-prompt`,
+`claude -p` as a subprocess, `--output-format json`. The tools are supplied
+through an MCP bridge to the existing `dispatch()` — the same code the API path
+uses, with no second implementation. Checked on this machine (CLI 2.1.231):
+`--print`, `--output-format json`, `--mcp-config`, `--strict-mcp-config`,
+`--allowedTools`, `--disallowedTools`, `--permission-mode`, `--system-prompt`,
 `--no-session-persistence`, `--exclude-dynamic-system-prompt-sections`.
 
-**`--max-turns` не съществува.** Затова таванът на ходовете не се налага през
-CLI-то, а през това, което броим сами: стенен часовник (убиваме процеса) и брой
-извиквания на инструменти (нашият `dispatch` отказва след тавана, което
-едновременно казва на модела да приключва). Codex: ходовете и без това са
-по-малко преносими от време и извиквания.
+**`--max-turns` does not exist.** So the turn ceiling is not enforced through the
+CLI but through what we count ourselves: the wall clock (we kill the process) and
+the number of tool calls (our `dispatch` refuses past the ceiling, which at the
+same time tells the model to wrap up). Codex: turns are in any case less portable
+than time and calls.
 
-**Къде минава шевът.** `claude -p` носи свой собствен цикъл, а нашият цикъл
-държи тавана на ходовете, часовника, повторението при отрязан отговор, и
-списъка на разрешените причини за спиране. Runner-ът не се вмъква в него — той
-**заменя** `run()`.
+**Where the seam runs.** `claude -p` carries a loop of its own, while our loop
+holds the turn ceiling, the clock, the retry on a truncated response, and the
+list of allowed stop reasons. The runner does not insert itself into it — it
+**replaces** `run()`.
 
-Това е поносимо по една причина: всичко, което решава нещо, се трупа в
-`Session` през `dispatch()`, защото всяка способност е инструмент. Историята на
-съобщенията не е мястото, където живее решението — журналът на инструментите е.
-Ако MCP мостът вика **същия** `dispatch()`, `Session` се пълни еднакво, който и
-да е карал цикъла. Runner-ът дава само причина за спиране, обобщение, ходове и
-разход — тоест точно телеметрията от точка 2.
+That is tolerable for one reason: everything that decides anything accumulates in
+`Session` through `dispatch()`, because every capability is a tool. The message
+history is not where the decision lives — the tool journal is. If the MCP bridge
+calls the **same** `dispatch()`, `Session` fills up identically, whoever drove
+the loop. The runner supplies only a stop reason, a summary, turns and spend —
+that is, exactly the telemetry from point 2.
 
-**Три неща преди да се пише runner-ът** (Codex, кръг 22):
+**Three things before the runner gets written** (Codex, round 22):
 
-1. **`finish_review`** — изричен протокол за край, вместо „CLI-то излезе с 0".
-   ✅ Направено. Виж отдолу — то поправя нещо и в текущия път.
-2. **Журнал от канонични събития**, не повторение на суровите извиквания.
-   Детето трупа събития, родителят ги свежда през същата логика на `Session`.
-3. **Фазите да носят собствеността върху бюджета механично**, а не по
-   договорка. Днес твърдя, че не се застъпват: детето брои извикванията по
-   време на прегледа, родителят държи часовника и запазва verifier-сесии, които
-   започват след края на прегледа. Твърдение, което не е наложено, е твърдение,
-   което един ден спира да е вярно.
+1. **`finish_review`** — an explicit protocol for the end, instead of "the CLI
+   exited with 0". ✅ Done. See below — it fixes something in the current path
+   as well.
+2. **A journal of canonical events**, not a replay of the raw calls. The child
+   accumulates events, the parent reduces them through the same `Session` logic.
+3. **The phases must carry ownership of the budget mechanically**, not by
+   agreement. Today I claim that they do not overlap: the child counts the calls
+   during the review, the parent holds the clock and reserves verifier sessions,
+   which start after the review ends. A claim that is not enforced is a claim
+   that one day stops being true.
 
-**Таванът на ходовете става `int | None`.** CLI-то не може да го наложи, така че
-за този runner е `None` и се докладва като „не се налага от този runner".
-Профил, който обещава 20 хода на runner, който не ги брои, лъже.
+**The turn ceiling becomes `int | None`.** The CLI cannot enforce it, so for this
+runner it is `None` and is reported as "not enforced by this runner". A profile
+that promises 20 turns to a runner that does not count them is lying.
 
-**Обобщението от CLI-то е представяне, не състояние.** Записва се с произход
-`claude_cli.result` и никога не поражда, не маха и не мени находка. Каноничното
-обобщение идва през `finish_review`.
+**The summary from the CLI is presentation, not state.** It is recorded with
+provenance `claude_cli.result` and never creates, removes or changes a finding.
+The canonical summary comes through `finish_review`.
 
-**Verifier-ите също минават през CLI-то локално.** Иначе всеки успешен локален
-преглед пак праща сметка по API-то — точно това, което етапът маха. Verifier-ът
-няма нужда от MCP: заменен system prompt, нула инструменти, твърд таймаут.
+**The verifiers go through the CLI locally as well.** Otherwise every successful
+local review still sends a bill over the API — exactly what this stage removes.
+The verifier needs no MCP: a replaced system prompt, zero tools, a hard timeout.
 
-**Частите, които вече стоят:**
+**The parts that already stand:**
 
-- `mcp_server.py` — мостът. Всяко извикване минава през същия `dispatch()`.
-  Дескриптор 1 се заема на ниво файлов дескриптор, не само `sys.stdout`:
-  подпроцес, наследил го, щеше да сложи изхода на `git` насред JSON-RPC кадър.
-  Производственият вход **отказва да тръгне**, ако не може да го заеме.
-- `session_document.py` — завършената сесия, записана атомарно от детето и
-  проверена от родителя. Изведеното се пресмята наново, не му се вярва.
-- `crash_journal.py` — какво е останало от убито пускане. Никога не се
-  превръща в състояние, върху което се съди. Изключително създаване на файла и
-  run id на всеки запис: втори run на същия път щеше да представи находки от
-  вчерашно пускане като напредък на днешното.
-- `rendering.py` — двете правила за екраниране на едно място, защото сега две
-  различни неща рендират текст на модела.
+- `mcp_server.py` — the bridge. Every call goes through the same `dispatch()`.
+  Descriptor 1 is taken at the file-descriptor level, not only `sys.stdout`: a
+  subprocess that inherited it would have put `git`'s output in the middle of a
+  JSON-RPC frame. The production entry point **refuses to start** if it cannot
+  take it.
+- `session_document.py` — the finished session, written atomically by the child
+  and checked by the parent. What is derived is recomputed, not trusted.
+- `crash_journal.py` — what is left of a killed run. It never turns into state
+  that gets judged upon. Exclusive creation of the file and a run id on every
+  record: a second run over the same path would have presented findings from
+  yesterday's run as today's progress.
+- `rendering.py` — the two escaping rules in one place, because two different
+  things now render text for the model.
 
-*Готово когато:* пускане върху фиксиран diff произвежда същия `canonical_result`
-като API-пътя върху същия diff.
+*Done when:* a run over a fixed diff produces the same `canonical_result` as the
+API path over the same diff.
 
-### 3а. `finish_review` — прегледът казва, че е свършил
+### 3a. `finish_review` — the review says that it is finished
 
-Готово, и си струва отделно, защото поправя нещо в *текущия* път.
+Done, and it is worth a section of its own, because it fixes something in the
+*current* path.
 
-Досега обобщението беше каквото се случеше да е в последния отговор — изречение,
-написано да бъде прочетено, пристигащо по канал без схема и без минимум. Сега е
-аргумент на инструмент и се записва такова, каквото е подадено.
+Until now the summary was whatever happened to be in the last response — a
+sentence written to be read, arriving over a channel with no schema and no
+minimum. Now it is a tool argument and is recorded exactly as it was passed.
 
-По-важното: прегледът вече **заявява**, че е приключил. По Messages API разликата
-е малка (`end_turn` значи, че моделът е решил да спре), но доставчик, който кара
-свой цикъл, излиза с 0 и когато прегледът е свършил, и когато нещо се е отказало.
-Двете никога не бива да изглеждат еднакво.
+More importantly: the review now **declares** that it has finished. Over the
+Messages API the difference is small (`end_turn` means the model decided to
+stop), but a provider that drives its own loop exits with 0 both when the review
+is finished and when something gave up. The two must never look the same.
 
-Плюс `unresolved` — въпросите, които прегледът не е успял да затвори, по един на
-ред. Назована дупка струва повече от находката над нея; неназована дупка не се
-различава от чист преглед.
+Plus `unresolved` — the questions the review did not manage to close, one per
+line. A named gap is worth more than the finding above it; an unnamed gap is
+indistinguishable from a clean review.
 
-**Записва се, не блокира.** Пускане, което спре без подпис, все още е завършило —
-да го превърна в провал днес би провалило пускания, които са наред. Числото се
-чете от партидите по корпуса, после се стяга.
+**It is recorded, it does not block.** A run that stops without a signature has
+still completed — turning that into a failure today would fail runs that are
+fine. The number is read off the batches over the corpus, and then it is
+tightened.
 
-### 3б. `submit_verdict` — verifier-ът гласува, вместо да спре
+### 3b. `submit_verdict` — the verifier votes instead of stopping
 
-Същото на по-малък мащаб. Преглед, който спира, не е преглед, който е свършил;
-verifier, който спира, не е verifier, който е гласувал.
+The same thing on a smaller scale. A review that stops is not a review that
+finished; a verifier that stops is not a verifier that voted.
 
-По Messages API вторият случай е почти безопасен — отговор, ограничен от схема, е
-гаранция, не надежда. Доставчик със свой цикъл не дава такава гаранция, и
-„процесът излезе" щеше да се чете като „панелът гласува".
+Over the Messages API the second case is nearly safe — a response constrained by
+a schema is a guarantee, not a hope. A provider with a loop of its own gives no
+such guarantee, and "the process exited" would have read as "the panel voted".
 
-И двата канала остават отворени — махането на ограничения отговор би отслабило
-пътя, който днес работи. Гласът записва през кой канал е дошъл: подаден аргумент
-и отговор, който транспортът случайно е валидирал, не са едно и също събитие.
+Both channels stay open — removing the constrained response would weaken the path
+that works today. The vote records which channel it came through: an argument
+that was passed and a response the transport happened to validate are not the
+same event.
 
-Схемата на присъдата се подава отвън, не се преписва в слоя на инструментите.
-Две дефиниции на присъда е точно дрейфът, който този проект вече е хващал два
-пъти.
+The schema of the verdict is supplied from outside, it is not written out again
+in the tool layer. Two definitions of a verdict is exactly the drift this project
+has already caught twice.
 
-**И една поправка на самия Codex.** То отсъди, че verifier-ът през CLI няма нужда
-от инструменти. Тук verifier-ите **имат** инструменти и четат кода, преди да
-гласуват; промптът иска `control_search` — какво са търсили и къде — а присъда,
-която не може да каже какво е търсила, пада до `uncertain`, а `uncertain` е под
-прага. Verifier без инструменти нямаше да гласува по-лошо: щеше да гласува
-`uncertain` за всичко и всяка находка щеше да блокира. `Profile` вече отказва
-такава конфигурация по име.
+**And one correction of Codex itself.** It ruled that the verifier through the
+CLI needs no tools. Here the verifiers **do** have tools and read the code before
+they vote; the prompt asks for `control_search` — what they searched for and
+where — and a verdict that cannot say what it searched for drops to `uncertain`,
+and `uncertain` is below the threshold. A verifier without tools would not have
+voted worse: it would have voted `uncertain` for everything and every finding
+would have blocked. `Profile` already refuses such a configuration by name.
 
-### 4. Затваряне на инструментите — два слоя
+### 4. Closing off the tools — two layers
 
-Един слой не стига.
+One layer is not enough.
 
-- **Слой 1:** през `--mcp-config` се излагат само нашите инструменти, а
-  `--strict-mcp-config` изключва всяка друга MCP конфигурация на машината.
-- **Слой 2:** режим на разрешения, който отказва всичко неизброено — Bash, Write
-  и Edit не просто не се дават, а се отказват.
-- **Плюс:** изключване на околната конфигурация на Claude Code — `CLAUDE.md`,
+- **Layer 1:** through `--mcp-config` only our tools are exposed, and
+  `--strict-mcp-config` switches off every other MCP configuration on the
+  machine.
+- **Layer 2:** a permission mode that refuses everything not enumerated — Bash,
+  Write and Edit are not merely not granted, they are refused.
+- **Plus:** switching off the ambient Claude Code configuration — `CLAUDE.md`,
   skills, plugins, hooks, settings.
 
-Последното е причината, а не удобство. Codex: *този runner не споделя вашия
-prompt-договор — той тихо добавя втори канал за инструкции, контролиран от
-repository-то.* `CLAUDE.md` в прегледаното repo е файл, който авторът на
-промяната може да редактира. Целият проект стои върху правилото, че съдържанието
-на repository-то е данни, а не инструкции; runner, който чете `CLAUDE.md`, го
-нарушава още преди prompt-ът да е тръгнал.
+The last one is the reason, not a convenience. Codex: *this runner does not share
+your prompt contract — it quietly adds a second instruction channel controlled by
+the repository.* `CLAUDE.md` in the reviewed repo is a file the author of the
+change can edit. The whole project rests on the rule that the contents of the
+repository are data, not instructions; a runner that reads `CLAUDE.md` breaks it
+before the prompt has even started.
 
-**Как е решено — по-силно от планираното.** CLI-то пропуска диалога за доверие в
-неинтерактивен режим. Значи то изобщо не бива да се пуска **вътре** в
-прегледаното repository: там `.claude/settings.json`, `CLAUDE.md`, hooks и
-plugins са файлове, които авторът на промяната може да редактира, и стават втори
-канал за инструкции под нашия промпт-договор.
+**How it was decided — stronger than planned.** The CLI skips the trust dialog in
+non-interactive mode. That means it must not be run **inside** the reviewed
+repository at all: there `.claude/settings.json`, `CLAUDE.md`, hooks and plugins
+are files the author of the change can edit, and they become a second instruction
+channel underneath our prompt contract.
 
-Затова CLI-то върви в **празна временна директория и никога не получава път към
-дървото.** Repository-то се чете само от MCP сървъра — друг процес. Това не е
-настройка, която може да се сбърка; това е липса на път.
+That is why the CLI runs in an **empty temporary directory and is never given a
+path to the tree.** The repository is read only by the MCP server — a different
+process. This is not a setting that can be got wrong; this is the absence of a
+path.
 
-Останалите слоеве стоят: `--strict-mcp-config` (всяка друга MCP конфигурация се
-игнорира), `--allowedTools` само с нашия префикс, `--disallowedTools` с всеки
-вграден инструмент поименно, `--system-prompt`, който **замества** (а не
-допълва), и `--no-session-persistence`.
+The remaining layers stand: `--strict-mcp-config` (every other MCP configuration
+is ignored), `--allowedTools` with our prefix only, `--disallowedTools` naming
+every built-in tool one by one, `--system-prompt`, which **replaces** (rather
+than appends), and `--no-session-persistence`.
 
-*Готово когато:* тест доказва, че CLI-то не получава път към дървото и че
-заявка за Bash се отказва.
+*Done when:* a test proves that the CLI is not given a path to the tree and that
+a request for Bash is refused.
 
-### 5. Conformance тест — 13 сценария на провал
+### 5. Conformance test — 13 failure scenarios
 
-Двата runner-а трябва да дават еднакъв `canonical_result` при еднакви входни
-данни. Codex: най-ценните фикстури са провалите, не успехите.
+The two runners must give the same `canonical_result` on the same input. Codex:
+the most valuable fixtures are the failures, not the successes.
 
-| # | Сценарий |
+| # | Scenario |
 |---|---|
-| 1 | нормален успех |
-| 2 | повреден терминален JSON |
-| 3 | липсващ терминален резултат |
-| 4 | непознат статус |
-| 5 | провал на автентикация / rate limit / изчерпана квота |
-| 6 | убит по стенен часовник, докато моделът мисли |
-| 7 | убит по стенен часовник, докато инструмент работи |
-| 8 | изчерпан бюджет за извиквания |
-| 9 | изчерпан бюджет за verifier-сесии |
-| 10 | заявка за забранен инструмент |
-| 11 | частична находка, после прекратяване |
-| 12 | успешен край с невалидни данни за находка |
-| 13 | процесът е убит, без да остави артефакт |
+| 1 | ordinary success |
+| 2 | corrupted terminal JSON |
+| 3 | missing terminal result |
+| 4 | unknown status |
+| 5 | authentication failure / rate limit / exhausted quota |
+| 6 | killed on the wall clock while the model is thinking |
+| 7 | killed on the wall clock while a tool is running |
+| 8 | exhausted budget for calls |
+| 9 | exhausted budget for verifier sessions |
+| 10 | a request for a forbidden tool |
+| 11 | a partial finding, then termination |
+| 12 | a successful end with invalid data for a finding |
+| 13 | the process is killed without leaving an artifact |
 
-*Готово когато:* 13 от 13 минават и с двата runner-а, и `canonical_result` е
-байт-идентичен във всичките 13.
+*Done when:* 13 of 13 pass with both runners, and `canonical_result` is
+byte-identical in all 13.
 
-### 6. Избор на runner, без тих отказ към API-то
+### 6. Choice of runner, with no silent fallback to the API
 
-`--provider claude-cli | anthropic-api`. Няма `auto` — режим, чиято работа е да
-реши коя от две сметки да натовари, е решение за пари, взето вместо потребителя.
-Ако `claude-cli` е неавтентикиран, ограничен по скорост, изчерпан или се срива,
-пускането **се проваля**. Не превключва.
+`--provider claude-cli | anthropic-api`. There is no `auto` — a mode whose job is
+to decide which of two accounts to charge is a decision about money taken instead
+of the user. If `claude-cli` is unauthenticated, rate-limited, exhausted or
+crashes, the run **fails**. It does not switch over.
 
-*Готово когато:* тест доказва, че провал на CLI-то дава exit 2 и нула API
-извиквания.
+*Done when:* a test proves that a failure of the CLI gives exit 2 and zero API
+calls.
 
-### 7. Обхват — `--changed-only` и `--path`
+### 7. Scope — `--changed-only` and `--path`
 
-Без това всяко локално пускане е преглед на цялото repository и „пусни го често"
-е неизпълнимо. `--changed-only` спрямо клона, от който си тръгнал, е случаят,
-който ще се използва всеки ден.
+Without this every local run is a review of the whole repository and "run it
+often" is impossible. `--changed-only` against the branch you started from is the
+case that will be used every day.
 
-**Два флага, не трите от първата скица.** `--path` приема точен път също толкова
-лесно, колкото шаблон, така че отделен `--file` щеше да е втори правопис на едно
-и също. Флаг, добавен за да се затвори отметка, е начинът, по който мярката
-спира да мери.
+**Two flags, not the three of the first sketch.** `--path` accepts an exact path
+just as easily as a pattern, so a separate `--file` would have been a second
+spelling of the same thing. A flag added in order to close a checkbox is how a
+measure stops measuring.
 
-**Стеснява какво се преглежда, никога какво се чете.** Целият дизайн стои върху
-това да следваш кода извън парчето — проверката, която прави промяната безопасна,
-и извикващият, който я прави атакуема, почти никога не са в diff-а. Обхват, който
-оградеше и четенето, щеше да превърне всеки скрит контрол във фалшива тревога:
-инструментът щеше да става по-ненадежден, колкото по-точно е насочен.
+**It narrows what is reviewed, never what is read.** The whole design rests on
+following the code outside the hunk — the check that makes the change safe, and
+the caller that makes it attackable, are almost never in the diff. A scope that
+fenced in the reading too would have turned every hidden control into a false
+alarm: the tool would become less reliable the more precisely it was aimed.
 
-**И не омекотява прага.** Картата на променените редове нарочно пренебрегва
-обхвата. Тя отговаря на „промяната пипна ли този ред" — факт за промяната, не за
-това какво сме поискали да гледаме. Ако се стесняваше заедно с обхвата, находка
-извън обхвата щеше да изглежда заварена, а заварените се пропускат по-меко — тоест
-флаг за „гледай по-малко" щеше да прави прага по-снизходителен към това, което
-все пак е гледал.
+**And it does not soften the threshold.** The map of changed lines deliberately
+ignores the scope. It answers "did the change touch this line" — a fact about the
+change, not about what we asked to look at. If it narrowed along with the scope,
+a finding outside the scope would look pre-existing, and pre-existing ones are
+let through more leniently — that is, a flag for "look at less" would make the
+threshold more forgiving towards what it did look at.
 
-Стеснен преглед има **различна идентичност** и носи предупреждение в доклада.
-„Няма находки" от преглед на един файл и „няма находки" от преглед на промяната
-е едно и също изречение и обратни твърдения.
+A narrowed review has a **different identity** and carries a warning in the
+report. "No findings" from a review of one file and "no findings" from a review
+of the change are the same sentence and opposite claims.
 
-**Състояние: готово.** 13 теста.
+**State: done.** 13 tests.
 
-*Готово когато:* времето на `tools/review.sh --changed-only` е измерено от
-истинско пускане, не от преценка — тоест на точка 8.
+*Done when:* the time of `tools/review.sh --changed-only` has been measured from
+a real run, not from judgement — that is, at point 8.
 
-### 8. Квалификация срещу двойки от advisory-та
+### 8. Qualification against pairs of advisories
 
-**Не „мярката". Име, което казва какво е** — Codex поиска точно това, защото
-предишното име обещаваше повече, отколкото нещото прави.
+**Not "the measure". A name that says what it is** — Codex asked for exactly
+that, because the previous name promised more than the thing does.
 
-Както беше: двадесет прегледа на истински промени в това repository, всяка
-находка отсъдена от човек. Въпросът, на който отговаряше, е „беше ли ти
-полезно" — и на него може да отговори само авторът на кода. Кодът тук го писах
-аз, така че въпросът е мой, не негов, и отговорът не значи нищо.
+As it was: twenty reviews of real changes in this repository, every finding
+adjudicated by a person. The question it answered is "was it useful to you" — and
+only the author of the code can answer that. The code here I wrote myself, so the
+question is mine, not his, and the answer means nothing.
 
-Решението на 2026-08-27: **не се работи по това засега.** Проектът се мери само
-срещу чужди repository-та, чиито проблеми вече са известни.
+The decision of 2026-08-27: **this is not worked on for now.** The project is
+measured only against other people's repositories, whose problems are already
+known.
 
-`corpus-real/`: **43 advisory-та**, извадени от публикувани advisory-та, а
-истината е **поправката на самите поддържащи**.
+`corpus-real/`: **43 advisories**, drawn from published advisories, and the truth
+is **the fix by the maintainers themselves**.
 
-Броенето е по advisory, не по директория. Едно advisory дава `regression`
-случай и обикновено `-snap` близнак, а `tools/harvest_pairs.py` казва за двете
-построения „never score the two constructions together" — тоест таблица, която
-ги събира, брои повечето редове двойно. Затова: 43 `regression` + 39 `snapshot`
-= 82 директории в `corpus-real/`, плюс 23 ръчно писани в `corpus/` = 105.
+The counting is per advisory, not per directory. One advisory gives a
+`regression` case and usually a `-snap` twin, and `tools/harvest_pairs.py` says
+of the two constructions "never score the two constructions together" — that is,
+a table that adds them together counts most rows twice. Hence: 43 `regression` +
+39 `snapshot` = 82 directories in `corpus-real/`, plus 23 written by hand in
+`corpus/` = 105.
 
 ```
 python3 tools/check_corpus.py corpus/ corpus-real/
@@ -360,26 +369,26 @@ print(sorted(c.items()))"
 # [('regression', 43), ('snapshot', 39)]
 ```
 
-Четири `regression` случая нямат `-snap` близнак: `go-qqff-5854-px68`,
-`php-gvrw-qqp5-jgc5`, `php-hq84-x37p-j6q5`, `ts-q7m3-rhxg-7vxr`. Оттам е
-разликата 43 срещу 39.
+Four `regression` cases have no `-snap` twin: `go-qqff-5854-px68`,
+`php-gvrw-qqp5-jgc5`, `php-hq84-x37p-j6q5`, `ts-q7m3-rhxg-7vxr`. That is where
+the difference 43 against 39 comes from.
 
-Не всички могат да измерят нещо — отсъдените за негодни имат „безопасен" член,
-който още носи слабостта, за която е случаят, а двойка с такъв член не
-различава нищо в никоя посока. Знаменателят се смята, не се преписва:
-`tools/stage2.py` чете `adjudications.yml` и вади отсъдените. Отсъдени за
-негодни са четири: `cs-q939-rpr3-3284`, `py-2cp2-2r3c-7p7r`,
-`py-6x92-6vx4-5fwr` и `py-2cp2-2r3c-7p7r-snap`. Оттам знаменателят на точка 8
-е **40 regression (+38 snapshot)**, а не 43 и 39.
+Not all of them can measure anything — the ones adjudicated unusable have a
+"safe" member that still carries the weakness the case is about, and a pair with
+such a member distinguishes nothing in either direction. The denominator is
+computed, not copied out: `tools/stage2.py` reads `adjudications.yml` and
+subtracts the adjudicated ones. Adjudicated unusable are four:
+`cs-q939-rpr3-3284`, `py-2cp2-2r3c-7p7r`, `py-6x92-6vx4-5fwr` and
+`py-2cp2-2r3c-7p7r-snap`. Hence the denominator of point 8 is **40 regression
+(+38 snapshot)**, and not 43 and 39.
 
-**Смяна на 2026-08-28: по-нататъшното изваждане отива в четири езика.**
-Случаите бяха разпръснати по два до четири на език. При такъв брой всяко „на
-език" число може да бъде само 0%, 33%, 67% или 100%, тоест таблицата, която
-партидите печатат, не мери нищо: една партида даде „php 0%, ruby 0%" от по един
-случай.
+**Change on 2026-08-28: further harvesting goes into four languages.** The cases
+were spread two to four per language. At such a count any "per language" number
+can only be 0%, 33%, 67% or 100%, that is, the table the batches print measures
+nothing: one batch gave "php 0%, ruby 0%" out of one case each.
 
-Затова новите случаи отиват в **`javascript/typescript`, `python`, `php` и
-`go`**, всеки от които вече е на **осем advisory-та**:
+That is why the new cases go into **`javascript/typescript`, `python`, `php` and
+`go`**, each of which is already at **eight advisories**:
 
 ```
 python3 -c "
@@ -393,167 +402,176 @@ print(sorted(c.items()))"
 #  ('python', 8), ('ruby', 3), ('rust', 3), ('typescript', 7)]
 ```
 
-Внимание при препрочитане на това число: `javascript/typescript` е **един кош
-в плана, но две стойности на `language:` в манифестите** — 7 typescript плюс 1
-javascript прави 8. Всяка таблица трябва да казва коя от двете сметки ползва,
-иначе четящият ще преброи друго.
+Care when re-reading that number: `javascript/typescript` is **one basket in the
+plan, but two values of `language:` in the manifests** — 7 typescript plus 1
+javascript makes 8. Every table has to say which of the two counts it uses,
+otherwise the reader will count something else.
 
-**Корпусът не е четириезичен и не се твърди, че е.** Извън четирите остават
-**11 advisory-та в четири езика** — `csharp` 3, `java` 2, `ruby` 3, `rust` 3.
-Те остават: вече са построени, част от тях носят платени резултати, и
-продължават да се точкуват. Изтриването им би изхвърлило доказателство.
-Решението е **къде отива по-нататъшното изваждане**, не какво съдържа корпусът.
+**The corpus is not four-language and is not claimed to be.** Outside the four
+there remain **11 advisories in four languages** — `csharp` 3, `java` 2, `ruby`
+3, `rust` 3. They stay: they are already built, some of them carry paid results,
+and they go on being scored. Deleting them would throw away evidence. The
+decision is **where further harvesting goes**, not what the corpus contains.
 
-**Разминаване, което се записва, а не се заглажда.** Знаменателят на точка 8 е
-40 — всяка измерима `regression` двойка, на който и да е език — а не 32-те на
-четирите коша. След изваждане на негодните четирите коша дават 30 (`python`
-губи два), а другите четири езика — 10. 30 + 10 = 40. Двете числа не си
-противоречат, но описват различни неща: **целта на точка 8 е „всяка измерима
-двойка", а четирите езика са правило за изваждане.** Кодът е този, който е
-прав за знаменателя, и не се пипа, за да съвпадне с план. Планът е този, който
-трябваше да каже коя от двете сметки дава — сега я казва.
+**A discrepancy that is recorded rather than smoothed over.** The denominator of
+point 8 is 40 — every measurable `regression` pair, in whatever language — and
+not the 32 of the four baskets. After subtracting the unusable ones the four
+baskets give 30 (`python` loses two), and the other four languages give 10.
+30 + 10 = 40. The two numbers do not contradict each other, but they describe
+different things: **the target of point 8 is "every measurable pair", while the
+four languages are a rule for harvesting.** The code is the one that is right
+about the denominator, and it is not touched in order to match a plan. The plan
+is the one that should have said which of the two counts it is giving — now it
+says so.
 
-Бележка за същия ред: коментарът в `tools/stage2.py` над `probe_use` още
-говори за „all 47" и „the 24 regression cases". Това са остарели числа в
-коментар, не в сметка — сметката се прави от корпуса и е вярна. Оставено е
-непипнато нарочно; поправка на коментар е промяна в `tools/`.
+A note on the same line: the comment in `tools/stage2.py` above `probe_use` still
+speaks of "all 47" and "the 24 regression cases". Those are stale numbers in a
+comment, not in a computation — the computation is made from the corpus and is
+correct. It has been left untouched deliberately; fixing a comment is a change in
+`tools/`.
 
-Два случая отпаднаха, защото отговорът пътуваше вътре в прегледаната промяна:
-`py-mv8m-v9v6-5f94` и близнакът му — поправката пипа `.rst`, който
-`strip_comments.py` не чете, тъй че прозата на поддържащия за поправката влезе
-в промяната; и `js-w93q-cq9w-58p7` още при изваждането, по същата причина с
-JSX. И за двата са извадени заместници. Затова `javascript` е 1: единственият
-останал случай с `language: javascript`.
+Two cases dropped out because the answer travelled inside the reviewed change:
+`py-mv8m-v9v6-5f94` and its twin — the fix touches `.rst`, which
+`strip_comments.py` does not read, so the maintainer's prose about the fix went
+into the change; and `js-w93q-cq9w-58p7` already at harvest time, for the same
+reason with JSX. Replacements have been harvested for both. That is why
+`javascript` is 1: the only remaining case with `language: javascript`.
 
-Изборът на четирите беше по добив на advisory-та по екосистема, броен в базата
-на GitHub. Това броене е правено **извън** това repository и никакъв артефакт
-тук не го записва, затова число за него не се цитира: нищо в дървото не го
-пресмята наново, а число, което никой не може да си извади сам, е твърдение, а
-не измерване. Проверимото е резултатът, и той е таблицата отгоре.
+The choice of the four was by yield of advisories per ecosystem, counted in
+GitHub's database. That counting was done **outside** this repository and no
+artifact here records it, which is why no number for it is quoted: nothing in the
+tree recomputes it, and a number nobody can derive for themselves is a claim, not
+a measurement. What is checkable is the result, and that is the table above.
 
-`go` е в четирите заради **формата**, не заради обема: другите три са уеб езици
-с почти един и същи профил слабости, а случаите на go в корпуса са `dos` от nil
-panic и изчерпване на ресурси. Без него се мери един стил код, а не инструмент.
+`go` is among the four because of its **shape**, not its volume: the other three
+are web languages with almost the same weakness profile, while the go cases in
+the corpus are `dos` from a nil panic and from resource exhaustion. Without it
+one style of code is measured, not a tool.
 
-`javascript` и `typescript` се броят като един език. Езикът се определя по
-разширението на файла — свойство на файла, не на прегледа — смесено repo е
-нормата, а агентът нищо не компилира: чете с `read_file` и `search_code`, които
-не знаят за типове. И никой не би постъпил различно заради „по-слаб е на `.js`".
+`javascript` and `typescript` count as one language. The language is determined
+by the file extension — a property of the file, not of the review — a mixed repo
+is the norm, and the agent compiles nothing: it reads with `read_file` and
+`search_code`, which know nothing about types. And nobody would act differently
+because of "it is weaker on `.js`".
 
-**Цената, казана веднага:** `README.md` и `LIMITATIONS.md` вече не могат да
-твърдят „езиково независим". Мерено е на девет стойности на `language:`, от
-които четири коша са изваждани до осем advisory-та, а останалите са от
-по-ранна работа — и това е, което може да се цитира.
-Всеки случай е **двойка** върху едни и същи редове: опасната версия и
-поправената. Двойката минава само ако опасната е блокирана **и** поправената не
-е — по-строго от „намери ли нещо", защото инструмент, който блокира всичко, се
-проваля точно толкова, колкото и такъв, който не блокира нищо.
+**The price, said straight away:** `README.md` and `LIMITATIONS.md` can no longer
+claim "language independent". It has been measured on nine values of `language:`,
+four baskets of which have been harvested up to eight advisories, while the rest
+come from earlier work — and that is what can be quoted.
+Every case is a **pair** over the same lines: the dangerous version and the fixed
+one. The pair passes only if the dangerous one is blocked **and** the fixed one
+is not — stricter than "did it find something", because a tool that blocks
+everything fails exactly as much as one that blocks nothing.
 
-**Какво измерва:** различаване върху тези замразени двойки; регресия спрямо
-по-ранна версия при същата идентичност и настройки; и дали инструментът хваща
-означения опасен член, без да блокира сдвоената му поправка.
+**What it measures:** discrimination over these frozen pairs; regression against
+an earlier version at the same identity and settings; and whether the tool
+catches the member marked dangerous without blocking its paired fix.
 
-**Какво не измерва**, и не се представя, че измерва:
+**What it does not measure**, and is not presented as measuring:
 
-- полезност за човек;
-- precision или recall върху обикновени промени;
-- претеглено по честота поведение;
-- устойчивост между повторни пускания;
-- поведение върху непознати семейства слабости или чужда структура;
-- че „безопасният" член няма друга слабост — Hydra и SurrealDB бяха точно това;
-- каквото и да е за ново repository.
+- usefulness to a person;
+- precision or recall over ordinary changes;
+- frequency-weighted behaviour;
+- stability between repeated runs;
+- behaviour over unfamiliar families of weakness or somebody else's structure;
+- that the "safe" member has no other weakness — Hydra and SurrealDB were exactly
+  that;
+- anything whatsoever about a new repository.
 
-**И най-важното: всички от всички е праг за приемане, не оценка за
-качество.** В мига, в който провал промени prompt или код и същите двойки се
-пуснат отново, корпусът става регресионен пакет за разработка. Едно и също
-нещо не може да е и независима оценка. Затова числото не се цитира като
-доказателство за нищо извън самите случаи — и се пише като дроб с изчислен
-знаменател, никога като закован брой, защото всяко отсъждане за негоден
-случай го мести.
+**And most important of all: all of them out of all of them is a threshold for
+acceptance, not a score for quality.** The moment a failure changes a prompt or
+code and the same pairs are run again, the corpus becomes a regression suite for
+development. One and the same thing cannot also be an independent evaluation.
+That is why the number is not quoted as proof of anything outside the cases
+themselves — and it is written as a fraction with a computed denominator, never
+as a nailed-down count, because every adjudication of an unusable case moves it.
 
-**Проверката за изтичане върви преди всяко пускане.** Веднъж корпусът се оказа
-решим без четене на код — броене на коментари даде 48 от 48. Днес: 70 случая, 0
-проблема, и никой признак вътре в един член не сработва достатъчно често, за да
-се съди по него. Признаците, видими при сравнение на двата, дават 100% — и това
-**не се отхвърля** с довода, че прегледът вижда един член. Признак, свързан с
-„безопасен срещу опасен", присъства и в самия член: добавена проверка, сменено
-API, структура на кръпка. Не е доказателство за изтичане, но отслабва
-твърдението, че успехът задължително идва от проследяване на смисъла.
+**The check for leakage runs before every run.** Once the corpus turned out to be
+solvable without reading code — counting comments gave 48 out of 48. Today: 70
+cases, 0 problems, and no cue inside a single member fires often enough to be
+judged by. The cues visible when the two are compared give 100% — and this is
+**not dismissed** with the argument that the review sees one member. A cue tied
+to "safe versus dangerous" is present in the member itself too: an added check, a
+changed API, the shape of a patch. It is not proof of leakage, but it weakens the
+claim that success necessarily comes from following the meaning.
 
-Отсъдените изключения (`adjudications.yml`) са част от замразената идентичност на
-корпуса, не бележка отстрани.
+The adjudicated exceptions (`adjudications.yml`) are part of the frozen identity
+of the corpus, not a note off to the side.
 
-*Готово когато:* и двата члена на всеки случай, който може да измери нещо,
-са пуснати през `--provider claude-cli` срещу текущата му версия,
-резултатите са в `measurements/`, и решението е запазено — опасният
-блокира, безопасният минава. Броят се смята от `tools/stage2.py` и не се
-записва тук: всяко ново отсъждане за негоден случай го мести, а число в
-план, което кодът не смята, е число, което остарява тихо.
+*Done when:* both members of every case that can measure anything have been run
+through `--provider claude-cli` against its current version, the results are in
+`measurements/`, and the decision has been preserved — the dangerous one blocks,
+the safe one passes. The count is computed by `tools/stage2.py` and is not
+written down here: every new adjudication of an unusable case moves it, and a
+number in a plan that the code does not compute is a number that goes stale
+quietly.
 
-### 9. Поправките
+### 9. The fixes
 
-Всеки провал получава или commit, или ред в `LIMITATIONS.md` с причината защо не
-се поправя. Трето положение няма — и „моделът просто не го хвана" е причина,
-която се записва, а не се премълчава.
+Every failure gets either a commit or a line in `LIMITATIONS.md` with the reason
+why it is not being fixed. There is no third position — and "the model simply did
+not catch it" is a reason that gets written down, not passed over in silence.
 
-*Готово когато:* броят провали е равен на броя поправки плюс броя записани
-ограничения.
+*Done when:* the number of failures equals the number of fixes plus the number of
+recorded limitations.
 
 ---
 
-## Как го следим
+## How we track it
 
 ```
 tools/stage2.py
 ```
 
-Изкарва таблицата отдолу, като чете състоянието от repository-то — тестове,
-артефакти, journal — а не от отметки в този файл. Числата идват от измерване,
-не от очакване; файл с отметки е място, където преценка се прави на факт.
+It prints the table below by reading the state out of the repository — tests,
+artifacts, journal — and not out of checkboxes in this file. The numbers come
+from measurement, not from expectation; a file with checkboxes is a place where
+judgement is made into fact.
 
-| # | Параметър | Мярка | Цел |
+| # | Parameter | Measure | Target |
 |---|---|---|---|
-| 1 | тестове за бюджета | pytest | зелени |
-| 2 | канонично разделяне | липса на телеметрия в `canonical_result` | 0 полета |
-| 3a | `finish_review` | инструмент, prompt, цикъл | и трите |
-| 3b | `submit_verdict` | инструмент, prompt, цикъл | и трите |
-| 3 | `ClaudeCodeRunner` | conformance върху фиксиран diff | съвпада |
-| 4 | затваряне на инструментите | тест за `CLAUDE.md` и за Bash | 2/2 |
-| 5 | conformance сценарии | брой минали и с двата runner-а | всеки назован |
-| 6 | без тих отказ | тест за провал на CLI | exit 2, 0 API извиквания |
-| 7 | обхват | `--changed-only` и `--path`, с тест | 2/2 флага, тествани |
-| 8 | двойки от advisory-та | `tools/stage2.py` върху `measurements/` | всяка измерима двойка, решението запазено |
-| 9 | поправки | потвърдени = поправени + записани | равенство |
-| — | целият пакет | pytest | всички зелени |
-| — | локален разход | login-ът от артефактите в `measurements/` | пускане на абонамент, не предположено |
+| 1 | tests for the budget | pytest | green |
+| 2 | canonical split | absence of telemetry in `canonical_result` | 0 fields |
+| 3a | `finish_review` | tool, prompt, loop | all three |
+| 3b | `submit_verdict` | tool, prompt, loop | all three |
+| 3 | `ClaudeCodeRunner` | conformance over a fixed diff | matches |
+| 4 | closing off the tools | a test for `CLAUDE.md` and for Bash | 2/2 |
+| 5 | conformance scenarios | number passing with both runners | every one named |
+| 6 | no silent fallback | a test for a failure of the CLI | exit 2, 0 API calls |
+| 7 | scope | `--changed-only` and `--path`, with a test | 2/2 flags, tested |
+| 8 | pairs of advisories | `tools/stage2.py` over `measurements/` | every measurable pair, the decision preserved |
+| 9 | fixes | confirmed = fixed + recorded | equality |
+| — | the whole suite | pytest | all green |
+| — | local spend | the login from the artifacts in `measurements/` | a run on the subscription, not assumed |
 
-Етапът е готов, когато всичките тринадесет реда са на целта си. Не по-рано и не
-по преценка.
+The stage is done when all thirteen rows are at their target. Not earlier and not
+by judgement.
 
-Редовете са тринадесет, защото `tools/stage2.py` има тринадесет проверки:
-`python3 tools/stage2.py` ги печата всичките. Три реда бяха поправени на
-2026-08-28, след ред по ред сверяване с `CHECKS` в кода:
+The rows are thirteen because `tools/stage2.py` has thirteen checks:
+`python3 tools/stage2.py` prints them all. Three rows were corrected on
+2026-08-28, after a line-by-line reconciliation with `CHECKS` in the code:
 
-- **3a и 3b липсваха изцяло.** Тракерът ги мери, планът не ги споменаваше —
-  тоест таблицата изглеждаше пълна, докато две от проверките не бяха в нея.
-- **7 казваше „време на `--changed-only` < 5 мин".** `probe_scope` не мери
-  време: гледа дали `--changed-only` и `--path` присъстват и дали
-  `tests/test_scope.py` минава.
-- **локален разход казваше „$0.00".** `probe_spend` изрично не твърди това —
-  докстрингът му казва, че старата версия е проверявала `cost_usd` за
-  истинност, тъй че липсващо число е минавало за нула. Сега „готово" значи
-  пускане, чийто login CLI-ят е отчел като абонамент.
+- **3a and 3b were missing entirely.** The tracker measures them, the plan did
+  not mention them — that is, the table looked complete while two of the checks
+  were not in it.
+- **7 said "time of `--changed-only` < 5 min".** `probe_scope` does not measure
+  time: it looks at whether `--changed-only` and `--path` are present and whether
+  `tests/test_scope.py` passes.
+- **local spend said "$0.00".** `probe_spend` explicitly does not claim that —
+  its docstring says the old version used to check `cost_usd` for truthiness, so
+  a missing number passed for zero. Now "done" means a run whose login the CLI
+  reported as a subscription.
 
 ---
 
-## Какво етап 2 съзнателно не прави
+## What stage 2 deliberately does not do
 
-- **Не прави `claude-cli` равноправен доставчик.** CI остава на API-то. Тънкият
-  runner е за автора, не за потребителите.
-- **Не полира.** Codex беше изричен: употребата идва преди полирането. Каквото
-  двойките от advisory-та покажат, това се полира — не каквото изглежда
-  недовършено отсега.
-- **Не пипа prompt-овете заради козметика.** Преформулирано изречение не може да
-  промени резултат, а отменя сравнимостта с всичко измерено дотук.
-- **Не вади число за recall или precision.** И двете са оттеглени и остават
-  оттеглени; `LIMITATIONS.md` казва защо.
+- **It does not make `claude-cli` an equal provider.** CI stays on the API. The
+  thin runner is for the author, not for the users.
+- **It does not polish.** Codex was explicit: use comes before polish. Whatever
+  the pairs of advisories show is what gets polished — not what looks unfinished
+  in advance.
+- **It does not touch the prompts for cosmetics.** A reworded sentence cannot
+  change a result, and it cancels comparability with everything measured so far.
+- **It does not produce a number for recall or precision.** Both are withdrawn
+  and stay withdrawn; `LIMITATIONS.md` says why.

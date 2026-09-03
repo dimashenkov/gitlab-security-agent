@@ -37,6 +37,14 @@ from security_agent.workspace import Workspace
 
 # Latin-1 supplement, a different Latin script, Cyrillic, and CJK — each one
 # only needs a byte above 0x7f to trigger the quoting.
+#
+# These four are **test data, not prose**, and the repository's English-only
+# rule exempts them by name: the test proves git quoting survives a path with
+# bytes above 0x7f, and a name spelled in ASCII proves nothing. A sweep once
+# swapped the Cyrillic one for Greek to satisfy the rule — which kept the
+# non-ASCII the rule permits and lost the specific string the test was written
+# against, for no gain. Do not translate, transliterate, or substitute another
+# alphabet for any of them.
 AWKWARD = (
     # Bytes above 0x7f — the case `core.quotePath=false` covers.
     "café.py", "naïve.go", "плащане.py", "決済.rb",

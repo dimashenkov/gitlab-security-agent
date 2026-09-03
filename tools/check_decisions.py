@@ -33,27 +33,27 @@ from typing import Dict, List
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "DECISIONS.md"
 
-# The four states, and nothing else. "действащо, с известна дупка" was a state
-# in the first draft: a value carrying an explanation, which no parser can read
-# and which lets a decision look active and qualified at once. The qualification
+# The four states, and nothing else. "active, with a known hole" was a state in
+# the first draft: a value carrying an explanation, which no parser can read and
+# which lets a decision look active and qualified at once. The qualification
 # belongs in its own field.
-DECISION_STATES = {"действащо", "заменено", "оттеглено"}
-PROPOSAL_STATES = {"предложено", "оттеглено"}
+DECISION_STATES = {"active", "superseded", "withdrawn"}
+PROPOSAL_STATES = {"proposed", "withdrawn"}
 
-DECISION_FIELDS = ("Състояние", "Обхват", "Проверено срещу")
-PROPOSAL_FIELDS = ("Състояние", "Обхват")
+DECISION_FIELDS = ("State", "Scope", "Checked against")
+PROPOSAL_FIELDS = ("State", "Scope")
 
 # A decision claims something is true of the code. These say what makes it true
 # and how a reader checks it; a proposal has neither by construction, which is
 # what makes it a proposal.
-DECISION_SECTIONS = ("Решено", "Отхвърлено", "Причина", "Наложено от",
-                     "Доказателство", "Възражение", "Преразглежда се когато")
-PROPOSAL_SECTIONS = ("Предложено", "Възражение", "Става решение когато")
+DECISION_SECTIONS = ("Decided", "Rejected", "Reason", "Enforced by",
+                     "Evidence", "Objection", "Revisited when")
+PROPOSAL_SECTIONS = ("Proposed", "Objection", "Becomes a decision when")
 
 ENTRY = re.compile(r"^##\s+(D-\d{3}|P-\d{3})\s+·\s+(.+)$", re.M)
 FIELD = re.compile(r"^\|\s*\*\*(.+?)\*\*\s*\|\s*(.+?)\s*\|$", re.M)
 # The whole bold run, then trailing punctuation stripped. Matching up to the
-# first space instead read `**Наложено от.**` as the section "Наложено", so
+# first space instead read `**Enforced by.**` as the section "Enforced", so
 # every entry was missing a section it plainly had — a checker wrong in the
 # direction that fails loudly, which is the safe one, but wrong.
 BOLD_SECTION = re.compile(r"\*\*(.+?)\*\*", re.S)
@@ -90,7 +90,7 @@ def parse(text: str) -> List[Entry]:
 
 
 def _section_present(entry: Entry, name: str) -> bool:
-    # The heading is written as `**Решено.**` or `**Доказателство,** и то ...`,
+    # The heading is written as `**Decided.**` or `**Evidence,** and namely ...`,
     # so a prefix match is what the document actually contains. Matching the
     # whole line would pass for any entry and check nothing.
     return any(s == name or s.startswith(name) for s in entry.sections)
@@ -119,7 +119,7 @@ def check(text: str, run_tests: bool) -> List[str]:
             if name not in entry.fields:
                 problems.append("{}: no `{}` field".format(entry.id, name))
 
-        state = entry.fields.get("Състояние", "")
+        state = entry.fields.get("State", "")
         if state and state not in states:
             problems.append(
                 "{}: state {!r} is not one of {} — a state carrying its own "
@@ -130,7 +130,7 @@ def check(text: str, run_tests: bool) -> List[str]:
             if not _section_present(entry, name):
                 problems.append("{}: no **{}** section".format(entry.id, name))
 
-        commit = entry.fields.get("Проверено срещу", "")
+        commit = entry.fields.get("Checked against", "")
         if commit and not COMMIT.match(commit):
             problems.append("{}: {!r} is not a commit".format(entry.id, commit))
         elif commit:
@@ -172,11 +172,11 @@ def _check_supersession(entry: Entry, seen: Dict[str, Entry]) -> List[str]:
     mind.
     """
     problems = []
-    state = entry.fields.get("Състояние", "")
-    replaces = entry.fields.get("Заменя", "")
-    replaced_by = entry.fields.get("Заменено от", "")
+    state = entry.fields.get("State", "")
+    replaces = entry.fields.get("Replaces", "")
+    replaced_by = entry.fields.get("Replaced by", "")
 
-    if state == "заменено" and not replaced_by:
+    if state == "superseded" and not replaced_by:
         problems.append(
             "{}: superseded and does not name its successor — a reader has "
             "nowhere to go and no way to know the decision moved".format(
@@ -188,11 +188,11 @@ def _check_supersession(entry: Entry, seen: Dict[str, Entry]) -> List[str]:
                             "exist".format(entry.id, replaced_by))
         elif successor.id == entry.id:
             problems.append("{}: names itself as its successor".format(entry.id))
-        elif successor.fields.get("Заменя") != entry.id:
+        elif successor.fields.get("Replaces") != entry.id:
             problems.append(
                 "{}: says {} replaces it, and {} does not say so back".format(
                     entry.id, replaced_by, replaced_by))
-        if state != "заменено":
+        if state != "superseded":
             problems.append(
                 "{}: names a successor while still {!r}".format(
                     entry.id, state or "stateless"))
@@ -205,8 +205,8 @@ def _check_supersession(entry: Entry, seen: Dict[str, Entry]) -> List[str]:
     # A proposal never becomes a decision by being renamed: the proposal stays
     # where it is and the decision is new, so the history of the argument
     # survives instead of being overwritten by its outcome.
-    if not entry.is_proposal and entry.fields.get("Произлиза от", "").startswith("P-"):
-        origin = entry.fields["Произлиза от"]
+    if not entry.is_proposal and entry.fields.get("Comes from", "").startswith("P-"):
+        origin = entry.fields["Comes from"]
         if origin not in seen:
             problems.append("{}: comes from {}, which does not exist".format(
                 entry.id, origin))

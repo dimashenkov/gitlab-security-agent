@@ -178,8 +178,8 @@ class ToolResult:
     # *opened by name* answers "none" for a review that read the whole diff, and
     # files whose bytes arrived counts one search hit as having seen a file.
     # Line-level accounting was the third attempt, and Codex refused it for a
-    # reason worth keeping: "'моделът видя обзор и избра какво да отвори' не
-    # може едновременно да е по-евтино и не по-снизходително" — an overview the
+    # reason worth keeping: "'the model saw an overview and chose what to open'
+    # cannot be both cheaper and no more lenient" — an overview the
     # model selects from is cheaper *because* something went unread, and no
     # arithmetic over delivered lines makes that not so.
     #

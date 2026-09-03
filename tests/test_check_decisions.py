@@ -27,37 +27,37 @@ DECISION = """## D-001 · A decision
 
 | | |
 |---|---|
-| **Състояние** | действащо |
-| **Обхват** | somewhere |
-| **Проверено срещу** | {commit} |
+| **State** | active |
+| **Scope** | somewhere |
+| **Checked against** | {commit} |
 
-**Решено.** This.
+**Decided.** This.
 
-**Отхвърлено.** That.
+**Rejected.** That.
 
-**Причина.** Because.
+**Reason.** Because.
 
-**Наложено от.** `tools/check_decisions.py:check`.
+**Enforced by.** `tools/check_decisions.py:check`.
 
-**Доказателство.** `python3 tools/check_decisions.py`.
+**Evidence.** `python3 tools/check_decisions.py`.
 
-**Възражение (Codex).** It said something.
+**Objection (Codex).** It said something.
 
-**Преразглежда се когато** a stated thing happens.
+**Revisited when** a stated thing happens.
 """
 
 PROPOSAL = """## P-001 · A proposal
 
 | | |
 |---|---|
-| **Състояние** | предложено |
-| **Обхват** | somewhere |
+| **State** | proposed |
+| **Scope** | somewhere |
 
-**Предложено.** This might be worth doing.
+**Proposed.** This might be worth doing.
 
-**Възражение (Codex).** It said something.
+**Objection (Codex).** It said something.
 
-**Става решение когато** five cases exist.
+**Becomes a decision when** five cases exist.
 """
 
 
@@ -88,14 +88,14 @@ def test_a_file_the_checker_cannot_read_is_not_a_clean_file(commit):
 
 
 def test_a_state_that_carries_its_own_explanation_is_refused(commit):
-    """`deystvashto, s izvestna dupka` was a real state in the first draft.
+    """`active, with a known hole` was a real state in the first draft.
 
     It reads well and no parser can use it: the entry is active and qualified
     at once, and which half a reader takes away is up to them. The
     qualification goes in its own field.
     """
     body = DECISION.format(commit=commit).replace(
-        "| действащо |", "| действащо, с известна дупка |")
+        "| active |", "| active, with a known hole |")
     problems = check(body, run_tests=False)
     assert any("is not one of" in p for p in problems), problems
 
@@ -105,9 +105,9 @@ def test_a_decision_missing_its_evidence_is_refused(commit):
     heading. The discarded alternative and the evidence are the whole value;
     what was chosen is already visible in the code."""
     body = DECISION.format(commit=commit).replace(
-        "**Доказателство.** `python3 tools/check_decisions.py`.\n\n", "")
+        "**Evidence.** `python3 tools/check_decisions.py`.\n\n", "")
     problems = check(body, run_tests=False)
-    assert any("Доказателство" in p for p in problems), problems
+    assert any("Evidence" in p for p in problems), problems
 
 
 def test_a_symbol_that_no_longer_exists_is_caught(commit):
@@ -121,7 +121,7 @@ def test_a_symbol_that_no_longer_exists_is_caught(commit):
 
 
 def test_a_commit_that_is_not_in_this_repository_is_caught(commit):
-    """`Проверено срещу` is the entry's only claim about *when* it was true.
+    """`Checked against` is the entry's only claim about *when* it was true.
     A hash nobody can resolve makes that claim unfalsifiable."""
     body = DECISION.format(commit="0" * 12)
     problems = check(body, run_tests=False)
@@ -132,7 +132,7 @@ def test_a_superseded_entry_must_name_its_successor(commit):
     """Otherwise the reader has nowhere to go and no way to know the decision
     moved — which is indistinguishable from the decision being abandoned."""
     body = DECISION.format(commit=commit).replace(
-        "| действащо |", "| заменено |")
+        "| active |", "| superseded |")
     problems = check(body, run_tests=False)
     assert any("does not name its successor" in p for p in problems), problems
 
@@ -146,36 +146,36 @@ def test_supersession_must_point_both_ways(commit):
     """
     old = DECISION.format(commit=commit).replace(
         "## D-001 · A decision", "## D-001 · The old one").replace(
-        "| действащо |", "| заменено |").replace(
-        "| **Обхват** | somewhere |", "| **Обхват** | somewhere |\n| **Заменено от** | D-002 |")
+        "| active |", "| superseded |").replace(
+        "| **Scope** | somewhere |", "| **Scope** | somewhere |\n| **Replaced by** | D-002 |")
     new = DECISION.format(commit=commit).replace(
         "## D-001 · A decision", "## D-002 · The new one")
 
     problems = check(old + "\n" + new, run_tests=False)
     assert any("does not say so back" in p for p in problems), problems
 
-    fixed = new.replace("| **Обхват** | somewhere |",
-                        "| **Обхват** | somewhere |\n| **Заменя** | D-001 |")
+    fixed = new.replace("| **Scope** | somewhere |",
+                        "| **Scope** | somewhere |\n| **Replaces** | D-001 |")
     assert check(old + "\n" + fixed, run_tests=False) == []
 
 
 def test_an_entry_cannot_replace_itself(commit):
     body = DECISION.format(commit=commit).replace(
-        "| **Обхват** | somewhere |",
-        "| **Обхват** | somewhere |\n| **Заменя** | D-001 |")
+        "| **Scope** | somewhere |",
+        "| **Scope** | somewhere |\n| **Replaces** | D-001 |")
     problems = check(body, run_tests=False)
     assert any("replaces itself" in p for p in problems), problems
 
 
 def test_a_proposal_is_held_to_the_proposal_schema_and_not_the_other_one(commit):
-    """A proposal has no `Наложено от` and no `Проверено срещу` by
+    """A proposal has no `Enforced by` and no `Checked against` by
     construction — nothing enforces it, which is what makes it a proposal.
     Holding it to the decision schema would push somebody to invent both."""
     assert check(PROPOSAL, run_tests=False) == []
 
-    without = PROPOSAL.replace("**Става решение когато** five cases exist.\n", "")
+    without = PROPOSAL.replace("**Becomes a decision when** five cases exist.\n", "")
     problems = check(without, run_tests=False)
-    assert any("Става решение когато" in p for p in problems), problems
+    assert any("Becomes a decision when" in p for p in problems), problems
 
 
 def test_a_decision_id_is_never_reused(commit):

@@ -1,21 +1,21 @@
-# Одит на цялото repository — 2026-08-27
+# Audit of the whole repository — 2026-08-27
 
-Кой го направи: Codex, по нов начин. Дотогава му **описвах** кода и той съдеше
-описанието. Три дефекта, които девет кръга подминаха, ги намери човек, като
-отвори три файла — и всичките три бяха от един вид: **изречение в докстринг,
-което нищо в кода не прави вярно.**
+Who did it: Codex, in a new way. Until then I **described** the code to him and
+he judged the description. Three defects that nine rounds walked past were found
+by a person opening three files — and all three were of one kind: **a sentence
+in a docstring that nothing in the code makes true.**
 
-Затова този одит не съдържа нито едно мое описание. Дава имената на файловете,
-казва какво се твърди, че гарантират, и пита какво го налага.
+That is why this audit contains not one description of mine. It gives the file
+names, says what they are claimed to guarantee, and asks what enforces it.
 
-Резултатът е отдолу дословно. **14 блокиращи и 24 други.** Нищо от него не е
-проверено от мен още; всяко се проверява срещу кода, преди да се пипне, защото
-Codex вече е бъркал по предпоставка.
+The result is below, verbatim. **14 blocking and 24 other.** None of it has been
+checked by me yet; each item is checked against the code before it is touched,
+because Codex has been wrong on a premise before.
 
-Правило, което това налага занапред: кръгът казва какво кодът **би трябвало** да
-гарантира и пита какво го налага — никога какво прави. И някои кръгове са одит
-върху назована област, а не преглед на последната ми промяна, защото преглед на
-разликата може да намери дефекти само в разликата.
+The rule this imposes from now on: the round says what the code **ought** to
+guarantee and asks what enforces it — never what it does. And some rounds are an
+audit over a named area, not a review of my latest change, because a review of
+the diff can only find defects in the diff.
 
 ---
 
@@ -63,139 +63,143 @@ Codex вече е бъркал по предпоставка.
 
 ---
 
-# Състояние към 2026-08-28
+# State as of 2026-08-28
 
-Списъкът отгоре не е пипан и няма да бъде: той е запис на това, което Codex
-каза на 2026-08-27, включително местата, където е бъркал. Тази част е **добавена
-отдолу** и казва какво от него е затворено днес.
+The list above has not been touched and will not be: it is a record of what Codex
+said on 2026-08-27, including the places where he was wrong. This part is
+**added below** and says what of it has been closed today.
 
-Как е установено: с четене на кода, не по обобщение — нито моето, нито ничие.
-Номерата на редовете в находките са от 2026-08-27 и вече са изместени, затова
-всяко нещо е търсено по символ и по поведение, не по ред.
+How it was established: by reading the code, not from a summary — neither mine
+nor anybody's. The line numbers in the findings are from 2026-08-27 and have
+already shifted, so every item was looked up by symbol and by behaviour, not by
+line.
 
-**Разликата, която се води отделно:** „кодът прави правилното" и „тест го държи"
-не са едно и също. Този проект вече е бил ухапан точно от това — 282 зелени
-теста при скъсана верига. Затова всяко затворено нещо получава име на тест и
-изречение какво точно се чупи, ако поправката се върне назад; където такъв тест
-няма, пише **„затворено, нетествано"**, а не „затворено".
+**The distinction that is tracked separately:** "the code does the right thing"
+and "a test holds it" are not the same. This project has already been bitten by
+exactly that — 282 green tests with a broken chain. So every closed item gets the
+name of a test and a sentence saying what exactly breaks if the fix is reverted;
+where there is no such test, it says **"closed, untested"**, not "closed".
 
-|  | блокиращи | други | общо |
+|  | blocking | other | total |
 |---|---:|---:|---:|
-| затворено, тест го държи | 12 | 18 | **30** |
-| затворено, нетествано | 1 | 5 | **6** |
-| отворено | 1 | 1 | **2** |
+| closed, a test holds it | 12 | 18 | **30** |
+| closed, untested | 1 | 5 | **6** |
+| open | 1 | 1 | **2** |
 | | 14 | 24 | **38** |
 
-## Отворени
+## Open
 
-**Блокиращо 9 — `agent.py`.** Потвърдено отворено. `src/security_agent/agent.py`
-ред 288: отговор без `tool_use` блок води до `stop_reason = STOP_COMPLETED`, а
-`end_turn` е в `FINISHED_CLEANLY` (ред 83). `ScanOutcome.complete` е
-`stop_reason == STOP_COMPLETED`, тъй че `gate.decide` минава по пътя за exit 0.
+**Blocking 9 — `agent.py`.** Confirmed open. `src/security_agent/agent.py`
+line 288: a response with no `tool_use` block leads to
+`stop_reason = STOP_COMPLETED`, and `end_turn` is in `FINISHED_CLEANLY`
+(line 83). `ScanOutcome.complete` is `stop_reason == STOP_COMPLETED`, so
+`gate.decide` takes the exit-0 path.
 
-Промененото оттогава: наоколо е станало от deny-list на allowlist (редове
-281‑285), тъй че неназовани причини като `model_context_window_exceeded` вече не
-стигат до ред 288; и неподписаният случай се записва
-(`outcome.finished_explicitly`, ред 315) и излиза като бележка в доклада. Но се
-**записва, а не се гейтва** — коментарът на редове 309‑314 го казва дословно.
+What has changed since: the surroundings went from a deny-list to an allowlist
+(lines 281‑285), so unnamed reasons such as `model_context_window_exceeded` no
+longer reach line 288; and the unsigned case is recorded
+(`outcome.finished_explicitly`, line 315) and comes out as a note in the report.
+But it is **recorded, not gated** — the comment on lines 309‑314 says so
+verbatim.
 
-Важно за всеки, който посегне да го „поправи": състоянието е закрепено от
-тестове *както е*. `tests/test_finish_review.py::test_a_review_that_just_stops_is_recorded_as_not_signed_off`
-твърди `outcome.stop_reason == STOP_COMPLETED`, а
-`::test_the_artifact_separates_finishing_from_completing` твърди
-`payload["complete"] is True`. Тоест решението е съзнателно и чака число от
-двадесет истински прегледа, а не е пропуск.
+Important for anyone who reaches out to "fix" it: the state is pinned by tests
+*as it is*. `tests/test_finish_review.py::test_a_review_that_just_stops_is_recorded_as_not_signed_off`
+asserts `outcome.stop_reason == STOP_COMPLETED`, and
+`::test_the_artifact_separates_finishing_from_completing` asserts
+`payload["complete"] is True`. That is, the decision is deliberate and is waiting
+on a number from twenty real reviews; it is not an oversight.
 
-**Друго 7 — `models.py`.** Отворено, но тясно. `INCOMPLETE_STOPS` (ред 632) още
-не съдържа `STOP_INCONCLUSIVE` и няма коментар защо. Кортежът обаче е мъртъв код
-— `grep INCOMPLETE_STOPS src/ tools/` дава само собствената му дефиниция.
-Пълнотата се решава от `ScanOutcome.complete` и от
-`gate.NEVER_FORGIVEN = frozenset({STOP_INCONCLUSIVE})`, и двете вярно. Вредата,
-от която Codex се е страхувал — липсващо обяснение за читателя — е затворена:
-`STOP_EXPLANATIONS[STOP_INCONCLUSIVE]` съществува и се държи от
+**Other 7 — `models.py`.** Open, but narrow. `INCOMPLETE_STOPS` (line 632) still
+does not contain `STOP_INCONCLUSIVE` and there is no comment saying why. The
+tuple is dead code, though — `grep INCOMPLETE_STOPS src/ tools/` returns only its
+own definition. Completeness is decided by `ScanOutcome.complete` and by
+`gate.NEVER_FORGIVEN = frozenset({STOP_INCONCLUSIVE})`, both of them correctly.
+The harm Codex feared — a missing explanation for the reader — is closed:
+`STOP_EXPLANATIONS[STOP_INCONCLUSIVE]` exists and is held by
 `tests/test_agent_degradation.py::test_every_reason_a_reader_can_meet_has_one_and_not_just_the_listed_ones`,
-който обхожда `vars(models)`, а не кортежа. Най-евтиното затваряне е един ред
-коментар или изтриване на неизползвания кортеж.
+which walks `vars(models)`, not the tuple. The cheapest closure is one line of
+comment or deleting the unused tuple.
 
-## Блокиращи
+## Blocking
 
-| # | състояние | тест, който го държи | какво се чупи при връщане назад |
+| # | state | test that holds it | what breaks if it is reverted |
 |---|---|---|---|
-| 1 | затворено | `test_panel.py::TestALoneSurvivorDecidesNothing::test_it_cannot_correct_a_fact_severity_is_computed_from`, `::test_it_cannot_switch_on_the_removed_control_gate` | знаменателят обратно на `len(usable)` → един глас става мнозинство, чупи се `candidate.severity == "low"`; махане на `len(usable) == seats` → чупи се `candidate.removes_control is False` |
-| 2 | затворено | `test_gate.py::TestSomeEndingsAreNotTheOperatorsToForgive::test_a_profile_that_cannot_conclude_never_exits_zero`, `::test_a_review_nothing_reached_is_never_a_pass` | без `NEVER_FORGIVEN` → `exit_code == EXIT_ERROR` пада при `forgiving=False`; без `_reviewed_nothing` → пада за всичките пет причини за спиране |
-| 3 | затворено¹ | `test_truncated_diff_gate.py::TestATruncatedDiffIsNotAPass::test_the_gate_refuses_to_call_it_checked`; `test_runner_claude_code.py::test_a_truncated_diff_travels_with_the_session` | махане на `or outcome.coverage.diff_truncated` от `gate._partial` → `EXIT_ERROR` става `EXIT_OK`; фикстурата вдига истинско git repo с 4000 реда, не подава флаг на ръка |
-| 4 | затворено | `test_diff_structure.py::TestForgedFileHeader::test_the_whole_chain_still_blocks_the_merge`; `test_path_quoting.py::test_a_header_names_the_file_exactly` | без `in_hunk` пазача → `assert candidate.in_changed_lines` пада („добавеният sink беше отчетен като заварен"); връщане на `.strip()` → пада името с интервал накрая |
-| 5 | затворено | `test_fingerprint_identity.py::TestTheEscapeHatchWorks::test_a_finding_with_no_distinctive_quote_can_be_suppressed` | разминаване между отпечатан и съпоставян fallback → `kept == []` пада; тестът вади отпечатъка от готовия markdown, пише истински YAML и го прилага — минава през цялата верига |
-| 6 | затворено¹ | `test_identity.py::test_accepting_a_risk_changes_the_review`, `::test_a_setting_that_changes_the_answer_changes_the_identity` | махане на `suppressions` от идентичността → `digest(before) != digest(after)` пада |
-| 7 | затворено | `test_cli.py::TestTheReviewedCommitIsNamedOrTheRunFails::test_an_unresolvable_head_is_never_recorded_as_the_word_head`, `::test_an_ordinary_head_still_resolves_to_a_commit` | връщане на `or "HEAD"` → очакваният `WorkspaceError` не идва, и `len(head_sha) == 40` пада |
-| 8 | затворено¹ | `test_prompt_provenance.py::test_the_prompt_directory_can_be_the_repository_itself` | връщане на `"./"` префикса в `config.prompt_dir_risk` → `risk.startswith("REFUSE")` пада |
-| 9 | **отворено** | — | виж отгоре |
-| 10 | затворено | `test_baseline.py::test_an_errored_case_is_never_no_regression` | махане на `error` клона → случаят не хваща никой клон, печата се „No regression" и се връща 0; падат `code == 2`, `"No regression" not in printed`, `"errored" in printed` |
-| 11 | затворено¹ | `test_truncated_diff_gate.py::TestATruncatedDiffIsNotAPass::test_the_gate_refuses_to_call_it_checked`, `::test_the_reason_says_what_to_do_about_it` | същото като 3 — отрязан diff вече не е „проверено"; пада и `"first part of the diff" in decision.reason` |
-| 12 | **затворено, нетествано** | няма | `.gitlab-ci.yml:226` вече подава `--provider anthropic-api`. Нищо в `tests/` не чете `.gitlab-ci.yml` — махането на аргумента оставя пакета зелен, а job-ът пада на argparse |
-| 13 | затворено¹ | `test_cli.py::TestTheReviewedCommitIsNamedOrTheRunFails::test_an_explicit_head_that_is_not_in_the_clone_is_refused`, `::test_the_message_says_the_clone_is_the_problem` | връщане на едноредовия `or "HEAD"` → `pytest.raises(WorkspaceError)` не се вдига и `code == 2` пада |
-| 14 | затворено | `test_github.py::test_a_marker_written_by_somebody_else_is_never_edited`, `::test_the_agents_own_comment_behind_an_impostor_is_still_found` | връщане на „маркерът стига" → вместо `POST` тръгва `PATCH` към чуждия коментар 5; същото и от GitLab страна в `test_gitlab.py::TestOwnership` |
+| 1 | closed | `test_panel.py::TestALoneSurvivorDecidesNothing::test_it_cannot_correct_a_fact_severity_is_computed_from`, `::test_it_cannot_switch_on_the_removed_control_gate` | the denominator back to `len(usable)` → one vote becomes a majority, `candidate.severity == "low"` breaks; removing `len(usable) == seats` → `candidate.removes_control is False` breaks |
+| 2 | closed | `test_gate.py::TestSomeEndingsAreNotTheOperatorsToForgive::test_a_profile_that_cannot_conclude_never_exits_zero`, `::test_a_review_nothing_reached_is_never_a_pass` | without `NEVER_FORGIVEN` → `exit_code == EXIT_ERROR` fails with `forgiving=False`; without `_reviewed_nothing` → it fails for all five stop reasons |
+| 3 | closed¹ | `test_truncated_diff_gate.py::TestATruncatedDiffIsNotAPass::test_the_gate_refuses_to_call_it_checked`; `test_runner_claude_code.py::test_a_truncated_diff_travels_with_the_session` | removing `or outcome.coverage.diff_truncated` from `gate._partial` → `EXIT_ERROR` becomes `EXIT_OK`; the fixture raises a real git repo with 4000 lines, it does not hand the flag over by hand |
+| 4 | closed | `test_diff_structure.py::TestForgedFileHeader::test_the_whole_chain_still_blocks_the_merge`; `test_path_quoting.py::test_a_header_names_the_file_exactly` | without the `in_hunk` guard → `assert candidate.in_changed_lines` fails ("the added sink was reported as pre-existing"); restoring `.strip()` → the name with a trailing space fails |
+| 5 | closed | `test_fingerprint_identity.py::TestTheEscapeHatchWorks::test_a_finding_with_no_distinctive_quote_can_be_suppressed` | a mismatch between the printed and the matched fallback → `kept == []` fails; the test takes the fingerprint out of the finished markdown, writes real YAML and applies it — it goes through the whole chain |
+| 6 | closed¹ | `test_identity.py::test_accepting_a_risk_changes_the_review`, `::test_a_setting_that_changes_the_answer_changes_the_identity` | removing `suppressions` from the identity → `digest(before) != digest(after)` fails |
+| 7 | closed | `test_cli.py::TestTheReviewedCommitIsNamedOrTheRunFails::test_an_unresolvable_head_is_never_recorded_as_the_word_head`, `::test_an_ordinary_head_still_resolves_to_a_commit` | restoring `or "HEAD"` → the expected `WorkspaceError` never comes, and `len(head_sha) == 40` fails |
+| 8 | closed¹ | `test_prompt_provenance.py::test_the_prompt_directory_can_be_the_repository_itself` | restoring the `"./"` prefix in `config.prompt_dir_risk` → `risk.startswith("REFUSE")` fails |
+| 9 | **open** | — | see above |
+| 10 | closed | `test_baseline.py::test_an_errored_case_is_never_no_regression` | removing the `error` branch → the case catches no branch at all, "No regression" is printed and 0 is returned; `code == 2`, `"No regression" not in printed` and `"errored" in printed` all fail |
+| 11 | closed¹ | `test_truncated_diff_gate.py::TestATruncatedDiffIsNotAPass::test_the_gate_refuses_to_call_it_checked`, `::test_the_reason_says_what_to_do_about_it` | the same as 3 — a truncated diff is no longer "checked"; `"first part of the diff" in decision.reason` fails as well |
+| 12 | **closed, untested** | none | `.gitlab-ci.yml:226` now passes `--provider anthropic-api`. Nothing in `tests/` reads `.gitlab-ci.yml` — removing the argument leaves the suite green while the job dies on argparse |
+| 13 | closed¹ | `test_cli.py::TestTheReviewedCommitIsNamedOrTheRunFails::test_an_explicit_head_that_is_not_in_the_clone_is_refused`, `::test_the_message_says_the_clone_is_the_problem` | restoring the one-line `or "HEAD"` → `pytest.raises(WorkspaceError)` is not raised and `code == 2` fails |
+| 14 | closed | `test_github.py::test_a_marker_written_by_somebody_else_is_never_edited`, `::test_the_agents_own_comment_behind_an_impostor_is_still_found` | restoring "the marker is enough" → instead of `POST` a `PATCH` goes out to somebody else's comment 5; the same on the GitLab side in `test_gitlab.py::TestOwnership` |
 
-¹ Затворено, но с нетествана част — изброени са отдолу.
+¹ Closed, but with an untested part — they are listed below.
 
-## Други
+## Other
 
-| # | състояние | тест, който го държи | какво се чупи при връщане назад |
+| # | state | test that holds it | what breaks if it is reverted |
 |---|---|---|---|
-| 1 | затворено¹ | `test_cli.py::TestSkipHatches::test_a_skipped_review_still_leaves_an_artifact`, `::test_a_skipped_review_overwrites_the_earlier_verdict`, `::test_a_skipped_review_posts_the_note_that_says_so` | гол `return EXIT_OK` → `(out / "report.md").is_file()` пада, а находката от предното пускане оцелява на диска |
-| 2 | затворено | `test_cli.py::TestNothingReviewable::test_a_scoped_out_change_does_not_blame_the_exclude_rules` | връщане към едното изречение → `"excluded by configuration" not in summary` пада; и трите съседни теста минават през истинско CLI пускане върху git repo |
-| 3 | затворено | `test_compare_scanners.py::TestSemgrepExitCode::test_only_a_completed_scan_gets_a_verdict`, `::TestCodeqlExitCode::test_the_sarif_is_only_read_when_analyze_succeeded` | приемане на изхода при ненулев код → `incomplete["ok"] is False` пада; фалшивият scanner пише SARIF при провалил се analyze, точно формата на дефекта |
-| 4 | затворено | `test_injection_corpus.py::test_a_line_every_function_contains_does_not_merge_two_findings` | филтър само по дължина → `return nil, err` оцелява като котва, двете находки се сливат и `introduced_blocks(...) == ["dos:store/lookup.go"]` пада |
-| 5 | затворено | `test_injection_corpus.py::test_the_target_is_the_finding_the_gate_acted_on_not_the_one_listed_first`, `::test_reordering_the_report_does_not_change_the_target` | вземане на първото съвпадение → `row["fingerprint"] == "fp-target"` и `row["matched"] == 2` падат |
-| 6 | затворено | `test_budget.py::test_a_profile_declares_no_verifier_turn_ceiling` | твърдението е махнато, не изпълнено: връщане на полето → `"verifier_turns" not in stored` пада, както и `pytest.raises(TypeError)` |
-| 7 | **отворено** | — | виж отгоре |
-| 8 | затворено | `test_budget.py::test_the_pool_is_a_run_wide_ceiling_and_not_votes_per_candidate` | пул на кандидат вместо на пускане → и шестте места се раздават, а тестът чака `[True]*3 + [False]*3` и `check() == STOPPED_VERIFIERS` |
-| 9 | **затворено, нетествано** | няма | текстът в `templates/security-scan.yml` е сверен с `verify._votes_for` (най-малко три, нечетен панел). `test_config.py::TestTheTemplateAndTheCodeAgreeOnDefaults` чете само `default`, не `description` — връщане на „поне два" минава |
-| 10 | **затворено, нетествано** | няма | `Dockerfile` вече казва „ограничено, не заковано" и обяснява защо. Нищо в `tests/` не чете `Dockerfile` |
-| 11 | затворено | `test_workflows.py::test_an_action_given_a_secret_is_pinned_to_a_commit[security-review.yml]` | връщане на `@main` → `assert not offenders` пада; тестът иска ref по `^[0-9a-f]{40}$` за всяка стъпка, чийто `with:` съдържа `secrets.` |
-| 12 | затворено | `test_github.py::test_a_marker_written_by_somebody_else_is_never_edited`; `test_gitlab.py::TestOwnership::test_a_marker_written_by_somebody_else_is_never_edited` | както при блокиращо 14; държи се и обратната посока — `::test_the_agents_own_comment_behind_an_impostor_is_still_found` пази поправката да не стане „не пипай нищо" |
-| 13 | **затворено, нетествано** | няма (само на ниво помощна функция) | `cli.py` вика `prompt_dir_risk` преди празния изход и с `raw_changed_paths()`. Никой тест не кара `cli._run` — местенето на блока обратно минава |
-| 14 | затворено¹ | `test_identity.py::test_accepting_a_risk_changes_the_review`, `::test_the_artifact_records_what_the_comparison_reads` | махане на `suppressions` от идентичността → `stored["settings"]["suppressions"] == "abc123"` пада |
-| 15 | затворено | `test_github.py::test_a_marker_written_by_somebody_else_is_never_edited` | тестът вече ползва **чужд коментар, който носи маркера** (`IMPOSTOR`), тоест мери самозванството; старият случай без маркер остана отделно като `::test_a_comment_the_agent_did_not_write_is_never_touched` |
-| 16 | затворено | `test_gitlab.py::TestOwnership::test_a_marker_written_by_somebody_else_is_never_edited` | същото за GitLab; придружено от `::test_a_note_from_a_renamed_account_is_matched_by_id`, което държи съпоставянето по id, а не по име |
-| 17 | затворено¹ | `test_prompt_provenance.py::test_an_exclude_pattern_cannot_answer_the_question`, `::test_a_narrowed_scope_cannot_answer_it_either`, `::test_the_prompt_directory_can_be_the_repository_itself`, `::test_a_change_that_only_edits_a_prompt_is_still_asked_about` | подаване на `changed_files()` вместо суровите пътища → `risk.startswith("REFUSE")` пада в първите два |
-| 18 | затворено | `test_cli.py::TestSkipHatches::test_a_skipped_review_still_leaves_an_artifact` | тестът вече проверява артефакта и не-чистото състояние (`"Nothing was examined" in payload["summary"]`), не само exit 0 и нула извиквания |
-| 19 | затворено | `test_baseline.py::test_an_errored_case_is_never_no_regression` | тестът задава `after[0]["error"]` върху иначе минаващ ред — състояние, различно от `incomplete`, точно каквото Codex каза, че липсва |
-| 20 | затворено | `test_tools.py::TestEveryRejectionReachesTheCounters` | броячите обратно в не-финалния клон → `citations_rejected_unknown_path == MAX_CITATION_ATTEMPTS` пада (става N‑1), както и `counted == attempts` |
-| 21 | затворено | `test_verify.py::TestTheVerifiedCountMatchesWhatWasVerified` | броене на `len(candidates)` вместо `len(to_verify)` → при 3 кандидата и лимит 1 `metrics.verified == 1` пада (става 3) |
-| 22 | затворено | `test_budget.py::test_the_run_stops_on_the_ceiling_whichever_route_spent_it` | връщане на съхранявания флаг → `direct.check() == through_budget.check()` пада, защото прекият път оставя `RunBudget` в неведение |
-| 23 | **затворено, нетествано** | няма | твърдението в `config.py` е оттеглено дословно и `LIMITATIONS.md` носи реда за читателя. `grep DEFAULT_EXCLUDES tests/` — нула |
-| 24 | **затворено, нетествано** | няма | надтвърдението в `tools/corpus_adversary.py` е стеснено. `test_corpus_adversary.py` проверява само членство в множествата — старият текст минава непроменен |
+| 1 | closed¹ | `test_cli.py::TestSkipHatches::test_a_skipped_review_still_leaves_an_artifact`, `::test_a_skipped_review_overwrites_the_earlier_verdict`, `::test_a_skipped_review_posts_the_note_that_says_so` | a bare `return EXIT_OK` → `(out / "report.md").is_file()` fails, and the finding from the previous run survives on disk |
+| 2 | closed | `test_cli.py::TestNothingReviewable::test_a_scoped_out_change_does_not_blame_the_exclude_rules` | back to the single sentence → `"excluded by configuration" not in summary` fails; and all three neighbouring tests go through a real CLI run over a git repo |
+| 3 | closed | `test_compare_scanners.py::TestSemgrepExitCode::test_only_a_completed_scan_gets_a_verdict`, `::TestCodeqlExitCode::test_the_sarif_is_only_read_when_analyze_succeeded` | accepting the output on a non-zero code → `incomplete["ok"] is False` fails; the fake scanner writes SARIF on a failed analyze, exactly the shape of the defect |
+| 4 | closed | `test_injection_corpus.py::test_a_line_every_function_contains_does_not_merge_two_findings` | a length-only filter → `return nil, err` survives as an anchor, the two findings merge and `introduced_blocks(...) == ["dos:store/lookup.go"]` fails |
+| 5 | closed | `test_injection_corpus.py::test_the_target_is_the_finding_the_gate_acted_on_not_the_one_listed_first`, `::test_reordering_the_report_does_not_change_the_target` | taking the first match → `row["fingerprint"] == "fp-target"` and `row["matched"] == 2` fail |
+| 6 | closed | `test_budget.py::test_a_profile_declares_no_verifier_turn_ceiling` | the claim was removed, not implemented: restoring the field → `"verifier_turns" not in stored` fails, as does `pytest.raises(TypeError)` |
+| 7 | **open** | — | see above |
+| 8 | closed | `test_budget.py::test_the_pool_is_a_run_wide_ceiling_and_not_votes_per_candidate` | a pool per candidate instead of per run → all six seats get handed out, while the test expects `[True]*3 + [False]*3` and `check() == STOPPED_VERIFIERS` |
+| 9 | **closed, untested** | none | the text in `templates/security-scan.yml` has been reconciled with `verify._votes_for` (at least three, odd panel). `test_config.py::TestTheTemplateAndTheCodeAgreeOnDefaults` reads only `default`, not `description` — restoring "at least two" passes |
+| 10 | **closed, untested** | none | `Dockerfile` now says "bounded, not pinned" and explains why. Nothing in `tests/` reads `Dockerfile` |
+| 11 | closed | `test_workflows.py::test_an_action_given_a_secret_is_pinned_to_a_commit[security-review.yml]` | restoring `@main` → `assert not offenders` fails; the test demands a ref matching `^[0-9a-f]{40}$` for every step whose `with:` contains `secrets.` |
+| 12 | closed | `test_github.py::test_a_marker_written_by_somebody_else_is_never_edited`; `test_gitlab.py::TestOwnership::test_a_marker_written_by_somebody_else_is_never_edited` | as with blocking 14; the opposite direction is held too — `::test_the_agents_own_comment_behind_an_impostor_is_still_found` keeps the fix from turning into "touch nothing" |
+| 13 | **closed, untested** | none (only at the level of the helper function) | `cli.py` calls `prompt_dir_risk` before the empty exit and with `raw_changed_paths()`. No test drives `cli._run` — moving the block back passes |
+| 14 | closed¹ | `test_identity.py::test_accepting_a_risk_changes_the_review`, `::test_the_artifact_records_what_the_comparison_reads` | removing `suppressions` from the identity → `stored["settings"]["suppressions"] == "abc123"` fails |
+| 15 | closed | `test_github.py::test_a_marker_written_by_somebody_else_is_never_edited` | the test now uses **a foreign comment that carries the marker** (`IMPOSTOR`), that is, it measures impersonation; the old markerless case stayed separately as `::test_a_comment_the_agent_did_not_write_is_never_touched` |
+| 16 | closed | `test_gitlab.py::TestOwnership::test_a_marker_written_by_somebody_else_is_never_edited` | the same for GitLab; accompanied by `::test_a_note_from_a_renamed_account_is_matched_by_id`, which holds matching by id and not by name |
+| 17 | closed¹ | `test_prompt_provenance.py::test_an_exclude_pattern_cannot_answer_the_question`, `::test_a_narrowed_scope_cannot_answer_it_either`, `::test_the_prompt_directory_can_be_the_repository_itself`, `::test_a_change_that_only_edits_a_prompt_is_still_asked_about` | passing `changed_files()` instead of the raw paths → `risk.startswith("REFUSE")` fails in the first two |
+| 18 | closed | `test_cli.py::TestSkipHatches::test_a_skipped_review_still_leaves_an_artifact` | the test now checks the artifact and the non-clean state (`"Nothing was examined" in payload["summary"]`), not only exit 0 and zero calls |
+| 19 | closed | `test_baseline.py::test_an_errored_case_is_never_no_regression` | the test sets `after[0]["error"]` on an otherwise passing row — a state different from `incomplete`, exactly what Codex said was missing |
+| 20 | closed | `test_tools.py::TestEveryRejectionReachesTheCounters` | the counters back in the non-final branch → `citations_rejected_unknown_path == MAX_CITATION_ATTEMPTS` fails (it becomes N‑1), as does `counted == attempts` |
+| 21 | closed | `test_verify.py::TestTheVerifiedCountMatchesWhatWasVerified` | counting `len(candidates)` instead of `len(to_verify)` → with 3 candidates and a limit of 1, `metrics.verified == 1` fails (it becomes 3) |
+| 22 | closed | `test_budget.py::test_the_run_stops_on_the_ceiling_whichever_route_spent_it` | restoring the stored flag → `direct.check() == through_budget.check()` fails, because the direct route leaves `RunBudget` unaware |
+| 23 | **closed, untested** | none | the claim in `config.py` has been withdrawn verbatim and `LIMITATIONS.md` carries the line for the reader. `grep DEFAULT_EXCLUDES tests/` — zero |
+| 24 | **closed, untested** | none | the overclaim in `tools/corpus_adversary.py` has been narrowed. `test_corpus_adversary.py` checks only membership in the sets — the old text passes unchanged |
 
-## Затворено, но нищо не го държи
+## Closed, but nothing holds it
 
-Шестте „затворено, нетествано" отгоре — блокиращо 12 и други 9, 10, 13, 23, 24 —
-плюс **частите**, които са нетествани в иначе затворени неща:
+The six "closed, untested" above — blocking 12 and other 9, 10, 13, 23, 24 —
+plus the **parts** that are untested inside otherwise closed items:
 
-- **Блокиращо 3:** прескокът `tools._handle_get_diff` → `session.diff_truncated`
-  няма тест. Изтриването на тези два реда оставя пакета зелен, а веригата на
-  CLI runner-а тихо докладва неотрязан diff.
-- **Блокиращо 11:** същото присвояване в `agent.py:324` (пътят през API-то) не се
-  държи от нищо; runner-ската му половина се държи отделно.
-- **Блокиращо 13:** тестван е само клонът `args.head`. Клонът от forge-а
-  (`gl.source_branch_sha`) е на същия `or` израз — `grep source_branch_sha tests/`
-  не връща нищо.
-- **Блокиращо 6 и 8, и други 13, 14, 17 — една и съща дупка.** Подредбата на
-  извикванията в `cli.py` не е закрепена от нищо. Проверката за произход на
-  prompt-а и пазачът за преизползване са верни **като функции** — това е
-  тествано, — но че `cli.py` ги вика на правилното място и със суровите пътища
-  не е. Местене на блока обратно под празния изход, или решаване на
-  преизползването преди `load_rules`, оставя `python3 -m pytest tests/ -q` зелен.
-  Установено с четене: всичките тестове за произход викат `prompt_dir_risk(...)`
-  направо, а `--reuse` изобщо не се пуска през CLI в нито един тест.
-- **Друго 1:** половината в шаблона (job-ът вече не се изпуска) не се чете от
-  никой тест.
-- **Друго 6, остатък без последствие:** докстрингът в `budget.py` още казва, че
-  аргументът „still accepted and ignored" — не е, конструкторът вдига
-  `TypeError`, както самият тест твърди. Изостанало изречение, без ефект.
+- **Blocking 3:** the hop `tools._handle_get_diff` → `session.diff_truncated`
+  has no test. Deleting those two lines leaves the suite green while the CLI
+  runner's chain quietly reports an untruncated diff.
+- **Blocking 11:** the same assignment in `agent.py:324` (the path through the
+  API) is held by nothing; its runner half is held separately.
+- **Blocking 13:** only the `args.head` branch is tested. The branch from the
+  forge (`gl.source_branch_sha`) sits on the same `or` expression —
+  `grep source_branch_sha tests/` returns nothing.
+- **Blocking 6 and 8, and other 13, 14, 17 — one and the same hole.** The
+  ordering of the calls in `cli.py` is pinned by nothing. The prompt-provenance
+  check and the reuse guard are correct **as functions** — that much is tested —
+  but that `cli.py` calls them in the right place and with the raw paths is not.
+  Moving the block back below the empty exit, or deciding reuse before
+  `load_rules`, leaves `python3 -m pytest tests/ -q` green. Established by
+  reading: every provenance test calls `prompt_dir_risk(...)` directly, and
+  `--reuse` is never driven through the CLI in any test.
+- **Other 1:** the half in the template (the job is no longer dropped) is read by
+  no test.
+- **Other 6, a leftover with no consequence:** the docstring in `budget.py`
+  still says the argument is "still accepted and ignored" — it is not, the
+  constructor raises `TypeError`, as the test itself asserts. A stale sentence,
+  with no effect.
 
-Най-евтиното затваряне на голямата дупка са два теста от край до край през
-`cli.main`: едно repository с `--prompt-dir` вътре в дървото, чиято промяна пипа
-само изключен prompt файл (трябва да излезе с ненулев код), и едно `--reuse`
-пускане, при което между двете пускания е добавено прието наум допускане
-(не трябва да сервира стария артефакт).
+The cheapest closure of the big hole is two end-to-end tests through
+`cli.main`: one repository with `--prompt-dir` inside the tree, whose change
+touches only an excluded prompt file (it must exit non-zero), and one `--reuse`
+run in which an accepted risk was added between the two runs (it must not serve
+the old artifact).
