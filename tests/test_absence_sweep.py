@@ -1,9 +1,19 @@
 """A sweep for one defect class: a missing answer read as a reassuring one.
 
-Every test here asserts the behaviour the code *should* have and is marked
-`xfail(strict=True)`, so each one is a live proof that the defect is still
-present — and turns red the moment somebody fixes it, which is what stops the
-marker being left behind after the fix.
+Every test here asserts the behaviour the code should have.
+
+Seven of them were written first as `xfail(strict=True)` over a defect that was
+live at the time, so each turned red the moment its defect went — that is what
+the strict marker is for, and it is why those seven are proofs rather than
+descriptions. All seven markers are off: the defects are fixed, on 2026-09-03,
+and each test now guards against its own failure returning. Two of the fixes
+changed an existing test rather than the code, and both say so in place with
+the argument for it.
+
+The rest were added alongside the fixes and were never xfails — the floor
+tests, which fail if a fix went too far, and the regressions for defects the
+fixes themselves turned up. They are ordinary tests and make no claim to have
+proved anything about the old code.
 
 Nothing in this file spends money: no `claude`, no corpus runner, no API.
 """
@@ -28,21 +38,29 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 from security_agent import workspace as workspace_module  # noqa: E402
-from security_agent.workspace import Workspace  # noqa: E402
+from security_agent.workspace import Workspace, WorkspaceError  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # 1. Workspace.search — a search cut off by the deadline reports "no matches"
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "workspace.py:847 — `if total == 0: return 'no matches for {pattern}'` is "
-    "reached with `truncated=True` when `_grep_stream` hits its deadline "
-    "before keeping a single line. The reviewer asked whether a pattern "
-    "occurs anywhere and is told it does not, over a search that was stopped."))
 def test_search_stopped_at_the_deadline_does_not_report_no_matches(
     git_repo: Path, monkeypatch
 ) -> None:
+    """Fixed 2026-09-03. `if total == 0: return "no matches"` never looked at
+    `truncated`, so a search stopped by its own deadline before keeping a
+    single line was rendered as a search that found nothing. The reviewer asks
+    whether a pattern occurs anywhere and is told it does not.
+
+    Refused rather than answered, which is stronger than this test first
+    asserted. A returned body would carry `count = 0` into
+    `_handle_search_code`, which records an exposure per matched file and a
+    summary of "0 match(es)" — so the run's own coverage accounting would show
+    a search that happened and found nothing. `WorkspaceError` becomes a tool
+    result with `is_error=True`: the model reads the refusal, and no coverage
+    is recorded for a search that did not run.
+    """
     ws = Workspace(root=git_repo)
 
     # The search really does match; nothing about the repository is unusual.
@@ -53,25 +71,45 @@ def test_search_stopped_at_the_deadline_does_not_report_no_matches(
     # large repository produces when it runs past GIT_TIMEOUT_SECONDS. The
     # first line read trips the deadline check, so nothing is kept.
     monkeypatch.setattr(workspace_module, "GIT_TIMEOUT_SECONDS", -1)
-    body, count = ws.search("SELECT")
 
-    assert "no matches" not in body, (
-        "a search that was stopped before it read anything must not be "
-        "rendered as a search that found nothing: {!r}".format(body))
+    with pytest.raises(WorkspaceError) as raised:
+        ws.search("SELECT")
+
+    message = str(raised.value)
+    assert "no matches" not in message, message
+    assert "stopped" in message
+    # It has to say what to do next, or the model repeats the same search.
+    assert "path_glob" in message
+
+
+def test_a_search_that_finishes_and_finds_nothing_still_says_so(
+    git_repo: Path
+) -> None:
+    """The floor. Refusing every empty result would delete the one honest use
+    of "no matches" — and "I could not check" and "it is clean" are the two
+    answers this repository exists to keep apart, in both directions."""
+    ws = Workspace(root=git_repo)
+
+    body, count = ws.search("a_pattern_that_is_certainly_absent_zzz")
+
+    assert count == 0
+    assert "no matches" in body
 
 
 # ---------------------------------------------------------------------------
 # 2. tools/corpus_adversary.py — an empty corpus passes the leakage gate
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "corpus_adversary.py:236-241 — `worst()` returns ('' , 0.0, {}) when no "
-    "rule fired, and main() prints 'the cues that could reach the reviewer "
-    "are absent' and returns 0. Point it at a directory holding no case.yml "
-    "and the leakage gate passes over zero cases."))
 def test_corpus_adversary_refuses_a_corpus_with_no_cases(
     tmp_path: Path, monkeypatch
 ) -> None:
+    """Fixed 2026-09-03. `worst()` returned no rule when none fired, which is
+    also what a corpus with nothing in it produces — so the gate that exists to
+    prove the corpus cannot be scored without reading code printed "the cues
+    that could reach the reviewer are absent" and exited 0, one line under
+    "0 case(s) examined". A mistyped path does it, or a renamed manifest, or a
+    corpus not yet checked out: `Path.rglob` on a directory that is not there
+    raises nothing."""
     import corpus_adversary
 
     empty = tmp_path / "corpus"
@@ -114,14 +152,19 @@ def _table_total(output: str) -> int:
     return total
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "journal.py:169 — `f.get('verdict', 'unadjudicated')` only defaults when "
-    "the KEY is absent. A hand-edited `verdict:` with nothing after it is "
-    "YAML null, and `verdict: nto_real` is a typo; both land in the Counter "
-    "under a name outside VERDICTS, are excluded from `judged`, and are not "
-    "reported by the `unadjudicated` notice either. The finding leaves the "
-    "report entirely and the percentage is computed as if it never existed."))
 def test_journal_report_accounts_for_an_unreadable_verdict(tmp_path: Path) -> None:
+    """Fixed 2026-09-03. `f.get("verdict", "unadjudicated")` defaults only when
+    the KEY is absent, and `verdict.yml` is edited by hand: `verdict:` with
+    nothing after it is YAML `None`, and `verdict: nto_real` is a typo. Both
+    landed under a name outside `VERDICTS`, so they were in no column, in no
+    percentage, and in no notice — the finding left the report and the rate was
+    computed as though it had never been written down.
+
+    Counted as unjudged now, so the table adds up to the number of findings,
+    and named separately in a line of their own — because "nobody judged this"
+    and "somebody judged it and the file cannot carry what they wrote" are
+    different statements with different remedies.
+    """
     import journal
 
     root = tmp_path / "journal"
@@ -147,14 +190,56 @@ def test_journal_report_accounts_for_an_unreadable_verdict(tmp_path: Path) -> No
 # 4. tools/journal.py — an entry filed under a nested ref is invisible
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "journal.py:66 — `root.glob('*/verdict.yml')` is one level deep, while "
-    "`entry_dir` (line 60) is `root / ref` and `add` creates it with "
-    "`parents=True`. File a review with `--ref feature/login` and it is "
-    "written, reported as filed, and then never seen by `report` again."))
+@pytest.mark.parametrize("value", [
+    "\n      - not_real\n",         # a list
+    "\n      spelling: not_real\n",  # a mapping
+    " 3\n",                          # a number
+    " true\n",                       # a boolean
+    "\n",                            # empty: YAML `None`
+])
+def test_journal_report_survives_a_verdict_of_the_wrong_shape(
+    tmp_path: Path, value: str
+) -> None:
+    """The repair for an unreadable verdict must not be a crash.
+
+    `Counter` over a list raises `TypeError: unhashable type`, so a
+    `verdict:` followed by an indented list took the whole report down —
+    losing a month of adjudication to a typo, which is exactly what the
+    `minutes` reader two lines away already refuses to do.
+    """
+    import journal
+
+    root = tmp_path / "journal"
+    entry = root / "some-ref"
+    entry.mkdir(parents=True)
+    (entry / "verdict.yml").write_text(
+        "complete: true\nfindings:\n  - fingerprint: aa11\n"
+        "    verdict:{}".format(value), encoding="utf-8")
+
+    out = io.StringIO()
+    with redirect_stdout(out):
+        code = journal.report(root)
+
+    text = out.getvalue()
+    assert code == 0
+    assert "cannot read" in text, text
+    assert _table_total(text) == 1, (
+        "the finding left the table entirely:\n" + text)
+
+
 def test_journal_report_sees_an_entry_filed_under_a_nested_ref(
     tmp_path: Path
 ) -> None:
+    """Fixed 2026-09-03. A ref is a branch name and branch names have slashes:
+    `add --ref feature/login` wrote to `root/feature/login` with
+    `parents=True`, printed "filed feature/login", and a one-level glob never
+    saw it again. The report either said nothing was filed, or computed its
+    percentage over whichever entries happened to be flat.
+
+    `rglob` now, and the ref is the path from the root rather than the last
+    segment — `feature/login` and `hotfix/login` are two refs and `.name` calls
+    both of them `login`.
+    """
     import journal
 
     artifact = tmp_path / "findings.json"
@@ -190,14 +275,14 @@ def _variance_argv() -> list:
     return ["measure_variance.py", "--repo", "/nonexistent", "-n", "3"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "measure_variance.py:238 — `main` returns 0 unconditionally, and "
-    "`summarise` (line 98-100) returns after printing 'every run failed; "
-    "nothing to compare'. A wrapper reading the exit code cannot tell 'the "
-    "suite is stable' from 'nothing was measured'."))
 def test_measure_variance_does_not_exit_zero_when_every_run_failed(
     monkeypatch
 ) -> None:
+    """Fixed 2026-09-03. `main` returned 0 whatever happened, so a wrapper
+    reading the exit code could not tell "the gate is stable" from "nothing was
+    measured" — the distinction this whole repository is built around, missing
+    from the tool that measures whether the gate holds still. `summarise` now
+    returns the code it earns and `main` passes it through."""
     import measure_variance
 
     def failed(args: argparse.Namespace, index: int) -> dict:
@@ -215,14 +300,17 @@ def test_measure_variance_does_not_exit_zero_when_every_run_failed(
     assert code != 0, "no measurement was taken; exit 0 says one was"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "measure_variance.py:97 and 170 — `good` drops every run that produced no "
-    "report, and the stability claim is then made over what is left. Four "
-    "crashes and one survivor print 'stable across 1 runs at this sample "
-    "size', which is agreement manufactured by absence."))
 def test_measure_variance_does_not_call_one_surviving_run_stable(
     monkeypatch
 ) -> None:
+    """Fixed 2026-09-03. `good` drops every run that produced no report and the
+    stability claim was then made over what was left: four crashes and one
+    survivor printed "stable across 1 runs at this sample size", which is
+    agreement manufactured out of the four absences.
+
+    Only the stability claim is withheld. The cost and exit-code rows are
+    honest for a single run, and refusing to print them would lose the one
+    thing that run did establish."""
     import measure_variance
 
     payload = {
@@ -260,13 +348,15 @@ def test_measure_variance_does_not_call_one_surviving_run_stable(
 # 6. tools/verifier_replay.py — a crashed run leaves the panel looking steady
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "verifier_replay.py:144 and 191 — `good` excludes every errored run and "
-    "the instability check at line 169 then compares the survivors only, so "
-    "two clean runs where one crashed exit 0. The protocol in the module "
-    "docstring ('two clean runs before any payload') is satisfied by a "
-    "single run plus a crash."))
 def test_verifier_replay_is_not_green_when_a_run_produced_no_verdict() -> None:
+    """Fixed 2026-09-03. `good` excluded every errored run and the instability
+    check then compared the survivors only, so two clean runs where one crashed
+    left a single verdict compared with itself and exited 0 — the module's own
+    protocol, "two clean runs before any payload, always", satisfied by one run
+    plus a crash.
+
+    The table is still printed before the refusal: a crashed run is worth
+    seeing, and so is the row of the run that worked."""
     verifier_replay = pytest.importorskip("verifier_replay")
 
     rows = [

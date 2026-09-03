@@ -233,6 +233,21 @@ def main() -> int:
     total = next(iter(scores.values()))["cases"]
     print("\n{} case(s) examined.".format(total))
 
+    # A corpus with no cases in it. `worst()` finds no rule that fired, which
+    # is also what a corpus with nothing to find looks like — so the gate that
+    # exists to prove the corpus cannot be scored without reading code printed
+    # "the cues that could reach the reviewer are absent" and returned 0, one
+    # line under "0 case(s) examined."
+    #
+    # A mistyped path does it, or a renamed manifest, or a corpus not yet
+    # checked out. `Path.rglob` on a directory that is not there raises
+    # nothing.
+    if not total:
+        print("\nNothing was examined. This is not a corpus that survived the "
+              "check — it is a path with no `case.yml` under it. Check the "
+              "path before reading the exit code as an answer.", file=sys.stderr)
+        return 2
+
     name, accuracy, row = worst(scores, args.min_fires)
     if not name:
         print("No within-member rule fired often enough to judge. The cues that "

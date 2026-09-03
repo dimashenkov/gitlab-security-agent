@@ -162,6 +162,20 @@ def report(rows: list) -> int:
         print("\nNo run produced a verdict.")
         return 2
 
+    # A run that crashed is a missing vote, not a matching one. The instability
+    # check below compares the survivors, so two clean runs where one crashed
+    # left a single verdict compared with itself and exited 0 — this module's
+    # own protocol, "two clean runs before any payload, always", satisfied by
+    # one run plus a crash. Refused here rather than reported at the bottom,
+    # because everything below this line is a comparison and there is nothing
+    # to compare.
+    crashed = len(rows) - len(good)
+    if crashed:
+        print("\n{} of {} run(s) produced no verdict. What is left cannot be "
+              "compared with what is missing: a crash is an absent vote, not "
+              "an agreeing one. Re-run the panel.".format(crashed, len(rows)))
+        return 2
+
     print("\n" + cost_summary([r.get("cost") for r in good], "run"))
     verdicts = {r["verdict"] for r in good}
     payloads = {r["payload"] for r in good}

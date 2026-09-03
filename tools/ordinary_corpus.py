@@ -361,13 +361,65 @@ def changed_lines(diff: str) -> List[str]:
     over the whole hunk excludes the change for words its author never touched.
     The `+++`/`---` file headers are excluded for the same reason: they repeat
     the path, which the path rule already reads.
+
+    **The headers are found by position, not by prefix.** Skipping every line
+    that starts `---` or `+++` also skipped source lines whose own content began
+    with `--` or `++`: a removed SQL, Lua or Haskell comment, and a C-family
+    `--i` / `++i`. So `-` + `--i; // drop the session password check` was read
+    as a file header and never searched. In a unified diff a file header can
+    only stand *before* the first `@@` of its file, and everything after a `@@`
+    up to the next header is hunk body — which is a structural distinction, and
+    the one used here.
     """
-    out = []
+    out: List[str] = []
+    in_hunk = False
     for line in diff.splitlines():
-        if line.startswith(("+++", "---")):
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if not in_hunk:
             continue
         if line.startswith(("+", "-")):
             out.append(line[1:])
+        elif line and not line.startswith((" ", "\\")):
+            # Neither context (" "), nor the "\ No newline" note, nor empty (a
+            # context line some tools emit without its leading space). The hunk
+            # is over and the next file's headers have started.
+            in_hunk = False
+    return out
+
+
+# The headers git writes for a move. `files` carries the destination only —
+# `git show --name-only` prints one path for a rename — so a file moved *out*
+# of a privileged directory names its origin nowhere else in the record.
+MOVE_HEADERS: Tuple[str, ...] = (
+    "rename from ", "rename to ", "copy from ", "copy to ",
+)
+
+
+def moved_paths(diff: str) -> List[str]:
+    """Both ends of every rename or copy the diff declares.
+
+    Read here rather than folded into `files`, and treated by the path rule
+    rather than the content rule, because the fact is about a *location*:
+    moving `auth/token.py` to `pkg/greet.py` touches a privileged path whichever
+    direction it went, and `files` is the record's own field — a rule that
+    rewrote it would make the manifest's `files` count disagree with the input
+    it was derived from. Both ends are read, not only the origin: a file moved
+    *into* `auth/` is as much a change to that area as one moved out.
+
+    Unambiguous by construction: each of these headers carries exactly one path
+    to end of line, whereas `diff --git a/OLD b/NEW` cannot be split when a
+    path contains a space.
+    """
+    out: List[str] = []
+    for line in diff.splitlines():
+        for prefix in MOVE_HEADERS:
+            if line.startswith(prefix):
+                path = line[len(prefix):].strip()
+                if path:
+                    out.append(path)
+                break
     return out
 
 
@@ -383,15 +435,72 @@ def canonical(record: Dict[str, Any]) -> str:
     return json.dumps(record, sort_keys=True, ensure_ascii=False)
 
 
+def identity(repo: Any, commit: Any) -> Optional[Tuple[str, str]]:
+    """The one normalisation of a change's identity. Every call site uses it.
+
+    There is exactly one of these on purpose. When the same normalisation was
+    written out at each call site, `group_duplicates` stripped the repository
+    and lowercased the sha while `evaluate`, `order_hash` and the per-repository
+    cap used the raw strings, and the two disagreements had teeth:
+
+    * one project written twelve slightly different ways was twelve
+      repositories to the cap and to the `distinct_repositories` check, so a
+      sample of 30 could come entirely from one project and still be reported
+      `complete`; and
+    * upcasing a sha — which `missing_fields` accepts, because it validates
+      `commit.strip().lower()` — moved that candidate to a different position
+      in the order, which is a free re-roll of the sample per candidate.
+
+    The sha is hex, so case carries nothing. Repository *paths* are folded too:
+    the field is a `host/owner/name` path, GitHub and GitLab both resolve those
+    without regard to case, and the cost of folding two genuinely distinct names
+    together is one candidate out of an enlargeable pool, while the cost of not
+    folding them is the whole sample coming from one project.
+
+    Returns None when there is nothing to normalise — a repo or commit that is
+    not a string is not an identity, and callers must not invent one.
+    """
+    if not isinstance(repo, str) or not isinstance(commit, str):
+        return None
+    return repo.strip().lower(), commit.strip().lower()
+
+
 def order_hash(repo: str, commit: str) -> str:
     """Position in the sample, from the seed and the identity of the change.
 
     Not the date: dates let whoever chose the interval choose the sample. Not
     `random.shuffle`: that orders the list it is handed, so a differently
     ordered input would give a different sample from the same candidates.
+
+    The material is the *normalised* identity, so that no spelling of the same
+    commit can be tried until one of them lands in the sample.
     """
-    material = "{}\x00{}\x00{}".format(ORDER_SEED, repo, commit)
+    key = identity(repo, commit)
+    if key is None:
+        raise InputError(
+            "order_hash needs a repository and a commit as strings, got {!r} "
+            "and {!r}".format(repo, commit))
+    material = "{}\x00{}\x00{}".format(ORDER_SEED, key[0], key[1])
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+# A digest over the rule *code* was built here on 2026-09-03 and dropped after
+# four review rounds. The next person to have the idea should see that it was
+# had, built, and measured — but as a comment, not as a function nothing calls.
+#
+# Each round found the last one incomplete: the enumerated helper list missed
+# four functions; deriving the list from `co_names` missed the rule bodies
+# themselves; the serialiser missed defaults, then closures, then
+# positional-only arguments, then `co_exceptiontable`, and still mapped `[]`
+# and `()`, `{1}` and `frozenset({1})`, and any two instances of one class to
+# the same text.
+#
+# It was dropped because it added no safety, not because it was hard.
+# `generator_digest` is a hash of this whole file: every edit to a rule, a
+# helper or a constant already moves it, and `cmd_check` already refuses on it.
+# The behavioural digest could only have *classified* a change that was already
+# blocking — with a bespoke serialiser and a reachability walk that cannot
+# deliver what their existence implies.
 
 
 def rules_digest() -> str:
@@ -399,8 +508,23 @@ def rules_digest() -> str:
 
     Covers the constants themselves rather than the file, because the file also
     holds argument parsing and printing, and a changed help string is not a
-    changed rule. `generator_digest` covers the whole file for the reader who
-    wants the stronger statement.
+    changed rule.
+
+    **It identifies a change to the declared constants, and claims nothing
+    else.** It does not cover the code that applies them: measured 2026-09-03,
+    replacing `rule_sensitive_path` with one that excludes nothing left this
+    value unmoved while a change touching `auth/token.py` went from `excluded`
+    to `eligible`.
+
+    `generator_digest` — a hash of this whole file — is the freeze check.
+    Every edit to a rule, a helper or a constant moves it, and `cmd_check`
+    refuses on it. This digest exists to say *which kind* of edit happened, and
+    a reader deciding whether to trust a manifest reads the generator one.
+
+    A digest over the rule code was built for that gap and dropped after four
+    review rounds; the comment above this function says why. It could only have
+    classified a change that was already blocking, and could not do even that
+    soundly.
     """
     parts = [
         ORDER_SEED, repr(REPO_CAP_FRACTION), repr(MIN_REPOS),
@@ -412,6 +536,11 @@ def rules_digest() -> str:
         repr(DOC_PATH_MARKERS), repr(GENERATED_PATH_MARKERS),
         repr(RULE_ORDER), repr(UNDECIDABLE_RULES), repr(REQUIRED_FIELDS),
     ]
+    # `RULE_ORDER` above already carries the declared rule names and the order
+    # they fire in. `sorted(RULES)` was added beside it and does not: sorted, it
+    # cannot see a reordering, and it moves for an alias added to the runtime
+    # table — reporting "the declared rules have been edited" over a change to
+    # nothing declared.
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
@@ -487,7 +616,21 @@ def parse_commit_date(text: str) -> Optional[datetime]:
     None is a third answer here too: `committed_date` present but unparseable
     is not a date inside the interval, and the caller turns it into a refusal
     rather than into a pass.
+
+    The `Z` suffix is translated first, and it is not a nicety. `harvest` writes
+    git's `%cI`, and git prints `2026-01-01T00:00:00Z` — not `+00:00` — whenever
+    the committer's zone is UTC. `datetime.fromisoformat` rejects `Z` before
+    Python 3.11 (measured on 3.9.6, the interpreter this repository runs), so
+    on such an interpreter every record harvested from a UTC-committed history
+    came back `committed_date (not an ISO 8601 timestamp)` and the whole pool
+    was `undecidable`: 84 candidates in, 0 eligible, and the only visible sign
+    a single NOT MET line about a short sample. Found the moment `git_instant`
+    started letting midnight-UTC commits through — the two defects hid each
+    other, because the pool that triggers this one is the pool the old
+    `--since` was dropping.
     """
+    if isinstance(text, str) and text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
     try:
         moment = datetime.fromisoformat(text)
     except (TypeError, ValueError):
@@ -532,6 +675,16 @@ def missing_fields(record: Dict[str, Any]) -> List[str]:
             bad.append("commit (not a 40-character hex sha)")
         if not record["files"]:
             bad.append("files (empty; a change with no file is not a change)")
+        if not record["diff_text"].strip():
+            # The mirror of the `files` guard, and it was missing. Every content
+            # rule below reads this field; over an empty string each of them
+            # finds nothing and reports nothing found, and `diff_truncated:
+            # false` beside it says the diff was read whole. The two together
+            # read as "the content rules were checked and passed" over a record
+            # that answered none of them. The remedy is named, because it is
+            # actionable: re-harvest the record.
+            bad.append("diff_text (empty; the content rules cannot be checked "
+                       "over no diff — re-harvest this commit)")
         if any(not isinstance(p, str) or not p.strip() for p in record["files"]):
             bad.append("files (holds something that is not a path)")
         if any(not isinstance(lb, str) for lb in record["labels"]):
@@ -582,7 +735,10 @@ def rule_security_signal(record: Dict[str, Any], ctx: Dict[str, Any]) -> Optiona
 
 
 def rule_sensitive_path(record: Dict[str, Any], ctx: Dict[str, Any]) -> Optional[str]:
-    for path in record["files"]:
+    # The destinations the record lists, plus both ends of every declared move.
+    # A rename out of `auth/` leaves nothing in `files` and nothing in any added
+    # or removed line, so without the second half it is scored as ordinary.
+    for path in list(record["files"]) + moved_paths(record["diff_text"]):
         low = path.lower()
         for marker in SENSITIVE_PATH_MARKERS:
             if marker in low:
@@ -695,8 +851,8 @@ def evaluate(record: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     ceiling" are different pictures of the pool, and only the second one tells
     the operator which rule to argue with when the pool comes out too thin.
     """
-    repo = record.get("repo") if isinstance(record.get("repo"), str) else ""
-    commit = record.get("commit") if isinstance(record.get("commit"), str) else ""
+    key = identity(record.get("repo"), record.get("commit"))
+    repo, commit = key if key is not None else ("", "")
     row: Dict[str, Any] = {
         "repo": repo,
         "commit": commit,
@@ -769,10 +925,8 @@ def group_duplicates(records: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[str, 
     """
     groups: Dict[Any, List[Dict[str, Any]]] = {}
     for index, record in enumerate(records):
-        repo, commit = record.get("repo"), record.get("commit")
-        key = ((repo.strip(), commit.strip().lower())
-               if isinstance(repo, str) and isinstance(commit, str)
-               else ("\x00unidentified", index))
+        named = identity(record.get("repo"), record.get("commit"))
+        key = named if named is not None else ("\x00unidentified", index)
         groups.setdefault(key, []).append(record)
 
     unique, conflicts = [], []
@@ -817,6 +971,9 @@ def select(records: Sequence[Dict[str, Any]], ctx: Dict[str, Any],
     eligible.sort(key=lambda r: (r["order_hash"], r["repo"], r["commit"]))
 
     cap = max(1, math.ceil(target * REPO_CAP_FRACTION))
+    # Keyed on `row["repo"]`, which `evaluate` has already put through
+    # `identity`. Counting the raw string counted spellings, and a project
+    # written twelve ways filled 30 of 30 under a cap of 3.
     per_repo: Dict[str, int] = {}
     selected = []
     for row in eligible:
@@ -850,10 +1007,29 @@ def select(records: Sequence[Dict[str, Any]], ctx: Dict[str, Any],
         if row["disposition"] in ("excluded", "undecidable"):
             by_rule[row["rule"]] = by_rule.get(row["rule"], 0) + 1
 
+    # Commits, not rows: a contradiction produces one row per distinct form, and
+    # what the operator has to go and resolve is one commit.
+    contradicted = sorted({(r["repo"], r["commit"]) for r in rows
+                           if r["rule"] == "conflicting_records"})
+
     checks = [
         {"name": "sample_filled", "required": target,
          "observed": len(selected), "met": len(selected) == target,
          "remedy": "widen the date interval or add repositories to the pool"},
+        # `conflicting_records` was recorded on the row and read by nothing.
+        # That made a contradiction a *silent* exclusion: one extra record
+        # naming a commit already in the pool, with any single field changed,
+        # deleted that candidate and promoted the next one — and the run still
+        # said `complete: true`, and `check` reproduced it perfectly, because
+        # both derive from the same poisoned input. Whoever supplies candidates
+        # must not be able to choose the sample by contradicting themselves.
+        {"name": "no_contradicted_commits", "required": 0,
+         "observed": len(contradicted), "met": not contradicted,
+         "remedy": ("resolve the commits two records disagree about and "
+                    "re-harvest them; they are listed under "
+                    "`coverage.contradicted_commits`. Until then a candidate "
+                    "has been removed from the draw by something this program "
+                    "cannot adjudicate")},
         {"name": "distinct_repositories", "required": MIN_REPOS,
          "observed": len(repos), "met": len(repos) >= MIN_REPOS,
          "remedy": "add repositories; D-013 asks for at least ten"},
@@ -874,6 +1050,7 @@ def select(records: Sequence[Dict[str, Any]], ctx: Dict[str, Any],
         "label_evidence_unavailable": sum(
             1 for r in selected if r.get("label_evidence") == "unavailable"),
         "per_repo_cap": cap,
+        "contradicted_commits": ["{} {}".format(r, c) for r, c in contradicted],
         "checks": checks,
         "complete": all(c["met"] for c in checks),
     }
@@ -958,6 +1135,7 @@ def build_manifest(name: str, outcome: Dict[str, Any], ctx: Dict[str, Any],
             "repositories": outcome["per_repo"],
             "languages": outcome["languages"],
             "label_evidence_unavailable": outcome["label_evidence_unavailable"],
+            "contradicted_commits": outcome["contradicted_commits"],
             "checks": outcome["checks"],
         },
         "complete": outcome["complete"],
@@ -1061,10 +1239,36 @@ def repo_name(clone: Path) -> Tuple[str, str]:
     return re.sub(r"\.git$", "", url).strip("/"), "remote.origin.url"
 
 
+def git_instant(text: str, field: str) -> str:
+    """A boundary in the one form `git log` cannot fill in from somewhere else.
+
+    `git log --since=2026-01-01` does not mean midnight. git parses it with
+    approxidate, which fills the unspecified time of day from the operator's
+    *current clock* and the unspecified zone from their locale — so the same
+    command run at 14:00 silently starts the interval fourteen hours late, and
+    two operators in different zones harvest two different pools. `select`
+    meanwhile applies the same bare date at midnight UTC (`parse_day`), so the
+    first hours of the interval were simply never offered to it. Measured on
+    git 2.55.0: a commit at exactly 2026-01-01T00:00:00Z is dropped by
+    `--since=2026-01-01` and kept by the instant below, in every zone tried.
+
+    Built from `parse_day`, not formatted separately, so the two ends of the
+    program cannot drift apart again.
+    """
+    return parse_day(text, field).strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
 def harvest_clone(clone: Path, since: str, until: str,
                   read_limit: int) -> List[Dict[str, Any]]:
     name, source = repo_name(clone)
-    shas = git(clone, "log", "--since={}".format(since), "--until={}".format(until),
+    # `--until` is inclusive in git and exclusive in `select`, and there is no
+    # exclusive form to ask for. Harvesting one instant wide is the safe
+    # direction: a commit exactly on the upper boundary reaches the pool and
+    # `rule_outside_interval` then excludes it *on the record*, where it can be
+    # audited. Narrowing here would delete it with nothing written down.
+    shas = git(clone, "log",
+               "--since={}".format(git_instant(since, "since")),
+               "--until={}".format(git_instant(until, "until")),
                "--pretty=format:%H").split()
     out = []
     for sha in shas:
@@ -1142,6 +1346,12 @@ def report(manifest: Dict[str, Any]) -> None:
         "{} {}".format(k, v) for k, v in sorted(coverage["languages"].items()))
         or "none"))
     print("  repositories: {}".format(len(coverage["repositories"])))
+    if coverage.get("contradicted_commits"):
+        print("  {} commit(s) are described by records that disagree and were "
+              "removed from the draw:".format(
+                  len(coverage["contradicted_commits"])), file=sys.stderr)
+        for line in coverage["contradicted_commits"][:10]:
+            print("    {}".format(line), file=sys.stderr)
     if coverage["label_evidence_unavailable"]:
         print("  {} selected change(s) came from a source with no label "
               "channel — a human must confirm no upstream security label"
@@ -1256,10 +1466,18 @@ def cmd_check(args: argparse.Namespace) -> int:
                         "({} -> {})".format(manifest["generator"]["rules_digest"],
                                             now_rules))
     if manifest["generator"]["generator_digest"] != now_gen:
-        problems.append("the tool's source has changed since the freeze "
-                        "({} -> {}); harmless if the rules digest above "
-                        "holds".format(manifest["generator"]["generator_digest"],
-                                       now_gen))
+        problems.append(
+            # Not "harmless if the rules digest holds", which is what this line
+            # used to say and was false: the fixes that changed what the cap
+            # counts and which diff lines the content rules read left
+            # `rules_digest` at a74d2353568e97c2 byte for byte. This is a hash
+            # of the whole file and it is the only thing here that sees a
+            # change to the code applying the rules.
+            "the tool's source has changed since the freeze ({} -> {}). This "
+            "is a hash of the whole file; the rules digest sees only the "
+            "declared constants, so this is the one signal that the code "
+            "applying them moved. Read the diff before believing the manifest"
+            .format(manifest["generator"]["generator_digest"], now_gen))
 
     path = Path(args.candidates)
     if digest_file(path) != manifest["input"]["digest"]:

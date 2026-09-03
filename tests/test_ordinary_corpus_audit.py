@@ -1,9 +1,17 @@
 """Hostile audit of `tools/ordinary_corpus.py`.
 
-Every test here asserts the CORRECT behaviour and is marked `xfail(strict=True)`.
-A test that starts passing means the defect it names has been fixed and the mark
-must come off. A test that starts *failing to xfail* means the defect is back in
-a different shape.
+Every test here asserts the CORRECT behaviour.
+
+The eleven from the audit were written first as `xfail(strict=True)` over a
+defect that was live at the time, so each turned red the moment its defect went
+— that is what the strict marker is for, and it is why those assertions are not
+a description of the code. Every marker has come off: each of the eleven is
+fixed, and each test guards against its specific failure returning.
+
+The others were added alongside the fixes and were never xfails: the floor
+tests, which fail if a fix went too far, the freeze tests, and the last one in
+the file, which was not on the audit list at all — it came out of running the
+fixed `harvest` end to end and names a defect the interval fix had been hiding.
 
 Nothing here spends money: no `claude`, no network, no clone. `harvest` is
 exercised against a git repository built in `tmp_path`.
@@ -100,24 +108,32 @@ def write_pool(tmp_path, records):
 # ---------------------------------------------------------------------------
 # 1. The per-repository cap counts spellings, not repositories.
 #
-# `group_duplicates` (ordinary_corpus.py:773) normalises the identity with
-# `repo.strip()` / `commit.strip().lower()`. `evaluate` (:698) and the cap in
-# `select` (:827,:832) use the raw string. So one repository written twelve
-# slightly different ways is twelve repositories to the cap and to the
-# `distinct_repositories` check, and the sample can be drawn entirely from one
-# project while the manifest reports `complete: true`.
+# `group_duplicates` normalised the identity with `repo.strip()` /
+# `commit.strip().lower()`; `evaluate` and the cap in `select` used the raw
+# string. So one repository written twelve slightly different ways was twelve
+# repositories to the cap and to the `distinct_repositories` check, and the
+# sample could be drawn almost entirely from one project while the manifest
+# reported `complete: true`.
+#
+# Fixed 2026-09-03: `identity()` is the single normalisation and every call
+# site goes through it, `evaluate` stores the normalised pair on the row, and
+# the cap keys on that.
+#
+# The pool below carries twelve *genuine* repositories beside the twelve
+# spellings. The first version of this test offered the spellings alone and
+# asserted a full sample of thirty — which only holds while the defect is
+# present, because one repository under a cap of three can contribute three.
+# A fixture that cannot be satisfied by correct behaviour proves nothing, so
+# the sample is filled from elsewhere and the spelled project is held to the
+# cap like any other.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "select() keys the per-repository cap and the distinct_repositories check "
-    "on the raw `repo` string, while group_duplicates already strips it; one "
-    "project spelled with trailing spaces fills the whole sample"))
 def test_the_repo_cap_counts_repositories_not_spellings(ctx):
-    records = []
+    records = list(pool(n_repos=12, per_repo=4))
     for spelling in range(12):
         name = "host/only" + " " * spelling
         for c in range(3):
-            records.append(record(name, sha("{}:{}".format(spelling, c)),
+            records.append(record(name, sha("only:{}:{}".format(spelling, c)),
                                   files=[LANGUAGE_FILES[spelling % 6]]))
     outcome = oc.select(records, ctx, 30)
     assert len(outcome["selected"]) == 30
@@ -128,12 +144,120 @@ def test_the_repo_cap_counts_repositories_not_spellings(ctx):
             max(drawn.values()), len(outcome["selected"]),
             outcome["per_repo_cap"], outcome["complete"],
             len(outcome["per_repo"])))
+    # And it is one repository in the manifest's coverage table too, not
+    # twelve: `distinct_repositories` is checked against these keys.
+    assert [k for k in outcome["per_repo"] if k.strip() == "host/only"] \
+        in ([], ["host/only"])
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "order_hash() is computed over the raw repo/commit strings, so upcasing a "
-    "sha the record's own validator already lowercases re-rolls that "
-    "candidate's position in the sample"))
+class TestWhatTheFreezeActuallyRestsOn:
+    """`generator_digest` is the freeze check. `rules_digest` is a label.
+
+    A digest over the rule *code* was built for the gap between them and
+    dropped after four review rounds; the comment above `rules_digest` in
+    `tools/ordinary_corpus.py` records why. Each round found the last one
+    incomplete, and the honest verdict was that it added no safety at all: a
+    hash of the whole file already moves on every edit to a rule, a helper or a
+    constant, and `cmd_check` already refuses on it. The behavioural digest
+    could only have classified a change that was already blocking.
+
+    These tests assert what is true, which is less than what was claimed.
+    """
+
+    def test_the_digest_is_the_same_twice(self):
+        assert oc.rules_digest() == oc.rules_digest()
+
+    def test_a_changed_constant_moves_it(self, monkeypatch):
+        before = oc.rules_digest()
+
+        monkeypatch.setattr(oc, "REPO_CAP_FRACTION", 0.5)
+
+        assert oc.rules_digest() != before
+
+    def test_a_reordered_rule_moves_it(self, monkeypatch):
+        """`RULE_ORDER` is the declared name and order, and the order decides
+        which rule's reason is reported when several fire."""
+        before = oc.rules_digest()
+
+        monkeypatch.setattr(
+            oc, "RULE_ORDER", tuple(reversed(oc.RULE_ORDER)))
+
+        assert oc.rules_digest() != before
+
+    def test_an_alias_in_the_runtime_table_does_not_move_it(self, monkeypatch):
+        """`sorted(RULES)` was added beside `RULE_ORDER` and duplicated it
+        badly: sorted, it could not see a reordering, and it moved for a key
+        added to the runtime table — reporting "the declared rules have been
+        edited" over a change to nothing declared."""
+        before = oc.rules_digest()
+
+        monkeypatch.setitem(oc.RULES, "an_alias", oc.RULES["sensitive_path"])
+
+        assert oc.rules_digest() == before
+
+    def test_a_gutted_rule_body_does_NOT_move_it(self, monkeypatch):
+        """Stated as a test rather than left to a docstring, because this is
+        the gap somebody will otherwise rediscover and try to close again.
+
+        Replacing a rule with one that excludes nothing leaves this digest
+        exactly where it was. `generator_digest` is what catches that edit,
+        and `cmd_check` treats a mismatch in it as a problem in its own right —
+        not, as it once said, as "harmless if the rules digest holds".
+        """
+        before = oc.rules_digest()
+
+        def excludes_nothing(record, ctx):
+            return None
+
+        monkeypatch.setitem(oc.RULES, "sensitive_path", excludes_nothing)
+
+        assert oc.rules_digest() == before
+
+    def test_the_manifest_records_a_hash_of_the_whole_generator_file(
+            self, tmp_path, corpus):
+        """The one that actually holds the freeze — read out of the manifest,
+        not recomputed from `digest_file`.
+
+        The first version of this test asserted `digest_file(source)` equals
+        sha256 of the file, which is a test that `digest_file` is sha256. It
+        would have passed just as well if `build_manifest` had stopped putting
+        the generator's hash in the document at all.
+        """
+        import hashlib
+
+        _path, out = _select_manifest(tmp_path, corpus)
+        body = json.loads(out.read_text(encoding="utf-8"))
+        source = Path(oc.__file__).resolve()
+
+        assert body["generator"]["generator_digest"] == \
+            hashlib.sha256(source.read_bytes()).hexdigest()[:16]
+
+    def test_check_reports_a_changed_generator_digest_as_the_problem(
+            self, tmp_path, corpus, capsys):
+        path, out = _select_manifest(tmp_path, corpus)
+
+        # First: the untouched manifest checks clean. Without this, the
+        # refusal below could be any other validation failure and the test
+        # would pass while the generator digest went unread.
+        assert oc.main(["check", "--manifest", str(out), "--candidates",
+                        str(path), "--corpus", str(corpus)]) == 0
+        capsys.readouterr()
+
+        body = json.loads(out.read_text(encoding="utf-8"))
+        body["generator"]["generator_digest"] = "0" * 16
+        out.write_text(json.dumps(body), encoding="utf-8")
+
+        code = oc.main(["check", "--manifest", str(out), "--candidates",
+                        str(path), "--corpus", str(corpus)])
+        reported = capsys.readouterr()
+
+        assert code == 2
+        message = reported.out + reported.err
+        assert "the tool's source has changed" in message, message
+        # And it must not tell the operator to wave it through.
+        assert "harmless" not in message
+
+
 def test_upcasing_a_sha_does_not_move_a_candidate_in_the_order(ctx):
     lower = record("host/x", sha("a"))
     upper = record("host/x", sha("a").upper())
@@ -147,12 +271,14 @@ def test_upcasing_a_sha_does_not_move_a_candidate_in_the_order(ctx):
 
 
 # ---------------------------------------------------------------------------
-# 2. `check` compares case ids and nothing else.
+# 2. `check` compared case ids and nothing else. Fixed 2026-09-03.
 #
-# cmd_check (:1208-1212) builds `again`/`before` from `case_id` only. Every
-# other field of the manifest — the headline counts, the coverage block, the
-# `complete` verdict, `label_evidence` on each selected row, and the whole
-# `candidates` audit table — is never compared with what the rules produce.
+# `cmd_check` built `again`/`before` from `case_id` only, so every other field
+# of the manifest — the headline counts, the coverage block, the `complete`
+# verdict, `label_evidence` on each selected row, and the whole `candidates`
+# audit table — went uncompared, and "Reproduced" was printed over a document
+# that contradicted itself. It now rebuilds the whole manifest and compares it
+# field by field.
 # ---------------------------------------------------------------------------
 
 def _select_manifest(tmp_path, corpus, records=None):
@@ -215,15 +341,14 @@ def test_check_refuses_a_manifest_whose_rejection_table_was_rewritten(
 # ---------------------------------------------------------------------------
 # 3. A diff with no added or removed lines passes every content rule.
 #
-# `files: []` is refused at :534 ("a change with no file is not a change").
-# There is no matching guard on `diff_text`: rule_sensitive_change (:596) walks
-# an empty list of changed lines, finds nothing, and reports nothing found.
+# `files: []` is refused ("a change with no file is not a change"). There was
+# no matching guard on `diff_text`: rule_sensitive_change walked an empty list
+# of changed lines, found nothing, and reported nothing found.
+#
+# Fixed 2026-09-03: `missing_fields` requires a non-empty `diff_text`, so the
+# record is `undecidable` with a named remedy rather than silently taken.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "an empty diff_text with diff_truncated false is read as 'the content "
-    "rules were checked and passed'; missing_fields guards `files` being "
-    "empty but not `diff_text`"))
 def test_an_empty_diff_is_not_a_checked_diff(ctx):
     row = oc.select([record("host/x", sha("blank"), diff_text="",
                             files=["pkg/greet.py"])], ctx, 30)["rows"][0]
@@ -232,10 +357,9 @@ def test_an_empty_diff_is_not_a_checked_diff(ctx):
         "an ordinary change")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "a rename carries its sensitive origin only in `rename from`, which is "
-    "neither in `files` (rule_sensitive_path) nor an added/removed line "
-    "(rule_sensitive_change), so moving auth/token.py is 'ordinary'"))
+# Fixed 2026-09-03: `moved_paths()` reads `rename from`/`rename to`/`copy
+# from`/`copy to` out of the diff, and `rule_sensitive_path` checks both ends
+# of a move alongside the paths in `files`.
 def test_a_rename_out_of_a_sensitive_path_is_not_read_as_ordinary(ctx):
     renamed = record(
         "host/x", sha("rename"),
@@ -255,16 +379,16 @@ def test_a_rename_out_of_a_sensitive_path_is_not_read_as_ordinary(ctx):
 # 4. changed_lines() drops the content of any line that itself starts with
 #    `+` or `-`.
 #
-# changed_lines (:366-371) skips every diff line beginning `+++` or `---` to
-# drop the file headers. A *removed* source line whose own text starts with
-# `--` (a SQL/Lua/Haskell comment, a C-style `--i` decrement) becomes `---…`
-# and is skipped with them; an *added* line starting `++` becomes `+++…`.
+# changed_lines skipped every diff line beginning `+++` or `---` to drop the
+# file headers. A *removed* source line whose own text starts with `--` (a
+# SQL/Lua/Haskell comment, a C-style `--i` decrement) becomes `---…` and was
+# skipped with them; an *added* line starting `++` becomes `+++…`.
+#
+# Fixed 2026-09-03: the headers are found by position, not by prefix — a file
+# header can only stand before the first `@@` of its file, and changed_lines
+# now reads only hunk bodies.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "changed_lines() drops any removed line whose own content starts with "
-    "'--' along with the '---' file header, so removing a line about a "
-    "password is invisible to rule_sensitive_change"))
 def test_a_removed_line_starting_with_two_dashes_is_still_read(ctx):
     hidden = record("host/x", sha("dashes"), files=["pkg/greet.js"],
                     subject="tidy the counter", diff_text=(
@@ -282,9 +406,6 @@ def test_a_removed_line_starting_with_two_dashes_is_still_read(ctx):
         "recorded as {}".format(row["disposition"]))
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "the same hole on the added side: an added line whose content starts "
-    "with '++' becomes '+++…' and is dropped with the file header"))
 def test_an_added_line_starting_with_two_pluses_is_still_read(ctx):
     hidden = record("host/x", sha("pluses"), files=["pkg/greet.cs"],
                     subject="tidy the counter", diff_text=(
@@ -304,16 +425,16 @@ def test_an_added_line_starting_with_two_pluses_is_still_read(ctx):
 # ---------------------------------------------------------------------------
 # 5. A contradictory duplicate silently removes a candidate from the sample.
 #
-# group_duplicates (:788-802) turns both copies into `undecidable` and the run
-# continues. Adding one record with a single field changed is therefore a way
-# to drop any change the operator dislikes and promote the next one — and the
-# run still reports `complete: true`, and `check` reproduces it exactly.
+# group_duplicates turns both copies into `undecidable` and the run continued.
+# Adding one record with a single field changed was therefore a way to drop any
+# change the operator dislikes and promote the next one — and the run still
+# reported `complete: true`, and `check` reproduced it exactly, because both
+# derive from the same poisoned input.
+#
+# Fixed 2026-09-03: `no_contradicted_commits` is a coverage check with a named
+# remedy, and the commits in question are listed in the manifest.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "conflicting_records is recorded but no coverage check reads it, so a "
-    "poisoned input still produces `complete: true`; one extra record with a "
-    "changed subject removes any candidate from the sample"))
 def test_conflicting_records_make_the_sample_incomplete(ctx):
     records = pool(n_repos=12, per_repo=4)
     victim = oc.select(records, ctx, 30)["selected"][0]
@@ -383,13 +504,9 @@ def _harvest(tmp_path, clones_root, tz):
     return json.loads(out.read_text(encoding="utf-8"))
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "harvest hands --since/--until straight to `git log`, whose approxidate "
-    "fills the unspecified time of day from the operator's *current clock* "
-    "and the unspecified zone from their locale, while select applies the "
-    "same bare date at midnight UTC; the first several hours of the interval "
-    "never reach the pool. (Would xpass only if run inside the first second "
-    "of a UTC day.)"))
+# Fixed 2026-09-03: `git_instant()` turns the boundary into an explicit instant
+# with an explicit zone, built from the same `parse_day` `select` uses, so git
+# has no unspecified field left to fill from the operator's clock or locale.
 def test_harvest_reads_the_interval_from_midnight_utc(tmp_path):
     clones = tmp_path / "clones"
     clones.mkdir()
@@ -401,6 +518,42 @@ def test_harvest_reads_the_interval_from_midnight_utc(tmp_path):
         "harvest dropped commits that select's own interval calls inside it; "
         "`git log --since=2026-01-01` resolved to the current time of day on "
         "that date, not to midnight")
+
+
+# ---------------------------------------------------------------------------
+# 7. A UTC committer date came back from harvest unreadable.
+#
+# Found 2026-09-03 while verifying the fix above end to end, not from the
+# audit list. `harvest` writes git's `%cI`, and git prints `...T00:00:00Z` —
+# not `+00:00` — whenever the committer's zone is UTC. `parse_commit_date`
+# used `datetime.fromisoformat`, which rejects `Z` before Python 3.11 (3.9.6
+# here), so every such record was `record_incomplete` and the pool was 84
+# candidates with 0 eligible.
+#
+# The two defects hid each other: the pool that triggers this one is exactly
+# the pool the old bare-date `--since` was dropping, so it could not show up
+# until the interval was fixed. The existing suite missed it because its
+# fixture lets the committer date default to the machine's local zone, which
+# on this machine is not UTC and so never produces a `Z`.
+# ---------------------------------------------------------------------------
+
+def test_a_utc_committer_date_from_git_is_read_not_refused(tmp_path, ctx):
+    clones = tmp_path / "clones"
+    clones.mkdir()
+    build_clone(clones, "2026-03-04T10:00:00+00:00")
+    out = tmp_path / "candidates.json"
+    assert oc.main(["harvest", "--clones", str(clones), "--since", "2026-01-01",
+                    "--until", "2026-07-01", "--out", str(out)]) == 0
+    records = json.loads(out.read_text(encoding="utf-8"))
+    assert len(records) == 2
+    # This is what git actually writes, and the shape the defect choked on.
+    assert all(r["committed_date"].endswith("Z") for r in records), (
+        "the fixture no longer produces the UTC spelling this test is about")
+    assert all(oc.missing_fields(r) == [] for r in records), (
+        "harvest wrote a committed_date its own selector cannot read: {}".format(
+            [oc.missing_fields(r) for r in records]))
+    rows = oc.select(records, ctx, 30)["rows"]
+    assert not any(r["rule"] == "record_incomplete" for r in rows)
 
 
 # The time-zone half of the same defect is real but was NOT isolated into a

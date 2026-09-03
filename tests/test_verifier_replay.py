@@ -174,9 +174,19 @@ def test_a_run_that_produced_no_verdict_is_not_a_result(capsys):
 
 
 def test_a_failed_run_does_not_hide_the_ones_that_worked(capsys):
+    """What this is named for: the surviving run's row is still printed, and
+    so is the failure.
+
+    It also asserted `code == 0`, which encoded a defect — a crashed run is a
+    missing vote, not an agreeing one, and this module's protocol is "two clean
+    runs before any payload, always". One run plus a crash satisfied it and
+    exited 0. Changed to 2 on 2026-09-03; the display assertions, which are the
+    ones this test is about, are unchanged. See
+    `tests/test_absence_sweep.py::test_verifier_replay_is_not_green_when_a_run_produced_no_verdict`.
+    """
     code = report([run(run=0), {"run": 1, "error": "boom"}])
     out = capsys.readouterr().out
 
-    assert code == 0
+    assert code == 2
     assert "boom" in out
     assert "confirmed" in out

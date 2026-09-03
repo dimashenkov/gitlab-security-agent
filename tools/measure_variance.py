@@ -93,11 +93,19 @@ def run_once(args: argparse.Namespace, index: int) -> dict:
             "exit_code": proc.returncode, "payload": payload}
 
 
-def summarise(runs: list, provider: str = "claude-cli") -> None:
+def summarise(runs: list, provider: str = "claude-cli") -> int:
+    """Print the comparison, and return the exit code it earns.
+
+    Returns 0 for an answer, 2 for "not enough runs to compare". `main` used to
+    return 0 unconditionally, so a wrapper reading the exit code could not tell
+    "the gate is stable" from "nothing was measured" — the two answers this
+    repository exists to keep apart, in the tool that measures whether the gate
+    holds still.
+    """
     good = [r for r in runs if r["ok"]]
     if not good:
         print("every run failed; nothing to compare")
-        return
+        return 2
 
     print("\n{}\n{} of {} runs produced a report\n".format("=" * 78, len(good), len(runs)))
 
@@ -167,8 +175,28 @@ def summarise(runs: list, provider: str = "claude-cli") -> None:
                 or len(Counter(i["severity"] for i in items)) > 1
                 or 0 < blocking[fp] < len(good)]
     print("\n{} of {} findings varied between runs".format(len(unstable), len(seen)))
+
+    # One run cannot disagree with itself. Four crashes and a survivor printed
+    # "stable across 1 runs at this sample size" — agreement manufactured out
+    # of the four absences, in the tool that decides whether the gate holds
+    # still. The cost and exit-code rows above are honest for a single run;
+    # only the stability claim is not, so only it is withheld.
+    if len(good) < 2:
+        print("\nNot a measurement of stability: {} of {} run(s) produced a "
+              "report, and one run cannot disagree with itself.".format(
+                  len(good), len(runs)))
+        return 2
+
     if not unstable and len(exits) == 1:
         print("stable across {} runs at this sample size".format(len(good)))
+        if len(good) < len(runs):
+            # The claim is about the runs that reported, and the ones that did
+            # not are not evidence for it. Said beside the claim rather than
+            # further up, because this line is the one that gets quoted.
+            print("  over {} of {} run(s) — the {} that produced no report "
+                  "are not agreement".format(
+                      len(good), len(runs), len(runs) - len(good)))
+    return 0
 
 
 def _dist(counter: Counter) -> str:
@@ -230,12 +258,18 @@ def main() -> int:
     print("\nwall clock: {:.0f}s".format(time.monotonic() - started))
     runs.sort(key=lambda r: r["index"])
 
-    summarise(runs, args.provider)
+    code = summarise(runs, args.provider)
     if args.json:
+        # Written whatever the code. The payloads are what was paid for, and a
+        # run that could not be compared is still a run somebody bought.
         Path(args.json).write_text(json.dumps(
             [r.get("payload") for r in runs if r["ok"]], indent=2))
         print("\nraw payloads written to {}".format(args.json))
-    return 0
+    # `return 0` was unconditional here. A wrapper reading the exit code could
+    # not tell "the gate is stable" from "nothing was measured", which is the
+    # distinction this whole repository is built around — missing from the tool
+    # that measures whether the gate holds still.
+    return code
 
 
 if __name__ == "__main__":

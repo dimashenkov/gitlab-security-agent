@@ -61,12 +61,21 @@ def entry_dir(root: Path, ref: str) -> Path:
 
 
 def load_entries(root: Path) -> list:
-    """Every filed review, newest name last. Missing verdicts are not errors."""
+    """Every filed review, newest name last. Missing verdicts are not errors.
+
+    `rglob`, not `glob`. A ref is a branch name and branch names have slashes
+    in them: `add --ref feature/login` writes to `root/feature/login` — created
+    with `parents=True` — prints "filed feature/login", and a one-level glob
+    then never saw it again. The report either said "nothing filed" or, worse,
+    computed its percentage over whichever entries happened to be flat.
+    """
     entries = []
-    for verdict_file in sorted(root.glob("*/verdict.yml")):
+    for verdict_file in sorted(root.rglob("verdict.yml")):
         data = yaml.safe_load(verdict_file.read_text(encoding="utf-8")) or {}
         data["_dir"] = verdict_file.parent
-        data.setdefault("ref", verdict_file.parent.name)
+        # The path from the root, not the last segment: `feature/login` and
+        # `hotfix/login` are two refs and `.name` calls both of them `login`.
+        data.setdefault("ref", verdict_file.parent.relative_to(root).as_posix())
         entries.append(data)
     return entries
 
@@ -158,6 +167,24 @@ def _minutes(value) -> int:
         return 0
 
 
+def _verdict_key(value):
+    """Something that can be counted, whatever the file holds.
+
+    `verdict.yml` is edited by hand and YAML will give back whatever the shape
+    of the line suggests. `verdict:` followed by an indented list loads as a
+    list, and a `Counter` over a list raises `TypeError: unhashable type` — so
+    the fix that stopped an unreadable verdict vanishing from the report
+    replaced it with a crash, which loses the whole month of adjudication
+    rather than one finding.
+
+    A value that is not a recognised verdict is rendered as text and reported
+    as unreadable, whatever type it arrived as.
+    """
+    if isinstance(value, str) and value in VERDICTS:
+        return value
+    return repr(value)
+
+
 def report(root: Path) -> int:
     entries = load_entries(root)
     if not entries:
@@ -166,7 +193,23 @@ def report(root: Path) -> int:
 
     incomplete = [e for e in entries if not e.get("complete")]
     findings = [f for e in entries for f in (e.get("findings") or [])]
-    tally = Counter(f.get("verdict", "unadjudicated") for f in findings)
+    # A verdict this program does not recognise is its own answer. The default
+    # fires only when the *key* is absent, and `verdict.yml` is edited by hand:
+    # `verdict:` with nothing after it is YAML `None`, and `verdict: nto_real`
+    # is a typo. Both used to land in the tally under a name outside `VERDICTS`
+    # — so they were not counted as judged, not counted as unadjudicated, and
+    # not mentioned anywhere. The finding left the report, and the percentage
+    # was computed as though it had never been written down.
+    raw = Counter(_verdict_key(f.get("verdict", "unadjudicated"))
+                  for f in findings)
+    unreadable = {name: n for name, n in raw.items() if name not in VERDICTS}
+    # Folded into `unadjudicated` for the arithmetic, and named separately
+    # below for the reader. Both are needed and for different reasons: the
+    # table has to add up to the number of findings, or a finding has left the
+    # report; and "nobody judged this" is not the same statement as "somebody
+    # judged it and wrote something the file cannot carry".
+    tally = Counter({name: n for name, n in raw.items() if name in VERDICTS})
+    tally["unadjudicated"] += sum(unreadable.values())
     judged = sum(tally[name] for name in VERDICTS
                  if name not in ("unadjudicated", "unclear"))
     valuable = sum(tally[name] for name in VALUABLE)
@@ -188,6 +231,20 @@ def report(root: Path) -> int:
     print("-" * 30)
     for name in VERDICTS:
         print("{:<22}{:>8}".format(name, tally[name]))
+    if unreadable:
+        # A finding whose verdict nobody can read is not a finding nobody
+        # judged: somebody sat down and wrote something, and it did not survive
+        # the file. Counted with the unjudged so the table adds up, named here
+        # so the difference is not lost — the remedy is a one-character edit
+        # and nothing was telling anyone to make it.
+        print("\n{} of those are not unjudged — they carry a verdict this tool "
+              "cannot read, and are counted as unjudged only so nothing leaves "
+              "the table: {}. A typo, or a `verdict:` left empty. The choices "
+              "are {}.".format(
+                  sum(unreadable.values()),
+                  ", ".join("{!r} ({})".format(name, n) for name, n
+                            in sorted(unreadable.items(), key=lambda kv: repr(kv[0]))),
+                  ", ".join(VERDICTS)))
 
     if misses:
         # The column that stops this being a scoreboard of hits. A tool that

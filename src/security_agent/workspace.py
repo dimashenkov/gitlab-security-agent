@@ -845,6 +845,27 @@ class Workspace:
         hits, truncated = self._grep_stream(args)
         total = len(hits)
         if total == 0:
+            # `truncated` before the count. A search that ran out of time
+            # before keeping a single line kept zero lines, and the zero branch
+            # never looked — so "the reviewer asked whether this pattern occurs
+            # anywhere" was answered "it does not", over a search that was
+            # stopped. The truncation notice further down is reachable only
+            # when something was found, which is the case where it matters
+            # least.
+            #
+            # With no kept lines the cause can only be the deadline: `size` and
+            # `len(hits)` grow together, so neither ceiling can trip at zero.
+            if truncated:
+                # The phrase this refusal replaces must not appear in it. A
+                # model skimming a tool error for a summary can take the words
+                # out of the sentence that denies them, and the whole point is
+                # that those two words were never true here.
+                raise WorkspaceError(
+                    "the search for {!r} was stopped at the {}s limit before "
+                    "reading any of the repository. Nothing was established "
+                    "about this pattern in either direction. Narrow it with "
+                    "path_glob or a more specific pattern and ask again."
+                    .format(pattern, GIT_TIMEOUT_SECONDS))
             return "no matches for {!r}".format(pattern), 0
 
         shown = hits[:max_results]
