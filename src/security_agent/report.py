@@ -970,6 +970,52 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
     }
 
 
+def preflight_output_dir(requested: Path) -> None:
+    """Ask, before the money is spent, whether the report could be written.
+
+    `_safe_output_dir` ran inside `write_artifacts`, at the very end — so a
+    committed symlink at `.security-scan` let the whole review and every
+    verifier call finish and *then* exited 2 with nothing to show for them. The
+    destination is knowable at the start; only the contents are not.
+
+    Non-mutating on purpose. Creating the directory here would leave one behind
+    for every run that later fails on something else — a missing credential, a
+    bad revision — so the walk is done without `mkdir`, and the file names are
+    only asked about if the directory already exists.
+
+    This does not replace the check at write time and must not. The path can
+    change between the two, and the one that decides is the one next to the
+    write.
+    """
+    _refuse_symlinked_path(Path(requested))
+    directory = Path(requested)
+    if directory.is_dir():
+        _refuse_symlinked_targets(directory)
+
+
+def _refuse_symlinked_path(requested: Path) -> None:
+    probe = requested if requested.is_absolute() else Path.cwd() / requested
+    walked = Path(probe.anchor or ".")
+    for part in probe.parts[1:] if probe.anchor else probe.parts:
+        walked = walked / part
+        if walked.is_symlink():
+            raise ReportError(
+                "refusing to write the report through the symlink at {}. The "
+                "output path must not pass through a link the repository "
+                "controls; set SECURITY_SCAN_OUTPUT_DIR to a directory outside "
+                "the checkout.".format(walked)
+            )
+
+
+def _refuse_symlinked_targets(directory: Path) -> None:
+    for name in ("report.md", "findings.json"):
+        target = directory / name
+        if target.is_symlink():
+            raise ReportError(
+                "refusing to overwrite {}: it is a symlink, and the report "
+                "would be written to wherever it points.".format(target))
+
+
 def _safe_output_dir(requested: Path) -> Path:
     """Refuse to write the report through anything the repository controls.
 
@@ -984,25 +1030,9 @@ def _safe_output_dir(requested: Path) -> Path:
     checkout to avoid the question entirely.
     """
     requested = Path(requested)
-    probe = requested if requested.is_absolute() else Path.cwd() / requested
-    walked = Path(probe.anchor or ".")
-    for part in probe.parts[1:] if probe.anchor else probe.parts:
-        walked = walked / part
-        if walked.is_symlink():
-            raise ReportError(
-                "refusing to write the report through the symlink at {}. The "
-                "output path must not pass through a link the repository "
-                "controls; set SECURITY_SCAN_OUTPUT_DIR to a directory outside "
-                "the checkout.".format(walked)
-            )
-
+    _refuse_symlinked_path(requested)
     requested.mkdir(parents=True, exist_ok=True)
-    for name in ("report.md", "findings.json"):
-        target = requested / name
-        if target.is_symlink():
-            raise ReportError(
-                "refusing to overwrite {}: it is a symlink, and the report "
-                "would be written to wherever it points.".format(target))
+    _refuse_symlinked_targets(requested)
     return requested
 
 

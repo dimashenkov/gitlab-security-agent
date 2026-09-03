@@ -55,7 +55,12 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     from .agent import SecurityAgent
     from .briefing import build as build_briefing
     from .forge import publish
-    from .report import ReportError, render_markdown, write_artifacts
+    from .report import (
+        ReportError,
+        preflight_output_dir,
+        render_markdown,
+        write_artifacts,
+    )
     from .suppress import SuppressionError
     from .suppress import apply as apply_suppressions
     from .suppress import load as load_rules
@@ -67,7 +72,48 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     # was that did not happen; nothing here touches git.
     mode = args.mode or ("diff" if args.changed_only else cfg.resolve_mode())
 
+    root = Path(args.repo or ".").resolve()
+
+    # Whether the answer can be written down — and, before that, whether the
+    # directory it would be read from is one the repository controls.
+    #
+    # The only check on the destination lived inside `write_artifacts`, at the
+    # very end. Two things followed. A committed symlink at `.security-scan`
+    # let the whole review and every verifier call finish and then exited 2
+    # with nothing to show for the money. And `_reuse` *reads*
+    # `output_dir/findings.json` — so the same symlink could hand this run a
+    # crafted artifact and its exit code, and the write-time check never runs
+    # at all when reuse succeeds. Reading through a path the change controls is
+    # the worse half, so this goes above the reuse decision and not merely
+    # above the spending.
+    #
+    # Above the skip as well as above the spending: `_nothing_to_review`
+    # writes an artifact too, and an invariant with an exception is one
+    # nobody can rely on. `write_artifacts` still checks at the write —
+    # the path can change in between, and the check next to the write is
+    # the one that decides.
+    #
+    # The contents are not knowable here; the destination always was.
+    try:
+        preflight_output_dir(cfg.output_dir)
+    except ReportError as exc:
+        log.error("%s", exc)
+        return EXIT_ERROR
+
+
     if _skip_requested(cfg, args):
+        # The label waives the review of *this* change. It does not waive the
+        # question of whether this change rewrites the rules the *next* review
+        # runs under — those are different things, and only the first one is
+        # what the escape hatch was documented to do.
+        #
+        # The guard sat below this return, so a change that edited the prompts
+        # and carried the label merged green with the question never asked.
+        # Skipping your own review is scoped and logged; changing the judge is
+        # neither.
+        refused = _prompt_guard_before_skipping(cfg, args, root, mode)
+        if refused is not None:
+            return refused
         # Not a bare `return EXIT_OK`. That wrote no artifact at all, so the
         # note the *previous* run left on the merge request stayed up claiming
         # its verdict — a label meaning "do not review this" read afterwards as
@@ -76,7 +122,6 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         # same treatment.
         return _nothing_to_review(cfg, args, mode, _skipped_summary(args.skip_label))
 
-    root = Path(args.repo or ".").resolve()
     base, head = _resolve_range(cfg, root, mode, args)
     workspace = Workspace(root=root, excludes=cfg.excludes, diff_base=base,
                           default_context_lines=cfg.diff_context_lines,
@@ -198,27 +243,6 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         outcome.turns, len(candidates),
     )
 
-    # Layers 2 and 3 of the hallucination check. Layer 1 already ran inside
-    # `report_finding`, so everything here cites code that provably exists.
-    if candidates:
-        with _folded("verify", "Verifying {} finding(s)".format(len(candidates))):
-            if client is not None:
-                outcome.verification_usage = verify_candidates(
-                    cfg, workspace, client, candidates,
-                    provenance=outcome.provenance, metrics=outcome.metrics)
-            else:
-                # Through the same CLI, not the API. Splitting providers
-                # mid-review would mean one review's findings were read by two
-                # execution paths — and, worse here, that every successful local
-                # review still arrived with a bill, which is the one thing this
-                # provider exists to prevent.
-                from .verify_cli import verify_candidates_with_cli
-
-                verify_candidates_with_cli(
-                    cfg, workspace, candidates, budget, config_digest=digest,
-                    revision=outcome.revision, provenance=outcome.provenance,
-                    metrics=outcome.metrics)
-
     # A suppression the change itself adds cannot excuse that change.
     # Asked of git, not of the filtered file list. Three things were wrong with
     # the comparison this replaces, and the first alone meant the guard had
@@ -246,6 +270,45 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     outcome.suppressions_digest = _suppression_digest(rules)
     kept, suppressed = apply_suppressions(candidates, rules, self_added=ignore_touched)
     outcome.suppressed = suppressed
+    # Marked, not merely omitted. A candidate that skipped verification keeps
+    # the model default `confirmed`, and an artifact saying "confirmed" about a
+    # finding no verifier ever saw is a stronger claim than the run can make.
+    # "Accepted risk that an independent verifier confirmed" and "accepted risk
+    # whose verification was not bought" are different evidence, and the file
+    # has to be able to tell them apart.
+    for candidate in suppressed:
+        candidate.verdict_reason = (
+            "not verified — an active accepted-risk rule already excludes this "
+            "finding from the gate, so no verifier was bought for it")
+        outcome.metrics.verification_skipped += 1
+
+    # Layers 2 and 3 of the hallucination check. Layer 1 already ran inside
+    # `report_finding`, so everything here cites code that provably exists.
+    #
+    # Only what can still reach the gate. Verification ran over every
+    # candidate and the split happened afterwards, so verifier votes were
+    # bought for findings an unchanged, active rule already excluded and
+    # then thrown into `outcome.suppressed`. The rules were final before
+    # the review started; nothing about them needed the review's output.
+    if kept:
+        with _folded("verify", "Verifying {} finding(s)".format(len(kept))):
+            if client is not None:
+                outcome.verification_usage = verify_candidates(
+                    cfg, workspace, client, kept,
+                    provenance=outcome.provenance, metrics=outcome.metrics)
+            else:
+                # Through the same CLI, not the API. Splitting providers
+                # mid-review would mean one review's findings were read by two
+                # execution paths — and, worse here, that every successful local
+                # review still arrived with a bill, which is the one thing this
+                # provider exists to prevent.
+                from .verify_cli import verify_candidates_with_cli
+
+                verify_candidates_with_cli(
+                    cfg, workspace, kept, budget, config_digest=digest,
+                    revision=outcome.revision, provenance=outcome.provenance,
+                    metrics=outcome.metrics)
+
     outcome.refuted = [c for c in kept if c.verdict == VERDICT_REFUTED]
     outcome.reported = [c for c in kept if c.verdict != VERDICT_REFUTED]
 
@@ -454,6 +517,76 @@ def _skip_requested(cfg: Config, args: argparse.Namespace) -> bool:
         )
         return True
     return False
+
+
+def _prompt_guard_before_skipping(
+    cfg: Config, args: argparse.Namespace, root: Path, mode: str
+) -> Optional[int]:
+    """`EXIT_ERROR` when a skipped change edits the prompts, otherwise `None`.
+
+    The cheap case first, and it is the common one: prompts that live *outside*
+    the repository under review cannot be rewritten by a change to it, and
+    `prompt_dir_risk` returns `None` for exactly that reason. So the label
+    skips immediately, with no git and no diff — the escape hatch keeps working
+    on a shallow clone, a broken base, a detached head.
+
+    When the prompts are inside the tree, the range has to be resolved to learn
+    whether this change touched them, and a failure there raises out of here
+    rather than being caught: "the range could not be resolved" is not "the
+    prompts are untouched". Skipping on that answer would be a bypass with a
+    recipe — break the range, edit the prompts, add the label, take the green
+    pipeline. The cost is real and is accepted: with prompts in the tree, a
+    broken checkout cannot produce a skipped-and-green run.
+
+    The WARN half of `prompt_dir_risk` is deliberately not emitted here. Its
+    wording says this review is sound, and no review ran.
+    """
+    from .config import _inside, prompt_dir_risk
+
+    prompt_dir = cfg.resolved_prompt_dir().resolve()
+    if not _inside(prompt_dir, root):
+        return None
+
+    # `"diff"`, not the run's mode. `_resolve_range` returns no base for any
+    # other mode, `raw_changed_paths` is then empty, and the guard would have
+    # answered "nothing touched the prompts" about a change it never looked at
+    # — so `--mode repo` beside the label walked straight past it.
+    #
+    # Safe to force here in a way it would not be on the review path: this
+    # branch is only reached because the merge request carried a label, so
+    # there is a merge request, and the base comes from the forge or from the
+    # merge base with the default branch. Where neither exists there are no
+    # labels either, and `_skip_requested` is False.
+    try:
+        base, head = _resolve_range(cfg, root, "diff", args)
+    except WorkspaceError as exc:
+        # Re-worded, not swallowed. `_resolve_range`'s own message ends with
+        # "or use --mode repo to review the whole tree", which is useless
+        # advice to somebody already in repo mode and arrived at here for a
+        # different reason entirely. Still exit 2: the prompts are inside the
+        # tree and whether this change edits them could not be established,
+        # and that is not the same answer as "it does not".
+        raise WorkspaceError(
+            "the prompts are read from inside this repository, so a skipped "
+            "review still has to establish that this change does not edit "
+            "them — and the range to compare could not be resolved: {}\\n"
+            "Pass --base <sha>, or move the prompts outside the checkout with "
+            "SECURITY_SCAN_PROMPT_DIR.".format(exc)
+        ) from None
+    # Neither `excludes` nor `scope`: `raw_changed_paths` is the unfiltered
+    # list on purpose, and handing this question a filtered one is the defect
+    # this guard already had once — a committed exclude pattern must not be
+    # able to answer it.
+    probe = Workspace(root=root, diff_base=base, diff_head=head)
+    risk = prompt_dir_risk(prompt_dir, root, probe.raw_changed_paths())
+    if risk and risk.startswith("REFUSE"):
+        log.error("%s", risk[len("REFUSE: "):])
+        log.error(
+            "the %r label skips a review; it does not skip this.",
+            args.skip_label,
+        )
+        return EXIT_ERROR
+    return None
 
 
 def _resolve_range(
