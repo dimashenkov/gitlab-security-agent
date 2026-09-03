@@ -60,7 +60,7 @@ from artifact import (
     case_digest,
     load_adjudications,
     malformed_cases,
-    ruled_incidental,
+    rulings_for,
     signature,
 )
 from artifact import is_target as _is_target
@@ -446,10 +446,21 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
         # family in the same file. Without this the only ruling available
         # was to throw the whole case away, so a correct incidental in the
         # safe member failed a pair that discriminated perfectly.
-        excused = ruled_incidental(adjudications, case["case_id"], "safe")
+        excused = rulings_for(adjudications, case["case_id"], "safe")
         safe_hit = hits_target(members["safe"]["payload"], case,
                                excused=excused)
-        unsafe_hit = hits_target(members["unsafe"]["payload"], case)
+
+        # The broken member had no ruling applied to it at all, and one kind
+        # belongs here: a finding ruled `not_real` is a claim the reviewer got
+        # wrong, and `is_target` matches category and file only — so a wrong
+        # claim earned full credit for finding the advisory's weakness and
+        # could carry the pair. Only `not_real`. An *incidental* finding in the
+        # broken member is a correct lesser finding and says nothing about
+        # whether the target was found; excusing it here would be a second
+        # ruling nobody made.
+        refuted = rulings_for(adjudications, case["case_id"], "unsafe")
+        unsafe_hit = hits_target(members["unsafe"]["payload"], case,
+                                 excused=refuted)
 
         # Kept for every case, scored or not. `signature()` already extracts
         # exactly what a later question needs — whether the run finished, why it
@@ -463,12 +474,13 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
                 # contradicting each other inside one result: the safe member
                 # scored as not persisting while the row beside it still named
                 # the excused finding as the case's target — which is the field
-                # `stability.py` prints and `controls_agree` compares. Only the
-                # safe member, because that is where `hits_target` applies them;
-                # excusing in the unsafe member here would make the stored row
-                # disagree with `unsafe_target_recall` in the other direction.
+                # `stability.py` prints and `controls_agree` compares. Each
+                # member gets the rulings its own score used and no others:
+                # incidental excusals in the safe member, refutations in the
+                # broken one. Handing both members one list made the stored row
+                # disagree with the score it sits beside.
                 signature(members[member]["payload"], case,
-                          excused=excused if member == "safe" else ()),
+                          excused=excused if member == "safe" else refuted),
                 seconds=members[member]["seconds"],
                 cost=cost_of(members[member]["payload"]["usage"]),
                 usage=members[member]["payload"].get("usage", {}),
@@ -492,6 +504,15 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
                  # could only be written against its file — which
                  # excuses every finding in that file.
                  "fingerprint": f.get("fingerprint"),
+                 # The citation: file, line, and the quoted code the claim is
+                 # about. Dropped here until 2026-09-03, which made the stored
+                 # row unadjudicable — the one step this corpus needs from a
+                 # person is deciding whether a finding is right, and doing
+                 # that from a category and a title is deciding from prose.
+                 # Anyone ruling had to re-run the case or open the repository
+                 # by hand, and the rulings that exist were made by the model
+                 # that had the evidence in front of it and did not save it.
+                 "evidence": f.get("evidence"),
                  "blocking": f.get("fingerprint") in set(
                      payload.get("verdict", {}).get("blocking_fingerprints", []))}
                 for f in payload.get("findings", [])

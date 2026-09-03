@@ -46,7 +46,7 @@ from artifact import (
     legacy_case_digest,
     load_adjudications,
     malformed_cases,
-    ruled_incidental,
+    rulings_for,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -655,9 +655,18 @@ def _pair_passed(row: dict, case_id: str) -> bool:
     except (OSError, yaml.YAMLError):
         return row.get("pair_success") is True
 
-    excused = ruled_incidental(
-        load_adjudications(ROOT / "corpus-real"), case_id, "safe")
-    found = any(is_target(f, case) for f in unsafe)
+    adjudications = load_adjudications(ROOT / "corpus-real")
+    excused = rulings_for(adjudications, case_id, "safe")
+    # A finding ruled `not_real` in the broken member is a wrong claim, and
+    # `is_target` reads category and file only — so it earned full credit for
+    # finding the advisory's weakness. Applied here as well as in the scorer
+    # because this function decides the same question from a stored row, and a
+    # tracker that answers differently from the scorer is a second opinion
+    # nobody asked for.
+    refuted = rulings_for(adjudications, case_id, "unsafe")
+    found = any(is_target(f, case)
+                and f.get("fingerprint") not in refuted
+                for f in unsafe)
     persists = any(is_target(f, case)
                    and f.get("fingerprint") not in excused
                    for f in safe)

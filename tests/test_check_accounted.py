@@ -376,6 +376,12 @@ class TestAFailureThatStaysInTheSet:
     """
 
     def rule(self, root, **keys):
+        # A ruling that drops a case has to say why — `malformed_cases` and
+        # `rulings` both require it, since a row that removes a measurement
+        # without a reason is a deletion rather than a ruling. Supplied here so
+        # the fixture is a ruling the tool would actually accept.
+        if keys.get("case_is_malformed") and "why_malformed" not in keys:
+            keys["why_malformed"] = "the safe member carries the weakness"
         body = {"adjudications": [dict({"case_id": CASE, "member": "safe"},
                                        **keys)]}
         (root / "corpus-real" / "adjudications.yml").write_text(

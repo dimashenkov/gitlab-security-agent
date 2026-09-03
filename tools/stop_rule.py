@@ -37,7 +37,12 @@ from typing import Dict, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from artifact import instant
+from artifact import (
+    independence,
+    instant,
+    load_adjudications,
+    malformed_cases,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -131,6 +136,19 @@ def rates(rows: Dict[str, dict]) -> dict:
     }
 
 
+def without_malformed(rows: Dict[str, dict]) -> Dict[str, dict]:
+    """The rows left after the cases a ruling says cannot measure anything.
+
+    `pair_corpus`, `stage2` and `check_accounted` all drop these; this tool
+    counted them, so four readers of one corpus used two denominators and the
+    one that authorises stopping used the larger. Thirteen cases are ruled
+    malformed and nine of them have a stored row.
+    """
+    ruled = malformed_cases(ROOT / "corpus-real")
+    return {case_id: row for case_id, row in rows.items()
+            if case_id not in ruled}
+
+
 def verdict(counts: dict) -> Tuple[str, list]:
     """`stop`, `no catastrophe`, or `cannot say` — never `pass`.
 
@@ -150,12 +168,26 @@ def verdict(counts: dict) -> Tuple[str, list]:
         reasons.append("recall {:.0%} is below the {:.0%} floor".format(
             recall, RECALL_FLOOR))
     if alert > PATCHED_ALERT_CEILING:
-        reasons.append("alerts on the fix {:.0%} exceed the {:.0%} ceiling"
-                       .format(alert, PATCHED_ALERT_CEILING))
+        reasons.append(
+            "the fixed member still carries a finding of the target category "
+            "in {:.0%} of cases, over the {:.0%} ceiling — this is not a "
+            "false-alarm rate, see D-013".format(alert, PATCHED_ALERT_CEILING))
     return ("stop" if reasons else "no catastrophe"), reasons
 
 
-def render(counts: dict, decision: str, reasons: list) -> str:
+def render_without_verdict(counts: dict) -> str:
+    """The rates, and deliberately no answer.
+
+    A reading that rests on rulings the reviewer's own model made is worth
+    printing and must not carry a verdict — `LIMITATIONS.md` says no threshold
+    may be computed through them. Rendering it through `render()` would attach
+    "verdict: no catastrophe" to it, and a line saying "not evidence" printed
+    beside a verdict loses to the verdict every time.
+    """
+    return _table(counts)
+
+
+def _table(counts: dict) -> str:
     lines = ["{} case(s) with a usable latest row".format(
         max(counts["unsafe_total"], counts["safe_total"])), ""]
     lines.append("                     alerts   quiet")
@@ -167,18 +199,27 @@ def render(counts: dict, decision: str, reasons: list) -> str:
     for name, hits, total, floor, ceiling in (
             ("recall", counts["found"], counts["unsafe_total"],
              RECALL_FLOOR, None),
-            ("alert on the fix", counts["fired"], counts["safe_total"],
+            # Not "false alarms". `is_target` compares category and file and
+            # makes no judgement about whether the finding is correct, so this
+            # counts "the fixed file still carries a finding of this category"
+            # — which a correct reviewer produces too. Naming it a false-alarm
+            # rate is how the 40% ceiling came to be read as one.
+            ("category still in fix", counts["fired"], counts["safe_total"],
              None, PATCHED_ALERT_CEILING)):
         if not total:
-            lines.append("  {:<18} no usable rows".format(name))
+            lines.append("  {:<22} no usable rows".format(name))
             continue
         low, high = wilson(hits, total)
         bound = ("floor {:.0%}".format(floor) if floor is not None
                  else "ceiling {:.0%}".format(ceiling))
-        lines.append("  {:<18} {:>3}/{:<3} = {:>3.0%}   95% CI {:.0%}–{:.0%}"
+        lines.append("  {:<22} {:>3}/{:<3} = {:>3.0%}   95% CI {:.0%}–{:.0%}"
                      "   {}".format(name, hits, total, hits / total,
                                     low, high, bound))
-    lines.append("")
+    return "\n".join(lines)
+
+
+def render(counts: dict, decision: str, reasons: list) -> str:
+    lines = [_table(counts), ""]
     lines.append("  verdict: {}".format(decision))
     for reason in reasons:
         lines.append("    {}".format(reason))
@@ -188,16 +229,79 @@ def render(counts: dict, decision: str, reasons: list) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--rows", action="store_true",
                         help="list every contributing case")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     rows = latest_rows()
     counts = rates(rows)
     decision, reasons = verdict(counts)
+
+    # The rulings are read *before* anything is printed. They do not touch the
+    # verdict — that comes from the raw rows and from nothing else — but
+    # `load_adjudications` raises on unreadable or invalid YAML, and printing
+    # first meant the exception left stdout saying "no catastrophe" while the
+    # process exited 1, the code this tool documents as `stop`. Two answers
+    # from one run, and the louder one wrong.
+    unreadable = ruled_rows = report = ruled_counts = None
+    try:
+        # `without_malformed` reads the same file, so it belongs inside the
+        # same attempt. Leaving it outside was the first version of this fix
+        # and moved the crash three lines up without removing it.
+        ruled_rows = without_malformed(rows)
+        stored = load_adjudications(ROOT / "corpus-real")
+    except Exception as exc:                       # noqa: BLE001 — see below
+        # Deliberately broad — whatever a malformed rulings file does to the
+        # parser, the answer is the same. Narrow in *extent* instead: only the
+        # two calls that read the file are inside it. Wrapping the arithmetic
+        # too would have reported a bug in `rates` as "the rulings could not be
+        # read", which is a true-sounding sentence about the wrong thing.
+        unreadable = "{}: {}".format(type(exc).__name__, exc)
+    else:
+        # Only the rulings that *dropped* a case from this denominator.
+        # Filtering on the case id alone was the first version and counted
+        # every ruling about a dropped case — including excusals, which have
+        # nothing to do with which cases are here. Measured: one dropped case
+        # with a second, incidental ruling beside it reported "0 of 2".
+        dropped = set(rows) - set(ruled_rows)
+        report = independence([r for r in stored
+                               if r.get("case_id") in dropped
+                               and r.get("case_is_malformed") is True])
+        ruled_counts = rates(ruled_rows)
+
+    # The second reading is printed because four tools disagreeing over one
+    # corpus is worth seeing, and it decides nothing. An earlier version let it
+    # decide: it removed the cases a ruling had dropped and could return `stop`
+    # on what was left, while `LIMITATIONS.md` two files away said no threshold
+    # may be computed through those rulings. A prohibition written down and
+    # stepped over in the same change is worse than one never written.
     print(render(counts, decision, reasons))
+
+    if unreadable is not None:
+        # The verdict stands. The rulings feed the second reading and the
+        # second reading decides nothing, so a broken rulings file cannot
+        # unmake an answer that was computed without it. Turning this into
+        # `cannot say` was the first version of this fix, and it was worse than
+        # the crash it replaced: it could mask a raw `stop` behind exit 2.
+        print()
+        print("  the rulings could not be read: {}".format(unreadable))
+        print("  Only the second reading is missing. The verdict above was "
+              "computed\n  without the rulings and is unaffected.")
+    else:
+        print()
+        print("  and with the {} case(s) a ruling dropped as malformed removed"
+              " — the\n  denominator stage2 and check_accounted use:".format(
+                  len(rows) - len(ruled_rows)))
+        print(render_without_verdict(ruled_counts))
+        print("    No verdict from this reading. {} of {} rulings were made by "
+              "somebody who\n    did not produce the findings; see "
+              "LIMITATIONS.md.".format(report["independent"], report["total"]))
+        if verdict(ruled_counts)[0] != decision:
+            print("    It disagrees with the reading above. That is a question "
+                  "about the\n    corpus, not a second answer about the "
+                  "product.")
 
     if args.rows:
         print()

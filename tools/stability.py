@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from artifact import load_adjudications, ruled_incidental
+from artifact import load_adjudications, rulings_for
 from injection_corpus import Incomparable, controls_agree, signature
 from pair_corpus import build_repo, cost_of, cost_summary, load_cases, review
 
@@ -163,7 +163,12 @@ def main() -> int:
     print("{} identical run(s) of {}/{} — {} review(s)".format(
         args.runs, args.case, args.member, args.runs))
 
-    excused = ruled_incidental(
+    # `rulings_for`, not `ruled_incidental`: this tool measures whichever
+    # member is asked for, and the safe-member reader was called for both. A
+    # finding ruled `not_real` in the broken member stayed the target here
+    # while the pair scorer had dropped it, so one corpus row moved this number
+    # and not the headline one.
+    excused = rulings_for(
         load_adjudications(Path(args.cases)), args.case, args.member)
 
     with ThreadPoolExecutor(max_workers=max(1, min(args.concurrency, args.runs))) as pool:

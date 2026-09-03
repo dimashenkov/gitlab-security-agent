@@ -57,7 +57,7 @@ from artifact import (
     is_target,
     legacy_case_digest,
     load_adjudications,
-    ruled_incidental,
+    rulings_for,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,8 +74,17 @@ def _adjudications() -> list:
 
 
 def rulings() -> set:
+    """Cases a ruling has dropped, on the same terms `malformed_cases` uses.
+
+    Was `if r.get("case_is_malformed")` — truthy, so `"false"` dropped a case
+    here while `artifact.malformed_cases` and `_fingerprints` both read it as
+    not-malformed. One field, two accountings, and this one decides which
+    basket a case is reported in.
+    """
     return {r.get("case_id") for r in _adjudications()
-            if r.get("case_is_malformed")}
+            if r.get("case_is_malformed") is True
+            and isinstance(r.get("why_malformed"), str)
+            and r["why_malformed"].strip()}
 
 
 def known_failures() -> set:
@@ -166,9 +175,16 @@ def passed(row: dict, case: dict) -> bool:
         # agent missed the weakness — it has said nothing, and scoring it as a
         # failure would put a wrong answer where an absent one belongs.
         return None
-    excused = ruled_incidental(
-        load_adjudications(ROOT / "corpus-real"), row.get("case_id"), "safe")
-    found = any(is_target(f, case) for f in unsafe)
+    adjudications = load_adjudications(ROOT / "corpus-real")
+    case_id = row.get("case_id")
+    excused = rulings_for(adjudications, case_id, "safe")
+    # See `stage2.pair_passed`. A claim ruled `not_real` in the broken member
+    # matched on category and file and earned recall it did not deserve; the
+    # three readers of this question have to give one answer.
+    refuted = rulings_for(adjudications, case_id, "unsafe")
+    found = any(is_target(f, case)
+                and f.get("fingerprint") not in refuted
+                for f in unsafe)
     persists = any(is_target(f, case)
                    and f.get("fingerprint") not in excused
                    for f in safe)

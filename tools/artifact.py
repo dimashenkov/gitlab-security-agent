@@ -18,7 +18,7 @@ import hashlib
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -252,12 +252,47 @@ def load_adjudications(root) -> list:
     reported six pairs run where the scorer had excluded two of them.
     """
     path = Path(root) / ADJUDICATIONS
-    if not path.is_file():
+    # Absent means no rulings, which is an honest answer. Anything else that is
+    # not a readable file does not: a directory, a fifo, or a symlink pointing
+    # at nothing is a broken corpus, and `is_file()` said False for all of them
+    # and handed back an empty list — five tools then scored as though every
+    # ruling had been withdrawn. The shape this repository keeps finding in
+    # itself, in the reader for the file that decides what counts.
+    #
+    # `is_symlink()` is checked separately because `exists()` follows the link
+    # and reports False for a dangling one, which is indistinguishable here
+    # from nothing being there at all. It is not nothing: somebody pointed this
+    # name at a file and the file is gone.
+    if path.is_symlink() and not path.is_file():
+        raise OSError("{} is a symlink to nothing".format(path))
+    if path.exists() and not path.is_file():
+        raise OSError("{} is not a file".format(path))
+    if not path.exists():
         return []
     import yaml
 
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return list(data.get("adjudications") or [])
+
+
+def _fingerprints(adjudications, case_id: str, member: str, matches) -> list:
+    """The part every ruling reader shares, written once.
+
+    `case_is_malformed` is checked as `is not True`, matching
+    `malformed_cases`. The two readers used `not row.get(...)`, so
+    `case_is_malformed: "false"` — a truthy string — left the case in the
+    denominator *and* silently switched its finding-level ruling off. One
+    field, two answers, and neither of them the one the row was trying to give.
+    """
+    return [
+        row["fingerprint"]
+        for row in adjudications or []
+        if row.get("case_id") == case_id
+        and row.get("member") == member
+        and row.get("case_is_malformed") is not True
+        and row.get("fingerprint")
+        and matches(row)
+    ]
 
 
 def ruled_incidental(adjudications, case_id: str, member: str) -> list:
@@ -288,16 +323,125 @@ def ruled_incidental(adjudications, case_id: str, member: str) -> list:
     written, so the ruling for it cannot be precise until that case runs again
     — and the honest behaviour then is to leave the pair scored as it was and
     say why, rather than to widen the key until it fits.
+
+    **Only `verdict: real` excuses.** Incidental means the claim is correct and
+    about a lesser weakness than the advisory's. `not_real` says the reviewer
+    was *wrong*, and a wrong alert on the patched member is the very thing this
+    corpus counts — excusing it deletes a true false positive.
+    `php-p2ch-c2c3-4xm5-snap` already carries `not_real` and `incidental: true`
+    together, and is excused from nothing today only because its fingerprint
+    was never recorded; the day that case runs again, the old code would have
+    started forgiving a real false alarm.
+
+    Written as `== "real"` and not `!= "not_real"`, which was the first
+    version. That one let a ruling with no verdict at all — or `unclear`, or a
+    differently-cased `REAL` — excuse a finding by having said nothing about
+    it. Require the thing; do not forbid its opposite.
     """
-    return [
-        row["fingerprint"]
-        for row in adjudications or []
-        if row.get("case_id") == case_id
-        and row.get("member") == member
-        and row.get("incidental") is True
-        and not row.get("case_is_malformed")
-        and row.get("fingerprint")
-    ]
+    return _fingerprints(adjudications, case_id, member,
+                         lambda row: (row.get("incidental") is True
+                                      and row.get("verdict") == "real"))
+
+
+def ruled_false_alarm(adjudications, case_id: str, member: str) -> list:
+    """Findings a ruling says are **wrong**, whichever member they are in.
+
+    The other half of `ruled_incidental`, and it needs a separate name because
+    the two rulings mean opposite things and act in opposite directions:
+
+    | ruling | member | what it means | what it must do |
+    |---|---|---|---|
+    | `real` + `incidental` | safe | correct, but a lesser weakness | stop failing the pair |
+    | `not_real` | safe | the reviewer was wrong | **keep** failing the pair |
+    | `not_real` | unsafe | the reviewer was wrong | stop earning recall |
+
+    The third row is the reachable defect. A finding in the broken member that
+    matches the target category and file earns recall, and `is_target` reads
+    category and file only — so a claim ruled wrong still earns full credit for
+    finding the advisory's weakness. No stored row triggers it today (the one
+    unsafe ruling is `unclear`), which is timing, not a guard.
+
+    Same fingerprint key as `ruled_incidental`, and for the same reason: a
+    ruling names the finding it is about. Naming its file is a ruling about the
+    wrong thing.
+    """
+    return _fingerprints(adjudications, case_id, member,
+                         lambda row: row.get("verdict") == "not_real")
+
+
+def rulings_for(adjudications, case_id: str, member: str) -> list:
+    """Fingerprints that must not count as this case's target, in this member.
+
+    The one entry point, because five tools were each building this set for
+    themselves and no two agreed. `pair_corpus`, `stage2` and `check_accounted`
+    excused incidentals in the safe member; `stability` and `injection_corpus`
+    called the safe-member reader for whichever member they happened to be
+    measuring. So the same corpus row moved the stability number and not the
+    headline recall, and the first `not_real` ruling in a broken member would
+    have made the two disagree outright.
+
+    Which ruling applies is a property of the member, not of the caller:
+
+    - **safe** — `real` + `incidental`: a correct finding about a lesser
+      weakness. It must stop failing the pair.
+    - **unsafe** — `not_real`: a wrong claim that matched the coarse
+      category-and-file key. It must stop earning recall.
+
+    A correct incidental finding in the broken member excuses nothing: it says
+    the reviewer noticed something else as well, not that the target was
+    absent.
+
+    An unrecognised member is refused rather than defaulted. Written as
+    `if member == "unsafe": ... else: incidental` first, which meant a typo
+    picked the safe-member rule and then returned an empty list, because no row
+    matches a misspelt member either. Two wrong answers cancelling into a
+    plausible one is how this stays invisible.
+    """
+    if member == "safe":
+        return ruled_incidental(adjudications, case_id, member)
+    if member == "unsafe":
+        return ruled_false_alarm(adjudications, case_id, member)
+    raise ValueError(
+        "a pair has a safe and an unsafe member, not {!r}".format(member))
+
+
+# Nobody. Recorded as a set rather than a boolean because the question the
+# corpus needs answered is "how many rulings are independent", and an empty set
+# answers it in the same shape the answer will take when it stops being empty.
+INDEPENDENT_ADJUDICATORS = frozenset({"human"})
+
+
+def adjudicator(row: dict) -> str:
+    """Who made this ruling. `unrecorded` when the row does not say.
+
+    Not `human`, and not `model` either. A row that names no author is a row
+    whose author is unknown, and this repository's recurring defect is exactly
+    the step that reads a missing field as the reassuring value. `unrecorded`
+    is refused by `independence()` below for the same reason `unclear` is a
+    real answer in the product.
+    """
+    who = row.get("adjudicated_by")
+    return who if isinstance(who, str) and who else "unrecorded"
+
+
+def independence(adjudications) -> dict:
+    """How many rulings were made by somebody who did not produce the finding.
+
+    Established 2026-09-03: none of them were. The rulings in
+    `adjudications.yml` were written by the reviewer's own model in earlier
+    sessions and committed under the owner's git identity, and until that
+    changes no rate may be computed through them — see `LIMITATIONS.md`. This
+    function exists so the fact is a number a tool can print rather than a
+    sentence in a file somebody has to remember to read.
+    """
+    counts: Dict[str, int] = {}
+    for row in adjudications or []:
+        who = adjudicator(row)
+        counts[who] = counts.get(who, 0) + 1
+    independent = sum(n for who, n in counts.items()
+                      if who in INDEPENDENT_ADJUDICATORS)
+    return {"by": counts, "independent": independent,
+            "total": sum(counts.values())}
 
 
 def malformed_cases(root) -> dict:
@@ -309,11 +453,28 @@ def malformed_cases(root) -> dict:
     pair whose safe member still carries the advisory's own weakness cannot
     discriminate in either direction, and counting it as a failure records the
     corpus's defect against the product.
+
+    This is the most consequential thing a ruling can do — it removes a case
+    from the denominator, and nine of the seventy-eight are gone this way — and
+    until 2026-09-03 it asked for the least. `row.get("case_is_malformed")` is
+    truthy, so the string `"false"` ruled a case out; and `why_malformed`
+    defaulted to "adjudicated malformed", so a row could delete a measurement
+    without saying what was wrong with it. Both are now required: `is True`,
+    and a reason with words in it. A ruling that removes evidence has to say
+    why, or it is not a ruling, it is a deletion.
     """
-    return {
-        row["case_id"]: row.get("why_malformed", "adjudicated malformed")
-        for row in load_adjudications(root) if row.get("case_is_malformed")
-    }
+    ruled = {}
+    for row in load_adjudications(root):
+        if row.get("case_is_malformed") is not True:
+            continue
+        case_id = row.get("case_id")
+        why = row.get("why_malformed")
+        if not (isinstance(case_id, str) and case_id.strip()):
+            continue
+        if not (isinstance(why, str) and why.strip()):
+            continue
+        ruled[case_id] = why
+    return ruled
 
 
 def case_digest(case_dir) -> str:
@@ -579,11 +740,16 @@ def comparable(row: dict) -> bool:
 
     `exit_code` is the one field with no honest empty value. An empty
     `blocking` list means the run blocked on nothing and a `target` of `None`
-    means it reported no target finding: both are answers a run can give. An
-    absent exit code is not an answer — nothing recorded what the gate did, and
-    every run this module has ever written carries one.
+    means it reported no target finding: both are answers a run can give — but
+    only when the field is *there*. Requiring the exit code alone let
+    `{"exit_code": 0}` and `{"exit_code": 0}` compare equal while neither row
+    recorded what the gate blocked on or whether the target was found: three
+    comparisons, two of them between two absences, counted as agreement.
+    `signature()` writes all three today, so this needs a partial or legacy
+    row — which is exactly the row nobody notices.
     """
-    return row.get("exit_code") is not None
+    return (row.get("exit_code") is not None
+            and "blocking" in row and "target" in row)
 
 
 def controls_agree(first: dict, second: dict) -> bool:

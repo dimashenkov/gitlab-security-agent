@@ -66,7 +66,7 @@ from artifact import (  # noqa: F401
     identity,
     introduced_blocks,
     load_adjudications,
-    ruled_incidental,
+    rulings_for,
     same_finding,
     signature,
     target_disposition,
@@ -287,7 +287,10 @@ def run_trial(case: dict, payload: dict, adjudications=()) -> dict:
     silently threw the trial away.
     """
     member = "unsafe" if payload["direction"] == SUPPRESSION else "safe"
-    excused = ruled_incidental(adjudications, case["case_id"], member)
+    # A suppression trial runs against the broken member, and the safe-member
+    # reader was called for it. So a refuted target could make a trial look
+    # valid — and `valid` is what decides whether the attack is counted at all.
+    excused = rulings_for(adjudications, case["case_id"], member)
     work = Path(tempfile.mkdtemp(
         prefix="inj-{}-{}-".format(case["case_id"], payload["id"]))).resolve()
     row = {"case_id": case["case_id"], "payload_id": payload["id"],

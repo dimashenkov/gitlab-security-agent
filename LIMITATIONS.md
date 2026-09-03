@@ -543,3 +543,103 @@ expression's job.
 **Not fixed, and deliberately.** Adding secret cases to the corpus would
 measure a capability that should be delivered elsewhere, and buying that
 measurement costs real money. The honest entry is this one.
+
+## The adjudications are the reviewer grading its own work
+
+`corpus-real/adjudications.yml` holds 29 rulings — `real`, `not_real`,
+`incidental`, `case_is_malformed` — and they decide what counts. Established on
+2026-09-03, from `git log` and from the commit messages' own wording ("the
+ruling Codex stopped me from reversing"): **the assistant wrote them**, in
+earlier sessions, committed under the owner's git identity. The owner did not
+adjudicate. Nothing in the file says this.
+
+| | |
+|---|---|
+| who produced the finding | the model |
+| who ruled whether it is real | **the same model** |
+| who checked the ruling | Codex, on some of them |
+
+### What it invalidates
+
+Re-scoring the corpus through these rulings makes the numbers look much better
+and does not make them more true:
+
+| | cases | alerts on the fix |
+|---|---|---|
+| raw, latest row per case | 78 | 20 (26%) |
+| minus 9 ruled `case_is_malformed` | 69 | 11 |
+| minus findings ruled `incidental` | 69 | **1** |
+
+"1 of 69" rests entirely on rulings that are not independent. It is not a
+better number, it is a more convenient one, and the difference is the whole
+subject of this file. **26% stands** as the figure the stop rule uses: coarse,
+and free of the reviewer's opinion about its own output.
+
+The rulings remain useful for what they are — an explanation of why a row looks
+the way it does, and a record of reasoning that would otherwise be lost. They
+are not evidence, and no threshold may be computed through them.
+
+### The narrower defect underneath
+
+`safe_false_positive` is an alias for `safe_target_persistence`, and
+`artifact.is_target` matches on **category and file only** — there is no
+judgement of whether the finding is correct. A patched file nearly always still
+has something true to say in the same category, so the 26% is not a
+false-alarm rate at all; it is a "the fixed file still carries a finding of
+this category" rate. `tools/pair_corpus.py` says as much in its own comments,
+and `D-013`'s 40% ceiling was set against the number without that reading.
+
+### When the rulings apply, and when they do not
+
+The 26% above is **raw** — no ruling touched it — and that is an accident of
+dates, not a property of the tool. Verified 2026-09-03: all ten cases carrying
+an applicable excusal still read `alert: True` in their stored rows, because
+the rulings were written after those runs. `tools/stop_rule.py` reads the
+stored rows; `tools/pair_corpus.py` applies the rulings while it scores. So the
+same corpus yields 20 alerts from the file and 10 from a fresh run, and nothing
+on a row says which kind of number it is.
+
+`tools/stop_rule.py` also counts nine cases that `stage2` and
+`check_accounted` drop as `case_is_malformed`. Three tools, three
+denominators, one corpus. It prints both readings and takes its verdict from
+**the raw one only** — the second carries no verdict at all, and the line under
+it names how many of the rulings behind it are independent (zero). Printed
+because four tools disagreeing over one corpus is worth seeing; unanswered
+because a note saying "not evidence" beside a verdict loses to the verdict.
+
+That was not the first version. The first removed the ruled cases and could
+return `stop` on what was left — computing a threshold through the rulings two
+files from the sentence forbidding it. Caught by Codex at the commit gate. A
+prohibition written down and stepped over in the same change is worse than one
+never written, and this is the second time in one day that a rule here was
+recorded and not enforced.
+
+### Three defects fixed the day this was written, and one that was already dead
+
+- `ruled_incidental` ignored `verdict` entirely, so a ruling saying the
+  reviewer was **wrong** (`not_real`) instructed the scorer to *excuse* the
+  alert — deleting a true false positive. `php-p2ch-c2c3-4xm5-snap` carries
+  exactly that pair of keys and was saved only by never having had a
+  fingerprint recorded. Now only `verdict: real` excuses.
+- Nothing applied any ruling to the broken member, so a finding ruled
+  `not_real` there earned full recall credit and could carry a pair on its own.
+  `artifact.ruled_false_alarm` is the reader for it and `pair_corpus` calls it.
+- `case_is_malformed` — which removes a case from the denominator outright, and
+  has removed thirteen — accepted a truthy value and defaulted the reason to
+  "adjudicated malformed". `rs-g9hv-x236-4qp3-snap` had its real reason written
+  under `note:`, a field no code reads, and was excluded on the default for a
+  day. Both are now required.
+
+### What would fix the whole entry
+
+Blind adjudication by somebody who did not produce the findings, on a sample
+large enough to carry a rate. `adjudicated_by: human` is the field that would
+record it, `artifact.independence()` counts them, and the count is zero. Until
+it is not, the honest reading is that this corpus measures **discrimination
+between a vulnerable file and its patched twin**, and that no false-alarm rate
+has been established by anyone but the model itself.
+
+`adjudicated_by` is self-attested: a row saying `human` is a claim, not a
+proof, and nothing here can tell a person's ruling from a model's. It is worth
+recording anyway, because "unrecorded" and "model" and "human" are three
+different states and the file used to show none of them.

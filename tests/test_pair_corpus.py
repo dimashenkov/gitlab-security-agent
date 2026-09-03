@@ -238,11 +238,48 @@ TRAVERSAL_CASE = {"case_id": "one", "expected_category": ["path-traversal"],
 
 LESSER_FINDING = {"category": "path-traversal", "file": "lib/websocket.rb",
                   "severity": "low", "fingerprint": "aa11bb22cc33dd44",
-                  "title": "the response code leaks existence"}
+                  "title": "the response code leaks existence",
+                  "evidence": "lib/websocket.rb:88  return [403, {}, []]"}
 
 REAL_FINDING = dict(LESSER_FINDING, severity="high",
                     fingerprint="ffee0099aabbccdd",
-                    title="arbitrary file read through traversal")
+                    title="arbitrary file read through traversal",
+                    evidence="lib/websocket.rb:91  File.read(params[:path])")
+
+
+def test_the_stored_row_keeps_the_citation_a_ruling_is_made_from(
+        tmp_path, monkeypatch):
+    """A finding is adjudicated from its evidence, not from its title.
+
+    The summary kept category, file, severity, title and fingerprint and threw
+    the citation away, so the artifact a person is supposed to rule against did
+    not contain the thing the ruling is about. Titles are reworded every run —
+    that is why the fingerprint stopped being built from prose — and a row of
+    reworded prose is a row nobody can check without paying to run the case
+    again. The 29 rulings that exist were made by the model while it still had
+    the evidence in front of it, which is exactly the dependence
+    `LIMITATIONS.md` now records.
+    """
+    import pair_corpus
+
+    case_dir = tmp_path / "one"
+    (case_dir / "safe").mkdir(parents=True)
+    (case_dir / "unsafe").mkdir()
+    usage = dict.fromkeys(("input_tokens", "output_tokens",
+                           "cache_read_tokens", "cache_write_tokens"), 0)
+    payload = {"complete": True, "usage": usage, "findings": [LESSER_FINDING],
+               "verdict": {"exit_code": 0, "blocking_fingerprints": []}}
+    monkeypatch.setattr(pair_corpus, "build_repo",
+                        lambda *a, **k: (tmp_path, "base", "head"))
+    monkeypatch.setattr(pair_corpus, "review", lambda *a, **k: {
+        "ok": True, "seconds": 0.0, "exit_code": 0, "payload": payload})
+
+    row = pair_corpus.run_case(dict(TRAVERSAL_CASE, _dir=case_dir))
+
+    for key in ("safe_findings", "unsafe_findings"):
+        stored = row[key]
+        assert stored, "{} is empty".format(key)
+        assert stored[0]["evidence"] == LESSER_FINDING["evidence"]
 
 
 def test_a_finding_ruled_incidental_no_longer_fails_the_pair():
@@ -295,22 +332,28 @@ def test_a_ruling_with_no_fingerprint_excuses_nothing():
 def test_the_ruling_is_read_from_the_file_and_not_merely_written_in_it():
     """`incidental: true` sat in `adjudications.yml` and no code read it. A
     decision recorded and not enforced is the defect this repository keeps
-    finding in itself, and it was in the file where the decisions live."""
+    finding in itself, and it was in the file where the decisions live.
+
+    Every ruling here carries `verdict: real`, as every live incidental ruling
+    does. Incidental means the claim is *correct* and about a lesser weakness;
+    a ruling that does not say so excuses nothing — see
+    `tests/test_adjudication_independence.py`.
+    """
     from artifact import ruled_incidental
 
     rulings = [
         {"case_id": "one", "member": "safe", "fingerprint": "aa11",
-         "incidental": True},
+         "verdict": "real", "incidental": True},
         {"case_id": "two", "member": "safe", "fingerprint": "bb22",
-         "incidental": True},
+         "verdict": "real", "incidental": True},
         # A finding in the *unsafe* member is the target being found, which is
         # the pair working.
         {"case_id": "one", "member": "unsafe", "fingerprint": "cc33",
-         "incidental": True},
+         "verdict": "real", "incidental": True},
         # Ruled malformed instead, which drops the whole case elsewhere. It
         # must not also quietly excuse a finding.
         {"case_id": "one", "member": "safe", "fingerprint": "dd44",
-         "incidental": True, "case_is_malformed": True},
+         "verdict": "real", "incidental": True, "case_is_malformed": True},
     ]
 
     assert ruled_incidental(rulings, "one", "safe") == ["aa11"]
@@ -372,7 +415,7 @@ def test_the_runner_stores_the_row_it_scored_with(tmp_path, monkeypatch):
 
     row = pair_corpus.run_case(
         dict(TRAVERSAL_CASE, _dir=case_dir),
-        adjudications=[{"case_id": "one", "member": "safe",
+        adjudications=[{"case_id": "one", "member": "safe", "verdict": "real",
                         "fingerprint": "aa11bb22cc33dd44", "incidental": True}])
 
     assert row["safe_target_persistence"] is False
