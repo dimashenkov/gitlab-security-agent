@@ -269,6 +269,182 @@ def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
+# The files the review actually loads. `verifier.md` is checked even though a
+# run with verification off never opens it: the guard's subject is the
+# directory a change can reach, not whichever files this particular run happens
+# to read.
+PROMPT_FILES = ("system.md", "verifier.md", "findings.schema.json")
+
+
+class PromptRisk:
+    """What the guard concluded, as a value rather than a sentence to parse.
+
+    The old shape returned `None`, a warning string, or a string beginning
+    `"REFUSE"`, and every caller re-derived the verdict from the first six
+    characters. A refusal that loses its prefix in a reformat is then a
+    warning, silently.
+    """
+
+    __slots__ = ("baseline", "differing", "message", "verdict")
+
+    def __init__(self, verdict, message="", baseline="", differing=()):
+        self.verdict = verdict          # "clear" | "warn" | "refuse"
+        self.message = message
+        self.baseline = baseline
+        self.differing = list(differing)
+
+    @property
+    def refused(self):
+        return self.verdict == "refuse"
+
+    def to_dict(self):
+        return {"verdict": self.verdict, "baseline": self.baseline,
+                "differing": list(self.differing)}
+
+
+def _under_repo(named: Path, repo_root: Path):
+    """`(anchor, suffix)` when `named` is inside `repo_root`, else `None`.
+
+    `anchor` is the repository root *spelled the way `named` spells it*, and
+    `suffix` are the components below it, unresolved. Both halves are needed
+    and they pull in opposite directions: the containment decision has to be
+    canonical, and the symlink walk has to be lexical, because a link is
+    exactly what canonicalising destroys.
+
+    Comparing a resolved root against an unresolved path is the defect this
+    replaces, and it was not theoretical. On macOS `/tmp` is a symlink to
+    `/private/tmp`, so a checkout at `/tmp/x/repo` gave
+
+        repo_root -> /private/tmp/x/repo
+        named     -> /tmp/x/repo/prompts
+
+    which shares no prefix — and the guard returned "clear" over a prompt
+    directory sitting inside the repository under review, the exact reverse of
+    what it exists for. Verified on this machine before the fix.
+
+    So the root is found by walking `named`'s own ancestors until one *is* the
+    repository, asked with `os.path.samefile` — the same inode, whatever the
+    two paths are spelled like. That also settles case-insensitive
+    filesystems, where `/repo` and `/REPO` are one directory and two strings.
+    """
+    named = Path(os.path.abspath(str(named)))
+
+    def same(left: Path, right: Path) -> bool:
+        try:
+            return os.path.samefile(str(left), str(right))
+        except OSError:
+            # One of them does not exist. Fall back to the canonical spelling;
+            # a path that is not there cannot be the repository root anyway,
+            # and answering "not the same" is the safe direction only because
+            # the caller reads `None` as "outside", where the guard has nothing
+            # to say. See the docstring of `prompt_content_risk`.
+            return os.path.realpath(str(left)) == os.path.realpath(str(right))
+
+    suffix = []
+    walk = named
+    while True:
+        if same(walk, repo_root):
+            return walk, list(reversed(suffix))
+        if walk.parent == walk:            # reached the filesystem root
+            return None
+        suffix.append(walk.name)
+        walk = walk.parent
+
+
+def prompt_content_risk(prompt_dir, repo_root, resolve_baseline, at_baseline):
+    """Are the prompts the review will load the ones the baseline had?
+
+    Asked of **bytes on disk**, not of a list of changed paths. The path list
+    answered a question one step away from the real one: the prompts are read
+    from the filesystem — `agent.py` and `verify.py` open them and
+    `_provenance` hashes them there — so an edit present in the checkout and in
+    no commit changed what the model was told and appeared in no diff, in any
+    mode. That is not an exotic case; it is what an unclean working tree is.
+
+    `resolve_baseline()` yields the revision the content is held against, and
+    choosing it belongs to the caller because only the caller knows whether a
+    change is claimed: the merge request's base where there is one, and `HEAD` otherwise
+    — which can then only mean "nothing uncommitted has touched these".
+
+    `at_baseline(path)` returns the bytes that path held at that revision, or
+    `None` where it held none. A prompt file that did not exist at the baseline
+    is a refusal, not a pass: a file this change added is as much its choice as
+    one it edited.
+    """
+    inside = _under_repo(prompt_dir, repo_root)
+    if inside is None:
+        # Nothing in the repository names it. Not a statement that the
+        # directory is trustworthy — only that this change cannot have chosen
+        # it.
+        return PromptRisk("clear")
+
+    # Named inside the tree, so every component from the root down is
+    # something the change can rewrite. A link anywhere in that chain is
+    # refused rather than followed: following it is the bypass, and resolving
+    # it and comparing the destination is the same bypass with more steps.
+    anchor, suffix = inside
+    walked = anchor
+    for part in suffix:
+        walked = walked / part
+        if walked.is_symlink():
+            return PromptRisk(
+                "refuse",
+                "the prompt directory is reached through the symlink at {}, "
+                "which this repository controls — so the change chooses which "
+                "files the review runs under by choosing where the link "
+                "points. Point SECURITY_SCAN_PROMPT_DIR at a real directory "
+                "outside the checkout.".format(walked))
+    prompt_dir = walked
+    repo_root = anchor
+
+    # Resolved here and not before: a caller that touched git first would pay
+    # for a revision — and fail on a broken one — to answer a question that
+    # ends at the line above. `resolve_baseline` is a callable for exactly that
+    # reason, so the containment check has one home rather than two.
+    baseline = resolve_baseline()
+    if not baseline:
+        # In-tree prompts and nothing to hold them against. "Could not check"
+        # is not "unchanged", and this is the guard whose whole subject is a
+        # party that supplies its own evidence.
+        return PromptRisk(
+            "refuse",
+            "the prompts are read from {}, inside the repository under review, "
+            "and there is no revision to compare them against — so nothing "
+            "establishes that this change did not write them. Point "
+            "SECURITY_SCAN_PROMPT_DIR outside the checkout.".format(prompt_dir))
+
+    relative = prompt_dir.relative_to(repo_root)
+    differing = []
+    for name in PROMPT_FILES:
+        path = prompt_dir / name
+        try:
+            disk = path.read_bytes() if path.is_file() else None
+        except OSError:
+            disk = None
+        key = name if str(relative) == "." else "{}/{}".format(relative, name)
+        if disk != at_baseline(key):
+            differing.append(key)
+
+    short = baseline[:12] or baseline
+    if differing:
+        return PromptRisk(
+            "refuse",
+            "this change alters {}, and those files are the prompts this "
+            "review would run under — it would be judged by rules it wrote. "
+            "Compared against {}, over what is on disk and not only what was "
+            "committed. Point SECURITY_SCAN_PROMPT_DIR at the agent's own "
+            "prompts, outside the checkout, or review this change with a "
+            "trusted build.".format(", ".join(differing), short),
+            baseline=baseline, differing=differing)
+
+    return PromptRisk(
+        "warn",
+        "the prompts are being read from {}, inside the repository under "
+        "review. They are byte-for-byte what {} had, so this review is sound — "
+        "but the directory is one a change can reach.".format(prompt_dir, short),
+        baseline=baseline)
+
+
 def prompt_dir_risk(prompt_dir: Path, repo_root: Path,
                     changed: Sequence[str]) -> Optional[str]:
     """Can the change under review rewrite the rules used to review it?
@@ -632,6 +808,22 @@ class Config:
             return self.mode
         return "diff" if self.gitlab.is_merge_request else "repo"
 
+    def named_prompt_dir(self) -> Path:
+        """The prompt directory as *configured*, with no symlink followed.
+
+        `resolved_prompt_dir` ends in `.resolve()`, which is right for opening
+        files and wrong for the guard: a `prompts` symlink committed in the
+        repository resolved to wherever it pointed, and the containment check
+        then asked about the destination instead of about the link. The change
+        chose the prompts by choosing where the link went, and the guard said
+        the directory was none of the repository's business.
+
+        Absolute, so a relative `--prompt-dir` is comparable against the
+        repository root, and lexical, so `..` collapses without touching the
+        filesystem.
+        """
+        return Path(os.path.abspath(str(self._first_prompt_candidate())))
+
     def resolved_prompt_dir(self) -> Path:
         """Locate the prompt directory — never inside the repository under review.
 
@@ -660,11 +852,27 @@ class Config:
         # Installed layout: site-packages/security_agent/ -> /opt/security-agent/prompts
         candidates.append(Path("/opt/security-agent/prompts"))
 
+        return self._first_prompt_candidate().resolve()
+
+    def _first_prompt_candidate(self) -> Path:
+        """The first candidate that holds a prompt set, unresolved.
+
+        One search, two callers: `resolved_prompt_dir` follows symlinks because
+        it is used to open files, and `named_prompt_dir` does not because the
+        guard's question is about the path the repository can name. Two copies
+        of this loop would be two answers to "which directory is it".
+        """
+        candidates = []
+        if self.prompt_dir:
+            candidates.append(Path(self.prompt_dir))
+        candidates.append(Path(__file__).resolve().parents[2] / "prompts")
+        candidates.append(Path("/opt/security-agent/prompts"))
+
         for candidate in candidates:
             if (candidate / "system.md").is_file() and (
                 candidate / "findings.schema.json"
             ).is_file():
-                return candidate.resolve()
+                return candidate
 
         raise ConfigError(
             "cannot find the prompt directory (needs system.md and "

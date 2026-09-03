@@ -9,7 +9,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence
 
 from . import __version__
 from .config import PROVIDER_API, PROVIDER_CLI, PROVIDERS, Config, ConfigError
@@ -137,16 +137,12 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     # so an exclude pattern or a `--path` covering the prompt directory
     # answered it. Both are the same defect: a guard whose input the guarded
     # party supplies.
-    from .config import prompt_dir_risk
-
-    risk = prompt_dir_risk(cfg.resolved_prompt_dir(), root,
-                           _paths_the_change_touched(cfg, args, root, mode,
-                                                     workspace))
-    if risk and risk.startswith("REFUSE"):
-        log.error("%s", risk[len("REFUSE: "):])
+    risk = _prompt_risk(cfg, args, root)
+    if risk.refused:
+        log.error("%s", risk.message)
         return EXIT_ERROR
-    if risk:
-        log.warning("%s", risk)
+    if risk.message:
+        log.warning("%s", risk.message)
 
     if mode == "diff":
         changed = workspace.changed_files()
@@ -589,112 +585,96 @@ def _skip_requested(cfg: Config, args: argparse.Namespace) -> bool:
 def _claims_a_change(cfg: Config, args: argparse.Namespace) -> bool:
     """Does anything here say a change exists to compare against?
 
-    An explicit `--base`, or any of the forge's merge request signals. Not the
-    review mode: `--mode repo` describes how much gets *read*, and a merge
-    request in repo mode is still a change.
+    An explicit `--base`, or the forge's merge request signals. Not the review
+    mode: `--mode repo` describes how much gets *read*, and a merge request in
+    repo mode is still a change. Not `mr_labels` either — a label is metadata a
+    runner may export for an unrelated workflow, and treating it as evidence of
+    a merge request made a scheduled repo-mode job try to derive a base and
+    exit 2 when it could not.
     """
     gl = cfg.gitlab
-    # Not `mr_labels`. A label is metadata a runner may export for an unrelated
-    # workflow, and treating it as evidence that this checkout is a merge
-    # request made a scheduled or manual repo-mode job try to derive a base and
-    # exit 2 when it could not. An iid, a base the forge named, or a `--base`
-    # somebody typed are claims about a change; a label is not.
     return bool(args.base or gl.diff_base_sha or gl.mr_iid)
 
 
-def _paths_the_change_touched(cfg: Config, args: argparse.Namespace, root: Path,
-                              mode: str, already_resolved=None) -> list:
-    """The unfiltered path list the prompt guard is entitled to, or `[]`.
+def _prompt_risk(cfg: Config, args: argparse.Namespace, root: Path):
+    """Can this change choose the prompts the review will run under?
 
-    One definition for both callers, because they had drifted once already and
-    the drift was the hole. The review path took the range the *review* used
-    and `_resolve_range` returns no base outside `diff` mode — so `--mode repo`
-    handed the guard an empty list, it took the WARN branch, and a change that
-    edited in-tree prompts was reviewed under them.
+    Asked of the bytes on disk against a revision, not of a list of changed
+    paths. The path list answered a question one step away from the real one:
+    the prompts are *loaded from the filesystem*, so an edit sitting in the
+    checkout and in no commit changed what the model was told and appeared in
+    no diff — in any mode. An unclean working tree is not an exotic case.
 
-    Forcing a diff range everywhere is not the answer either: repo mode is what
-    `_resolve_range`'s own error tells people to use when no base can be found,
-    and a source checkout with no reachable default branch would stop working.
+    Choosing the revision is the part that belongs here, because only this
+    layer knows whether a change is claimed:
 
-    So the question is whether anything *claims* a change exists. In a merge
-    request pipeline one does, and then the range has to resolve or the run
-    ends — "the range could not be resolved" is not "the prompts are
-    untouched", and the alternative is a bypass with a recipe: shallow the base
-    away, edit the prompts, take the review. In a local run with no merge
-    request and no `--base`, nothing claims a change, and there is nothing for
-    this guard to compare; `prompt_dir_risk` then says only that the prompts
-    live in the tree.
+    * a merge request, or a `--base` somebody typed → that base, so a prompt
+      edit committed *in* the change is caught;
+    * otherwise `HEAD`, which can then only mean "nothing uncommitted has
+      touched these" — which is all that a run claiming no change can be asked.
 
-    Neither `excludes` nor `scope` reach the probe. `raw_changed_paths` is the
-    unfiltered list on purpose: handing this question a filtered one is the
-    defect this guard already had once, where a committed exclude pattern
-    answered it.
+    `HEAD` resolves in any repository with a commit, so unlike the path-list
+    version this needs no diff range and has no blind mode. `--mode repo` used
+    to hand the old guard an empty list and take its WARN branch.
     """
-    # `already_resolved` is the review's own workspace where one exists, and it
-    # is used only in `diff` mode, where its range *is* the change. Named for
-    # what it holds rather than checked for None as a mode switch: the next
-    # caller has to decide what it is passing, not discover the behaviour.
-    if mode == "diff" and already_resolved is not None:
-        return already_resolved.raw_changed_paths()
-    if not _claims_a_change(cfg, args):
-        return []
-    try:
-        base, head = _resolve_range(cfg, root, "diff", args)
-    except WorkspaceError as exc:
-        # Re-worded, not swallowed. `_resolve_range`'s own message ends with
-        # "or use --mode repo to review the whole tree", which is useless
-        # advice to somebody already in repo mode who arrived here for another
-        # reason entirely. Still exit 2.
-        raise WorkspaceError(
-            "the prompts are read from inside this repository, so this run has "
-            "to establish that the change does not edit them — and the range "
-            "to compare could not be resolved: {}\n"
-            "Pass --base <sha>, or move the prompts outside the checkout with "
-            "SECURITY_SCAN_PROMPT_DIR.".format(exc)
-        ) from None
-    return Workspace(root=root, diff_base=base,
-                     diff_head=head).raw_changed_paths()
+    from .config import prompt_content_risk
+
+    # `named_`, not `resolved_`: the guard's question is about the path
+    # the repository can name, and resolving it first follows the very
+    # symlink that would be the bypass.
+    prompt_dir = cfg.named_prompt_dir()
+    probe = Workspace(root=root, excludes=cfg.excludes)
+    settled: List[str] = []
+
+    def resolve_baseline() -> str:
+        """Memoised, and called only when the prompts are in the tree.
+
+        Both halves matter. Only-when-needed keeps the guard off git entirely
+        for the ordinary deployment, so a broken base cannot fail a run the
+        guard has nothing to say about. Memoised so the revision `at_baseline`
+        reads from is the one that was decided, and not a second `HEAD` that
+        may have moved.
+        """
+        if not settled:
+            if _claims_a_change(cfg, args):
+                settled.append(_resolve_range(cfg, root, "diff", args)[0])
+            else:
+                settled.append(
+                    probe.git("rev-parse", "HEAD", check=False).strip())
+        return settled[0]
+
+    def at_baseline(path: str):
+        """The bytes that path held at the baseline, or None.
+
+        A path absent at that revision is an answer, not a failure, and
+        `prompt_content_risk` refuses on it — a prompt file this change
+        *added* is as much its choice as one it edited.
+        """
+        return probe.blob_bytes(resolve_baseline(), path)
+
+    return prompt_content_risk(prompt_dir, root, resolve_baseline, at_baseline)
 
 
 def _prompt_guard_before_skipping(
     cfg: Config, args: argparse.Namespace, root: Path, mode: str
 ) -> Optional[int]:
-    """`EXIT_ERROR` when a skipped change edits the prompts, otherwise `None`.
+    """`EXIT_ERROR` when a skipped change chose its own prompts, else `None`.
 
-    The cheap case first, and it is the common one: prompts that live *outside*
-    the repository under review cannot be rewritten by a change to it, and
-    `prompt_dir_risk` returns `None` for exactly that reason. So the label
-    skips immediately, with no git and no diff — the escape hatch keeps working
-    on a shallow clone, a broken base, a detached head.
+    The label waives the review of *this* change. It does not waive the
+    question of whether the change rewrites the rules the *next* review runs
+    under: skipping your own review is scoped and logged, changing the judge is
+    neither.
 
-    When the prompts are inside the tree, the range has to be resolved to learn
-    whether this change touched them, and a failure there raises out of here
-    rather than being caught: "the range could not be resolved" is not "the
-    prompts are untouched". Skipping on that answer would be a bypass with a
-    recipe — break the range, edit the prompts, add the label, take the green
-    pipeline. The cost is real and is accepted: with prompts in the tree, a
-    broken checkout cannot produce a skipped-and-green run.
-
-    The WARN half of `prompt_dir_risk` is deliberately not emitted here. Its
-    wording says this review is sound, and no review ran.
+    Only the refusal is acted on. `_prompt_risk`'s warning says this review is
+    sound, and no review ran.
     """
-    from .config import _inside, prompt_dir_risk
-
-    prompt_dir = cfg.resolved_prompt_dir().resolve()
-    if not _inside(prompt_dir, root):
+    risk = _prompt_risk(cfg, args, root)
+    if not risk.refused:
         return None
-
-    risk = prompt_dir_risk(
-        prompt_dir, root,
-        _paths_the_change_touched(cfg, args, root, mode))
-    if risk and risk.startswith("REFUSE"):
-        log.error("%s", risk[len("REFUSE: "):])
-        log.error(
-            "the %r label skips a review; it does not skip this.",
-            args.skip_label,
-        )
-        return EXIT_ERROR
-    return None
+    log.error("%s", risk.message)
+    log.error("the %r label skips a review; it does not skip this.",
+              args.skip_label)
+    return EXIT_ERROR
 
 
 def _resolve_range(

@@ -233,6 +233,25 @@ class Workspace:
             )
         return proc.stdout.decode("utf-8", "surrogateescape")
 
+    def blob_bytes(self, revision: str, path: str) -> Optional[bytes]:
+        """What `path` held at `revision`, or `None` where it held nothing.
+
+        Bytes, not text. The caller comparing prompt content needs to know
+        whether two files are the same, and decoding first — however carefully
+        — turns that into a question about the decoding. `None` for a path that
+        did not exist there, which is an answer and not a failure: a file the
+        change *added* is as much its choice as one it edited.
+        """
+        if not revision:
+            return None
+        proc = subprocess.run(
+            ("git", "--no-pager", "-C", str(self.root), "--no-optional-locks",
+             "show", "{}:{}".format(revision, path)),
+            capture_output=True, check=False, timeout=GIT_TIMEOUT_SECONDS,
+            env=_git_env(),
+        )
+        return proc.stdout if proc.returncode == 0 else None
+
     def rev_exists(self, rev: str) -> bool:
         if not rev:
             return False
