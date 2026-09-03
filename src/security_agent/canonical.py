@@ -44,6 +44,12 @@ from typing import Any, Dict, List, Tuple
 TELEMETRY_PATHS: Tuple[str, ...] = (
     # When the artifact was written. Two runs are never simultaneous.
     "generated_at",
+    # That this artifact was *served* again, and when. It says nothing about
+    # what the review decided — the same category as `generated_at` one line
+    # up. Left unclassified it would be compared, because an unlisted field is
+    # canonical by design, and then every reuse would make two otherwise
+    # identical artifacts differ and each further reuse differ again.
+    "reuse",
     # Tokens, cache and cost. The Claude Code CLI reports usage per run, the
     # Messages API per turn, and a subscription may report nothing at all —
     # which `budget.py` renders as "not reported by this runner" rather than

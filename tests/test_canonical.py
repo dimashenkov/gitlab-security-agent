@@ -94,7 +94,18 @@ def artifact(cfg, git_repo):
     outcome = agent.run("diff", "go")
     verify_candidates(cfg, ws, client, agent.candidates)
     outcome.reported = agent.candidates
-    return build_json(cfg, outcome, decide(cfg, outcome))
+    body = build_json(cfg, outcome, decide(cfg, outcome))
+    # The shape `_record_the_reuse` writes back, added here because a fresh
+    # review has no `reuse` block by construction — and the parametrised test
+    # below is the one that would catch a declared telemetry path matching
+    # nothing. Without it, `reuse` would be exempted from exactly the check
+    # that exists to notice an exclusion nobody applies.
+    body["reuse"] = {
+        "source_generated_at": body["generated_at"],
+        "reused_at": "2026-09-03T09:00:00+00:00",
+        "count": 1,
+    }
+    return body
 
 
 # --------------------------------------------- telemetry leaves, and only it

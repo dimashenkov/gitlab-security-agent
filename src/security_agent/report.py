@@ -1036,6 +1036,70 @@ def _safe_output_dir(requested: Path) -> Path:
     return requested
 
 
+def reuse_notice(body: Dict[str, Any]) -> str:
+    """One line saying this run reused a review rather than performing one.
+
+    Written from the artifact rather than rebuilt from a synthetic outcome:
+    reconstructing a `ScanOutcome` out of stored JSON to reach the normal
+    renderers would be a broad, lossy path for what is a single fact.
+    """
+    reuse = body.get("reuse") or {}
+    origin = reuse.get("source_generated_at") or "an earlier run"
+    times = int(reuse.get("count") or 1)
+    return (
+        "Reused: no review ran in this pipeline. The result below was produced "
+        "on {}{} — the code, prompts, model and settings are unchanged since "
+        "then. Pass --no-reuse to buy a fresh one."
+        .format(origin, "" if times < 2 else ", and reused {} times".format(times))
+    )
+
+
+def write_reused(cfg: Config, body: Dict[str, Any], artifact: Path) -> None:
+    """Replace the stored JSON with the same result, marked as reused.
+
+    Through `_safe_output_dir` like every other write. The preflight in `cli`
+    protects the *read* and stops the spending; it does not make a later bare
+    `write_text` safe, because the path can change in between.
+
+    Written to a neighbour and moved into place: an interrupted run must not
+    leave the only copy of a valid result half-written.
+    """
+    out_dir = _safe_output_dir(cfg.output_dir)
+    target = out_dir / artifact.name
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    try:
+        temporary.write_text(
+            json.dumps(body, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        temporary.replace(target)
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise ReportError(
+            "could not write {}: {}".format(target, exc)) from None
+
+    stored = out_dir / "report.md"
+    if stored.is_file():
+        try:
+            # Replaced, not skipped. Leaving an existing notice alone froze it
+            # at the first reuse while the count beside it went on rising, so
+            # the document and the artifact disagreed about the same run.
+            text = _without_reuse_notice(stored.read_text(encoding="utf-8"))
+            stored.write_text(
+                "> " + reuse_notice(body) + "\n\n" + text, encoding="utf-8")
+        except OSError as exc:
+            raise ReportError(
+                "could not mark {}: {}".format(stored, exc)) from None
+
+
+def _without_reuse_notice(text: str) -> str:
+    lines = text.splitlines()
+    while lines and lines[0].startswith("> Reused:"):
+        lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
 def write_artifacts(
     cfg: Config, outcome: ScanOutcome, decision: Decision
 ) -> Dict[str, str]:

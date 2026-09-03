@@ -140,7 +140,8 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     from .config import prompt_dir_risk
 
     risk = prompt_dir_risk(cfg.resolved_prompt_dir(), root,
-                           workspace.raw_changed_paths())
+                           _paths_the_change_touched(cfg, args, root, mode,
+                                                     workspace))
     if risk and risk.startswith("REFUSE"):
         log.error("%s", risk[len("REFUSE: "):])
         return EXIT_ERROR
@@ -478,6 +479,14 @@ def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,
         previous = json.loads(artifact.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    if not isinstance(previous, dict):
+        # A list, a string, a bare `null`. `reusable` never sees it — every
+        # reader below reaches for `.get` first and dies on the way, and this
+        # file is now also rewritten in place, so a shape check has to come
+        # before anything touches it.
+        log.warning("%s is not a review artifact, so there is nothing to "
+                    "reuse", artifact)
+        return None
 
     probe = Workspace(root=root, excludes=cfg.excludes, diff_base=base, diff_head=head)
 
@@ -504,7 +513,65 @@ def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,
     log.info("reusing the review of %s..%s — same code, prompts, model and "
              "settings as the artifact already in %s. Pass --no-reuse to pay "
              "for a replicate.", _abbrev(base), _abbrev(head), cfg.output_dir)
+    _record_the_reuse(cfg, args, previous, artifact)
     return int(verdict.get("exit_code", EXIT_OK))
+
+
+def _record_the_reuse(cfg: Config, args: argparse.Namespace,
+                      previous: dict, artifact: Path) -> None:
+    """Say in the file that this run reused, rather than reviewed.
+
+    The exit code was the whole of it: no artifact for this invocation, no
+    marker, nothing on the terminal, and the merge request kept whatever note
+    was already there. From outside, a reused run and a review performed today
+    were the same thing, and only the log knew.
+
+    `generated_at` is **not** touched. It says when the review was produced,
+    and the measuring tools order by it; moving it would make an old model
+    result look newly bought. The reuse is a separate fact and gets its own
+    key, so an existing reader that never heard of it is unaffected —
+    `identity.reusable` compares the identity digest and no timestamp, so a
+    marked artifact is still reusable and reusing a reuse is harmless: it is
+    the same original result, still saying so.
+    """
+    from .report import ReportError, reuse_notice, write_reused
+
+    body = dict(previous)
+    earlier = (body.get("reuse") or {}).get("source_generated_at")
+    body["reuse"] = {
+        # Anchored to the original, never to the previous reuse — otherwise a
+        # chain of reuses walks the origin forward one run at a time until it
+        # names a day on which nothing was reviewed.
+        "source_generated_at": earlier or body.get("generated_at", ""),
+        "reused_at": _now(),
+        "count": int((body.get("reuse") or {}).get("count", 0)) + 1,
+    }
+
+    try:
+        write_reused(cfg, body, artifact)
+    except ReportError as exc:
+        # The result is still valid and the exit code still stands; what was
+        # lost is the record of *this* run. Loud, and not fatal.
+        log.error("could not record the reuse: %s", exc)
+        return
+
+    print(reuse_notice(body))
+    if cfg.post_comment and not args.no_comment:
+        from .forge import publish
+
+        # The stored document, which `write_reused` has just marked — not the
+        # notice again in front of it. Posting both put two notices on the
+        # merge request, disagreeing about the count, and neither of them was
+        # the document on disk.
+        stored = cfg.output_dir / "report.md"
+        if stored.is_file():
+            publish(cfg.gitlab, stored.read_text(encoding="utf-8"))
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _skip_requested(cfg: Config, args: argparse.Namespace) -> bool:
@@ -517,6 +584,76 @@ def _skip_requested(cfg: Config, args: argparse.Namespace) -> bool:
         )
         return True
     return False
+
+
+def _claims_a_change(cfg: Config, args: argparse.Namespace) -> bool:
+    """Does anything here say a change exists to compare against?
+
+    An explicit `--base`, or any of the forge's merge request signals. Not the
+    review mode: `--mode repo` describes how much gets *read*, and a merge
+    request in repo mode is still a change.
+    """
+    gl = cfg.gitlab
+    # Not `mr_labels`. A label is metadata a runner may export for an unrelated
+    # workflow, and treating it as evidence that this checkout is a merge
+    # request made a scheduled or manual repo-mode job try to derive a base and
+    # exit 2 when it could not. An iid, a base the forge named, or a `--base`
+    # somebody typed are claims about a change; a label is not.
+    return bool(args.base or gl.diff_base_sha or gl.mr_iid)
+
+
+def _paths_the_change_touched(cfg: Config, args: argparse.Namespace, root: Path,
+                              mode: str, already_resolved=None) -> list:
+    """The unfiltered path list the prompt guard is entitled to, or `[]`.
+
+    One definition for both callers, because they had drifted once already and
+    the drift was the hole. The review path took the range the *review* used
+    and `_resolve_range` returns no base outside `diff` mode — so `--mode repo`
+    handed the guard an empty list, it took the WARN branch, and a change that
+    edited in-tree prompts was reviewed under them.
+
+    Forcing a diff range everywhere is not the answer either: repo mode is what
+    `_resolve_range`'s own error tells people to use when no base can be found,
+    and a source checkout with no reachable default branch would stop working.
+
+    So the question is whether anything *claims* a change exists. In a merge
+    request pipeline one does, and then the range has to resolve or the run
+    ends — "the range could not be resolved" is not "the prompts are
+    untouched", and the alternative is a bypass with a recipe: shallow the base
+    away, edit the prompts, take the review. In a local run with no merge
+    request and no `--base`, nothing claims a change, and there is nothing for
+    this guard to compare; `prompt_dir_risk` then says only that the prompts
+    live in the tree.
+
+    Neither `excludes` nor `scope` reach the probe. `raw_changed_paths` is the
+    unfiltered list on purpose: handing this question a filtered one is the
+    defect this guard already had once, where a committed exclude pattern
+    answered it.
+    """
+    # `already_resolved` is the review's own workspace where one exists, and it
+    # is used only in `diff` mode, where its range *is* the change. Named for
+    # what it holds rather than checked for None as a mode switch: the next
+    # caller has to decide what it is passing, not discover the behaviour.
+    if mode == "diff" and already_resolved is not None:
+        return already_resolved.raw_changed_paths()
+    if not _claims_a_change(cfg, args):
+        return []
+    try:
+        base, head = _resolve_range(cfg, root, "diff", args)
+    except WorkspaceError as exc:
+        # Re-worded, not swallowed. `_resolve_range`'s own message ends with
+        # "or use --mode repo to review the whole tree", which is useless
+        # advice to somebody already in repo mode who arrived here for another
+        # reason entirely. Still exit 2.
+        raise WorkspaceError(
+            "the prompts are read from inside this repository, so this run has "
+            "to establish that the change does not edit them — and the range "
+            "to compare could not be resolved: {}\n"
+            "Pass --base <sha>, or move the prompts outside the checkout with "
+            "SECURITY_SCAN_PROMPT_DIR.".format(exc)
+        ) from None
+    return Workspace(root=root, diff_base=base,
+                     diff_head=head).raw_changed_paths()
 
 
 def _prompt_guard_before_skipping(
@@ -547,38 +684,9 @@ def _prompt_guard_before_skipping(
     if not _inside(prompt_dir, root):
         return None
 
-    # `"diff"`, not the run's mode. `_resolve_range` returns no base for any
-    # other mode, `raw_changed_paths` is then empty, and the guard would have
-    # answered "nothing touched the prompts" about a change it never looked at
-    # — so `--mode repo` beside the label walked straight past it.
-    #
-    # Safe to force here in a way it would not be on the review path: this
-    # branch is only reached because the merge request carried a label, so
-    # there is a merge request, and the base comes from the forge or from the
-    # merge base with the default branch. Where neither exists there are no
-    # labels either, and `_skip_requested` is False.
-    try:
-        base, head = _resolve_range(cfg, root, "diff", args)
-    except WorkspaceError as exc:
-        # Re-worded, not swallowed. `_resolve_range`'s own message ends with
-        # "or use --mode repo to review the whole tree", which is useless
-        # advice to somebody already in repo mode and arrived at here for a
-        # different reason entirely. Still exit 2: the prompts are inside the
-        # tree and whether this change edits them could not be established,
-        # and that is not the same answer as "it does not".
-        raise WorkspaceError(
-            "the prompts are read from inside this repository, so a skipped "
-            "review still has to establish that this change does not edit "
-            "them — and the range to compare could not be resolved: {}\\n"
-            "Pass --base <sha>, or move the prompts outside the checkout with "
-            "SECURITY_SCAN_PROMPT_DIR.".format(exc)
-        ) from None
-    # Neither `excludes` nor `scope`: `raw_changed_paths` is the unfiltered
-    # list on purpose, and handing this question a filtered one is the defect
-    # this guard already had once — a committed exclude pattern must not be
-    # able to answer it.
-    probe = Workspace(root=root, diff_base=base, diff_head=head)
-    risk = prompt_dir_risk(prompt_dir, root, probe.raw_changed_paths())
+    risk = prompt_dir_risk(
+        prompt_dir, root,
+        _paths_the_change_touched(cfg, args, root, mode))
     if risk and risk.startswith("REFUSE"):
         log.error("%s", risk[len("REFUSE: "):])
         log.error(
