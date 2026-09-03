@@ -13,6 +13,7 @@ and all of them leave a reader trusting a sentence that is no longer true.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,7 +22,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from check_decisions import DOC, check
+from check_decisions import (
+    DOC,
+    blank_fences,
+    check,
+    parse,
+    unparsed_headings,
+)
 
 DECISION = """## D-001 · A decision
 
@@ -74,6 +81,290 @@ def test_the_document_that_ships_is_clean():
     """The one that matters. Everything below tests the checker; this tests the
     file, and it is the assertion a reader of `DECISIONS.md` is relying on."""
     assert check(DOC.read_text(encoding="utf-8"), run_tests=False) == []
+
+
+def test_every_entry_in_the_document_is_actually_read():
+    """A clean report over twelve entries when there are thirteen.
+
+    D-013 was written with an em dash where every other heading uses a middle
+    dot. `ENTRY` requires the dot, so to this checker the entry did not exist:
+    its body counted as part of D-012, its three required fields were never
+    looked for, and its file references resolved against the wrong entry. The
+    rule that authorises abandoning the project, unchecked for a day, and the
+    report above said "every field present" the whole time.
+
+    Counting is the check. Asserting `check() == []` cannot see an entry that
+    was never parsed — the absent entry produces no problem to report.
+    """
+    text = DOC.read_text(encoding="utf-8")
+    parsed = {e.id for e in parse(text)}
+
+    # Counted from the **field table**, not from another heading regex. Two
+    # sets built by closely related patterns agree when both are wrong the same
+    # way — an indented heading disappears from each of them at once — so the
+    # independent count is the one thing every entry has that a heading pattern
+    # cannot see.
+    # Counted in the same blanked view `parse` reads. Counting the raw text
+    # would count a `| **State** |` row inside a fenced example — whose heading
+    # is blanked — and the two would disagree over a document with no defect in
+    # it, which is a test that fails for its own reasons.
+    states = len(re.findall(r"^\s*\|\s*\*\*State\*\*\s*\|",
+                            blank_fences(text), re.M))
+
+    assert len(parsed) == states, (
+        "{} entries parsed, {} `**State**` rows in the file — an entry is not "
+        "being read".format(len(parsed), states))
+    assert unparsed_headings(text) == []
+    # The floor, and it moves with the file: an equality between two zeros
+    # would pass over an empty document.
+    assert states >= 16
+
+
+def entry_text(commit="abc1234", **over) -> str:
+    parts = {"id": "D-001", "title": "A real one", "state": "active",
+             "decided": "**Decided.** x\n", "extra": "", "commit": commit}
+    parts.update(over)
+    return ("## {id} · {title}\n\n"
+            "| **State** | {state} |\n"
+            "| **Scope** | somewhere |\n"
+            "| **Checked against** | {commit} |\n\n"
+            "{extra}{decided}"
+            "**Rejected.** x\n**Reason.** x\n**Enforced by.** x\n"
+            "**Evidence.** x\n**Objection.** x\n**Revisited when** x\n"
+            ).format(**parts)
+
+
+class TestASectionIsNotSatisfiedBySomethingThatStartsLikeIt:
+    """`**Decided by**` is a field. `Decided` is a required section. A bare
+    prefix match let the first stand in for the second, so an entry carrying
+    that field satisfied a requirement for a section it did not have. Three
+    entries carry it, and all three also have a real `**Decided.**` — which is
+    how it stayed invisible."""
+
+    def test_the_field_does_not_stand_in_for_the_section(self, commit):
+        text = entry_text(commit, decided="",
+                          extra="**Decided by** the owner.\n")
+
+        problems = check(text, run_tests=False)
+
+        assert problems == [
+            "D-001: no **Decided** section"], problems
+
+    @pytest.mark.parametrize("run", [
+        "​",   # zero-width space
+        "‌",   # zero-width non-joiner
+        "‍",   # zero-width joiner
+        "﻿",   # byte-order mark used as a word joiner
+        "́",   # a combining acute, which is not a letter either
+    ])
+    def test_an_invisible_character_is_not_a_boundary(self, run, commit):
+        """`not ....isalpha()` was the second repair, and a zero-width joiner
+        is not a letter and is not stripped — so the field walked through a
+        door made of a character nobody can see. The question is what the next
+        character *is*, not what it is not."""
+        text = entry_text(commit, decided="",
+                          extra="**Decided{}by** the owner.\n".format(run))
+
+        assert check(text, run_tests=False) == ["D-001: no **Decided** section"]
+
+    @pytest.mark.parametrize("run", ["  ", "\t", " \t ", "\n", " "])
+    def test_whitespace_does_not_open_the_door_again(self, run, commit):
+        """`Decided  by`, with two spaces. The first repair looked at the next
+        two characters: neither was a letter, so the field satisfied the
+        section again through a door one space wider. A rule about "the next
+        character" has to find the next character."""
+        text = entry_text(commit, decided="",
+                          extra="**Decided{}by** the owner.\n".format(run))
+
+        assert check(text, run_tests=False) == ["D-001: no **Decided** section"]
+
+    @pytest.mark.parametrize("heading", [
+        "**Decided.** x\n",
+        "**Decided 2026-09-03.** x\n",
+        "**Decided,** and namely x\n",
+        "**Decided (after Codex overturned it).** x\n",
+    ])
+    def test_the_real_headings_still_count(self, heading, commit):
+        """The floor. A rule that refuses `Decided by` and also refuses
+        `Decided 2026-09-03` has replaced one wrong answer with another."""
+        assert check(entry_text(commit, decided=heading),
+                     run_tests=False) == []
+
+
+def test_a_heading_the_checker_cannot_read_is_reported_not_skipped():
+    """Requiring the separator is right. Reading its absence as "no entry
+    here" is the defect — and it is this repository's own shape, in the
+    checker for the file that records its decisions."""
+    text = ("## D-001 · A real one\n\n"
+            "| **State** | active |\n"
+            "| **Scope** | somewhere |\n"
+            "| **Checked against** | abc1234 |\n\n"
+            "**Decided.** x\n**Rejected.** x\n**Reason.** x\n"
+            "**Enforced by.** x\n**Evidence.** x\n**Objection.** x\n"
+            "**Revisited when** x\n\n"
+            "## D-002 — An em dash instead of the dot\n\n"
+            "This body is invisible.\n")
+
+    assert unparsed_headings(text) == ["D-002 — An em dash instead of the dot"]
+    problems = check(text, run_tests=False)
+    assert any("D-002" in p for p in problems), problems
+    assert any("·" in p for p in problems), "the fix is not named"
+
+
+@pytest.mark.parametrize("indent", ["", " ", "  ", "   "])
+def test_an_indented_heading_is_read_like_any_other(indent, commit):
+    """Markdown renders a heading with up to three leading spaces. Anchored at
+    column zero, an indented entry was a heading to every reader and to no
+    parser here — the same silence the em dash produced, by a character nobody
+    can see."""
+    text = indent + entry_text(commit)
+
+    assert [e.id for e in parse(text)] == ["D-001"]
+    assert check(text, run_tests=False) == []
+
+
+def test_an_indented_malformed_heading_is_still_reported(commit):
+    text = entry_text(commit) + "\n  ## D-002 — indented and malformed\n"
+
+    assert unparsed_headings(text) == ["D-002 — indented and malformed"]
+
+
+class TestAFencedBlockIsAnExampleAndNotStructure:
+    """Without this, a document that shows what a malformed heading looks like
+    fails its own check, and a correctly formatted example inside a code block
+    becomes an extra decision that the checker then demands fields for."""
+
+    def test_a_malformed_heading_inside_a_fence_is_not_a_problem(self, commit):
+        text = (entry_text(commit)
+                + "\n```markdown\n## D-999 — what not to write\n```\n")
+
+        assert unparsed_headings(text) == []
+        assert check(text, run_tests=False) == []
+
+    def test_a_well_formed_heading_inside_a_fence_is_not_an_entry(self, commit):
+        text = (entry_text(commit)
+                + "\n```markdown\n## D-999 · An example, not a decision\n```\n")
+
+        assert [e.id for e in parse(text)] == ["D-001"]
+        assert check(text, run_tests=False) == []
+
+    def test_a_tilde_fence_counts_too(self, commit):
+        text = entry_text(commit) + "\n~~~\n## D-999 — inside a tilde fence\n~~~\n"
+
+        assert unparsed_headings(text) == []
+
+    def test_a_fenced_field_does_not_satisfy_a_missing_one(self, commit):
+        """The worst of the three, and self-inflicted. Headings were found in
+        the blanked text and bodies sliced from the original, so every fenced
+        example fed fields and sections to the entry it sat in — a decision
+        whose only `**State**` row and only `**Decided.**` were inside a code
+        block passed with nothing reported, while a comment three lines away
+        said fenced blocks are examples and not structure."""
+        text = ("## D-001 · Fields only inside a fence\n\n"
+                "| **Scope** | somewhere |\n"
+                "| **Checked against** | {} |\n\n"
+                "```markdown\n"
+                "| **State** | active |\n"
+                "**Decided.** this is an example of the format\n"
+                "```\n"
+                "**Rejected.** x\n**Reason.** x\n**Enforced by.** x\n"
+                "**Evidence.** x\n**Objection.** x\n"
+                "**Revisited when** x\n").format(commit)
+
+        problems = check(text, run_tests=False)
+
+        assert "D-001: no `State` field" in problems, problems
+        assert "D-001: no **Decided** section" in problems, problems
+
+    @pytest.mark.parametrize("text,ids", [
+        # A fence never closed runs to the end of the document.
+        ("```\n## D-999 · never closed\n", ["D-001"]),
+        # A ``` line inside a ```` block is content, not a close.
+        ("````\n```\n## D-999 · still inside\n````\n", ["D-001"]),
+        # A run of backticks with text after it does not close anything.
+        ("```\n```junk\n## D-999 · still inside\n```\n", ["D-001"]),
+        # A longer tilde fence closes only on a run at least as long.
+        ("~~~~\n~~~\n## D-999 · still inside\n~~~~\n", ["D-001"]),
+        # A backtick fence's info string may not contain a backtick, so this
+        # opens nothing and the heading below it is a real entry.
+        ("```python`oops\n\n## D-002 · Not inside anything\n\n"
+         "| **State** | active |\n| **Scope** | s |\n"
+         "| **Checked against** | {commit} |\n\n"
+         "**Decided.** x\n**Rejected.** x\n**Reason.** x\n"
+         "**Enforced by.** x\n**Evidence.** x\n**Objection.** x\n"
+         "**Revisited when** x\n", ["D-001", "D-002"]),
+        # A tilde fence's info string may.
+        ("~~~python`fine\n## D-999 · inside\n~~~\n", ["D-001"]),
+        # A close may be indented at most three spaces from column zero, not
+        # from the opener. Four spaces in is content.
+        ("   ```\nexample\n    ```\n## D-999 · still inside\n", ["D-001"]),
+        # And a tab-indented run does not close it either.
+        ("```\nexample\n\t```\n## D-999 · still inside\n", ["D-001"]),
+        # Trailing spaces after a closing fence are allowed. Refusing them
+        # left the parser inside the fence and the heading below invisible.
+        ("```\ncode\n```   \n\n## D-002 · After a close with trailing spaces\n\n"
+         "| **State** | active |\n| **Scope** | s |\n"
+         "| **Checked against** | {commit} |\n\n"
+         "**Decided.** x\n**Rejected.** x\n**Reason.** x\n"
+         "**Enforced by.** x\n**Evidence.** x\n**Objection.** x\n"
+         "**Revisited when** x\n", ["D-001", "D-002"]),
+        # A trailing tab closes it too — CommonMark allows spaces or tabs.
+        # This case asserted the opposite first, which locked in a defect in
+        # the silent direction: a fence Markdown had closed stayed open here,
+        # and every real entry after it went unchecked.
+        # `## D-999` sits inside the fence so the case proves both halves: the
+        # opener was recognised (D-999 does not appear) and the tabbed line
+        # closed it (D-002 does). Without the inner heading it would pass just
+        # as well if the fence had never opened.
+        ("```\n## D-999 · inside the fence\ncode\n```\t\n"
+         "## D-002 · After a close with a trailing tab\n\n"
+         "| **State** | active |\n| **Scope** | s |\n"
+         "| **Checked against** | {commit} |\n\n"
+         "**Decided.** x\n**Rejected.** x\n**Reason.** x\n"
+         "**Enforced by.** x\n**Evidence.** x\n**Objection.** x\n"
+         "**Revisited when** x\n", ["D-001", "D-002"]),
+        # A *leading* tab is still not indentation: a tab is four columns, so
+        # the line is indented code and closes nothing.
+        ("```\ncode\n\t```\n## D-999 · still inside\n", ["D-001"]),
+        # A stray carriage return does not refuse a close. Not reachable
+        # through the CLI, which reads with universal newlines, but this
+        # function is called directly and the failure is the silent one.
+        ("```\ncode\n```\r\n## D-002 · After a close with a CR\n\n"
+         "| **State** | active |\n| **Scope** | s |\n"
+         "| **Checked against** | {commit} |\n\n"
+         "**Decided.** x\n**Rejected.** x\n**Reason.** x\n"
+         "**Enforced by.** x\n**Evidence.** x\n**Objection.** x\n"
+         "**Revisited when** x\n", ["D-001", "D-002"]),
+        # And a real close does end it.
+        ("```\ncode\n```\n\n## D-002 · after a real close\n\n"
+         "| **State** | active |\n| **Scope** | s |\n"
+         "| **Checked against** | {commit} |\n\n"
+         "**Decided.** x\n**Rejected.** x\n**Reason.** x\n"
+         "**Enforced by.** x\n**Evidence.** x\n**Objection.** x\n"
+         "**Revisited when** x\n", ["D-001", "D-002"]),
+    ])
+    def test_the_fence_rules_are_markdowns(self, text, ids, commit):
+        """One regex got four of these wrong, each leaving real fenced text
+        visible to the parser."""
+        doc = entry_text(commit) + "\n" + text.format(commit=commit)
+
+        assert [e.id for e in parse(doc)] == ids
+
+    def test_an_entry_after_a_fence_keeps_its_body(self, commit):
+        """A fence between two entries does not swallow the second.
+
+        The docstring here used to say this proves offsets are preserved. It
+        does not, and they are not: blanking keeps the line count, not the
+        character offsets, and `parse` finds headings and slices bodies in the
+        same transformed text, so it would pass just as well if the fenced
+        lines were deleted outright. What it does prove is what its name says.
+        """
+        text = (entry_text(commit)
+                + "\n```\nsome code\nover several\nlines\n```\n\n"
+                + entry_text(commit, id="D-002", title="After a fence"))
+
+        assert [e.id for e in parse(text)] == ["D-001", "D-002"]
+        assert check(text, run_tests=False) == []
 
 
 def test_a_file_the_checker_cannot_read_is_not_a_clean_file(commit):

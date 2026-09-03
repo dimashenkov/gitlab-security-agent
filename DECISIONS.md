@@ -805,7 +805,21 @@ ordinarily passing ones, which DECISIONS.md already admits. Not fixed here.
 from this one — then it is checked whether "known failure" has not turned into a
 place where unexplained work piles up.
 
-## D-013 — The stop rule: a crude detector of catastrophe, and why not more
+## D-013 · The stop rule: a crude detector of catastrophe, and why not more
+
+| | |
+|---|---|
+| **State** | active |
+| **Scope** | `tools/stop_rule.py`, whether a configuration is abandoned |
+| **Checked against** | `1e18a74` |
+
+This entry was written on 2026-09-02 with an em dash where every other heading
+uses a middle dot, so `tools/check_decisions.py` did not see it at all — its
+body counted as part of D-012, and it had none of the three fields above for a
+day. The rule that authorises abandoning the project, invisible to the checker
+that exists to keep this file honest. Both halves fixed on 2026-09-03: the
+heading here, and `unparsed_headings` in the checker, which now reports a
+heading it cannot read instead of passing over it.
 
 **Decided 2026-09-03.** The project had no outcome in which the answer is "this
 does not work". Every failure became a fix or a row in `LIMITATIONS.md`, and a
@@ -923,3 +937,54 @@ undecided, not "passes".
 
 The Sonnet gate goes after all of this: it measures the measuring machine, and
 the project's question is a different one.
+
+### The fields the schema asks for
+
+Written on 2026-09-03, when the heading was fixed and the checker saw this entry
+for the first time. Not new decisions — the text above already carried them, but
+under `###` headings the checker cannot read.
+
+**Rejected.** A threshold for success. The first draft had one; Codex overturned
+it and was right — 78 pairs cannot carry it, and a rule that says "passes" would
+be quoted as acceptance evidence by every later reader. Also rejected: a single
+combined score over both halves, which hides which of the two failed; and
+`precision` computed from this corpus, which is 50/50 by construction and says
+nothing about a pipeline where the vulnerable changes are a minority.
+
+**Reason.** A project that cannot fail cannot succeed either. Every failure so
+far became a fix or a row in `LIMITATIONS.md`, and that is not a record of
+quality — it is a record of a project with no way to lose. What this rule buys
+is narrow and real: a catastrophe, of at least 13 points, is now something the
+artifacts refuse rather than something somebody has to notice.
+
+**Enforced by.** `tools/stop_rule.py` — `RECALL_FLOOR`, `PATCHED_ALERT_CEILING`,
+`verdict`, which has `stop` / `no catastrophe` / `cannot say` and no `pass`
+branch; `render_without_verdict`, which prints the second denominator without an
+answer. `tests/test_stop_rule.py`.
+
+**Evidence.** `python3 tools/stop_rule.py` — today 61/78 recall and 20/78 on the
+fixed half, verdict `no catastrophe`, exit 0.
+`PYTHONPATH=src python3 -m pytest tests/test_stop_rule.py -q` — 35 tests,
+including `TestTheVerdictHasNoPassBranch`, which fails if a `pass` branch is
+ever added. (Written as 30 first, from counting the functions and not the
+parametrised cases. Codex caught it. Nothing in `check_decisions.py` reads a
+number inside an evidence line, so a figure quoted there is a claim like any
+other prose — which is why this one is now the output of the command beside
+it.)
+
+**Objection (Codex, 2026-09-03).** Five rounds at the commit gate, and the two
+that changed this decision: `stop_rule` removed the cases a ruling had dropped
+and could return `stop` on the remainder — computing a threshold through
+verdicts that `LIMITATIONS.md`, two files away, forbids computing rates through.
+It now answers from the raw denominator only. Then the repair for that was worse
+than the defect: a broken rulings file turned a valid `stop` into `cannot say`,
+hiding a catastrophe behind "the check did not finish". The verdict now stands
+whatever happens to the rulings.
+
+**Revisited when** the ordinary-change corpus has been adjudicated — the second
+rule above is the one that decides whether anybody will tolerate the tool, and
+100 cases are enough for it where 78 are not enough for this one. Also revisited
+if any ruling in `corpus-real/adjudications.yml` is ever made by somebody who
+did not produce the findings: `artifact.independence()` counts them and the
+count is zero, and the 40% ceiling was set against a number nobody independent
+has looked at.
