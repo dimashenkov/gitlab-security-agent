@@ -1,0 +1,582 @@
+{
+  "candidates": {
+    "bytes": 44552276,
+    "digest": "9d7c04e09fca031a",
+    "path_when_sealed": "/Users/dimitar/PROJECTS/gsa-corpus-archive/pool-30repos.json",
+    "records": 3056
+  },
+  "corpus": "ordinary-v1",
+  "counts": {
+    "excluded": 1686,
+    "not_selected": 1331,
+    "taken": 30,
+    "undecidable": 9
+  },
+  "coverage": {
+    "checks": [
+      {
+        "met": true,
+        "name": "sample_filled",
+        "observed": 30,
+        "remedy": "widen the date interval or add repositories to the pool",
+        "required": 30
+      },
+      {
+        "met": true,
+        "name": "sensitive_quota_filled",
+        "observed": 15,
+        "remedy": "the pool holds 996 eligible sensitive change(s); add repositories or widen the interval",
+        "required": 15
+      },
+      {
+        "met": true,
+        "name": "quiet_quota_filled",
+        "observed": 15,
+        "remedy": "the pool holds 365 eligible quiet change(s); add repositories or widen the interval",
+        "required": 15
+      },
+      {
+        "met": true,
+        "name": "no_contradicted_commits",
+        "observed": 0,
+        "remedy": "resolve the commits two records disagree about and re-harvest them; they are listed under `coverage.contradicted_commits`. Until then a candidate has been removed from the draw by something this program cannot adjudicate",
+        "required": 0
+      },
+      {
+        "met": true,
+        "name": "distinct_repositories",
+        "observed": 16,
+        "remedy": "add repositories; D-013 asks for at least ten",
+        "required": 10
+      },
+      {
+        "met": true,
+        "name": "distinct_languages",
+        "observed": 9,
+        "remedy": "add repositories in the languages the corpus covers that the sample does not",
+        "required": 5
+      }
+    ],
+    "contradicted_commits": [],
+    "label_evidence_unavailable": 30,
+    "languages": {
+      "csharp": 2,
+      "go": 4,
+      "java": 4,
+      "javascript": 4,
+      "php": 3,
+      "python": 5,
+      "ruby": 3,
+      "rust": 3,
+      "typescript": 2
+    },
+    "repositories": {
+      "github.com/automapper/automapper": 2,
+      "github.com/axios/axios": 3,
+      "github.com/clap-rs/clap": 1,
+      "github.com/colinhacks/zod": 2,
+      "github.com/go-chi/chi": 1,
+      "github.com/google/gson": 1,
+      "github.com/google/guava": 3,
+      "github.com/guzzle/guzzle": 3,
+      "github.com/lodash/lodash": 1,
+      "github.com/pallets/click": 3,
+      "github.com/psf/requests": 1,
+      "github.com/puma/puma": 2,
+      "github.com/pydantic/pydantic": 1,
+      "github.com/rack/rack": 1,
+      "github.com/rayon-rs/rayon": 2,
+      "github.com/sirupsen/logrus": 3
+    },
+    "strata": {
+      "drawn": {
+        "quiet": 15,
+        "sensitive": 15
+      },
+      "eligible_in_pool": {
+        "quiet": 365,
+        "sensitive": 996
+      },
+      "frame_share": {
+        "quiet": 0.2682,
+        "sensitive": 0.7318
+      },
+      "quota": {
+        "quiet": 15,
+        "sensitive": 15
+      },
+      "rule_overlap": {
+        "both": 480,
+        "change only": 465,
+        "neither": 365,
+        "path only": 51
+      }
+    }
+  },
+  "freeze": {
+    "commit": "b67bd18a09cd8e80a2ceab50f9c318aa941f01ac",
+    "d013_digest": "06f0ceeb91c0f514ffcca53d467f4ac980b0fb97339a3bf455358231cf7db202",
+    "digest": "39cb431129fa9a1d",
+    "owner_acknowledgement": "\u0414\u0438\u043c\u0438\u0442\u044a\u0440, 2026-09-04, \u0441\u043b\u0435\u0434 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435\u0442\u043e \u0437\u0430 \u043e\u0442\u0441\u044a\u0436\u0434\u0430\u0449\u0438\u044f"
+  },
+  "generator": {
+    "generator_digest": "612b510c33dcc929",
+    "rules_digest": "a74d2353568e97c2",
+    "tool": "tools/ordinary_corpus.py"
+  },
+  "manifest": {
+    "bytes": 3873875,
+    "digest": "f70e189e449615ab",
+    "path_when_sealed": "/Users/dimitar/PROJECTS/gsa-corpus-archive/manifest-30.json"
+  },
+  "rules": {
+    "ceilings": {
+      "max_diff_bytes": 524288,
+      "max_diff_chars": 120000,
+      "source": "security_agent.workspace.Workspace.MAX_DIFF_BYTES and security_agent.tools.MAX_DIFF_CHARS, imported not copied"
+    },
+    "exclusion_order": [
+      "record_incomplete",
+      "diff_truncated",
+      "not_single_parent",
+      "outside_interval",
+      "security_signal",
+      "sensitive_path",
+      "sensitive_change",
+      "dependency_update",
+      "docs_or_generated_only",
+      "no_supported_source",
+      "diff_over_ceiling"
+    ],
+    "interval": {
+      "boundaries": "since inclusive, until exclusive, committer date, UTC",
+      "since": "2026-01-01",
+      "until": "2026-07-01"
+    },
+    "min_languages": 5,
+    "min_repositories": 10,
+    "order_seed": "ordinary-corpus-v1",
+    "per_repo_cap": 3,
+    "per_repo_cap_fraction": 0.1,
+    "supported_languages": {
+      "languages": {
+        "csharp": "cs",
+        "go": "go",
+        "java": "jv",
+        "javascript": "js",
+        "php": "php",
+        "python": "py",
+        "ruby": "rb",
+        "rust": "rs",
+        "typescript": "ts"
+      },
+      "source": "corpus-real/*/case.yml, read at selection time"
+    },
+    "target": 30,
+    "undecidable_rules": [
+      "record_incomplete",
+      "conflicting_records"
+    ]
+  },
+  "schema": "ordinary-sample-seal/1",
+  "sealed_at": "2026-09-04T12:26:44.991466+00:00",
+  "selected": [
+    {
+      "case_id": "ord-rb-002b8b92",
+      "commit": "e5a47bb11a285fe8dbe633d66abbd6fd0c782035",
+      "diff_bytes": 26431,
+      "label_evidence": "unavailable",
+      "language": "ruby",
+      "order_hash": "002b8b92a4ed02ec32fd453ccf8b87d5f0e4a834cbb6e7ca4300f4af918c633d",
+      "repo": "github.com/puma/puma",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_path",
+        "sensitive_change"
+      ],
+      "subject": "Add helper method `set_pumactl_config`, port/path variables (#3881)"
+    },
+    {
+      "case_id": "ord-ts-0066e4ad",
+      "commit": "dfbbf1c1ae0c224b8131d80ddf0a264262144086",
+      "diff_bytes": 686,
+      "label_evidence": "unavailable",
+      "language": "typescript",
+      "order_hash": "0066e4ad44570c91aaab2b82919061a39d53ec588c4b2b04606224a6b1b9aa2e",
+      "repo": "github.com/colinhacks/zod",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "Avoid re-exported star modules (#5656)"
+    },
+    {
+      "case_id": "ord-php-00d8cc16",
+      "commit": "b9944c161b12d9ee9c9334cfc5b9659ecd7451f8",
+      "diff_bytes": 6838,
+      "label_evidence": "unavailable",
+      "language": "php",
+      "order_hash": "00d8cc1692aeb1879b6969cfd395fdd90852c080a7d54573051a00eb57c9f7ac",
+      "repo": "github.com/guzzle/guzzle",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_path",
+        "sensitive_change"
+      ],
+      "subject": "Treat IP cookie domains as exact-only (#3694)"
+    },
+    {
+      "case_id": "ord-php-00e04478",
+      "commit": "f7c0786569236dc151f6d6eeb359534874bdea84",
+      "diff_bytes": 709,
+      "label_evidence": "unavailable",
+      "language": "php",
+      "order_hash": "00e04478193353709f77108cd8392ac9469a6671ccf829b9b4bdd56efdefd2e1",
+      "repo": "github.com/guzzle/guzzle",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_change"
+      ],
+      "subject": "Remove redundant sink validation (#3608)"
+    },
+    {
+      "case_id": "ord-py-012ec92a",
+      "commit": "5691f596134c2feb121e595c77a0178921fcce61",
+      "diff_bytes": 881,
+      "label_evidence": "unavailable",
+      "language": "python",
+      "order_hash": "012ec92a77b05e6ef8cda49e06bd74daffcee49d900953b30d39bc4f4053ea94",
+      "repo": "github.com/psf/requests",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_path"
+      ],
+      "subject": "Update JsonType containers to read-based collections (#7436)"
+    },
+    {
+      "case_id": "ord-py-01395e72",
+      "commit": "a09c1c655eef3d43181eb46036b66cf058d72df4",
+      "diff_bytes": 3704,
+      "label_evidence": "unavailable",
+      "language": "python",
+      "order_hash": "01395e721587d0eaf4fcf3e1002812c1bfe2728f795b3ecbc5175a78c2a0565a",
+      "repo": "github.com/pallets/click",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_change"
+      ],
+      "subject": "fix: show custom error message in prompt with hide_input=True"
+    },
+    {
+      "case_id": "ord-py-018332f1",
+      "commit": "73e155006526575548d143ef519995f540547e52",
+      "diff_bytes": 4196,
+      "label_evidence": "unavailable",
+      "language": "python",
+      "order_hash": "018332f1c54c985bc29ceca3d08977344dde7d1c248047c78e4a0119e972e948",
+      "repo": "github.com/pallets/click",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_path"
+      ],
+      "subject": "Fix sentinel typing and its uses in parser (#3396)"
+    },
+    {
+      "case_id": "ord-go-01843501",
+      "commit": "17068fbdc2aafafe58f50b3f08ab5946ffacdf90",
+      "diff_bytes": 615,
+      "label_evidence": "unavailable",
+      "language": "go",
+      "order_hash": "01843501950749fab0833a5b8478e3adca4085bd2b2e3714431f1aca36c9eb38",
+      "repo": "github.com/sirupsen/logrus",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "entry: add BenchmarkEntry_WithField_Chain"
+    },
+    {
+      "case_id": "ord-js-01da4179",
+      "commit": "34adfd90efc9c145488399e1cf7fa96de67080fa",
+      "diff_bytes": 17213,
+      "label_evidence": "unavailable",
+      "language": "javascript",
+      "order_hash": "01da41796f265a6a385c4b3149f21bbfa27d54972fa6f99c380225c701d873cf",
+      "repo": "github.com/axios/axios",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_path",
+        "sensitive_change"
+      ],
+      "subject": "revert: \"fix: support URL object as config.url input (#10866)\" (#10874)"
+    },
+    {
+      "case_id": "ord-ts-01ee4b45",
+      "commit": "85db85e9091d0706910d60c7eb2e9c181edd87bd",
+      "diff_bytes": 1147,
+      "label_evidence": "unavailable",
+      "language": "typescript",
+      "order_hash": "01ee4b45a3463893ed0d79dc234356e82bbce3e30b401656385fe63e2dc6069c",
+      "repo": "github.com/colinhacks/zod",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_change"
+      ],
+      "subject": "fix: typo in codec.test.ts file (#5628)"
+    },
+    {
+      "case_id": "ord-jv-0229e0d8",
+      "commit": "203495bbe6f94c1f67a63346a5ed245f64a3da8e",
+      "diff_bytes": 39319,
+      "label_evidence": "unavailable",
+      "language": "java",
+      "order_hash": "0229e0d8524e5b4b88d2fe6bf644e82a1748e007d23a536af2242d4386b87e63",
+      "repo": "github.com/google/guava",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "Add `final` to some methods in `Immutable*`."
+    },
+    {
+      "case_id": "ord-php-028e8426",
+      "commit": "fb827b89d46c2cf91293afd4f83a2fca9780a7bd",
+      "diff_bytes": 1751,
+      "label_evidence": "unavailable",
+      "language": "php",
+      "order_hash": "028e842649c35e77cd28bbdc1b841465c9f01cb523ced0e463557b2837527177",
+      "repo": "github.com/guzzle/guzzle",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_path",
+        "sensitive_change"
+      ],
+      "subject": "Reject invalid response header lines (#3395)"
+    },
+    {
+      "case_id": "ord-rs-0290c4aa",
+      "commit": "27c60cddecf566e746645ce9e93139091627e064",
+      "diff_bytes": 2070,
+      "label_evidence": "unavailable",
+      "language": "rust",
+      "order_hash": "0290c4aa3b16b51b4fffa5ca8d412d2bf30d32d624716695e353be0ca3044a5c",
+      "repo": "github.com/rayon-rs/rayon",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "Add tests for char range iteration at surrogate boundaries"
+    },
+    {
+      "case_id": "ord-jv-02914bcb",
+      "commit": "b44c6e5a104aacab11112dccca441df18e183913",
+      "diff_bytes": 858,
+      "label_evidence": "unavailable",
+      "language": "java",
+      "order_hash": "02914bcb394845a8b8076105c3cc3537f2c09f628605757898f11092f12d1e5e",
+      "repo": "github.com/google/guava",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "Align LocalCache super source visibility with main code."
+    },
+    {
+      "case_id": "ord-py-02cb4e2f",
+      "commit": "a3321c9ca14ddb951f04ac981f275b0de2f46208",
+      "diff_bytes": 2168,
+      "label_evidence": "unavailable",
+      "language": "python",
+      "order_hash": "02cb4e2f314d124176bd413bf0155ca4fb153c8b37f955dffcfe8da548127419",
+      "repo": "github.com/pallets/click",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_path",
+        "sensitive_change"
+      ],
+      "subject": "Implement Unix line endings for shell completion output to ensure compatibility with Windows (#3277)"
+    },
+    {
+      "case_id": "ord-js-02f665b4",
+      "commit": "3dec28f94ce29d396d5f2d9718805b47428dc7ab",
+      "diff_bytes": 6349,
+      "label_evidence": "unavailable",
+      "language": "javascript",
+      "order_hash": "02f665b49dbb410ba876b33f3f5e75d41276891c3501388be01cebbd226af7fb",
+      "repo": "github.com/axios/axios",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_path",
+        "sensitive_change"
+      ],
+      "subject": "fix(http): preserve TLS options for proxy tunnels (#10957)"
+    },
+    {
+      "case_id": "ord-js-0331ea21",
+      "commit": "4918457aad892a32b2b0cd585c40d22870d48c4a",
+      "diff_bytes": 10244,
+      "label_evidence": "unavailable",
+      "language": "javascript",
+      "order_hash": "0331ea21d1c2306d62721c824b50a3a3d9486d101b0517fa611387d65475eaaa",
+      "repo": "github.com/axios/axios",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_change"
+      ],
+      "subject": "fix(core): make AxiosError cause non-enumerable to prevent circular JSON errors (#10913)"
+    },
+    {
+      "case_id": "ord-go-0338fefe",
+      "commit": "e4f1d8a975011b8521524e17ee71abdbe390b53c",
+      "diff_bytes": 4237,
+      "label_evidence": "unavailable",
+      "language": "go",
+      "order_hash": "0338fefe395a8ba0a159401871826ab684384c909c946f2862fcb006286e6e61",
+      "repo": "github.com/sirupsen/logrus",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "entry: snapshot per-level hooks before firing"
+    },
+    {
+      "case_id": "ord-cs-041db1ab",
+      "commit": "91275568464b4291846b0dfb7cd0dabb43e6c8b5",
+      "diff_bytes": 686,
+      "label_evidence": "unavailable",
+      "language": "csharp",
+      "order_hash": "041db1ab80b571a14e864d486642d32ada9dca74ede8d893f778f1eb781d2417",
+      "repo": "github.com/automapper/automapper",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "Update src/IntegrationTests/Inheritance/PolymorphismTests.cs"
+    },
+    {
+      "case_id": "ord-py-045238f9",
+      "commit": "1a15e6e7a6f15fd31e88c694a296f4a8f0d64fb4",
+      "diff_bytes": 770,
+      "label_evidence": "unavailable",
+      "language": "python",
+      "order_hash": "045238f9e30c0ddf8b7b6db81b835f12ff1ab7be1351d2616046f27a9824d3fa",
+      "repo": "github.com/pydantic/pydantic",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "Fix serializer config typo (#13179)"
+    },
+    {
+      "case_id": "ord-rb-04546591",
+      "commit": "479b405d4735d39fb4aa8739577a6885448667f2",
+      "diff_bytes": 4551,
+      "label_evidence": "unavailable",
+      "language": "ruby",
+      "order_hash": "045465919aafdaa08cbfefb9b3c77c9dc7b183a30c662b35b4dbd74611c236aa",
+      "repo": "github.com/puma/puma",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "[#3875] add shared test helper (#3879)"
+    },
+    {
+      "case_id": "ord-go-046a0c9f",
+      "commit": "fa4818ced582b8d656706b45108fe3b836eb9863",
+      "diff_bytes": 1501,
+      "label_evidence": "unavailable",
+      "language": "go",
+      "order_hash": "046a0c9f50e9e835d373e49092735f19ff650a0e0acf0d6ea446692d9dbbe5e7",
+      "repo": "github.com/sirupsen/logrus",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "fix: build against tinygo"
+    },
+    {
+      "case_id": "ord-rb-04af7b02",
+      "commit": "c9f5565942bbd1b06663eb78b4de7631255a2026",
+      "diff_bytes": 2396,
+      "label_evidence": "unavailable",
+      "language": "ruby",
+      "order_hash": "04af7b0269069a86541e3592e477066a50d820d2d85617256590add38751d01f",
+      "repo": "github.com/rack/rack",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_change"
+      ],
+      "subject": "Root directory disclosure via unescaped regex interpolation in `Rack::Directory`."
+    },
+    {
+      "case_id": "ord-go-04e7b1d7",
+      "commit": "4ef87eaf2cfb27d3126d48194e1a84806acc1aed",
+      "diff_bytes": 2103,
+      "label_evidence": "unavailable",
+      "language": "go",
+      "order_hash": "04e7b1d7c1ac8338b0d445e1069186e36c59d47cc52de616acb40aabfd69db39",
+      "repo": "github.com/go-chi/chi",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_path",
+        "sensitive_change"
+      ],
+      "subject": "middleware: fix httpFancyWriter.ReadFrom double-counting bytes with Tee (#1085)"
+    },
+    {
+      "case_id": "ord-cs-04f87a76",
+      "commit": "29a59fb10553bfe4a4ab35a3eb912bfe2cac8a53",
+      "diff_bytes": 3021,
+      "label_evidence": "unavailable",
+      "language": "csharp",
+      "order_hash": "04f87a76115d2185b6e92f6c420501b6ff7b00639768bf2e5e7a124f3a03c0e2",
+      "repo": "github.com/automapper/automapper",
+      "stratum": "sensitive",
+      "stratum_rules": [
+        "sensitive_change"
+      ],
+      "subject": "Correctly converting nullables for MapAtRuntime; fixes #4597"
+    },
+    {
+      "case_id": "ord-rs-054288f9",
+      "commit": "436ff3c5742c31d01d349203e2c8315e909c8463",
+      "diff_bytes": 11079,
+      "label_evidence": "unavailable",
+      "language": "rust",
+      "order_hash": "054288f9b6366531d994f68d8607e8f7c82b5f711c602796677701457db2ca8d",
+      "repo": "github.com/rayon-rs/rayon",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "Fix unused plumbing imports"
+    },
+    {
+      "case_id": "ord-rs-05751605",
+      "commit": "0e6ba89ff2da16d0cd300944e6739f5aaa1c1abf",
+      "diff_bytes": 967,
+      "label_evidence": "unavailable",
+      "language": "rust",
+      "order_hash": "0575160534106111d4e2e57cba9ff28a2cbb70e29d7e080ef33a5844973164ea",
+      "repo": "github.com/clap-rs/clap",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "fix(derive): Improve invalid attribute errors"
+    },
+    {
+      "case_id": "ord-jv-0684865e",
+      "commit": "2f1ebdd49d945ff2c9e7b80818390cccc32cc034",
+      "diff_bytes": 5144,
+      "label_evidence": "unavailable",
+      "language": "java",
+      "order_hash": "0684865ee0a1a04bf8840a6bf0b7fa6779f381014832720baad5007684f8b854",
+      "repo": "github.com/google/guava",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "Suppress some tests under J2KT to address failures from cl/864303970 + cl/863485621."
+    },
+    {
+      "case_id": "ord-jv-07d8c3d4",
+      "commit": "e4f54f78c93dae0507fcac5be81253974bc9042d",
+      "diff_bytes": 2125,
+      "label_evidence": "unavailable",
+      "language": "java",
+      "order_hash": "07d8c3d46564c349cabac6f73f7b78d921a90cd10115b90eb40818d6e09bd794",
+      "repo": "github.com/google/gson",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "Throw JsonSyntaxException instead of NPE for a null AtomicLongArray element (#3038)"
+    },
+    {
+      "case_id": "ord-js-0b2b2df3",
+      "commit": "18ba0a32f42fd02117f096b032f89c984173462d",
+      "diff_bytes": 5037,
+      "label_evidence": "unavailable",
+      "language": "javascript",
+      "order_hash": "0b2b2df3065323d8566687238568b7aac3207010da2585d32b81ba908ba99a6c",
+      "repo": "github.com/lodash/lodash",
+      "stratum": "quiet",
+      "stratum_rules": [],
+      "subject": "refactor(fromPairs): use baseAssignValue for consistent assignment (#6153)"
+    }
+  ]
+}
