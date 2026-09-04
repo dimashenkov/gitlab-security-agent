@@ -218,7 +218,7 @@ def diff_plans(draw):
 
 
 @st.composite
-def miscounted_diffs(draw, amounts=(-1, 1)):
+def miscounted_diffs(draw, amounts=(-1, 1), with_git_lines=None):
     """A diff whose hunk header does not agree with its own body.
 
     One hunk declares one line too many or too few on one side. Nothing else
@@ -228,9 +228,22 @@ def miscounted_diffs(draw, amounts=(-1, 1)):
     `amounts` narrows it to one direction: `-1` is a body longer than its
     header, `+1` a header promising more than the body delivers. The two are
     caught by different branches and only one of them always fires.
+
+    `with_git_lines=True` makes **every** file section carry its
+    `diff --git` separator, because one caller needs exactly that shape and
+    was filtering for it afterwards. With up to three files and the flag drawn
+    per file, that discarded seven diffs in eight: Hypothesis raised
+    `FailedHealthCheck` on eight generated against fifty filtered, at seed 34,
+    and said the plain thing — that much filtering distorts the distribution
+    and leaves the test weaker than it looks. Generated rather than filtered
+    now. Found on 2026-09-04 when the suite failed once in two runs and passed
+    alone; Codex ruled it deterministic software rather than the recorded
+    noise floor, which is about model output.
     """
     files = draw(st.lists(file_plans(min_hunks=1), min_size=1, max_size=3,
                           unique_by=lambda f: f["path"]))
+    if with_git_lines is not None:
+        files = [dict(entry, with_git_line=with_git_lines) for entry in files]
     positions = [(f, h) for f, entry in enumerate(files)
                  for h in range(len(entry["hunks"]))]
     target = draw(st.sampled_from(positions))

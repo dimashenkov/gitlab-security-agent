@@ -149,8 +149,14 @@ def test_every_added_line_falls_inside_a_hunk_the_parser_read(plan):
                 path, line, spans.get(path))
 
 
-@given(miscounted_diffs())
-@example({"text": ("--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,2 @@\n+one\n"
+@given(miscounted_diffs(with_git_lines=True))
+# Both file sections carry the separator, because that is the shape this test
+# is about. They did not before, and the `assume` below silently discarded the
+# example every run — a pinned counterexample that never executed. Found on
+# 2026-09-04 while chasing the health-check failure that made the same filter
+# throw seven diffs in eight away.
+@example({"text": ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+                   "@@ -0,0 +1,2 @@\n+one\n"
                    "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n"
                    "@@ -0,0 +1,1 @@\n+two\n"),
           "where": (0, 0), "last": False, "side": "new", "amount": 1})
@@ -186,9 +192,16 @@ def test_a_diff_whose_counts_do_not_add_up_is_refused(broken):
     # separator for its first file and not its second has the undecidable shape
     # again, at the boundary between them — which is how the first attempt at
     # this assumption was too weak, and the generator found that too.
+    #
+    # Generated rather than assumed, since 2026-09-04. As a filter it threw
+    # away seven diffs in eight, Hypothesis raised `FailedHealthCheck` at seed
+    # 34 — eight generated against fifty discarded — and the health check said
+    # the thing that matters: that much filtering distorts what the test
+    # actually covers. It also silently discarded the pinned `@example` on
+    # every run. The assertion stays, as a check on the generator.
     text = broken["text"]
-    assume(text.count("diff --git ") == text.count("\n+++ ")
-           + text.startswith("+++ "))
+    assert text.count("diff --git ") == text.count("\n+++ ") \
+        + text.startswith("+++ ")
     with pytest.raises(evidence.DiffFormatError):
         evidence.changed_lines(text)
 

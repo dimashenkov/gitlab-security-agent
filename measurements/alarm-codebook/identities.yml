@@ -1,0 +1,125 @@
+# The findings behind the twenty alarms, named before anything classifies them
+#
+# D-013 step 4 asks what caused the alarms on the fixed member. Before a cause
+# can be recorded, the thing it is a cause *of* has to have a stable name, and
+# the rulings do not all carry one: 17 of the 21 have a `fingerprint` and four
+# do not.
+#
+# **Frozen before classification, on purpose.** Codex, 2026-09-04: supersession
+# decided while reading the classifier's answers is discretion wearing a rule,
+# and inferring it from claim similarity is a false automatic rule. So the
+# links are decided here, with who decided and on what, and the classifier
+# never sees a choice.
+#
+# `finding_id` is the classification key. A fingerprint is *evidence* for an
+# identity, not the identity itself — an absent fingerprint is absence, not a
+# value, and `(case_id, member, "")` would make every legacy row the same
+# finding.
+#
+# **What this establishes and what it does not.** It establishes which rows
+# describe one finding. It does not establish that any ruling is correct, and
+# an identity resolved here is not evidence about the alarm's cause.
+
+schema: alarm-finding-identity/1
+decided_by: assistant
+decided_on: 2026-09-04
+denominator: 20
+
+# Every alarm on the fixed member, by the finding it is about. `rulings` lists
+# the rows that speak about that finding; where there are two, the later one is
+# a revision and `same_finding_as` records why they are one.
+findings:
+
+  - finding_id: rs-8rw6-computed-field-alias
+    case_id: rs-8rw6-p7m8-63jp-snap
+    member: safe
+    file: surrealdb/core/src/doc/output.rs
+    fingerprint: 06bf0112168101e4
+    rulings:
+      - adjudicated_on: 2026-08-24
+        fingerprint: null
+        claim: Computed fields are re-added after permission reduction
+      - adjudicated_on: 2026-09-02
+        fingerprint: 06bf0112168101e4
+        claim: >-
+          Computed fields re-added after permission reduction leak via aliased
+          projections
+    same_finding_as: revision
+    decided_by: assistant
+    decided_on: 2026-09-04
+    rationale: >-
+      One finding stated twice, the later row adding the fingerprint and the
+      alias path. Both name the same mechanism — computed fields re-added after
+      `reduce_document` — in the same file. The assistant first claimed these
+      were two findings, which Codex checked and refuted; this record exists
+      because that claim was wrong and the correction has to be visible.
+    evidence_refs:
+      - corpus-real/adjudications.yml — the two rows, dated
+      - surrealdb/core/src/doc/output.rs — `output_select`, the re-add path
+
+  - finding_id: cs-q939-scp-directory-escape
+    case_id: cs-q939-rpr3-3284
+    member: safe
+    file: src/Renci.SshNet/ScpClient.cs
+    fingerprint: null
+    identity_basis: file_and_claim
+    claim: An 'E' message before any 'D' walks the download above its target
+    decided_by: assistant
+    decided_on: 2026-09-04
+    rationale: >-
+      No fingerprint, and none can be recovered — the batch summary did not
+      record them when this ruling was written. The claim names one mechanism in
+      one file and no second ruling exists for this case, so file and claim
+      identify it without ambiguity.
+    evidence_refs:
+      - corpus-real/adjudications.yml — the row's `claim` and `evidence`
+
+  - finding_id: py-6x92-parent-page-get-versus-post
+    case_id: py-6x92-6vx4-5fwr
+    member: safe
+    file: cms/admin/forms.py
+    fingerprint: null
+    identity_basis: file_and_claim
+    claim: >-
+      The add-subpage permission check reads parent_page from GET while the form
+      takes it from POST
+    decided_by: assistant
+    decided_on: 2026-09-04
+    rationale: >-
+      As above: one ruling, one file, one named mechanism. The row also carries
+      `not_verifiable`, which is a statement about the evidence and not about
+      the identity.
+    evidence_refs:
+      - corpus-real/adjudications.yml — the row's `claim` and `evidence`
+
+  - finding_id: php-gvrw-iframe-allowlist-bypass
+    case_id: php-gvrw-qqp5-jgc5
+    member: safe
+    file: src/View/Shortcodes/EmbedShortcodeProvider.php
+    fingerprint: null
+    identity_basis: file_and_why_malformed
+    # Quoted from `why_malformed`, not paraphrased. The first version stated
+    # the claim in the assistant's own words, and the checker refused it —
+    # correctly, because a paraphrase is indistinguishable from an invention.
+    claim: >-
+      The fix adds `removeDangerousAttributes` with an iframe attribute
+      allowlist, and the safe member reports that allowlist as bypassable —
+      the advisory's own weakness, not a neighbouring one.
+    decided_by: assistant
+    decided_on: 2026-09-04
+    rationale: >-
+      This row carries no `claim` field at all, which is why it was first
+      counted as unidentifiable. The claim is in `why_malformed`, stated in
+      full, and `fix_review_outcome: fix_bypass` says the same thing in a
+      second place. Identity from a field written for another purpose is
+      weaker than from `claim`, and `identity_basis` records which field it
+      came from so a later reader can disagree.
+    evidence_refs:
+      - corpus-real/adjudications.yml — the row's `why_malformed` and
+        `fix_review_outcome`
+
+# The remaining sixteen alarms each carry exactly one fingerprinted ruling, so
+# `(case_id, member, fingerprint)` names them and no record is needed here. A
+# checker must confirm that: an alarm with no entry here and no fingerprint is
+# `identity_unresolved` and leaves the quantitative denominator, staying in the
+# report.
