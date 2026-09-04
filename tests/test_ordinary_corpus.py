@@ -82,18 +82,43 @@ def ctx(corpus):
     return oc.context("2026-01-01", "2026-07-01", corpus)
 
 
+SENSITIVE_DIFF = (
+    "diff --git a/pkg/greet{e} b/pkg/greet{e}\n"
+    "--- a/pkg/greet{e}\n"
+    "+++ b/pkg/greet{e}\n"
+    "@@ -1,3 +1,3 @@\n"
+    " unchanged\n"
+    "-    old = parse(request)\n"
+    "+    new = parse(request)\n"
+)
+
+
 def pool(n_repos=12, per_repo=4):
-    """A pool wide enough to satisfy the coverage checks."""
+    """A pool wide enough to satisfy the coverage checks, in both strata.
+
+    Half the changes touch a security-adjacent area and half do not. Since
+    2026-09-04 `sensitive_path` and `sensitive_change` label rather than
+    exclude, and the sample is drawn to a quota from each stratum — so a pool
+    of only quiet changes fills half the sample and no more. A fixture that
+    cannot be satisfied by correct behaviour proves nothing.
+    """
     languages = [("go", "pkg/greet.go"), ("python", "pkg/greet.py"),
                  ("php", "pkg/greet.php"), ("typescript", "pkg/greet.ts"),
                  ("rust", "pkg/greet.rs"), ("ruby", "pkg/greet.rb")]
     out = []
     for r in range(n_repos):
         _, filename = languages[r % len(languages)]
+        extension = filename[filename.rindex("."):]
         for c in range(per_repo):
-            out.append(record("host/repo{:02d}".format(r),
-                              sha("{}:{}".format(r, c)),
-                              files=[filename]))
+            # Alternating, so every repository contributes to both strata and
+            # the per-repository cap is exercised across them rather than
+            # within one.
+            sensitive = (c % 2 == 1)
+            out.append(record(
+                "host/repo{:02d}".format(r), sha("{}:{}".format(r, c)),
+                files=[filename],
+                diff_text=(SENSITIVE_DIFF.format(e=extension) if sensitive
+                           else PLAIN_DIFF)))
     return out
 
 
@@ -175,15 +200,15 @@ def test_capped_candidates_are_recorded_not_dropped(ctx):
 # Exclusions are recorded, not dropped
 # --------------------------------------------------------------------------
 
+# `sensitive_path` and `sensitive_change` are NOT here since 2026-09-04. They
+# stopped excluding and became strata: they label a candidate rather than
+# removing it, and their own behaviour is tested in
+# `TestTheSensitiveRulesLabelRatherThanExclude` below.
 EXCLUDED = [
     ("security_signal",
      {"subject": "fix CVE-2026-11111 in the greeter"}),
     ("security_signal",
      {"labels": ["security"], "labels_source": "github-api"}),
-    ("sensitive_path",
-     {"files": ["pkg/auth/greet.go"]}),
-    ("sensitive_change",
-     {"diff_text": PLAIN_DIFF.replace("hello ", "hello token ")}),
     ("dependency_update",
      {"files": ["go.mod"]}),
     ("docs_or_generated_only",
@@ -197,6 +222,315 @@ EXCLUDED = [
     ("diff_truncated",
      {"diff_truncated": True}),
 ]
+
+
+class TestTheSensitiveRulesLabelRatherThanExclude:
+    """They used to exclude, and that made the whole measurement wrong.
+
+    On a real pool of 2129 candidates they accounted for 1334 of the 2003
+    exclusions — every ordinary change whose path or changed lines mention
+    parsing, request handling, filesystem paths or input validation. Those are
+    the changes most likely to make a security reviewer say something, so
+    removing them meant the rate answered "how often does it alarm on ordinary
+    changes *that survive this filter*" and not "how often does it alarm in a
+    pipeline". It measured the rules as much as the reviewer.
+
+    They now label. Codex named the defect and the repair on 2026-09-04.
+    """
+
+    def test_a_sensitive_path_is_kept_and_labelled(self, ctx):
+        row = oc.evaluate(
+            record("host/x", sha("p"), files=["pkg/auth/greet.go"]), ctx)
+
+        assert row["disposition"] == "eligible"
+        assert row["stratum"] == "sensitive"
+        assert row["stratum_rules"] == ["sensitive_path"]
+
+    def test_a_sensitive_change_is_kept_and_labelled(self, ctx):
+        row = oc.evaluate(
+            record("host/x", sha("c"),
+                   diff_text=PLAIN_DIFF.replace("hello ", "hello token ")),
+            ctx)
+
+        assert row["disposition"] == "eligible"
+        assert row["stratum"] == "sensitive"
+        assert row["stratum_rules"] == ["sensitive_change"]
+
+    def test_both_rules_firing_is_one_stratum_and_two_pieces_of_evidence(self, ctx):
+        row = oc.evaluate(
+            record("host/x", sha("b"), files=["pkg/auth/greet.go"],
+                   diff_text=PLAIN_DIFF.replace("hello ", "hello token ")),
+            ctx)
+
+        assert row["stratum"] == "sensitive"
+        assert sorted(row["stratum_rules"]) == ["sensitive_change",
+                                                "sensitive_path"]
+
+    def test_neither_is_the_quiet_stratum(self, ctx):
+        row = oc.evaluate(record("host/x", sha("q")), ctx)
+
+        assert row["stratum"] == "quiet"
+        assert row["stratum_rules"] == []
+
+    def test_a_sensitive_change_that_a_real_rule_excludes_is_still_excluded(
+            self, ctx):
+        """Labelling does not rescue anything. A dependency bump in an auth
+        path is still a dependency bump."""
+        row = oc.evaluate(
+            record("host/x", sha("d"), files=["pkg/auth/go.mod"]), ctx)
+
+        assert row["disposition"] == "excluded"
+        assert row["rule"] == "dependency_update"
+        assert row["stratum"] == "sensitive"
+
+    def test_the_quotas_are_equal_and_drawn_from_both(self, ctx):
+        outcome = oc.select(pool(), ctx, 30)
+        strata = outcome["strata"]
+
+        assert strata["quota"] == {"sensitive": 15, "quiet": 15}
+        assert strata["drawn"] == {"sensitive": 15, "quiet": 15}
+
+    def test_an_odd_target_does_not_lose_a_case(self, ctx):
+        """0.5 and 0.5 of 31 round to two halves that do not add up. A quota
+        that silently differs from the target is a sample whose size nobody
+        stated."""
+        outcome = oc.select(pool(), ctx, 31)
+
+        assert sum(outcome["strata"]["quota"].values()) == 31
+
+    def test_the_repository_cap_is_global_and_not_per_stratum(self, ctx):
+        """A cap applied inside each stratum lets one project contribute its
+        cap twice — twenty of a hundred where D-013 allows ten."""
+        outcome = oc.select(pool(), ctx, 30)
+        cap = outcome["per_repo_cap"]
+
+        assert max(outcome["per_repo"].values()) <= cap
+
+    def test_the_cap_does_not_starve_a_stratum_the_pool_could_fill(self, ctx):
+        """Codex's counterexample, exactly. Target 2, cap 1.
+
+        Repository A holds a sensitive change and a quiet one; repository B
+        holds a sensitive one. A's sensitive change sorts first.
+
+        Greedy — in either of the two versions written before this — takes
+        A-sensitive, refuses A-quiet at the cap, and reports 1 and 0. The
+        allocation B-sensitive plus A-quiet fills both, and the shortfall was
+        then blamed on a pool that had enough in it.
+
+        The rows are searched for by hash so the fixture holds whatever the
+        seed does, rather than asserting an order that a changed seed silently
+        breaks — the previous version of this test claimed the quiet rows sat
+        after the sensitive ones and they did not.
+        """
+        def rows_for(tag, sensitive):
+            return record(
+                "host/{}".format("A" if tag.startswith("a") else "B"),
+                sha(tag), files=["pkg/greet.py"],
+                diff_text=(SENSITIVE_DIFF.format(e=".py") if sensitive
+                           else PLAIN_DIFF))
+
+        # Both inequalities. `A-sensitive < B-sensitive` alone is not the
+        # arrangement: greedy also has to reach A's sensitive row before A's
+        # quiet one, or it takes the quiet one first and succeeds by accident.
+        # With one condition the search could pick a trio that proves nothing.
+        def key(row):
+            return oc.order_hash(row["repo"], row["commit"])
+
+        for n in range(500):
+            a_sensitive = rows_for("a-sensitive-{}".format(n), True)
+            a_quiet = rows_for("a-quiet-{}".format(n), False)
+            b_sensitive = rows_for("b-sensitive-{}".format(n), True)
+            if (key(a_sensitive) < key(b_sensitive)
+                    and key(a_sensitive) < key(a_quiet)):
+                break
+        else:
+            pytest.skip("no arrangement found; the seed must have changed")
+
+        assert key(a_sensitive) < key(b_sensitive)
+        assert key(a_sensitive) < key(a_quiet)
+
+        outcome = oc.select([a_sensitive, a_quiet, b_sensitive], ctx, 2)
+
+        assert outcome["strata"]["drawn"] == {"sensitive": 1, "quiet": 1}, (
+            "greedy takes A's sensitive row, refuses A's quiet one at the cap "
+            "and reports {} — while B-sensitive plus A-quiet fills both"
+            .format(outcome["strata"]["drawn"]))
+        assert max(outcome["per_repo"].values()) <= outcome["per_repo_cap"]
+
+    def test_the_allocator_beats_greedy_on_a_pool_where_greedy_falls_short(
+            self, ctx):
+        """A pool the allocator fills and the old greedy draw does not.
+
+        The first version of this test asserted only that the quotas filled at
+        target 30 — and greedy filled that fixture too, so the test passed
+        without exercising the thing it was named for. Codex simulated it.
+
+        Both algorithms are run here, on the same rows: greedy as it was, one
+        pass down the global hash order, and the allocator. The test is the
+        difference between them, so it cannot pass by accident.
+        """
+        quota = {"sensitive": 3, "quiet": 3}
+        cap = 1
+
+        def greedy(eligible):
+            """One pass down the hash order, first come first served."""
+            used, drawn = {}, {"sensitive": 0, "quiet": 0}
+            for row in eligible:
+                s = row["stratum"]
+                if drawn[s] >= quota[s] or used.get(row["repo"], 0) >= cap:
+                    continue
+                used[row["repo"]] = used.get(row["repo"], 0) + 1
+                drawn[s] += 1
+            return drawn
+
+        # Built to the shape that defeats greedy, at three times the size of
+        # the two-row counterexample: three repositories holding a sensitive
+        # change *and* a quiet one, three holding only a sensitive one, and
+        # every A-sensitive row sorting before every B-sensitive row and before
+        # its own quiet sibling.
+        #
+        # Greedy then fills its sensitive quota entirely from the A
+        # repositories, and every quiet row is behind a spent cap: 3 and 0. The
+        # allocator re-routes the sensitive rows to B and takes the quiet ones:
+        # 3 and 3.
+        #
+        # The shas are searched for rather than typed, because the order comes
+        # out of the hash and a fixture that asserted an order would break
+        # silently if `ORDER_SEED` ever changed.
+        def key(row):
+            return oc.order_hash(row["repo"], row["commit"])
+
+        def find(repo, sensitive, before=None):
+            for n in range(4000):
+                row = record(
+                    repo, sha("{}:{}:{}".format(repo, sensitive, n)),
+                    files=["pkg/greet.py"],
+                    diff_text=(SENSITIVE_DIFF.format(e=".py") if sensitive
+                               else PLAIN_DIFF))
+                if before is None or key(row) > before:
+                    return row
+            return None
+
+        records, ceiling = [], "0" * 16
+        for name in ("A0", "A1", "A2"):          # sensitive first, then quiet
+            s = find("host/{}".format(name), True, ceiling)
+            q = find("host/{}".format(name), False, key(s))
+            if s is None or q is None:
+                pytest.skip("no arrangement found; the seed must have changed")
+            records += [s, q]
+            ceiling = max(ceiling, key(s))
+        for name in ("B0", "B1", "B2"):          # sensitive, all sorting later
+            s = find("host/{}".format(name), True, ceiling)
+            if s is None:
+                pytest.skip("no arrangement found; the seed must have changed")
+            records.append(s)
+
+        rows = [oc.evaluate(r, ctx) for r in records]
+        eligible = sorted((r for r in rows if r["disposition"] == "eligible"),
+                          key=lambda r: (r["order_hash"], r["repo"], r["commit"]))
+        by_stratum = {
+            "sensitive": [r for r in eligible if r["stratum"] == "sensitive"],
+            "quiet": [r for r in eligible if r["stratum"] == "quiet"],
+        }
+        greedy_drawn = greedy(eligible)
+        taken = oc._allocate(by_stratum, quota, cap)
+        allocated = {"sensitive": 0, "quiet": 0}
+        used = {}
+        for row in eligible:
+            if id(row) in taken:
+                allocated[row["stratum"]] += 1
+                used[row["repo"]] = used.get(row["repo"], 0) + 1
+
+        assert greedy_drawn != quota, (
+            "the fixture no longer distinguishes the two algorithms: greedy "
+            "also filled {}".format(greedy_drawn))
+        assert allocated == quota, (
+            "the allocator did not fill a pool it could: {}".format(allocated))
+        assert max(used.values()) <= cap
+
+    def test_two_repositories_sharing_a_sha_are_two_rows(self, ctx):
+        """A change's identity is repository *and* commit.
+
+        The flow's row nodes were named after the stratum and the sha, so two
+        repositories holding the same sha — legitimate, and it happens — fused
+        into one node: capacities added up and only the last row survived the
+        lookup, so the allocator returned fewer rows than the flow carried.
+        Codex reproduced it. The names are ranks now.
+        """
+        # Four repositories, because the cap at a target of four is one apiece.
+        # Two of them hold the *same* sha, which is the collision.
+        shared = sha("shared-commit")
+        rows = [record("host/one", shared, files=["pkg/greet.py"]),
+                record("host/two", shared, files=["pkg/greet.go"]),
+                record("host/three", sha("s1"), files=["pkg/greet.php"],
+                       diff_text=SENSITIVE_DIFF.format(e=".php")),
+                record("host/four", sha("s2"), files=["pkg/greet.rs"],
+                       diff_text=SENSITIVE_DIFF.format(e=".rs"))]
+
+        outcome = oc.select(rows, ctx, 4)
+
+        assert outcome["strata"]["drawn"] == {"sensitive": 2, "quiet": 2}, (
+            "the two rows sharing a sha collapsed into one: {}".format(
+                outcome["strata"]["drawn"]))
+        assert len(outcome["selected"]) == 4
+
+    def test_the_draw_follows_the_hash_order_and_not_the_sha(self, ctx):
+        """The search visits neighbours in sorted order, and the node names
+        used to contain the sha — so sorting sorted by sha, not by
+        `order_hash`, which is what the draw is supposed to depend on. Between
+        two maximum flows a changed sha could move the sample."""
+        rows = pool()
+        first = oc.select([dict(r) for r in rows], ctx, 30)
+
+        # Same rows, same hashes, presented in a different order.
+        shuffled = [dict(r) for r in rows[7:]] + [dict(r) for r in rows[:7]]
+        second = oc.select(shuffled, ctx, 30)
+
+        assert ([r["case_id"] for r in first["selected"]]
+                == [r["case_id"] for r in second["selected"]])
+
+    def test_a_pool_that_genuinely_cannot_fill_says_so(self, ctx):
+        """The floor. An allocator that always claims success would pass every
+        test above and hide a short sample."""
+        only_quiet = [record("host/repo{:02d}".format(r), sha("q{}".format(r)),
+                             files=["pkg/greet.py"])
+                      for r in range(12)]
+
+        outcome = oc.select(only_quiet, ctx, 30)
+
+        assert outcome["strata"]["drawn"]["sensitive"] == 0
+        assert outcome["complete"] is False
+        assert [c["met"] for c in outcome["checks"]
+                if c["name"] == "sensitive_quota_filled"] == [False]
+
+    def test_the_draw_is_still_a_function_of_the_hash_and_nothing_else(self, ctx):
+        """The round-robin must not have made the sample depend on input
+        order — that is the one property this whole file exists for."""
+        records = pool()
+        forwards = oc.select(list(records), ctx, 30)
+        backwards = oc.select(list(reversed(records)), ctx, 30)
+
+        assert ([r["case_id"] for r in forwards["selected"]]
+                == [r["case_id"] for r in backwards["selected"]])
+
+    def test_the_frame_share_is_recorded_for_weighting(self, ctx):
+        """The sample is 50/50 by design and the population is not, so a
+        pipeline-representative figure needs the frame proportions. An
+        unweighted average over the hundred is a prevalence for a population
+        that does not exist."""
+        strata = oc.select(pool(), ctx, 30)["strata"]
+
+        assert set(strata["frame_share"]) == {"sensitive", "quiet"}
+        assert abs(sum(strata["frame_share"].values()) - 1.0) < 0.01
+
+    def test_the_two_by_two_is_recorded_rather_than_first_firings(self, ctx):
+        """"737 path, 597 change" hides how many are both — and on the real
+        pool 395 of 701 were. First-firing counts cannot say whether two strata
+        were the right number."""
+        cells = oc.select(pool(), ctx, 30)["strata"]["rule_overlap"]
+
+        assert set(cells) == {"neither", "path only", "change only", "both"}
+        assert sum(cells.values()) > 0
 
 
 @pytest.mark.parametrize(("rule", "spoil"), EXCLUDED, ids=[r for r, _ in EXCLUDED])
@@ -218,7 +552,11 @@ def test_each_exclusion_is_recorded_with_its_rule(ctx, rule, spoil):
 
 def test_an_excluded_candidate_is_never_taken(ctx):
     """It has to be absent from `selected`, not merely annotated in the table."""
-    records = [*pool(), record("host/x", sha("bad"), files=["pkg/authz.go"])]
+    # A dependency bump: a real exclusion. This used to use a sensitive path,
+    # which since 2026-09-04 is a stratum label and not an exclusion at all —
+    # the candidate is meant to be taken now, so the fixture was testing
+    # nothing.
+    records = [*pool(), record("host/x", sha("bad"), files=["go.mod"])]
     outcome = oc.select(records, ctx, 30)
     assert sha("bad") not in {r["commit"] for r in outcome["selected"]}
 
@@ -262,11 +600,17 @@ def test_word_matching_does_not_fire_on_innocent_substrings(ctx):
 
 
 def test_camel_case_identifiers_are_split(ctx):
-    """`parseRequest` must be seen. Snake-case-only matching is blind to Go."""
+    """`parseRequest` must be seen. Snake-case-only matching is blind to Go.
+
+    Asserted on the stratum since 2026-09-04: the rule labels rather than
+    excludes, so the candidate is eligible and sits in the sensitive stratum.
+    What is being tested is unchanged — whether the word was seen at all.
+    """
     camel = record("host/x", sha("camel"),
                    diff_text=PLAIN_DIFF + "\n+  v := parseRequest(b)\n")
     row = oc.select([camel], ctx, 30)["rows"][0]
-    assert row["rule"] == "sensitive_change"
+    assert row["stratum"] == "sensitive"
+    assert row["stratum_rules"] == ["sensitive_change"]
 
 
 def test_context_lines_do_not_exclude_a_change(ctx):
@@ -331,7 +675,10 @@ def test_undecidable_is_counted_apart_from_excluded(ctx):
     unusable, and only the second is the operator's to fix."""
     broken = record("host/z", sha("c"))
     del broken["body"]
-    counts = oc.select([record("host/x", sha("a"), files=["pkg/auth.go"]),
+    # `go.mod`, not an auth path: the sensitive rules label rather than exclude
+    # since 2026-09-04, so the old fixture produced a *taken* candidate and the
+    # excluded count it asserted was never going to arrive.
+    counts = oc.select([record("host/x", sha("a"), files=["go.mod"]),
                         broken], ctx, 30)["counts"]
     assert counts["excluded"] == 1
     assert counts["undecidable"] == 1
@@ -380,9 +727,15 @@ def test_identical_repeats_collapse_to_one(ctx):
 def test_a_thin_language_spread_is_a_refusal(ctx):
     """30 changes in two languages says nothing about the other seven, and the
     gate it feeds is about whether the tool is bearable in a pipeline."""
-    records = [record("host/repo{:02d}".format(r), sha("{}:{}".format(r, c)),
-                      files=["pkg/greet.go" if r % 2 else "pkg/greet.py"])
-               for r in range(12) for c in range(4)]
+    # Both strata, so the sample can actually fill: the point of this test is
+    # the language spread, and a fixture that also starves a quota would fail
+    # for a second reason and prove neither.
+    records = [
+        record("host/repo{:02d}".format(r), sha("{}:{}".format(r, c)),
+               files=["pkg/greet.go" if r % 2 else "pkg/greet.py"],
+               diff_text=(SENSITIVE_DIFF.format(e=".go" if r % 2 else ".py")
+                          if c % 2 else PLAIN_DIFF))
+        for r in range(12) for c in range(4)]
     outcome = oc.select(records, ctx, 30)
     assert len(outcome["selected"]) == 30
     assert outcome["complete"] is False

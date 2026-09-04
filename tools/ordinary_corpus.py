@@ -56,9 +56,15 @@ Then::
 
 ## What this program refuses to decide
 
-* **Whether a change is safe.** No rule here reads "this looks fine". The
-  exclusions remove changes that *touch* a security-relevant area; what is left
-  is a candidate for human adjudication, not a verdict.
+* **Whether a change is safe, or whether it is ordinary.** No rule here reads
+  "this looks fine". The exclusions remove changes that are not the kind this
+  measures — merges, dependency bumps, docs, security fixes — and the two
+  *stratum* rules label the ones that touch a security-adjacent area, which are
+  kept and sampled in their own right. Neither is a verdict. Until 2026-09-04
+  the stratum rules excluded, and on a real pool that removed 1334 of 2003 —
+  every ordinary change mentioning parsing, requests, paths or validation, which
+  are the changes most likely to make a reviewer speak. The resulting rate would
+  have measured the rules as much as the reviewer.
 * **Whether an upstream security label existed.** `git` carries no labels. A
   record whose `labels_source` is not authoritative is selected with
   `label_evidence: "unavailable"` recorded on it, and the adjudication template
@@ -863,6 +869,58 @@ RULES = {
     "diff_over_ceiling": rule_diff_over_ceiling,
 }
 
+# ---------------------------------------------------------------------------
+# STRATA, AND THE THREE KINDS OF RULE THEY SEPARATE
+#
+# Established 2026-09-04, after the first pool was drawn and before a single
+# review was bought. `sensitive_path` and `sensitive_change` used to *exclude*,
+# and on 2129 real candidates they accounted for 1334 of the 2003 exclusions —
+# every ordinary change whose path or changed lines mention parsing, request
+# handling, filesystem paths or input validation.
+#
+# Those are the changes most likely to make a security reviewer say something.
+# Removing them meant the resulting rate answered:
+#
+#     the alarm rate among ordinary changes THAT SURVIVE THIS FILTER
+#
+# and not the alarm rate in a pipeline. It measured the rules at least as much
+# as the reviewer. Codex named it; the repair is to keep the same evidence and
+# stop throwing the changes away.
+#
+# The three kinds are named apart because they are different claims:
+#
+#   POPULATION     the change is not the kind this rule is about at all — a
+#                  merge, a dependency bump, docs, a commit outside the
+#                  interval, a security fix. Excluded.
+#   OPERABILITY    the reviewer could not process it whole: truncated, over a
+#                  ceiling, no supported source. Excluded, and NOT evidence
+#                  that the change is anything — the estimand is conditional
+#                  on processable changes and the manifest says so.
+#   STRATUM        the change touches a security-adjacent area. Kept, labelled,
+#                  and sampled in its own right.
+# ---------------------------------------------------------------------------
+
+STRATUM_RULES = ("sensitive_path", "sensitive_change")
+
+OPERABILITY_RULES = ("diff_truncated", "diff_over_ceiling",
+                     "no_supported_source")
+
+POPULATION_RULES = tuple(
+    name for name in RULES
+    if name not in STRATUM_RULES and name not in OPERABILITY_RULES)
+
+# The two strata, and the label each candidate carries.
+SENSITIVE, QUIET = "sensitive", "quiet"
+
+# 50 and 50, not 63/37. Codex, 2026-09-04: proportional allocation is
+# defensible for a pipeline-wide prevalence and weakens the quiet stratum
+# exactly where the comparison lives; Neyman needs variances nobody has. The
+# quotas are justified on their own ground — comparative precision, and neither
+# stratum swamping the other — not derived from the pool's proportions. A
+# pipeline-representative figure is computed afterwards by weighting the two
+# rates with the frozen frame proportions, and never by averaging the hundred.
+STRATUM_TARGET_SHARE = {SENSITIVE: 0.5, QUIET: 0.5}
+
 
 # ---------------------------------------------------------------------------
 # Evaluation
@@ -904,6 +962,13 @@ def evaluate(record: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
         if reason is not None:
             fired.append({"rule": name, "reason": reason})
 
+    # Every stratum rule that fired, kept as an attribute of the candidate.
+    # Not "the first one" — once these are strata indicators, the full 2×2 of
+    # path-only / change-only / both / neither is the thing that describes the
+    # pool, and first-firing counts hide the overlap. Codex, 2026-09-04.
+    stratum_hits = [f["rule"] for f in fired if f["rule"] in STRATUM_RULES]
+    excluding = [f for f in fired if f["rule"] not in STRATUM_RULES]
+
     counts = languages_of(record, ctx["supported"])
     row.update({
         "committed_date": record["committed_date"],
@@ -924,12 +989,25 @@ def evaluate(record: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
         "labels_source": record["labels_source"],
         "rules_fired": [f["rule"] for f in fired],
         "rules_detail": fired,
+        # Which stratum, and on what evidence. `stratum_rules` is the cell of
+        # the 2×2 this candidate sits in; `stratum` is that collapsed to the
+        # two the sample is drawn from.
+        "stratum": SENSITIVE if stratum_hits else QUIET,
+        "stratum_rules": stratum_hits,
+        # Why it was excluded, if it was, kept apart from *whether*. An
+        # operability exclusion says the reviewer could not process the change
+        # whole; it is not evidence that the change is anything, and folding
+        # the two together is what let the estimand drift unnoticed.
+        "exclusion_kind": (
+            "operability"
+            if excluding and excluding[0]["rule"] in OPERABILITY_RULES
+            else "population" if excluding else None),
     })
 
-    if fired:
+    if excluding:
         row["disposition"] = "excluded"
-        row["rule"] = fired[0]["rule"]
-        row["reason"] = fired[0]["reason"]
+        row["rule"] = excluding[0]["rule"]
+        row["reason"] = excluding[0]["reason"]
     else:
         row["disposition"] = "eligible"
         row["rule"] = None
@@ -983,9 +1061,122 @@ def group_duplicates(records: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[str, 
     return unique, conflicts
 
 
+def _allocate(by_stratum, quota, cap):
+    """Which rows to take, filling both quotas if the pool allows it at all.
+
+    Returns a set of `id(row)`.
+
+    **Greedy does not work here, and two versions of it did not.** One pass
+    down the global hash order spends a repository's cap on whichever stratum
+    reaches it first; alternating between the strata spends it on whichever
+    stratum asks first. Codex's counterexample, with a target of two and a cap
+    of one: repository A holds a sensitive and a quiet change, repository B
+    holds a sensitive one, and A's sensitive change sorts first. Greedy takes
+    A-sensitive, refuses A-quiet at the cap, and reports 1 and 0 — while
+    B-sensitive plus A-quiet fills both. The shortfall was then blamed on a
+    pool that had enough in it.
+
+    This is an assignment problem: each stratum needs `quota` rows, each
+    repository can give `cap`, and a repository's rows can serve either
+    stratum. Solved as a maximum flow:
+
+        source -> stratum -> row -> repository -> sink
+
+    with capacities `quota`, 1, 1 and `cap`. Augmenting along the shortest path
+    each time, neighbours visited in sorted order, so the answer depends on the
+    hashes and the input and on nothing else — the one property this whole file
+    exists for.
+
+    A hand-rolled swap was tried first and is wrong in a way worth recording:
+    when a repository was full it looked for *another row of the same stratum*
+    to take instead of the one occupying the slot. That is not an augmenting
+    path — it can displace a row and replace it with one that was available
+    anyway, so the count does not rise and can fall. Traced on six rows: it
+    took A0q, then evicted it while serving A1q and "replaced" it with A2q,
+    which the next turn would have taken regardless. Result 3 and 2 on a pool
+    that admits 3 and 3.
+    """
+    # source -> stratum -> row -> repository -> sink, and the answer is a
+    # maximum flow. Written out explicitly rather than as a swap, because the
+    # swap looked right and was not.
+    graph: Dict[str, Dict[str, int]] = {}
+
+    def edge(a, b, capacity):
+        graph.setdefault(a, {})[b] = graph.setdefault(a, {}).get(b, 0) + capacity
+        graph.setdefault(b, {}).setdefault(a, 0)
+
+    # Node names carry a **rank**, not a name. Two things depended on it:
+    #
+    # A row keyed on `stratum + commit` merged two rows when two repositories
+    # held the same sha — legitimate, and it happens. The nodes fused, their
+    # capacities added up, and `rows_by_key` kept only whichever came last, so
+    # the allocator returned fewer rows than the flow carried. Codex
+    # reproduced it on a two-repository pool.
+    #
+    # And the search visits neighbours in sorted order, so sorting by a node
+    # name sorted rows by their sha — not by `order_hash`, which is what the
+    # draw is supposed to depend on. Between two maximum flows, changing a sha
+    # while leaving its position in the hash order alone could change the
+    # sample. Ranking the rows first and putting the rank in the name makes the
+    # sorted() order the hash order, which is what was claimed.
+    rows_by_key: Dict[str, Dict[str, Any]] = {}
+    repo_rank: Dict[str, int] = {}
+    for name, rows in by_stratum.items():
+        edge("source", "s:{}".format(name), quota.get(name, 0))
+        ordered = sorted(rows, key=lambda r: (r["order_hash"], r["repo"],
+                                              r["commit"]))
+        for rank, row in enumerate(ordered):
+            key = "r:{}:{:08d}".format(name, rank)
+            rows_by_key[key] = row
+            edge("s:{}".format(name), key, 1)
+            repo = row["repo"]
+            if repo not in repo_rank:
+                repo_rank[repo] = len(repo_rank)
+            edge(key, "repo:{:06d}".format(repo_rank[repo]), 1)
+    for rank in repo_rank.values():
+        edge("repo:{:06d}".format(rank), "sink", cap)
+
+    # Augment along the shortest path each time, taking neighbours in sorted
+    # order — which is hash order, because the names are ranks.
+    while True:
+        parent, queue = {"source": None}, ["source"]
+        while queue and "sink" not in parent:
+            node = queue.pop(0)
+            for nxt in sorted(graph.get(node, {})):
+                if nxt not in parent and graph[node][nxt] > 0:
+                    parent[nxt] = node
+                    queue.append(nxt)
+        if "sink" not in parent:
+            break
+        path, node = [], "sink"
+        while node != "source":
+            path.append((parent[node], node))
+            node = parent[node]
+        room = min(graph[a][b] for a, b in path)
+        for a, b in path:
+            graph[a][b] -= room
+            graph[b][a] += room
+
+    # A row is taken when its stratum edge carries flow — that is, when the
+    # residual capacity of `stratum -> row` has been spent.
+    taken = set()
+    for key, row in rows_by_key.items():
+        stratum_node = "s:" + row["stratum"]
+        if graph[stratum_node].get(key, 0) == 0 and graph[key].get(stratum_node, 0):
+            taken.add(id(row))
+    return taken
+
+
 def select(records: Sequence[Dict[str, Any]], ctx: Dict[str, Any],
            target: int) -> Dict[str, Any]:
-    """Evaluate everything, order by hash, draw under the per-repository cap."""
+    """Evaluate everything, order by hash, draw a quota from each stratum.
+
+    Two strata, drawn to their own quotas, under **one global** per-repository
+    cap. The cap is not applied within each stratum: at 50 and 50 that would
+    let a single project contribute ten to each and twenty of the hundred,
+    which is twice what D-013 allows and hides the clustering the cap exists to
+    measure. Codex, 2026-09-04.
+    """
     unique, conflicts = group_duplicates(records)
     rows = [evaluate(r, ctx) for r in unique] + conflicts
 
@@ -997,24 +1188,53 @@ def select(records: Sequence[Dict[str, Any]], ctx: Dict[str, Any],
     eligible.sort(key=lambda r: (r["order_hash"], r["repo"], r["commit"]))
 
     cap = max(1, math.ceil(target * REPO_CAP_FRACTION))
+    quota = {name: round(target * share)
+             for name, share in STRATUM_TARGET_SHARE.items()}
+    # Rounding must not lose or invent a case. With an odd target, 0.5 and 0.5
+    # round to two halves that do not add up, and a quota that silently differs
+    # from the target is a sample whose size nobody stated.
+    short = target - sum(quota.values())
+    if short:
+        quota[SENSITIVE] += short
+
     # Keyed on `row["repo"]`, which `evaluate` has already put through
     # `identity`. Counting the raw string counted spellings, and a project
     # written twelve ways filled 30 of 30 under a cap of 3.
     per_repo: Dict[str, int] = {}
+    drawn = {SENSITIVE: 0, QUIET: 0}
     selected = []
+    by_stratum = {
+        SENSITIVE: [r for r in eligible if r["stratum"] == SENSITIVE],
+        QUIET: [r for r in eligible if r["stratum"] == QUIET],
+    }
+    taken_ids = _allocate(by_stratum, quota, cap)
     for row in eligible:
-        if len(selected) >= target:
-            row["disposition"] = "not_selected"
-            row["reason"] = "the sample was already full at {}".format(target)
+        if id(row) in taken_ids:
+            per_repo[row["repo"]] = per_repo.get(row["repo"], 0) + 1
+            drawn[row["stratum"]] += 1
+            row["disposition"] = "taken"
+            selected.append(row)
+
+    # Why each of the rest was passed over. Distinguished, because "the pool
+    # did not hold enough" and "your cap was spent elsewhere" send an operator
+    # to different places — and the first version said the former when the
+    # latter was true.
+    for row in eligible:
+        if row["disposition"] != "eligible":
             continue
-        if per_repo.get(row["repo"], 0) >= cap:
-            row["disposition"] = "not_selected"
-            row["reason"] = ("{} had already contributed {}, the cap for a "
-                             "sample of {}".format(row["repo"], cap, target))
-            continue
-        per_repo[row["repo"]] = per_repo.get(row["repo"], 0) + 1
-        row["disposition"] = "taken"
-        selected.append(row)
+        row["disposition"] = "not_selected"
+        stratum = row["stratum"]
+        if drawn[stratum] >= quota[stratum]:
+            row["reason"] = "the {} stratum was already full at {}".format(
+                stratum, quota[stratum])
+        else:
+            row["reason"] = (
+                "{} had already contributed {}, the cap for a sample of {} — "
+                "counted across both strata".format(row["repo"], cap, target))
+
+    # Hash order across the whole sample, so the file reads the same way it
+    # would have without the round-robin.
+    selected.sort(key=lambda r: (r["order_hash"], r["repo"], r["commit"]))
 
     ids = [r["case_id"] for r in selected]
     if len(set(ids)) != len(ids):
@@ -1038,10 +1258,45 @@ def select(records: Sequence[Dict[str, Any]], ctx: Dict[str, Any],
     contradicted = sorted({(r["repo"], r["commit"]) for r in rows
                            if r["rule"] == "conflicting_records"})
 
+    # The full 2×2 of the two stratum rules over everything that could have
+    # been drawn. Not first-firing counts: once these are strata indicators,
+    # "737 sensitive_path, 597 sensitive_change" hides how many are both, and
+    # the overlap is what says whether two strata were the right number.
+    cells = {"neither": 0, "path only": 0, "change only": 0, "both": 0}
+    for row in eligible:
+        hits = set(row.get("stratum_rules") or ())
+        if hits == {"sensitive_path", "sensitive_change"}:
+            cells["both"] += 1
+        elif hits == {"sensitive_path"}:
+            cells["path only"] += 1
+        elif hits == {"sensitive_change"}:
+            cells["change only"] += 1
+        else:
+            cells["neither"] += 1
+
+    in_pool = {name: sum(1 for r in eligible if r["stratum"] == name)
+               for name in (SENSITIVE, QUIET)}
+    total_pool = sum(in_pool.values())
+
     checks = [
         {"name": "sample_filled", "required": target,
          "observed": len(selected), "met": len(selected) == target,
          "remedy": "widen the date interval or add repositories to the pool"},
+        # Per stratum, because a sample that filled its total by taking
+        # everything from one stratum is not the design that was preregistered.
+        # Reported as a check rather than a note: a quota missed is a sample
+        # that cannot answer the question it was drawn for.
+        {"name": "sensitive_quota_filled", "required": quota[SENSITIVE],
+         "observed": drawn[SENSITIVE],
+         "met": drawn[SENSITIVE] == quota[SENSITIVE],
+         "remedy": ("the pool holds {} eligible sensitive change(s); add "
+                    "repositories or widen the interval".format(
+                        in_pool[SENSITIVE]))},
+        {"name": "quiet_quota_filled", "required": quota[QUIET],
+         "observed": drawn[QUIET], "met": drawn[QUIET] == quota[QUIET],
+         "remedy": ("the pool holds {} eligible quiet change(s); add "
+                    "repositories or widen the interval".format(
+                        in_pool[QUIET]))},
         # `conflicting_records` was recorded on the row and read by nothing.
         # That made a contradiction a *silent* exclusion: one extra record
         # naming a commit already in the pool, with any single field changed,
@@ -1079,6 +1334,24 @@ def select(records: Sequence[Dict[str, Any]], ctx: Dict[str, Any],
         "contradicted_commits": ["{} {}".format(r, c) for r, c in contradicted],
         "checks": checks,
         "complete": all(c["met"] for c in checks),
+        # The strata: what the pool held, what was drawn, and the frame
+        # proportions. The proportions are the weights a pipeline-representative
+        # figure is computed with afterwards — the sample is 50/50 by design and
+        # the population is not, so an unweighted average over the hundred is a
+        # prevalence for a population that does not exist.
+        "strata": {
+            "drawn": dict(drawn),
+            "quota": dict(quota),
+            "eligible_in_pool": in_pool,
+            "frame_share": {
+                name: (round(n / total_pool, 4) if total_pool else None)
+                for name, n in in_pool.items()
+            },
+            # The 2×2 the two strata were collapsed from. Kept so a later
+            # reader can see whether two was the right number without
+            # re-deriving it from the candidate table.
+            "rule_overlap": cells,
+        },
     }
 
 
@@ -1135,34 +1408,80 @@ def build_manifest(name: str, outcome: Dict[str, Any], ctx: Dict[str, Any],
             "primary_endpoint": (
                 "of the selected changes, how many produce at least one "
                 "adjudicated unfounded finding presented as actionable."),
-            "thresholds_at_100": {
-                "pass_at_or_below": 9, "fail_at_or_above": 21,
+            # Rates, not counts. "Up to 9 of 50" silently doubles the
+            # tolerated rate, and this block said "at 100" while D-013 had
+            # already become a rate rule — a protocol recorded in one file and
+            # contradicted by the artifact the other file produces.
+            #
+            # **Nothing computes any of this yet.** There is no scorer for the
+            # ordinary corpus: no Wilson interval, no completeness gate, no
+            # worst-case bounds, no boundary classification, no frame-weighted
+            # estimate. Written as `required_of_the_scorer` rather than as
+            # properties the result carries, because the first version of this
+            # block said "the result carries worst-case bounds" and no result
+            # carried anything — the same defect it was written to repair,
+            # one turn later. Codex caught it twice.
+            "required_of_the_scorer": {
+                "acceptance_rate_at_or_below": 0.09,
+                "rejection_rate_at_or_above": 0.21,
                 "between": "undecided, which is not a pass",
-                "also_required": "at least 90% finish under the limits",
-                # Written into the artifact because a reader of the number
-                # otherwise has to go and find it. 9 of 100 and 9 of 80 are
-                # not the same boundary, and `unclear` removes cases from the
-                # denominator — so the count of adjudicated-ordinary cases has
-                # to be reported beside any comparison with these cutoffs.
+                "applied": (
+                    "per stratum, each with its own denominator, its `unclear` "
+                    "count and a Wilson interval. Never to the two pooled: the "
+                    "sample is equal by design and the population is not."),
                 "denominator": (
-                    "these cutoffs are stated for 100 adjudicated-ordinary "
-                    "changes. Compare against the count actually adjudicated "
-                    "ordinary, not against the number selected."),
+                    "the cases adjudicated `ordinary` in that stratum, not the "
+                    "number selected."),
+                "undecided_when": (
+                    "the interval, or the worst-case bounds below, cannot "
+                    "separate the two boundaries."),
+                "owner_rule_not_measurement": (
+                    "these are the owner's acceptance and rejection rates — "
+                    "the point at which he is willing to put the tool in a "
+                    "pipeline. With one adjudicator and no disagreement rate "
+                    "they are not evidential thresholds. See D-013."),
             },
             "adjudication": (
                 "one adjudicator — the owner — per change, verdict one of "
-                "ordinary / not_ordinary / unclear. `unclear` enters neither "
-                "numerator nor denominator, per D-013. D-013 asked for two "
-                "people ruling independently, so the changes they disagreed "
-                "about could be counted; there is no second person and the "
-                "assistant cannot be it, because the findings under "
-                "adjudication are its own output. What that costs is written "
-                "into D-013 beside the thresholds."),
+                "ordinary / not_ordinary / unclear. D-013 asked for two people "
+                "ruling independently, so the changes they disagreed about "
+                "could be counted; there is no second person and the assistant "
+                "cannot be it, because the findings under adjudication are its "
+                "own output. What that costs is written into D-013 beside the "
+                "boundaries."),
+            "unclear_is_not_merely_a_smaller_denominator": (
+                "REQUIRED OF THE SCORER, not done here. Difficult and "
+                "borderline changes concentrate in `unclear`, which makes it "
+                "informative missingness rather than noise. A stratum must be "
+                "reported invalid if fewer than 90% of its cases receive an "
+                "`ordinary` or `not_ordinary` verdict — per stratum, not "
+                "across the sample. The result must carry worst-case bounds: "
+                "every unclear case counted noisy, then counted quiet. If "
+                "those bounds straddle both boundaries the answer is undecided "
+                "by construction."),
+            "pipeline_estimate": (
+                "REQUIRED OF THE SCORER, not done here. Weight the two stratum "
+                "rates by `coverage.strata.frame_share`. Never average the "
+                "hundred: the sample is 50/50 by design and the frame is not, "
+                "so the unweighted mean is a prevalence for a population that "
+                "does not exist."),
+            "nothing_here_is_computed": (
+                "This manifest is a sampling frame. It draws the sample and "
+                "records what the sample is; it scores nothing, and no scorer "
+                "for the ordinary corpus exists yet. Every requirement above "
+                "is a requirement on the program that will read the filled "
+                "adjudications — not a description of anything this file "
+                "does. `candidates[].exclusion_kind` is likewise recorded for "
+                "that program and read by nothing today."),
             "not_answerable": (
-                "whether any selected change is in fact free of a weakness. "
-                "The rules below remove changes that touch a security-relevant "
-                "area; they do not certify what is left. That is the human "
-                "step, and this manifest is its input, not its result."),
+                "whether any selected change is in fact free of a weakness, "
+                "and whether it is ordinary. The rules below **exclude** "
+                "changes that are not the kind this measures — merges, "
+                "dependency bumps, docs, security fixes — and **label** the "
+                "ones that touch a security-adjacent area, which are kept and "
+                "sampled in their own stratum. Neither establishes safety nor "
+                "ordinariness. That is the human step, and this manifest is "
+                "its input, not its result."),
             "label_channel": (
                 "candidates marked label_evidence 'unavailable' came from a "
                 "source that cannot report labels at all. The absence of a "
@@ -1182,6 +1501,7 @@ def build_manifest(name: str, outcome: Dict[str, Any], ctx: Dict[str, Any],
             "label_evidence_unavailable": outcome["label_evidence_unavailable"],
             "contradicted_commits": outcome["contradicted_commits"],
             "checks": outcome["checks"],
+            "strata": outcome["strata"],
         },
         "complete": outcome["complete"],
         "selected": [{"case_id": r["case_id"], "repo": r["repo"],
@@ -1189,6 +1509,12 @@ def build_manifest(name: str, outcome: Dict[str, Any], ctx: Dict[str, Any],
                       "order_hash": r["order_hash"],
                       "label_evidence": r["label_evidence"],
                       "diff_bytes": r["diff_bytes"],
+                      # Which stratum, on the row itself. The rates are
+                      # reported per stratum and never pooled, so a result
+                      # that cannot say which stratum a case was in is a
+                      # result that cannot be computed at all.
+                      "stratum": r["stratum"],
+                      "stratum_rules": r["stratum_rules"],
                       "subject": r["subject"]} for r in outcome["selected"]],
         "candidates": outcome["rows"],
     }
@@ -1618,6 +1944,16 @@ def cmd_template(args: argparse.Namespace) -> int:
             # recorded in D-013 and travels with the number.
             "verdict": None,
             "verdict_values": "ordinary | not_ordinary | unclear",
+            # Which stratum this case was drawn from, and on what evidence.
+            # Shown because the two are reported separately and never pooled —
+            # and because it warns the adjudicator that a `sensitive` case is
+            # the harder call, which is what `unclear` is for.
+            #
+            # It says the change *touches* a security-adjacent area. It is not
+            # a finding that the change is risky, and not a finding that it is
+            # ordinary either. Both of those are the verdict above.
+            "stratum": entry["stratum"],
+            "stratum_evidence": entry["stratum_rules"],
             # Who ruled. Not decoration: `corpus-real/adjudications.yml` was
             # taken for hand judgement for a day and was not, and every ruling
             # file since carries its author.
@@ -1635,14 +1971,22 @@ def cmd_template(args: argparse.Namespace) -> int:
         "rules_digest": manifest["generator"]["rules_digest"],
         "instructions": (
             "Fill `verdict` for every case: ordinary | not_ordinary | "
-            "unclear. `unclear` is a real answer and enters neither numerator "
-            "nor denominator — it is the only place a hard call can go now "
-            "that there is one adjudicator rather than two, so use it rather "
-            "than guessing. Where label_evidence is 'unavailable', check the "
-            "upstream issue or PR for a security label before answering, and "
-            "record that you did. No review is run until every verdict is "
-            "filled: a change adjudicated after its result is seen is a change "
-            "adjudicated by the result."),
+            "unclear. `unclear` is a real answer and the only place a hard "
+            "call can go now that there is one adjudicator rather than two, so "
+            "use it rather than guessing — but it is not free. Difficult and "
+            "borderline changes concentrate there. A scorer, when one exists, "
+            "is REQUIRED to report it as a rate of its own, to mark a stratum "
+            "invalid where fewer than 90% of cases get an `ordinary` or "
+            "`not_ordinary` verdict, and to carry bounds computed with every "
+            "unclear case counted noisy and then counted quiet. Nothing "
+            "computes any of that today. Where label_evidence is "
+            "'unavailable', check "
+            "the upstream issue or PR for a security label before answering, "
+            "and record that you did. Cases in the `sensitive` stratum touch a "
+            "security-adjacent area — that is evidence about what the change "
+            "touches, not a hint about the verdict. No review is run until "
+            "every verdict is filled: a change adjudicated after its result is "
+            "seen is a change adjudicated by the result."),
         "cases": cases,
     }
     text = yaml.safe_dump(body, sort_keys=False, allow_unicode=True)

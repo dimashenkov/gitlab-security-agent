@@ -89,13 +89,36 @@ def ctx(corpus):
     return oc.context("2026-01-01", "2026-07-01", corpus)
 
 
+SENSITIVE_DIFF = (
+    "diff --git a/pkg/greet{e} b/pkg/greet{e}\n"
+    "--- a/pkg/greet{e}\n"
+    "+++ b/pkg/greet{e}\n"
+    "@@ -1,3 +1,3 @@\n"
+    " unchanged\n"
+    "-    old = parse(request)\n"
+    "+    new = parse(request)\n"
+)
+
+
 def pool(n_repos=12, per_repo=4):
+    """Both strata, half and half.
+
+    Since 2026-09-04 `sensitive_path` and `sensitive_change` label rather than
+    exclude, and the sample is drawn to a quota from each stratum. A pool of
+    only quiet changes fills half the sample and no more, so a fixture built
+    from one stratum cannot be satisfied by correct behaviour.
+    """
     out = []
     for r in range(n_repos):
         filename = LANGUAGE_FILES[r % len(LANGUAGE_FILES)]
+        extension = filename[filename.rindex("."):]
         for c in range(per_repo):
-            out.append(record("host/repo{:02d}".format(r),
-                              sha("{}:{}".format(r, c)), files=[filename]))
+            sensitive = (c % 2 == 1)
+            out.append(record(
+                "host/repo{:02d}".format(r), sha("{}:{}".format(r, c)),
+                files=[filename],
+                diff_text=(SENSITIVE_DIFF.format(e=extension) if sensitive
+                           else PLAIN_DIFF)))
     return out
 
 
@@ -428,7 +451,10 @@ def test_check_refuses_a_manifest_with_edited_label_evidence(tmp_path, corpus):
 
 def test_check_refuses_a_manifest_whose_rejection_table_was_rewritten(
         tmp_path, corpus):
-    records = pool() + [record("host/x", sha("bad"), files=["pkg/authz.go"])]
+    # `go.mod`, a real exclusion. `pkg/authz.go` was one until 2026-09-04, when
+    # the sensitive rules became strata — after that the fixture produced no
+    # excluded candidate at all and the assertion below had nothing to rewrite.
+    records = pool() + [record("host/x", sha("bad"), files=["go.mod"])]
     path, out = _select_manifest(tmp_path, corpus, records)
     body = json.loads(out.read_text(encoding="utf-8"))
     hit = [r for r in body["candidates"] if r["disposition"] == "excluded"]
@@ -475,9 +501,14 @@ def test_a_rename_out_of_a_sensitive_path_is_not_read_as_ordinary(ctx):
                    "rename from auth/token.py\n"
                    "rename to pkg/greet.py\n"))
     row = oc.select([renamed], ctx, 30)["rows"][0]
-    assert row["disposition"] != "taken", (
-        "a file renamed out of auth/ was selected as an ordinary change; the "
-        "old path was never looked at")
+    # Asserted on the stratum since 2026-09-04. `sensitive_path` labels rather
+    # than excludes, so the change is taken — into the sensitive stratum, which
+    # is where a move out of `auth/` belongs. What is tested is unchanged: that
+    # the old path was looked at at all.
+    assert row["stratum"] == "sensitive", (
+        "a file renamed out of auth/ was put in the {} stratum; the old path "
+        "was never looked at".format(row["stratum"]))
+    assert "sensitive_path" in row["stratum_rules"]
 
 
 # ---------------------------------------------------------------------------
@@ -506,9 +537,9 @@ def test_a_removed_line_starting_with_two_dashes_is_still_read(ctx):
                         "   return n;\n"
                         " }\n"))
     row = oc.select([hidden], ctx, 30)["rows"][0]
-    assert row["rule"] == "sensitive_change", (
+    assert row["stratum_rules"] == ["sensitive_change"], (
         "the removed line carried 'session' and 'password' and the change was "
-        "recorded as {}".format(row["disposition"]))
+        "put in the {} stratum".format(row["stratum"]))
 
 
 def test_an_added_line_starting_with_two_pluses_is_still_read(ctx):
@@ -522,9 +553,9 @@ def test_an_added_line_starting_with_two_pluses_is_still_read(ctx):
                         "+++retries; // skip the certificate check\n"
                         " }\n"))
     row = oc.select([hidden], ctx, 30)["rows"][0]
-    assert row["rule"] == "sensitive_change", (
-        "the added line carried 'certificate' and the change was recorded as "
-        "{}".format(row["disposition"]))
+    assert row["stratum_rules"] == ["sensitive_change"], (
+        "the added line carried 'certificate' and the change was put in the "
+        "{} stratum".format(row["stratum"]))
 
 
 # ---------------------------------------------------------------------------

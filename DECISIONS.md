@@ -970,9 +970,66 @@ rules at least as much as the reviewer. That the survivors are not trivial —
 median diff 1232 bytes over two files, real fixes among them — does not repair
 it; the missing stratum is exactly the high-trigger one.
 
-The repair, when the frame is rebuilt: **strata, not exclusions.** Adjudicate
-and measure inside and outside those rules separately, and report both. A
-single number over the filtered half is a number about the filter.
+The repair, built the same day: **strata, not exclusions.** The two rules label
+a candidate and no longer remove it. Every eligible change carries
+`stratum: sensitive | quiet` and the evidence that put it there, the sample is
+drawn to a quota from each, and the two rates are reported separately and never
+pooled. On the same pool this took the eligible count from 118 to 819.
+
+**50 and 50, not 63/37.** Proportional allocation is defensible for a
+pipeline-wide prevalence and weakens the quiet stratum exactly where the
+comparison lives; Neyman needs variances nobody has. The quotas are justified on
+their own ground — comparative precision, and neither stratum swamping the other
+— and not derived from the pool's shape. A pipeline-representative figure is
+computed afterwards by weighting the two rates with the frame proportions, which
+the manifest records. **Never by averaging the hundred**: the sample is equal by
+design and the population is not, so the unweighted mean is a prevalence for a
+population that does not exist.
+
+The frame proportions, measured on the first pool: 0.856 sensitive, 0.144 quiet.
+Not 0.63/0.37 — that figure came from first-firing counts, and the full 2×2 says
+otherwise: 118 neither, 26 path only, 280 change only, **395 both**. The two
+rules overlap heavily, which is also why first-firing counts are not used to
+describe the pool any more.
+
+**The thresholds do not carry across.** "Up to 9 of 50" silently doubles the
+tolerated rate, and "both strata must pass" invents a stricter rule nobody
+justified. 9% and 21% survive as *rates* and as the owner's acceptance
+boundaries.
+
+**Everything from here to the end of this section is a requirement on a scorer
+that does not exist.** Nothing computes any of it. This is written in the
+future tense on purpose: the first version said "the result carries worst-case
+bounds" while no result carried anything, which is the defect this file exists
+to catch, committed in the file that catches it. Codex found it twice, in two
+places, and once more in the generated template.
+
+The scorer, when there is one, **must**:
+
+* report each stratum separately, with its denominator, its `unclear` count and
+  a Wilson interval, and say `undecided` when the data cannot separate the two
+  boundaries;
+* treat `unclear` as informative missingness rather than noise — difficult and
+  borderline changes concentrate there — and mark a stratum **invalid** if
+  fewer than 90% of its cases receive an `ordinary` or `not_ordinary` verdict;
+* carry worst-case bounds: every unclear case counted noisy, then counted
+  quiet. If those bounds straddle both boundaries the answer is undecided by
+  construction;
+* compute a pipeline-representative figure by weighting the two rates with
+  `coverage.strata.frame_share`, and never by averaging the hundred.
+
+`tools/ordinary_corpus.py` draws the sample and records what the sample is. It
+scores nothing, and its manifest says so under `required_of_the_scorer`.
+
+**Three kinds of rule, named apart**, because they are different claims:
+*population* (a merge, a dependency bump, docs, a security fix — not the kind of
+change this is about), *operability* (truncated, over a ceiling, unsupported
+language — what the reviewer can process, and **not** evidence that a change is
+anything), and *stratum*. The estimand is conditional on processable,
+single-parent, supported changes in the chosen repositories and interval, and
+the manifest says so.
+
+Codex, 2026-09-04, on every point above.
 
 **Two more facts about the frame, recorded so the next attempt does not
 rediscover them:**
