@@ -1709,11 +1709,13 @@ class TestTheCommandLine:
         out = capsys.readouterr().out
         assert code == 2, out
         assert "D-013" in out
-        # Both, again: the guard-failure question was answered on 2026-09-04,
-        # `open_questions` is empty, and `requires_no_open_questions` therefore
-        # stops nothing. It stopped the freeze for exactly as long as the
-        # question stood, which is what the field is for.
-        assert "Next: freeze, classify_alarms" in out
+        # This line moves as the work moves, which is the point of the tool
+        # and the reason this assertion is rewritten rather than loosened: a
+        # smoke test that accepts any answer is the defect Codex found here
+        # once already. `freeze` left the list when it was taken and signed on
+        # 2026-09-04, so the two steps that wait for nothing else are what is
+        # named now.
+        assert "Next: adjudicate_30, classify_alarms" in out
         assert "Open questions" not in out
 
     def test_the_real_repository_denies_spending_today(self, capsys):
