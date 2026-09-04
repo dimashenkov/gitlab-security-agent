@@ -463,6 +463,70 @@ class TestDivergenceBetweenTheBlockAndTheCheckers:
         assert "requires_no_open_questions" in str(caught.value)
         assert "true or false" in str(caught.value)
 
+    def test_a_guard_may_not_both_await_an_answer_and_act_on_one(self):
+        """`guard_failure_blocked_on` and `on_guard_failed` are exclusive.
+
+        The first says the decision has not stated what a failed guard means;
+        the second says it has. A step carrying both is waiting for an answer
+        and acting on one at the same time, and whichever the code read first
+        would silently win.
+        """
+        block = BLOCK.replace(
+            "    guard_failure_blocked_on: q_guard\n",
+            "    guard_failure_blocked_on: q_guard\n"
+            "    on_guard_failed: undecided\n")
+        assert block != BLOCK, "the fixture moved under this test"
+        with pytest.raises(order_tool.OrderError) as caught:
+            parse(block)
+        assert "exactly one" in str(caught.value)
+
+    def test_a_guard_outcome_the_decision_never_named(self):
+        """`on_guard_failed: redraw` would be a decision invented by the block.
+
+        D-013 states one outcome — undecided, with no case replaced — and the
+        redraw the assistant proposed was refused precisely because it makes
+        inclusion depend on an observed verdict. A value this tool cannot act
+        on is a value it would have to interpret.
+        """
+        block = BLOCK.replace(
+            "    guard_failure_blocked_on: q_guard\n",
+            "    on_guard_failed: redraw\n")
+        with pytest.raises(order_tool.OrderError) as caught:
+            parse(block)
+        assert "on_guard_failed" in str(caught.value)
+        assert "undecided" in str(caught.value)
+
+    @pytest.mark.parametrize("value", [
+        "{fix-incomplete: true}", "[fix-incomplete, fix-incomplete]",
+        "[1, 2]", "[]", "fix-incomplete", "[fix-incomplete, '']"])
+    def test_a_list_of_names_written_as_something_else(self, value):
+        """`list(...)` accepted a mapping, a number and a repeat in silence.
+
+        `forbidden_values: {fix-incomplete: true}` would have become the list of
+        its keys, a stray integer would have compared equal to nothing, and a
+        repeated name does nothing without saying which copy. A rule this tool
+        enforces has to have a shape it checked. Codex, 2026-09-04.
+        """
+        block = BLOCK.replace(
+            "  - id: classify_alarms\n",
+            "  - id: classify_alarms\n    forbidden_values: {}\n".format(value),
+            1)
+        with pytest.raises(order_tool.OrderError) as caught:
+            parse(block)
+        assert "forbidden_values" in str(caught.value)
+
+    def test_the_real_block_carries_the_forbidden_value(self):
+        """The rule is in DECISIONS.md, not only in a hand-built `Step`.
+
+        The first test for it constructed the step in Python, so it proved the
+        checker works and not that the decision carries the rule — the same
+        gap as a checker with no step behind it.
+        """
+        real = order_tool.parse_order(
+            (ROOT / "DECISIONS.md").read_text(encoding="utf-8"))
+        step = step_of(real, "classify_alarms")
+        assert step.forbidden_values == ["fix-incomplete"]
+
     def test_a_criterion_reworded_without_its_checker(self):
         block = BLOCK.replace(
             "done_when: every alarm carries a non-empty failure_mode",
@@ -1039,6 +1103,30 @@ class TestTheGuard:
         assert result.stopped_by == order_tool.STOP_GUARD
         assert "q_guard" in result.evidence
 
+    def test_a_failing_guard_whose_outcome_the_decision_named(self, tmp_path,
+                                                              criteria):
+        """The other half of the branch, and the one the live file uses.
+
+        The parser learnt `on_guard_failed` and the reporting branch was
+        written with it, and nothing exercised that branch — every guard test
+        drove the `guard_failure_blocked_on` side. The block validating a key
+        is not the same as the tool acting on it, which is the whole reason
+        this file tests the chain rather than the links. Codex, 2026-09-04.
+        """
+        cases = {"c{}".format(i): case("unclear" if i < 5 else "ordinary")
+                 for i in range(30)}
+        ctx = self._ctx(tmp_path, cases)
+        block = defined_block().replace(
+            "    guard_failure_blocked_on: q_guard\n",
+            "    on_guard_failed: undecided\n")
+        assert "on_guard_failed" in block, "the fixture moved under this test"
+        result = order_tool.evaluate(ctx, parse(block))["extend_to_100"]
+        assert result.state == order_tool.GUARD_FAILED
+        assert result.stopped_by == order_tool.STOP_GUARD
+        assert "undecided" in result.evidence
+        assert "no case is replaced or redrawn" in result.evidence
+        assert "q_guard" not in result.evidence
+
     def test_a_passing_guard_lets_the_checker_answer(self, tmp_path, criteria):
         cases = {"c{}".format(i): case("unclear" if i < 4 else "ordinary")
                  for i in range(30)}
@@ -1116,6 +1204,28 @@ class TestTheAlarmChecker:
         result = order_tool.check_classify_alarms(ctx, step)
         assert result.state == order_tool.NOT_DONE
         assert "declares no vocabulary" in result.evidence
+
+    def test_a_cause_the_decision_rules_out(self, tmp_path):
+        """`fix-incomplete` is not a way the reviewer failed.
+
+        The reviewer may be entirely right that the weakness persists; that is
+        a fact about the corpus's fix. Codex ruled it out of `failure_mode` on
+        2026-09-04, and the ruling sat in the prose for one round while the
+        checker went on accepting the value — a settled rule nothing enforced.
+        """
+        step = order_tool.Step({
+            "id": "classify_alarms", "requires": [],
+            "needs_field": "failure_mode",
+            "forbidden_values": ["fix-incomplete"],
+            "done_when": "every alarm carries a non-empty failure_mode"})
+        fired = ["c0", "c1"]
+        rulings = [ruling("c0", failure_mode="a"),
+                   ruling("c1", failure_mode="fix-incomplete")]
+        ctx = context(tmp_path, alarm_reader=alarms(fired, rulings))
+        result = order_tool.check_classify_alarms(ctx, step)
+        assert result.state == order_tool.NOT_DONE
+        assert "fix-incomplete" in result.evidence
+        assert "corpus validity" in result.evidence
 
     def test_a_cause_outside_the_declared_vocabulary(self, tmp_path):
         fired = ["c0", "c1"]
@@ -1568,10 +1678,12 @@ class TestTheCommandLine:
         out = capsys.readouterr().out
         assert code == 2, out
         assert "D-013" in out
-        # `classify_alarms` alone: `freeze` is stopped on the one open
-        # question, because it digests D-013 and an answer would invalidate it.
-        assert "Next: classify_alarms" in out
-        assert "freeze (blocked_on_owner: open_question)" in out
+        # Both, again: the guard-failure question was answered on 2026-09-04,
+        # `open_questions` is empty, and `requires_no_open_questions` therefore
+        # stops nothing. It stopped the freeze for exactly as long as the
+        # question stood, which is what the field is for.
+        assert "Next: freeze, classify_alarms" in out
+        assert "Open questions" not in out
 
     def test_the_real_repository_denies_spending_today(self, capsys):
         code = order_tool.main(["check", "spend"])

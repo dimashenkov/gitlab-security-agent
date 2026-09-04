@@ -1130,14 +1130,13 @@ The steps, with what each waits for stated rather than implied by its number:
    alarms show a broad, independently repeated **cause**. Nothing recorded
    answers it.
 
-   So this step needs a `failure_mode` on each alarm. **That it must come from
-   a vocabulary fixed in advance is the assistant's addition, on 2026-09-04, and
-   no owner decision stands behind it** — step 4 as written asked for a
-   classification, not a precommitted taxonomy. The argument for it: a
-   vocabulary drawn up after the cases are read is drawn up to fit them, and
-   step 5 then asks whether a cause *repeats*, which a category invented per
-   case can always be made to answer either way. The argument against it is
-   cost, and the owner may take it. One such field exists already, on a
+   So this step needs a `failure_mode` on each alarm. **Whether that value must
+   come from a vocabulary fixed in advance was settled later the same day, and
+   the answer is no** — see "step 4 produces a post-hoc codebook" below. It was
+   the assistant's addition when first written here, with no decision behind it;
+   the ruling that replaced it rests on a stronger ground than that, and this
+   paragraph is kept only because the reasoning is where the ruling came from.
+   One such field exists already, on a
    `not_real` ruling from 2026-08-24 — `reachability-discipline`, for a finding
    correctly described at the statement level and promoted to a security
    weakness without reading the caller. That is the shape the rest need.
@@ -1169,6 +1168,39 @@ The steps, with what each waits for stated rather than implied by its number:
 5. **Tune** only if the ordinary changes are close to the boundary **and** the
    classified alarms show a broad, independently repeated cause. Waits for 3
    and 4.
+
+**Step 3's guard, when it fails. Settled 2026-09-04 by the assistant and Codex,
+the owner having delegated it.**
+
+> **If 5 or more of the 30 are `unclear`, step 3 does not run.** The pilot is
+> recorded, with its `unclear` counts *by stratum*; the ordinary-changes result
+> is `invalid`, and the decision-level outcome — and therefore the overall
+> result — is `undecided`. No case is replaced, topped up, redrawn or
+> reclassified after its verdict is known.
+
+The assistant proposed one permitted redraw: examine the unclear cases, exclude
+as *operability* the ones admitted by a rule that let something unreadable
+through, and top the sample back up from the frozen pool. Codex refused it, and
+the reason is the one that matters: **calling a case an operability exclusion
+after it proved difficult makes inclusion depend on an observed outcome.** Once
+that is allowed, "only once" is a word, and the honest description of the
+procedure becomes drawing until the number is agreeable. A malformed artifact
+may be *corrected* — it is still the same sampled case — but it does not earn a
+replacement.
+
+`invalid` and `undecided` are both used, and they say different things:
+`invalid` is why no inference is available, `undecided` is what the result then
+is. Neither is evidence that the reviewer failed.
+
+**And the number 5 has no derivation.** It appears in this decision as an
+assertion — no error rate, no power calculation, nothing it follows from. Worse,
+it does not agree with the validity rule this same section already states for
+the scorer: with two strata of 15, **two** unclear cases in one stratum leave it
+86.7% determinate and therefore invalid, while the pooled "fewer than 5" guard
+still passes. So the guard can let through a sample the scorer must reject.
+Recorded as a defect and not repaired here: replacing a count with a
+precommitted per-stratum validity condition is a separate decision, not a
+reading of what happens when the present guard fails.
 
 **Step 5, closed by the owner on 2026-09-04: B, and on changes never scored
 before.** How it was reached is kept, because the assistant got it wrong twice
@@ -1274,12 +1306,18 @@ waiting for the one before it". Those are different answers and a checker that
 merges them lies. So each step also carries what stops it, and every stop names
 its kind:
 
-* `guard` — a condition in the prose, with the field that decides it. It says
-  when the step runs. **It does not say what happens when the condition fails**,
-  because the prose does not, and inventing an answer here was the second thing
-  Codex caught: "extend if fewer than 5" is not the same sentence as "5 or more
-  makes this undecided". A checker meeting a failed guard reports the guard
-  failed and stops. It does not choose between skip, fail and undecided.
+* `guard` — a condition in the prose, with the field that decides it, and one
+  of two keys saying what a failure *means*. `guard_failure_blocked_on` names an
+  open question, for as long as the decision has not said; `on_guard_failed`
+  carries the outcome once it has. Exactly one, never both, and
+  `on_guard_failed` is checked against a list of outcomes a decision has named —
+  so a value like `redraw` is refused rather than interpreted.
+
+  Both keys exist because the first version had neither, and a checker was
+  about to choose between skip, fail and undecided on its own. "Extend if fewer
+  than 5" is not the same sentence as "5 or more makes this undecided", and the
+  second was written only on 2026-09-04, by the assistant and Codex, after the
+  owner delegated it. Until then the honest state was a written question.
 * `blocked_on_owner` — a question in this file that nobody has answered. Not a
   prerequisite: no work clears it, only an answer, and the answer is the owner's
   alone. A step in this state is never *ready* and never *done*.
@@ -1288,12 +1326,7 @@ its kind:
 
 ```yaml
 # d013-order
-open_questions:
-  - id: guard_failure_of_extend_to_100
-    asked_of: owner
-    text: >-
-      what happens when 5 or more of the 30 are unclear; the prose says only
-      when the step runs
+open_questions: []
 answered_questions:
   - id: step5_fork
     answered_by: owner
@@ -1301,6 +1334,13 @@ answered_questions:
     text: >-
       step 5 is an exception to the boxed rule, and the next measurement is on
       changes that have never been scored
+  - id: guard_failure_of_extend_to_100
+    answered_by: assistant_and_codex
+    answered_on: 2026-09-04
+    text: >-
+      5 or more unclear of the 30 means step 3 does not run, the ordinary
+      result is invalid and the overall outcome undecided, and no case is
+      replaced or redrawn after its verdict is known
 generations:
   disjoint: required
   records: [configuration_digest, case_ids]
@@ -1323,7 +1363,7 @@ steps:
     guard: fewer than 5 of the 30 are unclear
     guard_field: unclear_count
     guard_below: 5
-    guard_failure_blocked_on: guard_failure_of_extend_to_100
+    on_guard_failed: undecided
     done_when: >-
       the manifest and the adjudication file cover the same sample, the cases
       carry a verdict of ordinary / not_ordinary / unclear, and every one is
@@ -1331,6 +1371,7 @@ steps:
   - id: classify_alarms
     requires: []
     needs_field: failure_mode
+    forbidden_values: [fix-incomplete]
     done_when: every alarm carries a non-empty failure_mode
   - id: tune
     requires: [extend_to_100, classify_alarms]
@@ -1375,9 +1416,13 @@ evaluates, and `sonnet_gate`, which has no artifact at all —
 file.** Step 1 waits for no other step, so the tool named it first — and
 freezing while D-013 still carries an unanswered question produces a record that
 breaks the moment the question is answered, since answering it edits the text
-whose digest was frozen. Not a hypothetical: the guard-failure question is open
-today, and a freeze taken now would have been invalid by the owner's next
-sentence.
+whose digest was frozen.
+
+Not a hypothetical. When the field was added the guard-failure question stood
+open, the tool was reporting `freeze` as the first thing to do, and a freeze
+taken that afternoon would have been invalid by the next answer. It was
+answered later the same day and `open_questions` is now empty, so the field
+stops nothing — which is the field working, not the field being unnecessary.
 
 The stop is reported as an unanswered question, which is the state it is —
 not as a missing prerequisite, and not as a failed guard.
@@ -1395,27 +1440,82 @@ The check is kept because the absent case is the one that slips: a case with no
 catches that. What it cannot do is catch a false claim, and a reader must not
 take an unlocked `spend` as evidence the corpus was built by hand.
 
-**The block does not require a vocabulary, and that is deliberate.** It did for
-one round, with `needs_vocabulary_first: true` and an empty `vocabulary:` list,
-and Codex struck it out: the precommitted vocabulary is the assistant's addition
-with no owner decision behind it, so an empty list made step 4 *impossible*
-rather than unfinished — a rule nobody agreed to, enforced by a program, and
-flatly against "encoded only once it was decided" two paragraphs down. The
-tests asserted the implementation faithfully and the decision not at all.
+**The block does not require a precommitted vocabulary, and the reason changed
+under it.** For one round it did, with `needs_vocabulary_first: true` and an
+empty `vocabulary:` list, and Codex struck it out because the requirement was
+the assistant's addition with nobody's decision behind it: an empty list made
+step 4 *impossible* rather than unfinished, and the tests asserted the
+implementation faithfully and the decision not at all.
 
-So the machinery stays and the requirement does not. `vocabulary:` and
-`needs_vocabulary_first:` remain fields this tool acts on — a step carrying them
-has its values checked against the declared list, and a value outside it is
-refused. No step carries them today.
+The ruling below then settled it on different grounds — a precommitted
+vocabulary is not available to anyone who has read the cases, and a case-blind
+author would not supply the independence step 5 needs. So the requirement stays
+out for a stronger reason than it first came out.
 
-**The question for the owner, and it is cheap:** should the permitted
-`failure_mode` values be fixed *before* the 20 alarms are classified? The
-argument for: a vocabulary drawn up afterwards is drawn up to fit, and step 5
-then asks whether a cause *repeats*, which a category invented per case can be
-made to answer either way. The argument against: it is extra work before any
-classifying starts. If yes, the list goes in the block — and because the block
-sits inside the D-013 text the freeze digests, "fixed beforehand" stops being a
-promise and becomes something an artifact settles.
+The machinery stays. `vocabulary:` and `needs_vocabulary_first:` remain fields
+this tool acts on — a step carrying them has its values checked against the
+declared list, and a value outside it is refused. No step carries them, and a
+step should carry them only when a *prospective* round is set up, which is the
+one shape in which they would mean what they say.
+
+**Settled 2026-09-04: step 4 produces a post-hoc codebook, and step 5's
+condition is recorded as not established.** The owner delegated this to the
+assistant and Codex; the reasoning is theirs and the delegation is his.
+
+The assistant had already read all twenty cases before proposing a vocabulary,
+and then proposed deriving one only from text written earlier and for other
+reasons. Codex refused it: the sources predate the cases but the *selection* of
+which sources to quote does not, so it is the same fitting by a longer route.
+The six proposed labels also mixed levels — one was a property of the scoring,
+one a fact about the corpus's fix rather than the reviewer, one unassessable
+from a single run, and two were subtypes of a third — so counts of a "repeated"
+cause would have depended on an arbitrary precedence rule.
+
+An option was considered and rejected: a subagent that has not read the cases
+writes the vocabulary blind. **It buys a case-blind ontology and not an
+independent adjudicator**, and this file already uses `independent` in the
+stricter sense — independent of the model that produced the findings. Mapping
+each alarm to a category would still be the assistant's, over model-authored
+rulings about model-produced findings. Calling those counts "independently
+repeated" would be laundering one kind of blindness into another.
+
+So, as a rule:
+
+* Step 4 records a **post-hoc codebook**: `other` and `unclear` are permitted
+  values, the precedence between overlapping labels is written down before
+  classifying, and the provenance of every label is recorded.
+* `fix-incomplete` is **not** a `failure_mode`. The reviewer may be entirely
+  correct and the maintainer's fix incomplete; that is corpus validity and is
+  recorded as such.
+* Step 5 records **"independent repetition not established"**, and tuning is
+  not authorised on this evidence. Not "no cause repeats" — the twenty cannot
+  settle the question either way.
+
+**Of those, one is checked, and the shape of the key is checked with it.**
+`forbidden_values: [fix-incomplete]` in the block refuses that label as a cause,
+and the checker names why. The key itself must be a list of distinct non-empty
+names: a mapping would silently become its keys, a number would compare equal to
+nothing, and an empty list would state a rule that applies to nothing — three
+ways for the one enforced part of this ruling to be enforced over air. Codex
+found that gap in the first version, where the value went through `list(...)`
+unchecked. The rest —
+that `other` and `unclear` are permitted, that precedence between overlapping
+labels was written down *before* classifying, that each label's provenance is
+recorded — is prose no program here evaluates. So `classify_alarms` reporting
+`done` means every alarm carries a cause that is not `fix-incomplete`, and it is
+**not** evidence that a codebook was kept honestly. Written down because the
+alternative is a reader taking exit 0 for the whole rule, which is the mistake
+this file records at every other level.
+
+**This does not make step 5 permanently unanswerable**, which was the
+assistant's argument for the blind subagent and was wrong. It says these twenty
+cannot establish its condition. What would: freeze the vocabulary, the unit of
+analysis and the exact repetition criterion *first*; have someone independent of
+the finding production classify them, preferably two with disagreements kept;
+then apply the frozen criterion without revising it. Without a second
+adjudicator there is no procedural substitute — and the alternative, an owner
+rule of the form "I will tune if at least X cases carry one label", is
+governance rather than evidence, and would have to say so.
 
 **What the gate on spending asks for, and why it is not the freeze alone.** The
 first version let a paid run through the moment a freeze existed, while step 2 —

@@ -41,18 +41,31 @@ per step id and takes every number, field name and question out of the block.
       id                   stable, no ordinals
       requires             must be `done` before this step
       guard / guard_field  a condition in the prose and the metric that decides
-      guard_below          it. It says when the step RUNS. It does not say what
-      guard_failure_       happens when the condition fails, because the prose
-        blocked_on         does not — that is an open question, named here. A
-                           checker meeting a failed guard reports the guard
-                           failed and stops; it does not choose between skip,
-                           fail and undecided.
+      guard_below          it. It says when the step RUNS. What a failure MEANS
+                           is one of the next two, exactly one, never both.
+      guard_failure_       the id of an open question, while the decision has
+        blocked_on         not said what a failed guard means.
+      on_guard_failed      the outcome, once it has. Checked against the
+                           outcomes a decision has named, so a value nobody
+                           decided cannot be written here and acted on.
       blocked_on_owner     the id of an open question. Never ready, never done.
+      requires_no_open_    the step may not be taken while ANY question in the
+        questions          file is unanswered. `freeze` carries it: it digests
+                           D-013, so an answer would invalidate the record.
       undefined_predicates words no program evaluates. A step carrying any of
                            these may be reported *not started*, never *done*.
       needs_field          the field the step's evidence must carry, by name.
       needs_vocabulary_    the field's values must come from a vocabulary
-        first              written before the classifying starts.
+        first              written before the classifying starts. No step
+                           carries it — see D-013 on the post-hoc codebook.
+      vocabulary           the permitted values, when the step declares them.
+      forbidden_values     values a decision has ruled OUT, as against a list
+                           of the only ones allowed. The open-ended shape: the
+                           codebook is post-hoc, so an exhaustive permitted
+                           list would claim a precommitment nobody made.
+      done_when            what records that this step finished, or `undefined`
+                           — which is never done and never satisfies another
+                           step's `requires`.
 
 **A field this tool does not understand is a refusal, not a shrug.** The first
 implementation of this parser kept `id` and `requires` and silently dropped
@@ -68,8 +81,11 @@ compute).
     not done           an artifact establishes that it has not happened
     cannot tell        no artifact settles it — never rendered as `done`
     waiting            a prerequisite is not done yet
-    guard_failed       the guard's condition does not hold, and the decision
-                       does not say what follows
+    guard_failed       the guard's condition does not hold. What follows comes
+                       from the step: `on_guard_failed` names the outcome the
+                       decision chose, or `guard_failure_blocked_on` names the
+                       question nobody has answered. The state is the same;
+                       the evidence says which of the two it is.
     blocked_on_owner   an unanswered question in DECISIONS.md; no work clears it
     manual_required    the mechanical part holds, the rest is a judgement no
                        artifact records
@@ -175,11 +191,19 @@ TOP_LEVEL_KEYS = frozenset({"steps", "open_questions", "answered_questions",
 QUESTION_KEYS = frozenset({"id", "asked_of", "text"})
 ANSWER_KEYS = frozenset({"id", "answered_by", "answered_on", "text"})
 GENERATIONS_KEYS = frozenset({"disjoint", "records", "on_overlap"})
+# What a failed guard may be declared to mean. One value, because D-013 states
+# one: 5 or more unclear of the 30 makes the ordinary result invalid and the
+# outcome undecided, and no case is redrawn. A second value belongs here only
+# when a decision has named it — the list is short on purpose, so that a guard
+# outcome nobody decided cannot be written into the block and acted on.
+GUARD_OUTCOMES = frozenset({"undecided"})
+
 STEP_KEYS = frozenset({
     "id", "requires", "guard", "guard_field", "guard_below",
-    "guard_failure_blocked_on", "blocked_on_owner", "undefined_predicates",
+    "guard_failure_blocked_on", "on_guard_failed",
+    "blocked_on_owner", "undefined_predicates",
     "needs_field", "needs_vocabulary_first", "next_generation", "done_when",
-    "vocabulary", "requires_no_open_questions",
+    "vocabulary", "requires_no_open_questions", "forbidden_values",
 })
 
 # The one value of `next_generation` this tool can act on. Anything else is a
@@ -304,6 +328,7 @@ class Step:
         self.guard_below: Optional[float] = raw.get("guard_below")
         self.guard_failure_blocked_on: Optional[str] = raw.get(
             "guard_failure_blocked_on")
+        self.on_guard_failed: Optional[str] = raw.get("on_guard_failed")
         self.blocked_on_owner: Optional[str] = raw.get("blocked_on_owner")
         self.undefined_predicates: List[str] = raw.get(
             "undefined_predicates") or []
@@ -316,6 +341,13 @@ class Step:
         # from what has already been classified. Absent is the honest state
         # today: nobody has written one.
         self.vocabulary: List[str] = list(raw.get("vocabulary") or [])
+        # Values a decision has ruled out, as against a list of the only ones
+        # allowed. `fix-incomplete` is here because it describes the corpus's
+        # fix and not a way the reviewer failed: the reviewer may be entirely
+        # right that the weakness persists. Recorded as corpus validity
+        # instead, and refused as a cause.
+        self.forbidden_values: List[str] = list(
+            raw.get("forbidden_values") or [])
         # A step that cannot be taken while any question in this file is
         # unanswered. `freeze` carries it because the freeze digests D-013:
         # answering a question edits the text that was frozen, so a freeze
@@ -693,10 +725,24 @@ def _check_guard(entry: Dict[str, Any], ident: str,
     a step with no condition — the permissive reading, and the one that lets a
     guarded step run unguarded.
     """
-    keys = ("guard", "guard_field", "guard_below", "guard_failure_blocked_on")
-    present = [k for k in keys if k in entry]
+    # The fourth key says what a failed guard *means*, and it is one of two
+    # shapes: `guard_failure_blocked_on`, naming an open question, while the
+    # decision has not said; or `on_guard_failed`, once it has. Exactly one,
+    # never both — carrying both would be a step that is simultaneously waiting
+    # for an answer and acting on one.
+    outcome_keys = ("guard_failure_blocked_on", "on_guard_failed")
+    keys = ("guard", "guard_field", "guard_below")
+    present = [k for k in keys + outcome_keys if k in entry]
     if not present:
         return
+    stated = [k for k in outcome_keys if k in entry]
+    if len(stated) != 1:
+        raise OrderError(
+            "step {!r} declares {} of {} — a guarded step needs exactly one: "
+            "`guard_failure_blocked_on` while the decision has not said what a "
+            "failed guard means, `on_guard_failed` once it has".format(
+                ident, ", ".join(stated) or "neither",
+                " and ".join(outcome_keys)))
     missing = [k for k in keys if k not in entry]
     if missing:
         raise OrderError(
@@ -714,13 +760,22 @@ def _check_guard(entry: Dict[str, Any], ident: str,
             not isinstance(entry["guard_below"], (int, float)):
         raise OrderError("step {!r}: `guard_below` must be a number"
                          .format(ident))
-    blocked = entry["guard_failure_blocked_on"]
-    if not isinstance(blocked, str) or blocked.strip() not in questions:
-        raise OrderError(
-            "step {!r}: `guard_failure_blocked_on` is {!r}, which is not an id "
-            "under `open_questions`. The prose says when the step runs and not "
-            "what happens when the guard fails; that gap has to be a written "
-            "question, not a default in this tool".format(ident, blocked))
+    if "guard_failure_blocked_on" in entry:
+        blocked = entry["guard_failure_blocked_on"]
+        if not isinstance(blocked, str) or blocked.strip() not in questions:
+            raise OrderError(
+                "step {!r}: `guard_failure_blocked_on` is {!r}, which is not an "
+                "id under `open_questions`. The prose says when the step runs "
+                "and not what happens when the guard fails; that gap has to be "
+                "a written question, not a default in this tool".format(
+                    ident, blocked))
+    else:
+        outcome = entry["on_guard_failed"]
+        if not isinstance(outcome, str) or outcome.strip() not in GUARD_OUTCOMES:
+            raise OrderError(
+                "step {!r}: `on_guard_failed` is {!r}; this tool acts on {}. A "
+                "value it cannot act on is a decision it would have to invent"
+                .format(ident, outcome, ", ".join(sorted(GUARD_OUTCOMES))))
 
 
 def _check_rest(entry: Dict[str, Any], ident: str,
@@ -759,6 +814,34 @@ def _check_rest(entry: Dict[str, Any], ident: str,
                 "step {!r}: `{}` is {!r}; it must be true or false. A quoted "
                 "or numeric value reads as false and the step loses the rule "
                 "without a word".format(ident, flag, entry[flag]))
+
+    # Both are lists of names, and `list(...)` in the constructor would have
+    # accepted a mapping (its keys), a number (an error), or a mixed list — so
+    # `forbidden_values: {fix-incomplete: true}` would have silently become
+    # `["fix-incomplete"]` and a stray integer would have compared equal to
+    # nothing. A rule this tool enforces has to have a shape it checked.
+    for listed in ("vocabulary", "forbidden_values"):
+        if listed not in entry:
+            continue
+        values = entry[listed]
+        if not isinstance(values, list) or not all(
+                isinstance(v, str) and v.strip() for v in values):
+            raise OrderError(
+                "step {!r}: `{}` must be a list of non-empty names; it is {!r}"
+                .format(ident, listed, values))
+        if not values:
+            # An empty list is a key that reads as a rule and forbids nothing.
+            # `vocabulary: []` was exactly that once, and it made a step
+            # impossible rather than unfinished. Leave the key out instead.
+            raise OrderError(
+                "step {!r}: `{}` is empty — a key that states a rule and "
+                "applies to nothing. Leave it out, or name the values"
+                .format(ident, listed))
+        if len(set(values)) != len(values):
+            raise OrderError(
+                "step {!r}: `{}` repeats a name — one of them does nothing, "
+                "and which one is not visible from the block".format(
+                    ident, listed))
     # Required, not defaulted. A step with no `done_when` is a step whose
     # completion nothing records, and letting it default to anything is the
     # false readiness this key was added to stop.
@@ -1450,6 +1533,15 @@ def check_classify_alarms(ctx: Context, step: Step) -> Result:
                 "declares: {}. Either the value is wrong or the vocabulary is "
                 "no longer the one that was fixed.{}".format(
                     len(stray), field, ", ".join(stray), note)))
+    banned = sorted(set(vocabulary) & set(step.forbidden_values))
+    if banned:
+        return Result(NOT_DONE, (
+            "{} value(s) of `{}` name something the decision rules out as a "
+            "cause: {}. `fix-incomplete` describes the corpus's fix and not a "
+            "way the reviewer failed — the reviewer may be entirely right that "
+            "the weakness persists — and D-013 records it as corpus validity "
+            "instead.{}".format(len(banned), field, ", ".join(banned), note)))
+
     if unruled:
         return Result(NOT_DONE, (
             "{} of {} alarm(s) on the fixed member have no ruling at all for "
@@ -1756,12 +1848,22 @@ def state_of(ctx: Context, order: Order, step: Step,
                           .format(step.guard, why))
         if not value < step.guard_below:
             question = order.question(step.guard_failure_blocked_on)
+            if question is not None:
+                return Result(GUARD_FAILED, (
+                    "the guard {!r} does not hold: {}, which is not below {}. "
+                    "The decision says when this step runs and not what happens "
+                    "when the guard fails — that is the open question {!r}, "
+                    "asked of {}: {}".format(
+                        step.guard, why, step.guard_below, question.id,
+                        question.asked_of, question.text)),
+                    stopped_by=STOP_GUARD)
             return Result(GUARD_FAILED, (
                 "the guard {!r} does not hold: {}, which is not below {}. The "
-                "decision says when this step runs and not what happens when "
-                "the guard fails — that is the open question {!r}, asked of {}: "
-                "{}".format(step.guard, why, step.guard_below, question.id,
-                            question.asked_of, question.text)),
+                "decision says the outcome is `{}`: the pilot stands with its "
+                "unclear counts by stratum, the ordinary result is invalid, and "
+                "no case is replaced or redrawn now that its verdict is known"
+                .format(step.guard, why, step.guard_below,
+                        step.on_guard_failed)),
                 stopped_by=STOP_GUARD)
 
     return result
