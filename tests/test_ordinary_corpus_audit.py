@@ -258,6 +258,111 @@ class TestWhatTheFreezeActuallyRestsOn:
         assert "harmless" not in message
 
 
+class TestAMergeIsExcludedAndNotCalledUnreadable:
+    """A merge has no diff of its own. That is a fact about the commit, not a
+    failure to read it.
+
+    Measured on a real pool 2026-09-04: 324 of 332 `undecidable` records were
+    merges, filed as "cannot be checked: diff_text empty — re-harvest this
+    commit". Wrong twice — nothing failed, and re-harvesting will never help —
+    and it moved a sixth of the pool out of the disposition that explains it.
+    `missing_fields` runs before the rules, so `not_single_parent` never had
+    the chance to speak.
+    """
+
+    def merge(self, **over):
+        r = record("host/x", sha("m"), parents=2, files=[], diff_text="")
+        r.update(over)
+        return r
+
+    def test_a_merge_is_excluded_by_name(self, ctx):
+        row = oc.evaluate(self.merge(), ctx)
+
+        assert row["disposition"] == "excluded"
+        assert row["rule"] == "not_single_parent"
+        assert "merge" in row["reason"]
+
+    def test_it_is_not_told_to_reharvest(self, ctx):
+        row = oc.evaluate(self.merge(), ctx)
+
+        assert "re-harvest" not in row["reason"]
+        assert "cannot be checked" not in row["reason"]
+
+    def test_an_ordinary_commit_with_no_diff_is_still_undecidable(self, ctx):
+        """The eight that were not merges. An empty diff on a single-parent
+        commit is a record nothing can be checked over, and that answer stays.
+        """
+        row = oc.evaluate(
+            record("host/x", sha("e"), parents=1, files=[], diff_text=""), ctx)
+
+        assert row["disposition"] == "undecidable"
+        assert row["rule"] == "record_incomplete"
+
+    def test_a_merge_with_a_broken_field_is_still_undecidable(self, ctx):
+        """Skipping the content checks for a merge must not skip the shape
+        checks: a merge whose `commit` is not a sha is still unreadable."""
+        row = oc.evaluate(self.merge(commit="not-a-sha"), ctx)
+
+        assert row["disposition"] == "undecidable"
+
+
+class TestARefusalArrivesBeforeTheWorkAndNotAfterIt:
+    """`harvest` read 1717 commits for an hour on 2026-09-04 and then found it
+    could not write, because a file from an earlier run was still there.
+
+    The refusal was right — `publish` will not overwrite, deliberately — and it
+    came at the last line, after every network round-trip had been paid for.
+    Everything the run produced was lost. A check that costs a `stat` and can be
+    made first has to be made first.
+    """
+
+    def test_harvest_refuses_before_reading_a_single_clone(self, tmp_path):
+        out = tmp_path / "candidates.json"
+        out.write_text("[]\n", encoding="utf-8")
+        clones = tmp_path / "clones"
+        # Deliberately empty: if `harvest` got as far as looking for clones it
+        # would fail with a different message, which is how this test knows the
+        # refusal came first.
+        clones.mkdir()
+
+        code = oc.main(["harvest", "--clones", str(clones),
+                        "--since", "2026-01-01", "--until", "2026-07-01",
+                        "--out", str(out)])
+
+        assert code == 2
+        assert out.read_text(encoding="utf-8") == "[]\n", "it overwrote"
+
+    def test_select_refuses_before_reading_the_candidates(self, tmp_path, corpus):
+        out = tmp_path / "manifest.json"
+        out.write_text("{}\n", encoding="utf-8")
+
+        code = oc.main(["select", "--candidates", str(tmp_path / "nothing.json"),
+                        "--since", "2026-01-01", "--until", "2026-07-01",
+                        "--corpus", str(corpus), "--out", str(out)])
+
+        assert code == 2
+        assert out.read_text(encoding="utf-8") == "{}\n"
+
+    def test_template_refuses_before_reading_the_manifest(self, tmp_path):
+        out = tmp_path / "adjudications.yml"
+        out.write_text("cases: {}\n", encoding="utf-8")
+
+        code = oc.main(["template", "--manifest", str(tmp_path / "nothing.json"),
+                        "--out", str(out)])
+
+        assert code == 2
+        assert out.read_text(encoding="utf-8") == "cases: {}\n"
+
+    def test_an_absent_output_is_not_a_refusal(self, tmp_path):
+        """The floor. A guard that refused an absent file would refuse every
+        first run."""
+        assert oc.refuse_early(tmp_path / "not-there.json") is False
+
+    def test_the_parent_directory_is_created_rather_than_refused(self, tmp_path):
+        assert oc.refuse_early(tmp_path / "deep" / "nested" / "out.json") is False
+        assert (tmp_path / "deep" / "nested").is_dir()
+
+
 def test_upcasing_a_sha_does_not_move_a_candidate_in_the_order(ctx):
     lower = record("host/x", sha("a"))
     upper = record("host/x", sha("a").upper())

@@ -493,7 +493,16 @@ def test_template_leaves_every_verdict_null(tmp_path, corpus):
     body = yaml.safe_load(adjudications.read_text(encoding="utf-8"))
     assert len(body["cases"]) == 30
     for case in body["cases"].values():
-        assert case["verdict_a"] is None and case["verdict_b"] is None
+        # One verdict since 2026-09-04. D-013 asked for two people ruling
+        # independently, so the changes they disagreed about could be counted;
+        # the owner decided there is no second person, and the assistant cannot
+        # be it — the findings under adjudication are its own output. What that
+        # costs is written into D-013 beside the thresholds.
+        assert case["verdict"] is None
+        assert "verdict_a" not in case and "verdict_b" not in case
+        # And it says who ruled. `corpus-real/adjudications.yml` was taken for
+        # hand judgement for a day and was not.
+        assert case["adjudicated_by"] == "human"
         assert case["upstream_security_label_checked_by_hand"] is None
 
 

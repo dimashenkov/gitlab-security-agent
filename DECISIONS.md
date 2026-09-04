@@ -918,6 +918,75 @@ a new test. It cannot be proved not to contain a weakness — which is why the
 unclear ones are counted separately and enter neither the numerator nor the
 denominator.
 
+**One adjudicator, not two. Decided by the owner on 2026-09-04.** The rule as
+Codex wrote it asks for two people per change, independently, so that the ones
+they disagree about can be counted. There is no second person, and the
+assistant cannot be it: the findings under adjudication are the assistant's own
+output, and 2026-09-03 established what that produces — see the entry in
+`LIMITATIONS.md` on the corpus rulings.
+
+What this costs, stated so the number is not read as more than it is:
+
+* **The rate of disputed changes cannot be measured.** With two adjudicators
+  the disagreements are the sample's own error bar. With one there is none, and
+  `unclear` carries the whole weight of "this was hard to call".
+* **The thresholds keep their arithmetic and lose their footing.** 9 and 21 out
+  of 100 were chosen against a boundary somebody would defend in front of a
+  team. They still separate a quiet tool from a loud one; they no longer rest
+  on two people having agreed where the line is.
+* **It is one person's judgement of his own project.** Not a defect — the
+  alternative was no measurement at all — but it belongs beside the result
+  every time the result is quoted, in the same sentence.
+
+Recorded in the adjudication file itself as `adjudicated_by: human`, and
+`artifact.independence()` counts it as independent, because it is: the person
+ruling did not produce the findings. That is the property the field was added
+for, and it holds here in a way it does not hold for `corpus-real`.
+
+**And with one adjudicator, 9 and 21 stop being evidence.** Codex, 2026-09-04:
+one person, with no disagreement rate and no reliability audit, moves cases
+between `ordinary`, `unclear` and "unfounded and actionable" — every part of
+the endpoint. Calling nine or fewer a *measured* pass is not justified by that.
+The cutoffs stay, as **the owner's stated acceptance rule**: the number at
+which he is willing to put the tool in a pipeline. They are withdrawn as
+evidential thresholds. A blind audit of even a subset, by anyone who did not
+produce the findings, would be the smallest thing that changes this back.
+
+### What the frame measures, and what it does not
+
+**Established 2026-09-04, before any review was bought, and it is the reason
+the first thirty were not paid for.**
+
+The eligibility rules remove every ordinary change whose path or changed lines
+mention parsing, request handling, filesystem paths or input validation. On the
+first pool — 2129 candidates from 18 repositories — that was 1334 of the 2003
+exclusions. Those are the changes most likely to make a security reviewer say
+something. So the number this rule produces is:
+
+> the alarm rate among ordinary changes **that survive the eligibility filter**
+
+and not the alarm rate among ordinary changes in a pipeline. It measures the
+rules at least as much as the reviewer. That the survivors are not trivial —
+median diff 1232 bytes over two files, real fixes among them — does not repair
+it; the missing stratum is exactly the high-trigger one.
+
+The repair, when the frame is rebuilt: **strata, not exclusions.** Adjudicate
+and measure inside and outside those rules separately, and report both. A
+single number over the filtered half is a number about the filter.
+
+**Two more facts about the frame, recorded so the next attempt does not
+rediscover them:**
+
+* **This pool cannot reach 100.** 118 eligible changes, and the 10-per-
+  repository cap at a target of 100 yields at most 85. More repositories or a
+  wider interval are unavoidable — and new candidates move the hash-ordered
+  draw, so the present thirty are not the frozen set.
+* **`harvest` reads the default branch.** The population the reviewer actually
+  meets is proposed changes, before merge. Nothing here establishes that
+  post-merge commits have the same mix or the same propensity to draw a
+  finding. Unmeasured, and a limitation of the whole approach rather than of
+  this run.
+
 ### When the two do not agree
 
 **Every failure is a failure.** The corpus fails → it is not fit for the purpose

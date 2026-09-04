@@ -25,12 +25,22 @@ Two supported ways to hand it candidates:
 
 1.  **`harvest`, from local clones.** Clone the repositories yourself, then::
 
-        git clone --filter=blob:none https://github.com/OWNER/NAME clones/NAME
+        git clone https://github.com/OWNER/NAME clones/NAME
         tools/ordinary_corpus.py harvest --clones clones \\
             --since 2026-01-01 --until 2026-06-01 --out candidates.json
 
     `harvest` shells out to `git` in each clone. That is local disk, not the
     network, and it is the only reason `subprocess` appears here.
+
+    **A full clone, not `--filter=blob:none`.** This line said blobless until
+    2026-09-04, and it was a false economy measured that day: `harvest` reads
+    every diff, so a blobless clone fetches every blob anyway — one at a time,
+    over the network, inside the loop. Timed on the clones it recommends,
+    `git show` took 0.5s where the blobs were remote and 0.02s where they were
+    local. Over 1717 commits that is a quarter of an hour of round-trips to
+    save 50 MB of disk. A full clone downloads the same bytes once, in
+    parallel, and `harvest` is then genuinely local as the paragraph above
+    claims.
 
 2.  **A candidates file you built some other way** — `gh api`, a GitLab export,
     a spreadsheet — as long as it holds the record shape `harvest` writes. See
@@ -673,18 +683,34 @@ def missing_fields(record: Dict[str, Any]) -> List[str]:
             bad.append("repo (empty)")
         if not COMMIT_RE.match(record["commit"].strip().lower()):
             bad.append("commit (not a 40-character hex sha)")
-        if not record["files"]:
-            bad.append("files (empty; a change with no file is not a change)")
-        if not record["diff_text"].strip():
-            # The mirror of the `files` guard, and it was missing. Every content
-            # rule below reads this field; over an empty string each of them
-            # finds nothing and reports nothing found, and `diff_truncated:
-            # false` beside it says the diff was read whole. The two together
-            # read as "the content rules were checked and passed" over a record
-            # that answered none of them. The remedy is named, because it is
-            # actionable: re-harvest the record.
-            bad.append("diff_text (empty; the content rules cannot be checked "
-                       "over no diff — re-harvest this commit)")
+        # A merge is not a record that failed to be read. `git show` gives a
+        # merge no diff of its own, correctly, so `diff_text` and `files` are
+        # empty for every one of them — and `missing_fields` runs before the
+        # rules, so `not_single_parent` never got the chance to say so.
+        # Measured 2026-09-04: 324 of 332 `undecidable` records were merges,
+        # filed as "cannot be checked — re-harvest this commit", which is wrong
+        # twice. Nothing failed, and re-harvesting will never help.
+        #
+        # Only the two *content* checks are skipped, and this was the first
+        # version's defect: returning here outright skipped the sha and repo
+        # checks too, so a merge with a malformed commit id came out
+        # `excluded` — a record nobody could read, reported as a rule having
+        # decided about it. One absence-as-agreement traded for another.
+        merge = isinstance(record.get("parents"), int) and record["parents"] > 1
+        if not merge:
+            if not record["files"]:
+                bad.append(
+                    "files (empty; a change with no file is not a change)")
+            if not record["diff_text"].strip():
+                # The mirror of the `files` guard, and it was missing. Every
+                # content rule below reads this field; over an empty string
+                # each of them finds nothing and reports nothing found, and
+                # `diff_truncated: false` beside it says the diff was read
+                # whole. The two together read as "the content rules were
+                # checked and passed" over a record that answered none of them.
+                # The remedy is named, because it is actionable: re-harvest.
+                bad.append("diff_text (empty; the content rules cannot be "
+                           "checked over no diff — re-harvest this commit)")
         if any(not isinstance(p, str) or not p.strip() for p in record["files"]):
             bad.append("files (holds something that is not a path)")
         if any(not isinstance(lb, str) for lb in record["labels"]):
@@ -1067,13 +1093,18 @@ def build_manifest(name: str, outcome: Dict[str, Any], ctx: Dict[str, Any],
         # Not "changes that were never vulnerable". Nothing here establishes
         # that, and the tool's own protocol says so: the rules remove changes
         # that *touch* a sensitive area, and whether what is left is ordinary
-        # is the one question two people answer by hand afterwards. An artifact
+        # is the one question a person answers by hand afterwards. An artifact
         # that states the conclusion its own process has not reached yet is the
         # defect this repository is built to catch, printed on the cover.
+        #
+        # "a person", not "two people". The manifest said two while D-013 and
+        # the adjudication template said one — Codex caught it on 2026-09-04,
+        # and `check` had passed over it because it reproduces the manifest,
+        # not the protocol the manifest describes.
         "purpose": ("The sampling frame for D-013's second rule: changes drawn "
-                    "mechanically, before any result was seen, for two people "
-                    "to adjudicate as ordinary or not. Selection is not a "
-                    "finding that a change is safe."),
+                    "mechanically, before any result was seen, for the owner "
+                    "to adjudicate by hand as ordinary or not. Selection is "
+                    "not a finding that a change is safe."),
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "generator": {
             "tool": "tools/ordinary_corpus.py",
@@ -1108,11 +1139,25 @@ def build_manifest(name: str, outcome: Dict[str, Any], ctx: Dict[str, Any],
                 "pass_at_or_below": 9, "fail_at_or_above": 21,
                 "between": "undecided, which is not a pass",
                 "also_required": "at least 90% finish under the limits",
+                # Written into the artifact because a reader of the number
+                # otherwise has to go and find it. 9 of 100 and 9 of 80 are
+                # not the same boundary, and `unclear` removes cases from the
+                # denominator — so the count of adjudicated-ordinary cases has
+                # to be reported beside any comparison with these cutoffs.
+                "denominator": (
+                    "these cutoffs are stated for 100 adjudicated-ordinary "
+                    "changes. Compare against the count actually adjudicated "
+                    "ordinary, not against the number selected."),
             },
             "adjudication": (
-                "two independent humans per change, verdict one of ordinary / "
-                "not_ordinary / unclear. `unclear` enters neither numerator "
-                "nor denominator, per D-013."),
+                "one adjudicator — the owner — per change, verdict one of "
+                "ordinary / not_ordinary / unclear. `unclear` enters neither "
+                "numerator nor denominator, per D-013. D-013 asked for two "
+                "people ruling independently, so the changes they disagreed "
+                "about could be counted; there is no second person and the "
+                "assistant cannot be it, because the findings under "
+                "adjudication are its own output. What that costs is written "
+                "into D-013 beside the thresholds."),
             "not_answerable": (
                 "whether any selected change is in fact free of a weakness. "
                 "The rules below remove changes that touch a security-relevant "
@@ -1149,12 +1194,43 @@ def build_manifest(name: str, outcome: Dict[str, Any], ctx: Dict[str, Any],
     }
 
 
+def refuse_early(target: Path) -> bool:
+    """Would `publish` refuse this path? Asked *before* the work, not after.
+
+    `harvest` spent an hour reading 1717 commits on 2026-09-04 and then found
+    it could not write, because a file from an earlier pilot run was still
+    there. The refusal was correct — `publish` will not overwrite — and it
+    arrived at the last line, after every network round-trip had been paid for.
+    Everything the run produced was lost.
+
+    A check that can be made first must be made first. This one costs a
+    `stat`.
+    """
+    if target.exists():
+        print("{} already exists. This program will not overwrite it — a "
+              "manifest quietly replaced by a second run is the failure that "
+              "leaves the comparison looking ordinary. Move it aside or name "
+              "another file, then run again.".format(target), file=sys.stderr)
+        return True
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print("{} cannot be created: {}".format(target.parent, exc),
+              file=sys.stderr)
+        return True
+    return False
+
+
 def publish(target: Path, text: str) -> bool:
     """Write beside the target and rename, or leave nothing behind.
 
     Lifted from `experiment.py` on purpose, including the link-then-unlink: a
     manifest quietly overwritten by a second run is the failure that leaves the
     comparison looking perfectly ordinary.
+
+    `refuse_early` above answers the same question before the work starts. This
+    still refuses, because the file can appear while the work is running and
+    because a check made once is a check somebody moves.
     """
     temporary = target.with_name("{}.writing.{}".format(target.name, os.getpid()))
     try:
@@ -1307,6 +1383,9 @@ def harvest_clone(clone: Path, since: str, until: str,
 
 
 def cmd_harvest(args: argparse.Namespace) -> int:
+    # Before the hour of reading, not after it.
+    if refuse_early(Path(args.out)):
+        return 2
     clones = sorted(p for p in Path(args.clones).iterdir()
                     if (p / ".git").exists() or (p / "HEAD").exists())
     if not clones:
@@ -1364,6 +1443,8 @@ def report(manifest: Dict[str, Any]) -> None:
 
 
 def cmd_select(args: argparse.Namespace) -> int:
+    if refuse_early(Path(args.out)):
+        return 2
     ctx = context(args.since, args.until, Path(args.corpus))
     path = Path(args.candidates)
     records = load_candidates(path)
@@ -1387,8 +1468,8 @@ def cmd_select(args: argparse.Namespace) -> int:
         print("\nThis is not a usable sample. Exit 2 — see NOT MET above.",
               file=sys.stderr)
         return 2
-    print("Next: `template` for the adjudication skeleton. Two humans, "
-          "independently, before any review is bought.")
+    print("Next: `template` for the adjudication skeleton. Adjudicated by "
+          "hand, before any review is bought.")
     return 0
 
 
@@ -1512,13 +1593,15 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def cmd_template(args: argparse.Namespace) -> int:
-    """The skeleton the two adjudicators fill in, with every verdict null.
+    """The skeleton the adjudicator fills in, with every verdict null.
 
     `null`, not `false` and not an empty string. An unfilled verdict must be
     impossible to count: whatever tallies these has to refuse a null, and a
     default of `false` would silently mean "not noisy" for every change nobody
     ever looked at.
     """
+    if refuse_early(Path(args.out)):
+        return 2
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     cases = {}
     for entry in manifest["selected"]:
@@ -1527,18 +1610,23 @@ def cmd_template(args: argparse.Namespace) -> int:
             "commit": entry["commit"],
             "language": entry["language"],
             "subject": entry["subject"],
-            # Two independent verdicts, not one. D-013 step 2 says doubly
-            # adjudicated, and a single field would make the second reader's
-            # job "agree or disagree with what is already written".
-            "verdict_a": None,
-            "verdict_b": None,
+            # One verdict. D-013 asked for two, independently, so that the
+            # changes they disagreed about could be counted — that was the
+            # sample's own error bar. The owner decided on 2026-09-04 that
+            # there is no second person, and the assistant cannot be it: the
+            # findings under adjudication are its own output. The cost is
+            # recorded in D-013 and travels with the number.
+            "verdict": None,
             "verdict_values": "ordinary | not_ordinary | unclear",
+            # Who ruled. Not decoration: `corpus-real/adjudications.yml` was
+            # taken for hand judgement for a day and was not, and every ruling
+            # file since carries its author.
+            "adjudicated_by": "human",
             # Only meaningful where the manifest says the label channel was
             # blind, but present on every case so nobody has to notice which.
             "label_evidence": entry["label_evidence"],
             "upstream_security_label_checked_by_hand": None,
-            "note_a": "",
-            "note_b": "",
+            "note": "",
         }
     body = {
         "corpus": manifest["corpus"],
@@ -1546,9 +1634,11 @@ def cmd_template(args: argparse.Namespace) -> int:
         "generator_digest": manifest["generator"]["generator_digest"],
         "rules_digest": manifest["generator"]["rules_digest"],
         "instructions": (
-            "Two people fill verdict_a and verdict_b without seeing each "
-            "other's. `unclear` is a real answer and enters neither numerator "
-            "nor denominator. Where label_evidence is 'unavailable', check the "
+            "Fill `verdict` for every case: ordinary | not_ordinary | "
+            "unclear. `unclear` is a real answer and enters neither numerator "
+            "nor denominator — it is the only place a hard call can go now "
+            "that there is one adjudicator rather than two, so use it rather "
+            "than guessing. Where label_evidence is 'unavailable', check the "
             "upstream issue or PR for a security label before answering, and "
             "record that you did. No review is run until every verdict is "
             "filled: a change adjudicated after its result is seen is a change "
