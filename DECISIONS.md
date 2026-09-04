@@ -1224,14 +1224,66 @@ an API key, so the standing decision of 2026-08-30 is untouched.
   id, and the raw structured answer. Plus `adjudicated_by: model`,
   `vendor: xai`.
 
-**The owner audits 6 of the 30 — three per stratum, chosen by hash in
-advance — blind to Grok's verdicts.** At 100 it is 20, ten per stratum. Both
-rulings are kept and the disagreement is reported.
+**The audit was required, refused twice, and withdrawn on 2026-09-04.** The
+history is kept because replacing the text without it would falsify the record
+of what the protocol demanded when the first pilot ran.
 
-> **One disagreement between `ordinary` and `not_ordinary`, or more than one
-> disagreement of any kind in the pilot, invalidates model-only adjudication**
-> — and all 30 must then be adjudicated by hand before any extension. Nothing is
-> reconciled silently, and Grok is never asked again.
+What it required: the owner adjudicates **6 of the 30** — three per stratum,
+chosen by hash in advance — blind to Grok's verdicts, 20 of 100 at the larger
+target, both rulings kept and any disagreement reported. **One
+`ordinary`/`not_ordinary` disagreement, or more than one of any kind, invalidated
+model-only adjudication** and sent all 30 back to the owner's hand.
+
+He declined once on 2026-09-04 — *"не искам аз нищо да проверявам, и не смятам,
+че е нужно при 3 AI агента"* — and, asked again the same day after the
+consequences were laid out, declined flatly: *"няма аз да правя одит."* **On the owner's instruction the requirement
+is withdrawn.**
+
+**It is a waiver, not an erasure, and it carries four consequences.**
+
+**One: the thirty already scored are not made compliant by it.** They ran under
+a rule that required auditing and were not audited. An amendment cannot cure
+that backwards — doing so would be rewriting the protocol once the outcome was
+known. They are recorded as *thirty unaudited third-vendor adjudications under a
+protocol requiring audit*, and they are **discarded for decision purposes**. The
+choice between discarding them and extending from them was the assistant's, on
+the owner's delegation; discarding was chosen because the distribution and the
+three contaminated cases are already known, so any decision taken over them is a
+decision taken after seeing the outcome.
+
+**Two: what the result may and may not be called.** It may be called *Grok's
+unaudited pilot verdict distribution: 27 ordinary, 3 not_ordinary, 0 unclear.*
+It may **not** be called an audited or validated sample of ordinary changes,
+human ground truth, a measured false-alarm rate, a D-013 pass, or evidence that
+the 27 are genuinely ordinary.
+
+**Three: the three contaminated cases survive as a finding, and only as a narrow
+one.** They establish that the frame admits silent security fixes and that the
+commit-text filter missed at least one. They do **not** estimate the frame's
+contamination, do not validate Grok in general, and take no part in any later
+pilot's decision statistic. The whole 27/3/0 result and its failed status are
+preserved with them; keeping the finding while discarding the pilot is only
+honest if nothing is quietly dropped.
+
+**Four: the acceptance boundaries lose their evidential role.** 9% and 21% were
+never derived, and without an independent check nothing establishes that a rate
+measured against a model-written key means what those numbers assume. They
+remain **the owner's acceptance boundaries** and are not thresholds any
+measurement here has validated.
+
+**Step 3 is not authorised by this withdrawal.** The `unclear` guard passed
+numerically on a pilot that did not complete, and deleting the audit clause does
+not complete it. What is authorised instead: **a new pilot, drawn under the
+amended rule.** Its cost is $0.19 and twelve minutes, which is not a reason to
+keep a compromised one.
+
+And it must be *procedurally* new rather than another thirty calls. Before it is
+drawn, and before anything is spent: the generations ledger has to exist, with
+the thirty already scored seeded as generation 1 by their repository-and-commit
+identities including aliases, and the new draw required to be disjoint from
+them. The draw itself is frozen before the selected cases are seen — no chosen
+seed, no inspecting alternatives, no redraw, no change to eligibility after
+selection. **The absent ledger does not excuse overlap; it blocks the run.**
 
 **What this is not, said plainly because Codex required it.** Grok is less
 accountable than a person. It may share systematic biases with other models. It
@@ -1420,8 +1472,12 @@ answered_questions:
       replaced or redrawn after its verdict is known
 generations:
   disjoint: required
-  records: [configuration_digest, case_ids]
+  records: [id, status, case_identities]
+  status_values: [current, scored, discarded]
+  adjudicable_status: current
+  identity: repo_and_commit_folded
   on_overlap: refuse
+  on_repeat: refuse
 steps:
   - id: freeze
     requires: []
@@ -1433,8 +1489,9 @@ steps:
     requires: [freeze]
     done_when: >-
       the manifest and the adjudication file cover the same sample, the cases
-      carry a verdict of ordinary / not_ordinary / unclear, and every one names
-      an adjudicator the amendment permits
+      carry a verdict of ordinary / not_ordinary / unclear, every one names an
+      adjudicator the amendment permits, and the sample belongs to a generation
+      the ledger records as disjoint from every earlier one
   - id: extend_to_100
     requires: [adjudicate_30]
     guard: fewer than 5 of the 30 are unclear
@@ -1443,8 +1500,9 @@ steps:
     on_guard_failed: undecided
     done_when: >-
       the manifest and the adjudication file cover the same sample, the cases
-      carry a verdict of ordinary / not_ordinary / unclear, and every one names
-      an adjudicator the amendment permits
+      carry a verdict of ordinary / not_ordinary / unclear, every one names an
+      adjudicator the amendment permits, and the sample belongs to a generation
+      the ledger records as disjoint from every earlier one
   - id: classify_alarms
     requires: []
     needs_field: failure_mode

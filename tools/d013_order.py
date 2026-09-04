@@ -160,8 +160,9 @@ UNDEFINED = "undefined"
 # Without it a reworded criterion would keep the old checker silently.
 _ADJUDICATED_DONE_WHEN = (
     "the manifest and the adjudication file cover the same sample, the cases "
-    "carry a verdict of ordinary / not_ordinary / unclear, and every one names "
-    "an adjudicator the amendment permits")
+    "carry a verdict of ordinary / not_ordinary / unclear, every one names an "
+    "adjudicator the amendment permits, and the sample belongs to a generation "
+    "the ledger records as disjoint from every earlier one")
 
 DONE_WHEN_IMPLEMENTED: Dict[str, str] = {
     "freeze": ("a freeze record exists, an owner has acknowledged it, and "
@@ -190,7 +191,37 @@ TOP_LEVEL_KEYS = frozenset({"steps", "open_questions", "answered_questions",
                             "generations"})
 QUESTION_KEYS = frozenset({"id", "asked_of", "text"})
 ANSWER_KEYS = frozenset({"id", "answered_by", "answered_on", "text"})
-GENERATIONS_KEYS = frozenset({"disjoint", "records", "on_overlap"})
+# What this tool can actually do, as against what a block declares. These are
+# not derived from anything and nothing derives from them: they are the
+# behaviours the code implements, one per key, and they exist so that a
+# declaration and its expectation cannot be changed together into something
+# nobody wrote code for. Codex, 2026-09-04: changing `GENERATIONS_CONTRACT`
+# and the block in step made parsing and divergence agree while
+# `_change_identity` folded repository and commit regardless.
+GENERATIONS_IMPLEMENTED = {
+    "disjoint": ("required",),
+    "status_values": (("current", "scored", "discarded"),),
+    "adjudicable_status": ("current",),
+    "identity": ("repo_and_commit_folded",),
+    "on_overlap": ("refuse",),
+    "on_repeat": ("refuse",),
+}
+
+GENERATIONS_CONTRACT = {
+    "disjoint": "required",
+    "records": ["id", "status", "case_identities"],
+    "status_values": ["current", "scored", "discarded"],
+    "adjudicable_status": "current",
+    "identity": "repo_and_commit_folded",
+    "on_overlap": "refuse",
+    "on_repeat": "refuse",
+}
+
+# Derived, never restated. Codex, 2026-09-04: the contract constant was one
+# of five places the shape was written down, so changing it moved what
+# `divergence` expected and not what anything enforced. Every other statement
+# of the shape now reads from it.
+GENERATIONS_KEYS = frozenset(GENERATIONS_CONTRACT)
 # What a failed guard may be declared to mean. One value, because D-013 states
 # one: 5 or more unclear of the 30 makes the ordinary result invalid and the
 # outcome undecided, and no case is redrawn. A second value belongs here only
@@ -682,12 +713,13 @@ def _parse_generations(raw: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(raw, dict):
         raise OrderError("`generations:` must be a mapping")
     _reject_unknown("`generations`", raw, GENERATIONS_KEYS)
-    if raw.get("disjoint") != "required":
+    if raw.get("disjoint") != GENERATIONS_CONTRACT["disjoint"]:
         raise OrderError(
             "`generations.disjoint` is {!r}; this tool enforces only "
-            "'required'. Anything else is a rule it would accept and not "
-            "apply".format(raw.get("disjoint")))
-    if raw.get("on_overlap") != "refuse":
+            "{!r}. Anything else is a rule it would accept and not "
+            "apply".format(raw.get("disjoint"),
+                           GENERATIONS_CONTRACT["disjoint"]))
+    if raw.get("on_overlap") != GENERATIONS_CONTRACT["on_overlap"]:
         raise OrderError(
             "`generations.on_overlap` is {!r}; this tool enforces only "
             "'refuse'. A warning it cannot issue is not an enforcement"
@@ -699,8 +731,13 @@ def _parse_generations(raw: Any) -> Optional[Dict[str, Any]]:
             "`generations.records` must be a non-empty list of field names — "
             "they are what a generation has to carry for a later draw to be "
             "shown disjoint from it")
-    return {"disjoint": raw["disjoint"], "on_overlap": raw["on_overlap"],
-            "records": [name.strip() for name in records]}
+    # Every declared key carried through, not three of them. Returning a
+    # filtered dict dropped the rest silently — the defect this tool exists to
+    # refuse, inside the tool. `divergence` then reported them as missing from
+    # a block that declared them. Codex, 2026-09-04.
+    out = dict(raw)
+    out["records"] = [name.strip() for name in records]
+    return out
 
 
 def _id_list(entry: Dict[str, Any], key: str, ident: str) -> List[str]:
@@ -1358,6 +1395,227 @@ def check_extend_to_100(ctx: Context, step: Step) -> Result:
     return _check_adjudicated(ctx, step.id)
 
 
+
+
+
+def _declared_generations(spec) -> Optional[str]:
+    """The block's `generations:` must say what the checker enforces.
+
+    It did not: the block declared `records: [configuration_digest, case_ids]`
+    while the checker required `id`, `status` and `case_identities` and never
+    looked at a digest — so a ledger written to the documented shape was
+    refused, and the documented shape described a control nobody implemented.
+    The contract is one constant now, and a divergence is a refusal rather
+    than a surprise at the first ledger.
+
+    **And every value is enforced by being the only one accepted.** Codex,
+    2026-09-04, on the version before this: centralising the constant
+    centralised the *declaration* and not the behaviour — `identity`,
+    `on_repeat`, `on_overlap` and `disjoint` were validated while the code did
+    the one thing unconditionally, so changing the contract and the block
+    together would have changed nothing. This tool implements exactly one
+    behaviour for each, so any other declaration is a rule it would accept and
+    not apply, and it is refused here. A mutation test covers every key.
+    """
+    if not isinstance(spec, dict):
+        return None
+    wrong = []
+    for key, allowed in sorted(GENERATIONS_IMPLEMENTED.items()):
+        declared = GENERATIONS_CONTRACT.get(key)
+        value = tuple(declared) if isinstance(declared, list) else declared
+        if value not in allowed:
+            wrong.append(
+                "the contract says `{}` is {!r} and this tool implements only "
+                "{}. A value nothing applies is a rule in name".format(
+                    key, declared,
+                    ", ".join(repr(a) for a in allowed)))
+    for key, expected in sorted(GENERATIONS_CONTRACT.items()):
+        if key not in spec:
+            wrong.append("`{}` is missing".format(key))
+        elif spec[key] != expected:
+            wrong.append("`{}` is {!r} and this tool enforces {!r}".format(
+                key, spec[key], expected))
+    unknown = sorted(set(spec) - set(GENERATIONS_CONTRACT))
+    for key in unknown:
+        wrong.append("`{}` is declared and nothing acts on it".format(key))
+    if wrong:
+        return ("the block's `generations:` does not describe what this tool "
+                "enforces: {}".format("; ".join(wrong)))
+    return None
+
+
+def _change_identity(repo, commit):
+    """The one normalisation, borrowed rather than repeated.
+
+    `ordinary_corpus.identity` folds a repository path to lower case and a sha
+    to lower hex, which is what makes `AutoMapper/AutoMapper` and
+    `automapper/automapper` one change rather than two. A second copy here
+    would drift from it, and the drift would be silent in the permissive
+    direction: two spellings of one change would look disjoint.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import ordinary_corpus
+    return ordinary_corpus.identity(repo, commit)
+
+
+def _generation_problem(ctx: Context) -> Optional[str]:
+    """Why this sample's generation cannot be established, or `None`.
+
+    Today it is always the first reason: no ledger exists. That is deliberately
+    not treated as permission — the amendment says the absent ledger blocks the
+    run rather than excusing overlap — and it is why this returns a sentence
+    rather than a boolean. The six semantics D-013 leaves open (what a case id
+    names, alias equality, digest coverage, who writes a record, when overlap is
+    checked, which generation owns which result) are unbuilt, so nothing here
+    pretends to check them.
+    """
+    path = ctx.generations
+    if path is None:
+        return ("no generations ledger was named, so this sample cannot be "
+                "shown to be disjoint from one already scored — and the thirty "
+                "discarded on 2026-09-04 would otherwise satisfy this step")
+    if not path.exists():
+        return ("no generations ledger at {} — the amendment requires the "
+                "thirty already scored to be seeded as generation one and a "
+                "new draw to be disjoint from them. The absent ledger blocks "
+                "the run; it does not excuse the overlap".format(path))
+
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return "{} could not be read: {}".format(path, exc)
+    generations = body.get("generations") if isinstance(body, dict) else None
+    if not isinstance(generations, list) or not generations:
+        return ("{} records no generations — an empty ledger is not evidence "
+                "that nothing was scored before".format(path))
+
+    # Disjointness *is* computable, and only the edges D-013 leaves open are
+    # not: what a case id names, digest coverage, who writes a record, when
+    # overlap is checked. The identity used here is `ordinary_corpus.identity`,
+    # which is the alias normalisation every other call site uses — the same
+    # one that folds `AutoMapper/AutoMapper` onto `automapper/automapper`.
+    seen, current, problems = {}, None, []
+    per_generation = []
+    for index, generation in enumerate(generations):
+        if not isinstance(generation, dict):
+            problems.append("generation {} is not an object".format(index))
+            continue
+        ident = generation.get("id")
+        rows = generation.get("case_identities")
+        if not isinstance(ident, str) or not ident.strip():
+            problems.append("generation {} has no id".format(index))
+        if not isinstance(rows, list) or not rows:
+            problems.append("generation {!r} lists no cases — a generation "
+                            "that scored nothing is not a generation".format(
+                                ident))
+            continue
+        status = generation.get("status")
+        if status not in GENERATIONS_CONTRACT["status_values"]:
+            problems.append(
+                "generation {!r} has status {!r}; it must be one of {}. A "
+                "generation with no state can be replayed as though it were "
+                "the run in progress".format(
+                    ident, status,
+                    ", ".join(GENERATIONS_CONTRACT["status_values"])))
+        keys = set()
+        for row in rows:
+            if not isinstance(row, list) or len(row) != 2:
+                problems.append("generation {!r} holds a case that is not a "
+                                "[repo, commit] pair".format(ident))
+                continue
+            key = _change_identity(row[0], row[1])
+            if key is None:
+                problems.append("generation {!r} holds an unreadable "
+                                "identity".format(ident))
+                continue
+            if key in keys:
+                # Collapsing a repeat would let a generation of 29 changes
+                # answer for 30 case ids and still pass the count.
+                problems.append(
+                    "generation {!r} lists {}@{} twice".format(
+                        ident, key[0], key[1]))
+                continue
+            keys.add(key)
+        overlap = sorted(k for k in keys if k in seen)
+        if overlap:
+            problems.append(
+                "generation {!r} scores {} change(s) an earlier generation "
+                "already scored, the first being {}@{} from {!r}".format(
+                    ident, len(overlap), overlap[0][0], overlap[0][1],
+                    seen[overlap[0]]))
+        for key in keys:
+            seen.setdefault(key, ident)
+        per_generation.append((ident, keys, status))
+        current = ident
+    if problems:
+        return "; ".join(problems)
+    if current is None:
+        return "{} records no usable generation".format(path)
+
+    # **And this sample must be one of those generations.** Checking only that
+    # some ledger is internally disjoint leaves the gate open: a ledger holding
+    # one unrelated generation would satisfy it, and any thirty cases — the
+    # ones the owner's amendment discarded included — would pass. Codex found
+    # it, and found that the fixtures had encoded the permissiveness too.
+    drawn, why = _sample_identities(ctx)
+    if drawn is None:
+        return why
+    for ident, keys, status in per_generation:
+        if keys != drawn:
+            continue
+        if status == GENERATIONS_CONTRACT["adjudicable_status"]:
+            return None
+        return ("the drawn sample is generation {!r}, whose status is {!r}. "
+                "A generation already scored or discarded cannot be "
+                "adjudicated again — that is the replay the ledger "
+                "exists to stop".format(ident, status))
+    return ("the drawn sample is not any generation in {}: {} change(s) drawn, "
+            "and the generations hold {}. A sample that belongs to no "
+            "generation has no evidence of being new".format(
+                path, len(drawn),
+                ", ".join("{} in {!r}".format(len(k), i)
+                          for i, k, _ in per_generation) or "nothing"))
+
+
+def _sample_identities(ctx: Context):
+    """The drawn sample as normalised identities, or `None` and why not."""
+    path = ctx.ordinary_manifest
+    if path is None:
+        return None, ("no manifest was named, so the sample cannot be matched "
+                      "to a generation — pass `--ordinary-dir DIR`")
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, "{} could not be read: {}".format(path, exc)
+    selected = manifest.get("selected") if isinstance(manifest, dict) else None
+    if not isinstance(selected, list) or not selected:
+        return None, "{} has no `selected` list".format(path)
+    keys, missing, repeated = set(), 0, []
+    for row in selected:
+        key = _change_identity((row or {}).get("repo"),
+                               (row or {}).get("commit")) \
+            if isinstance(row, dict) else None
+        if key is None:
+            missing += 1
+            continue
+        if key in keys:
+            # A set would swallow this, and thirty case ids over twenty-nine
+            # changes would then match a twenty-nine-identity generation and
+            # still satisfy the separate count of thirty.
+            repeated.append(key)
+            continue
+        keys.add(key)
+    if repeated:
+        return None, ("{} draws {}@{} twice; a repeated change is one change "
+                      "counted as two".format(path, repeated[0][0],
+                                              repeated[0][1]))
+    if missing:
+        return None, ("{} of {} selected row(s) in {} carry no repository and "
+                      "commit, so the sample cannot be matched to a "
+                      "generation".format(missing, len(selected), path))
+    return keys, ""
+
+
 def _check_adjudicated(ctx: Context, step_id: str) -> Result:
     """One shape for both corpus steps: N cases, every verdict filled in, and
     every record *naming an adjudicator the amendment permits*.
@@ -1369,7 +1627,18 @@ def _check_adjudicated(ctx: Context, step_id: str) -> Result:
     beside the criterion. Codex blocked a commit over the old phrasing, and it
     was right to: a checker that prints a claim as a finding is how "the records
     say a human" becomes "a human did it" three readers later.
+
+    **And the sample must belong to a generation the ledger records as disjoint.**
+    Without that, the thirty discarded on 2026-09-04 still satisfy this step: the
+    criterion could not tell a fresh draw from the pilot the owner's amendment
+    threw out, so `extend_to_100` became reachable and step 3 passed by the
+    machine-readable rule while the prose forbade it. Codex found it in the
+    amendment that created it.
     """
+    ledger = _generation_problem(ctx)
+    if ledger is not None:
+        return Result(UNKNOWN, ledger)
+
     target = target_from_id(step_id)
     if target is None:
         return Result(UNKNOWN, (
@@ -1385,9 +1654,12 @@ def _check_adjudicated(ctx: Context, step_id: str) -> Result:
         return Result(UNKNOWN, disagreement)
 
     counts = _verdict_counts(cases)
-    if len(cases) < target:
-        return Result(NOT_DONE, "{} case(s) adjudicated, {} required".format(
-            len(cases), target))
+    if len(cases) != target:
+        # Equality, not a floor. `< target` passed 31 unique rows with 31
+        # adjudications against a matching generation — a sample nobody drew,
+        # answering for one nobody counted. Codex, 2026-09-04.
+        return Result(NOT_DONE, "{} case(s) adjudicated, exactly {} required"
+                      .format(len(cases), target))
     if counts["missing"]:
         return Result(NOT_DONE, (
             "{} of {} verdicts are still unfilled — a null verdict must never "
@@ -1468,8 +1740,24 @@ def _manifest_agreement(ctx: Context, cases: Dict[str, Any]) -> Optional[str]:
     selected = manifest.get("selected") if isinstance(manifest, dict) else None
     if not isinstance(selected, list):
         return "{} has no `selected` list".format(path)
-    drawn = {entry.get("case_id") for entry in selected
-             if isinstance(entry, dict)}
+    # Counted, not collapsed. A set here let a manifest of 31 rows with one
+    # case id repeated over two distinct changes agree with 30 adjudications
+    # and pass the count — the third place today where a set swallowed
+    # something that had to be counted. Codex, 2026-09-04.
+    malformed = sum(1 for entry in selected if not isinstance(entry, dict))
+    if malformed:
+        # Dropped silently before, so thirty good rows plus one bad one
+        # compared equal to thirty and passed.
+        return ("{} of {} selected row(s) in {} are not objects; a row the "
+                "comparison cannot read is not a row that agrees".format(
+                    malformed, len(selected), path))
+    ids = [entry.get("case_id") for entry in selected]
+    repeated = sorted({i for i in ids if ids.count(i) > 1})
+    if repeated:
+        return ("{} names case id {!r} on {} rows; one id over two changes is "
+                "two changes wearing one name".format(
+                    path, repeated[0], ids.count(repeated[0])))
+    drawn = set(ids)
     ruled = set(cases)
     if drawn != ruled:
         return ("the manifest draws {} case(s) and the adjudication file "
@@ -1730,6 +2018,9 @@ def divergence(order: Order) -> List[str]:
     named = {s.id for s in order.steps}
     known = set(CHECKERS)
     out = []
+    declared = _declared_generations(order.generations)
+    if declared is not None:
+        out.append(declared)
     for missing in sorted(named - known):
         out.append(
             "DECISIONS.md names step {!r} and this tool has no checker for it "

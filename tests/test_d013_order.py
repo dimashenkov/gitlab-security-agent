@@ -50,8 +50,12 @@ answered_questions:
     text: step 5 is an exception to the boxed rule
 generations:
   disjoint: required
-  records: [configuration_digest, case_ids]
+  records: [id, status, case_identities]
+  status_values: [current, scored, discarded]
+  adjudicable_status: current
+  identity: repo_and_commit_folded
   on_overlap: refuse
+  on_repeat: refuse
 steps:
   - id: freeze
     requires: []
@@ -321,8 +325,106 @@ class TestTheGenerationsRule:
 
     def test_records_must_name_fields(self):
         with pytest.raises(order_tool.OrderError, match="records"):
-            parse(BLOCK.replace("records: [configuration_digest, case_ids]",
+            parse(BLOCK.replace("records: [id, status, case_identities]",
                                 "records: []"))
+
+    def test_the_block_must_declare_what_the_tool_enforces(self):
+        """The block said one shape and the checker required another.
+
+        `records: [configuration_digest, case_ids]` was declared while the
+        checker wanted `id`, `status` and `case_identities` and never looked at
+        a digest — so a ledger written to the documented shape was refused, and
+        the documented shape described a control nobody implemented. Codex,
+        2026-09-04.
+        """
+        problems = order_tool.divergence(
+            parse(BLOCK.replace("adjudicable_status: current",
+                                "adjudicable_status: scored")))
+        assert any("adjudicable_status" in p for p in problems)
+
+    @pytest.mark.parametrize("key, other", [
+        ("disjoint", "optional"),
+        ("records", "[id]"),
+        ("status_values", "[current]"),
+        ("adjudicable_status", "scored"),
+        ("identity", "commit_only"),
+        ("on_overlap", "warn"),
+        ("on_repeat", "warn"),
+    ])
+    def test_every_contract_value_is_refused_when_changed(self, key, other):
+        """Centralising the constant centralised the declaration, not the code.
+
+        `identity`, `on_repeat`, `on_overlap` and `disjoint` were validated
+        while the behaviour was unconditional, so changing the contract and the
+        block together would have changed nothing. This tool implements exactly
+        one behaviour for each, so any other declaration is a rule it would
+        accept and not apply. Codex, 2026-09-04, asking for exactly this
+        mutation test.
+        """
+        import re
+        block = re.sub(r"^  {}: .*$".format(key),
+                       "  {}: {}".format(key, other), BLOCK, flags=re.M)
+        assert block != BLOCK, "the fixture no longer declares {}".format(key)
+        try:
+            problems = order_tool.divergence(parse(block))
+        except order_tool.OrderError as exc:
+            assert key in str(exc)
+            return
+        assert any(key in p for p in problems), problems
+
+    @pytest.mark.parametrize("key, other", [
+        ("disjoint", "optional"),
+        ("status_values", ["current"]),
+        ("adjudicable_status", "scored"),
+        ("identity", "commit_only"),
+        ("on_overlap", "warn"),
+        ("on_repeat", "warn"),
+    ])
+    def test_changing_the_block_and_the_contract_together_is_still_refused(
+            self, monkeypatch, key, other):
+        """The coupled mutation, which is the one that exposes the problem.
+
+        Changing only the block is caught by `divergence`. Changing both makes
+        parsing and divergence agree while the behaviour stays what it always
+        was — `identity: commit_only` declared and honoured in two places
+        while `_change_identity` folds repository and commit regardless. Codex
+        asked for exactly this after the one-sided version passed, 2026-09-04.
+
+        Refusal is the honest answer for every one of these: this tool
+        implements a single behaviour per key, so a second declared value is a
+        rule nothing applies. `records` is excluded because its shape, not its
+        content, is what the parser enforces.
+        """
+        import re
+        contract = dict(order_tool.GENERATIONS_CONTRACT)
+        contract[key] = other
+        monkeypatch.setattr(order_tool, "GENERATIONS_CONTRACT", contract)
+        monkeypatch.setattr(order_tool, "GENERATIONS_KEYS",
+                            frozenset(contract))
+        rendered = (json.dumps(other) if isinstance(other, list) else other)
+        block = re.sub(r"^  {}: .*$".format(key),
+                       "  {}: {}".format(key, rendered), BLOCK, flags=re.M)
+        assert block != BLOCK, "the fixture no longer declares {}".format(key)
+        try:
+            problems = order_tool.divergence(parse(block))
+        except order_tool.OrderError as exc:
+            assert key in str(exc) or "generations" in str(exc)
+            return
+        assert problems, (
+            "block and contract agree on {}={!r} and nothing refused it, so "
+            "the declaration moved and the behaviour did not".format(key, other))
+
+    def test_a_declared_key_the_parser_drops_is_reported(self):
+        """`_parse_generations` returned three keys and dropped the rest.
+
+        The tool that refuses a silently ignored field was silently ignoring
+        fields. Every declared key is carried through now, so `divergence` sees
+        what the block actually says.
+        """
+        order = parse()
+        assert set(order.generations) == {
+            "disjoint", "records", "on_overlap", "on_repeat",
+            "status_values", "adjudicable_status", "identity"}
 
     def test_it_is_reported_declared_and_unenforceable(self, tmp_path):
         result = order_tool.check_generations(
@@ -985,10 +1087,30 @@ def ordinary(tmp_path: Path, cases: dict, drawn=None) -> dict:
     (directory / "adjudications.yml").write_text(
         yaml.safe_dump({"cases": cases}), encoding="utf-8")
     ids = list(cases) if drawn is None else list(drawn)
+    rows = [{"case_id": c, "repo": "github.com/o/{}".format(c),
+             "commit": "{:040x}".format(abs(hash(c)) % (16 ** 40))}
+            for c in ids]
     (directory / "manifest.json").write_text(
-        json.dumps({"selected": [{"case_id": c} for c in ids]}),
-        encoding="utf-8")
+        json.dumps({"selected": rows}), encoding="utf-8")
+    # A ledger built **from this sample**, because the criterion requires the
+    # sample to belong to a generation. A ledger holding some unrelated
+    # generation used to satisfy it, so any thirty cases passed — the fixture
+    # encoded the permissiveness the check was meant to close. Codex found
+    # both, 2026-09-04.
+    ledger(tmp_path, [{"id": "g1", "status": "current",
+                       "case_identities": [[r["repo"], r["commit"]]
+                                           for r in rows]}])
     return {"ordinary_dir": directory}
+
+
+def ledger(tmp_path: Path, generations=None) -> Path:
+    """The generations record `_generation_problem` reads."""
+    if generations is None:
+        generations = [{"id": "g1", "status": "current",
+                        "case_identities": [["github.com/o/a", "a" * 40]]}]
+    path = tmp_path / "generations.json"
+    path.write_text(json.dumps({"generations": generations}), encoding="utf-8")
+    return path
 
 
 def case(verdict="ordinary", by="human"):
@@ -999,11 +1121,131 @@ class TestTheAdjudicationChecker:
     def _step(self):
         return step_of(parse(), "adjudicate_30")
 
+    def test_no_ledger_is_cannot_tell_and_names_the_discarded_thirty(
+            self, tmp_path):
+        """The ledger is read before anything else, and its absence blocks.
+
+        Without it the thirty discarded on 2026-09-04 satisfied this step —
+        the criterion could not tell a fresh draw from the pilot the owner's
+        amendment threw out, so `extend_to_100` became reachable and step 3
+        passed by the machine-readable rule while the prose forbade it.
+        """
+        result = order_tool.check_adjudicate_30(context(tmp_path), self._step())
+        assert result.state == order_tool.UNKNOWN
+        assert "no generations ledger" in result.evidence
+        assert "does not excuse the overlap" in result.evidence
+
     def test_no_directory_is_cannot_tell_never_not_done(self, tmp_path):
         """Work the tool was not shown is not work that did not happen."""
+        ledger(tmp_path)
         result = order_tool.check_adjudicate_30(context(tmp_path), self._step())
         assert result.state == order_tool.UNKNOWN
         assert "--ordinary-dir" in result.evidence
+
+    def test_a_generation_repeating_an_earlier_one_is_refused(self, tmp_path):
+        """Alias-folded, so one change under two spellings is one change."""
+        ledger(tmp_path, [
+            {"id": "g1", "status": "scored", "case_identities": [
+                ["github.com/AutoMapper/AutoMapper", "A" * 40]]},
+            {"id": "g2", "status": "current", "case_identities": [
+                ["github.com/automapper/automapper", "a" * 40]]}])
+        result = order_tool.check_adjudicate_30(context(tmp_path), self._step())
+        assert result.state == order_tool.UNKNOWN
+        assert "already scored" in result.evidence
+        assert "'g1'" in result.evidence
+
+    def test_a_ledger_that_does_not_contain_this_sample_is_refused(
+            self, tmp_path):
+        """The gate checked that *some* ledger was internally disjoint.
+
+        So a ledger holding one unrelated generation opened it, and any thirty
+        cases passed — the thirty the owner's amendment discarded included.
+        The fixtures had encoded the same permissiveness, seeding every sample
+        with an unrelated identity. Codex found both, 2026-09-04.
+        """
+        cases = {"c{}".format(i): case() for i in range(30)}
+        where = ordinary(tmp_path, cases)
+        ledger(tmp_path, [{"id": "somebody-else", "status": "current",
+                           "case_identities": [["github.com/x/y", "f" * 40]]}])
+        result = order_tool.check_adjudicate_30(
+            context(tmp_path, **where), self._step())
+        assert result.state == order_tool.UNKNOWN
+        assert "not any generation" in result.evidence
+        assert "no evidence of being new" in result.evidence
+
+    def test_a_sample_whose_rows_carry_no_commit_cannot_be_matched(
+            self, tmp_path):
+        """Case ids alone do not identify a change, so they cannot place it."""
+        cases = {"c{}".format(i): case() for i in range(30)}
+        where = ordinary(tmp_path, cases)
+        manifest = where["ordinary_dir"] / "manifest.json"
+        manifest.write_text(
+            json.dumps({"selected": [{"case_id": c} for c in cases]}),
+            encoding="utf-8")
+        result = order_tool.check_adjudicate_30(
+            context(tmp_path, **where), self._step())
+        assert result.state == order_tool.UNKNOWN
+        assert "carry no repository and commit" in result.evidence
+
+    @pytest.mark.parametrize("status", ["discarded", "scored"])
+    def test_the_discarded_pilot_cannot_be_adjudicated_again(
+            self, tmp_path, status):
+        """The pilot thrown out on 2026-09-04 passed its own gate.
+
+        Matching *any* generation was enough, so the thirty the owner's
+        amendment discarded satisfied the step they were discarded from. A
+        generation now carries its state, and only `current` may be
+        adjudicated. Codex, on the check that was meant to close this.
+        """
+        cases = {"c{}".format(i): case() for i in range(30)}
+        where = ordinary(tmp_path, cases)
+        rows = json.loads(
+            (where["ordinary_dir"] / "manifest.json").read_text())["selected"]
+        ledger(tmp_path, [{"id": "the-discarded-pilot", "status": status,
+                           "case_identities": [[r["repo"], r["commit"]]
+                                               for r in rows]}])
+        result = order_tool.check_adjudicate_30(
+            context(tmp_path, **where), self._step())
+        assert result.state == order_tool.UNKNOWN
+        assert status in result.evidence
+        assert "the replay the ledger exists to stop" in result.evidence
+
+    def test_a_generation_with_no_state_is_refused(self, tmp_path):
+        """No state can be replayed as though it were the run in progress."""
+        ledger(tmp_path, [{"id": "g1",
+                           "case_identities": [["github.com/o/a", "a" * 40]]}])
+        result = order_tool.check_adjudicate_30(context(tmp_path), self._step())
+        assert result.state == order_tool.UNKNOWN
+        assert "must be one of current, scored, discarded" in result.evidence
+
+    def test_a_sample_drawing_one_change_twice_is_refused(self, tmp_path):
+        """A set would swallow it, and 30 ids over 29 changes would pass."""
+        cases = {"c{}".format(i): case() for i in range(30)}
+        where = ordinary(tmp_path, cases)
+        manifest = where["ordinary_dir"] / "manifest.json"
+        rows = json.loads(manifest.read_text())["selected"]
+        rows[1]["repo"], rows[1]["commit"] = rows[0]["repo"], rows[0]["commit"]
+        manifest.write_text(json.dumps({"selected": rows}), encoding="utf-8")
+        result = order_tool.check_adjudicate_30(
+            context(tmp_path, **where), self._step())
+        assert result.state == order_tool.UNKNOWN
+        assert "twice" in result.evidence
+        assert "one change counted as two" in result.evidence
+
+    def test_a_generation_listing_one_change_twice_is_refused(self, tmp_path):
+        ledger(tmp_path, [{"id": "g1", "status": "current",
+                           "case_identities": [["github.com/o/a", "a" * 40],
+                                               ["github.com/O/A", "A" * 40]]}])
+        result = order_tool.check_adjudicate_30(context(tmp_path), self._step())
+        assert result.state == order_tool.UNKNOWN
+        assert "lists" in result.evidence and "twice" in result.evidence
+
+    def test_an_empty_ledger_is_not_evidence_that_nothing_was_scored(
+            self, tmp_path):
+        ledger(tmp_path, [])
+        result = order_tool.check_adjudicate_30(context(tmp_path), self._step())
+        assert result.state == order_tool.UNKNOWN
+        assert "records no generations" in result.evidence
 
     def test_a_named_file_that_is_not_there(self, tmp_path):
         ctx = context(tmp_path, ordinary_dir=tmp_path / "nope")
@@ -1018,12 +1260,59 @@ class TestTheAdjudicationChecker:
         assert result.state == order_tool.UNKNOWN
         assert "do not describe one sample" in result.evidence
 
+    def test_too_many_cases_is_also_refused(self, tmp_path):
+        """`< target` was a floor, so 31 adjudications passed as 30.
+
+        A sample nobody drew, answering for one nobody counted. Codex,
+        2026-09-04.
+        """
+        cases = {"c{}".format(i): case() for i in range(31)}
+        ctx = context(tmp_path, **ordinary(tmp_path, cases))
+        result = order_tool.check_adjudicate_30(ctx, self._step())
+        assert result.state == order_tool.NOT_DONE
+        assert "31 case(s) adjudicated, exactly 30 required" in result.evidence
+
+    def test_a_manifest_row_that_is_not_an_object_is_refused(self, tmp_path):
+        """Dropped silently, so thirty good rows plus one bad passed as thirty."""
+        cases = {"c{}".format(i): case() for i in range(30)}
+        where = ordinary(tmp_path, cases)
+        manifest = where["ordinary_dir"] / "manifest.json"
+        rows = json.loads(manifest.read_text())["selected"]
+        manifest.write_text(json.dumps({"selected": rows + ["not a row"]}),
+                            encoding="utf-8")
+        result = order_tool.check_adjudicate_30(
+            context(tmp_path, **where), self._step())
+        assert result.state == order_tool.UNKNOWN
+        # The ledger reads the manifest first and refuses there, so the second
+        # check in `_manifest_agreement` is defence rather than the live path.
+        # Both name the row; what matters is that the extra one is not dropped.
+        assert "1 of 31 selected row(s)" in result.evidence
+
+    def test_the_manifest_agreement_check_refuses_a_non_object_row(
+            self, tmp_path):
+        """Called directly, because the ledger reaches the manifest first.
+
+        Codex: keep the defensive check only with a test of its own, or it
+        rots unnoticed behind the path that actually runs.
+        """
+        cases = {"c0": case()}
+        where = ordinary(tmp_path, cases)
+        manifest = where["ordinary_dir"] / "manifest.json"
+        rows = json.loads(manifest.read_text())["selected"]
+        manifest.write_text(json.dumps({"selected": rows + [42]}),
+                            encoding="utf-8")
+        problem = order_tool._manifest_agreement(
+            context(tmp_path, **where), cases)
+        assert problem is not None
+        assert "are not objects" in problem
+        assert "not a row that agrees" in problem
+
     def test_too_few_cases(self, tmp_path):
         ctx = context(tmp_path, **ordinary(
             tmp_path, {"c{}".format(i): case() for i in range(29)}))
         result = order_tool.check_adjudicate_30(ctx, self._step())
         assert result.state == order_tool.NOT_DONE
-        assert "29 case(s) adjudicated, 30 required" in result.evidence
+        assert "29 case(s) adjudicated, exactly 30 required" in result.evidence
 
     def test_a_null_verdict_never_counts_as_ordinary(self, tmp_path):
         cases = {"c{}".format(i): case() for i in range(30)}
@@ -1165,7 +1454,7 @@ class TestTheGuard:
         result = order_tool.evaluate(
             ctx, parse(defined_block()))["extend_to_100"]
         assert result.state == order_tool.NOT_DONE
-        assert "30 case(s) adjudicated, 100 required" in result.evidence
+        assert "30 case(s) adjudicated, exactly 100 required" in result.evidence
 
     def test_the_metric_refuses_to_count_a_null_verdict(self, tmp_path):
         ctx = context(tmp_path, **ordinary(
@@ -1715,7 +2004,14 @@ class TestTheCommandLine:
         # once already. `freeze` left the list when it was taken and signed on
         # 2026-09-04, so the two steps that wait for nothing else are what is
         # named now.
-        assert "Next: adjudicate_30, classify_alarms" in out
+        # `freeze` is back in the list: the owner withdrew the audit on
+        # 2026-09-04, which changed the D-013 text, so the freeze taken against
+        # the old rule correctly no longer describes what is on disk. The
+        # thirty already scored keep their identity against that old freeze;
+        # the replacement belongs to the new pilot. This line moves as the work
+        # moves, and pinning it is deliberate — a smoke test that accepts any
+        # answer is a defect Codex found here once already.
+        assert "Next: freeze, classify_alarms" in out
         assert "Open questions" not in out
 
     def test_the_real_repository_denies_spending_today(self, capsys):
