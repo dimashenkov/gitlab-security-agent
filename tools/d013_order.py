@@ -160,8 +160,8 @@ UNDEFINED = "undefined"
 # Without it a reworded criterion would keep the old checker silently.
 _ADJUDICATED_DONE_WHEN = (
     "the manifest and the adjudication file cover the same sample, the cases "
-    "carry a verdict of ordinary / not_ordinary / unclear, and every one is "
-    "adjudicated_by human")
+    "carry a verdict of ordinary / not_ordinary / unclear, and every one names "
+    "an adjudicator the amendment permits")
 
 DONE_WHEN_IMPLEMENTED: Dict[str, str] = {
     "freeze": ("a freeze record exists, an owner has acknowledged it, and "
@@ -197,6 +197,13 @@ GENERATIONS_KEYS = frozenset({"disjoint", "records", "on_overlap"})
 # when a decision has named it — the list is short on purpose, so that a guard
 # outcome nobody decided cannot be written into the block and acted on.
 GUARD_OUTCOMES = frozenset({"undecided"})
+
+# Vendors a model adjudicator may come from, per the owner's amendment to
+# step 2 on 2026-09-04. One entry, and the list is short on purpose: the
+# permission is about the vendor, not about being a model. Anthropic is absent
+# deliberately — a Claude adjudicator shares the model family with the reviewer
+# whose findings are scored, and that is the independence the rule protects.
+PERMITTED_MODEL_VENDORS = frozenset({"xai"})
 
 STEP_KEYS = frozenset({
     "id", "requires", "guard", "guard_field", "guard_below",
@@ -1337,7 +1344,7 @@ def _freeze_problems(ctx: Context, body: Dict[str, Any]) -> List[str]:
 
 
 def check_adjudicate_30(ctx: Context, step: Step) -> Result:
-    """A manifest and an adjudication file whose records all claim a human."""
+    """A manifest and an adjudication file naming a permitted adjudicator."""
     return _check_adjudicated(ctx, step.id)
 
 
@@ -1353,7 +1360,7 @@ def check_extend_to_100(ctx: Context, step: Step) -> Result:
 
 def _check_adjudicated(ctx: Context, step_id: str) -> Result:
     """One shape for both corpus steps: N cases, every verdict filled in, and
-    every record *claiming* `adjudicated_by: human`.
+    every record *naming an adjudicator the amendment permits*.
 
     The wording is not fussiness. This said "filled by hand", and what the
     artifact carries is a self-report: a model-assisted adjudication records the
@@ -1390,17 +1397,18 @@ def _check_adjudicated(ctx: Context, step_id: str) -> Result:
             counts["bad"], ", ".join(VERDICT_VALUES)))
     if counts["by_model"]:
         return Result(NOT_DONE, (
-            "{} case(s) record `adjudicated_by` other than `human` — the step "
-            "requires the corpus be built and adjudicated without a single "
-            "model call, and a model grading its own findings is what "
-            "LIMITATIONS.md records for corpus-real. A case with no "
-            "`adjudicated_by` at all counts here: no author recorded is not a "
-            "human author".format(counts["by_model"])))
+            "{} case(s) name an adjudicator the amendment does not permit. "
+            "D-013 allows `human`, or `model` with `vendor: xai` — Grok, whose "
+            "vendor produced neither the findings nor these rules. A Claude "
+            "adjudicator is not permitted at all: it shares the model family "
+            "with the reviewer, which is the independence the rule is about. "
+            "And a case with no `adjudicated_by` counts here: no author "
+            "recorded is not an author".format(counts["by_model"])))
     return Result(DONE, (
-        "{} case(s), every verdict filled and every record claiming "
-        "`adjudicated_by: human`: {} ordinary, {} not_ordinary, {} unclear. "
-        "That the records claim a human is all this establishes — no artifact "
-        "can show that no model was consulted".format(
+        "{} case(s), every verdict filled and every record naming a permitted "
+        "adjudicator: {} ordinary, {} not_ordinary, {} unclear. What the "
+        "records *claim* is all this establishes — no artifact shows which "
+        "model was consulted, or whether one was".format(
             len(cases), counts["ordinary"], counts["not_ordinary"],
             counts["unclear"])))
 
@@ -1422,10 +1430,27 @@ def _verdict_counts(cases: Dict[str, Any]) -> Dict[str, int]:
         else:
             counts["bad"] += 1
         # Required, not forbidden: a case with no `adjudicated_by` at all is
-        # not "adjudicated by a human", it is a case with no author recorded.
-        if case.get("adjudicated_by") != "human":
+        # not adjudicated by anybody, it is a case with no author recorded.
+        #
+        # `human`, or `model` with `vendor: xai`. The owner amended step 2 on
+        # 2026-09-04 to permit a third-vendor adjudicator — Grok — and the
+        # vendor is required because the permission is *about* the vendor: a
+        # Claude adjudicator shares the model family with the reviewer whose
+        # findings are being scored, which is the independence at issue. Left
+        # requiring `human` for one round after the amendment, so the newly
+        # permitted path could never make the step done; Codex caught it.
+        if not _permitted_adjudicator(case):
             counts["by_model"] += 1
     return counts
+
+
+def _permitted_adjudicator(case: Dict[str, Any]) -> bool:
+    who = case.get("adjudicated_by")
+    if who == "human":
+        return True
+    # Not `!= "human"` inverted: a bare `model` with no vendor names nobody,
+    # and this file's recurring defect is a missing field reading as consent.
+    return who == "model" and case.get("vendor") in PERMITTED_MODEL_VENDORS
 
 
 def _manifest_agreement(ctx: Context, cases: Dict[str, Any]) -> Optional[str]:
@@ -1619,8 +1644,9 @@ CHECKERS: Dict[str, Callable[[Context, Step], Result]] = {
 # it presupposes that there is one.
 EXTRA_ACTIONS: Dict[str, List[str]] = {
     # Spending buys a scored generation, so it presupposes a frozen
-    # configuration, the thirty adjudicated with **every record claiming a
-    # human** — which is as much as any artifact shows — and a ledger that can
+    # configuration, the thirty adjudicated with **every record naming a
+    # permitted adjudicator** — which is as much as any artifact shows — and
+    # a ledger that can
     # tell a fresh draw from a re-reading. The ledger is inferred from the
     # decision rather than written in the block: D-013 says "without both
     # recorded there is no way to tell a fresh draw from a re-reading, and the

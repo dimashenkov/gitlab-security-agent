@@ -1114,9 +1114,12 @@ the contradictions rather than the order.
 The steps, with what each waits for stated rather than implied by its number:
 
 1. **Freeze** the configuration and this rule. Waits for nothing.
-2. **Build and adjudicate 30 ordinary changes**, by hand, **without a single
-   model call**. Waits for the freeze. One adjudicator — see above, and see
-   what that costs.
+2. **Build and adjudicate 30 ordinary changes.** Waits for the freeze.
+   **Amended by the owner on 2026-09-04**: the original text said "by hand,
+   without a single model call", and it now permits **one third-vendor model
+   call per case**, with the owner auditing a blind subsample. See "The
+   adjudicator for step 2" below — the amendment carries conditions, and the
+   result it produces is not what the original text would have produced.
 3. **Extend to 100** mechanically if fewer than 5 of the 30 are `unclear`, and
    run it. Waits for step 2.
 4. **Classify the alarms on the fixed member** — free, and **waiting for
@@ -1169,7 +1172,81 @@ The steps, with what each waits for stated rather than implied by its number:
    classified alarms show a broad, independently repeated cause. Waits for 3
    and 4.
 
-**Step 3's guard, when it fails. Settled 2026-09-04 by the assistant and Codex,
+### The adjudicator for step 2
+
+**Amended by the owner on 2026-09-04.** Step 2 said "by hand, without a single
+model call". It now permits **one model call per case, to a third vendor**, and
+the owner audits a blind subsample. What follows is the amendment and every
+condition on it; the conditions are not decoration, and dropping one of them
+turns this from a measurement into an assertion.
+
+**Why it was raised.** The owner saw the size of the job — thirty diffs, median
+2.3 KB — and asked whether it had to be his hand. It does not have to be, but
+what replaces it decides whether the result is a measurement at all.
+
+**Three candidates, and each fails a different axis.** This file uses
+`independent` in a specific sense, from `LIMITATIONS.md`: independent *of the
+model that produced the findings*. The findings will be produced by Claude.
+
+| Adjudicator | Independent of the reviewer | Did not design these rules |
+|---|---|---|
+| the owner | yes | yes |
+| Codex | yes — a different vendor | **no** — it defined `ordinary`, `unclear` and the stop rule |
+| a Claude subagent | **no** — the same model family | yes |
+| **Grok** | yes | yes |
+
+Codex was asked whether it should take the role and **ruled against itself**,
+declaring the conflict first. Its reason is the one the assistant had not
+named: having helped define the vocabulary and the stopping rule, labelling the
+cases too would let a later disagreement be resolved silently in favour of its
+own design. Vendor and account separation do not cure that.
+
+A Claude subagent was proposed and refused earlier the same day, on the ground
+that it buys a case-blind ontology and not an independent adjudicator.
+
+**Grok is the only one that clears both axes**, and it costs nothing from the
+Claude quota — a separate subscription, authenticated by browser rather than by
+an API key, so the standing decision of 2026-08-30 is untouched.
+
+**The protocol, from Codex, and every line of it is a condition:**
+
+* **`grok-4.6`, frozen before adjudication.** Changing to `grok-4.5` starts a
+  new generation and means restarting, never mixing.
+* **A new OS process per case, single-turn, no session.** No resume, no session
+  id, no conversation history available. Each invocation must be shown to have
+  created a distinct response id and received exactly one message.
+* **Randomised order, seed recorded in advance.**
+* **It is told nothing else**: not the case number, not the stratum, not why it
+  was sampled, not what the reviewer said, not the other cases, not its own
+  earlier verdicts.
+* **Recorded per case**: model name, CLI version, prompt digest, schema digest,
+  case-material digest, the command, timestamp, exit status, provider response
+  id, and the raw structured answer. Plus `adjudicated_by: model`,
+  `vendor: xai`.
+
+**The owner audits 6 of the 30 — three per stratum, chosen by hash in
+advance — blind to Grok's verdicts.** At 100 it is 20, ten per stratum. Both
+rulings are kept and the disagreement is reported.
+
+> **One disagreement between `ordinary` and `not_ordinary`, or more than one
+> disagreement of any kind in the pilot, invalidates model-only adjudication**
+> — and all 30 must then be adjudicated by hand before any extension. Nothing is
+> reconciled silently, and Grok is never asked again.
+
+**What this is not, said plainly because Codex required it.** Grok is less
+accountable than a person. It may share systematic biases with other models. It
+cannot supply lived judgement. And its independence and its fresh context are
+only **partly** auditable: the artifacts show that each call was a separate
+process with one message, and they cannot show what the provider keeps on its
+own side. "Never saw D-013" is a procedural claim, not something any digest
+proves.
+
+So the number this produces is **structured third-vendor measurement, not human
+ground truth**, and it must never be quoted as the second.
+
+### Step 3's guard, when it fails
+
+**Settled 2026-09-04 by the assistant and Codex,
 the owner having delegated it.**
 
 > **If 5 or more of the 30 are `unclear`, step 3 does not run.** The pilot is
@@ -1356,8 +1433,8 @@ steps:
     requires: [freeze]
     done_when: >-
       the manifest and the adjudication file cover the same sample, the cases
-      carry a verdict of ordinary / not_ordinary / unclear, and every one is
-      adjudicated_by human
+      carry a verdict of ordinary / not_ordinary / unclear, and every one names
+      an adjudicator the amendment permits
   - id: extend_to_100
     requires: [adjudicate_30]
     guard: fewer than 5 of the 30 are unclear
@@ -1366,8 +1443,8 @@ steps:
     on_guard_failed: undecided
     done_when: >-
       the manifest and the adjudication file cover the same sample, the cases
-      carry a verdict of ordinary / not_ordinary / unclear, and every one is
-      adjudicated_by human
+      carry a verdict of ordinary / not_ordinary / unclear, and every one names
+      an adjudicator the amendment permits
   - id: classify_alarms
     requires: []
     needs_field: failure_mode
@@ -1428,17 +1505,25 @@ The stop is reported as an unanswered question, which is the state it is —
 not as a missing prerequisite, and not as a failed guard.
 
 **`adjudicate_30` reports `done` on something self-reported, and that is as far
-as it can go.** Step 2 says the thirty are built and adjudicated "without a
-single model call". The criterion checks that every case records
-`adjudicated_by: human` — which a model-assisted adjudication would also record,
-if whoever wrote it said so. Nothing in any artifact can establish that no model
-was consulted, and nothing here pretends otherwise: `done` on this step means
-*the records claim a human*, not *no model was used*. Codex, 2026-09-04.
+as it can go.** The criterion requires every case to name an adjudicator the
+amendment permits: `human`, or `model` with `vendor: xai`. Both are claims in a
+file. A model-assisted adjudication records `human` if whoever wrote it says so,
+and nothing in any artifact establishes which model was consulted, or whether
+one was. `done` here means *the records name a permitted adjudicator*, and
+nothing stronger. Codex, 2026-09-04.
 
-The check is kept because the absent case is the one that slips: a case with no
-`adjudicated_by` at all is not "adjudicated by a human", and requiring the field
-catches that. What it cannot do is catch a false claim, and a reader must not
-take an unlocked `spend` as evidence the corpus was built by hand.
+**`model` without a vendor is refused**, because the permission is about the
+vendor rather than about being a model — and `anthropic` is refused by name: a
+Claude adjudicator shares the model family with the reviewer whose findings are
+scored, which is the independence at issue. A case with no `adjudicated_by` at
+all is refused too: no author recorded is not an author.
+
+The criterion required `human` for one round *after* the owner amended step 2,
+so the newly permitted path could never have made the step done. Codex found it
+while gating the amendment — the prose was changed and the executable rule was
+not, the fifth time in one day that a repair had a second carrier.
+
+A reader must not take an unlocked `spend` as evidence of who read the code.
 
 **The block does not require a precommitted vocabulary, and the reason changed
 under it.** For one round it did, with `needs_vocabulary_first: true` and an

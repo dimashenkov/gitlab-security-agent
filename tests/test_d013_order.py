@@ -88,12 +88,13 @@ steps:
 # the violation detector use this variant together with the `criteria` fixture.
 CRITERIA = {
     "freeze": "the freeze artifact verifies",
-    # "claim a human", not "by hand", even in a fixture nobody reads twice.
-    # The phrase is the one Codex blocked a commit over: a self-reported field
+    # "names a permitted adjudicator", not "by hand" and not "claims a
+    # human". Both earlier phrasings blocked a commit: a self-reported field
     # printed as a finding is how a claim becomes a fact a few readers later,
-    # and a fixture is where the careless wording survives longest.
-    "adjudicate_30": "thirty verdicts are filled and claim a human",
-    "extend_to_100": "a hundred verdicts are filled and claim a human",
+    # and after the owner amended step 2 the human wording was simply false.
+    # A fixture is where careless wording survives longest.
+    "adjudicate_30": "thirty verdicts filled, adjudicator permitted",
+    "extend_to_100": "a hundred verdicts filled, adjudicator permitted",
     "tune": "the two conditions hold",
     "sonnet_gate": "the gate has a written result",
 }
@@ -1047,13 +1048,43 @@ class TestTheAdjudicationChecker:
         assert result.state == order_tool.NOT_DONE
         assert "not one of" in result.evidence
 
-    def test_a_model_adjudicating_is_refused(self, tmp_path):
+    def test_a_model_with_no_vendor_is_refused(self, tmp_path):
+        """`model` alone names nobody.
+
+        The owner amended step 2 on 2026-09-04 to permit a model adjudicator
+        from a third vendor. The permission is *about the vendor*, so `model`
+        without one is the missing field reading as consent — this file's
+        recurring defect, in the rule written against it.
+        """
         cases = {"c{}".format(i): case() for i in range(30)}
         cases["c0"]["adjudicated_by"] = "model"
         ctx = context(tmp_path, **ordinary(tmp_path, cases))
         result = order_tool.check_adjudicate_30(ctx, self._step())
         assert result.state == order_tool.NOT_DONE
-        assert "without a single model call" in result.evidence
+        assert "does not permit" in result.evidence
+
+    def test_a_claude_adjudicator_is_refused_by_name(self, tmp_path):
+        """Anthropic is absent from the permitted vendors on purpose.
+
+        A Claude adjudicator shares the model family with the reviewer whose
+        findings are being scored, which is exactly the independence the rule
+        protects — so it fails where Grok passes.
+        """
+        cases = {"c{}".format(i): case() for i in range(30)}
+        cases["c0"].update(adjudicated_by="model", vendor="anthropic")
+        ctx = context(tmp_path, **ordinary(tmp_path, cases))
+        result = order_tool.check_adjudicate_30(ctx, self._step())
+        assert result.state == order_tool.NOT_DONE
+        assert "does not permit" in result.evidence
+
+    def test_the_permitted_third_vendor_is_accepted(self, tmp_path):
+        cases = {"c{}".format(i): case() for i in range(30)}
+        for row in cases.values():
+            row.update(adjudicated_by="model", vendor="xai")
+        ctx = context(tmp_path, **ordinary(tmp_path, cases))
+        result = order_tool.check_adjudicate_30(ctx, self._step())
+        assert result.state == order_tool.DONE
+        assert "permitted adjudicator" in result.evidence
 
     def test_a_missing_adjudicated_by_is_not_a_human(self, tmp_path):
         cases = {"c{}".format(i): case() for i in range(30)}
