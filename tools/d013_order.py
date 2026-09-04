@@ -179,7 +179,7 @@ STEP_KEYS = frozenset({
     "id", "requires", "guard", "guard_field", "guard_below",
     "guard_failure_blocked_on", "blocked_on_owner", "undefined_predicates",
     "needs_field", "needs_vocabulary_first", "next_generation", "done_when",
-    "vocabulary",
+    "vocabulary", "requires_no_open_questions",
 })
 
 # The one value of `next_generation` this tool can act on. Anything else is a
@@ -316,6 +316,12 @@ class Step:
         # from what has already been classified. Absent is the honest state
         # today: nobody has written one.
         self.vocabulary: List[str] = list(raw.get("vocabulary") or [])
+        # A step that cannot be taken while any question in this file is
+        # unanswered. `freeze` carries it because the freeze digests D-013:
+        # answering a question edits the text that was frozen, so a freeze
+        # taken with one open is invalid from the owner's next sentence.
+        self.requires_no_open_questions: bool = \
+            raw.get("requires_no_open_questions") is True
 
     @property
     def criterion_undefined(self) -> bool:
@@ -743,11 +749,16 @@ def _check_rest(entry: Dict[str, Any], ident: str,
                                    or not entry["needs_field"].strip()):
         raise OrderError("step {!r}: `needs_field` must name a field"
                          .format(ident))
-    if "needs_vocabulary_first" in entry and \
-            not isinstance(entry["needs_vocabulary_first"], bool):
-        raise OrderError(
-            "step {!r}: `needs_vocabulary_first` must be true or false"
-            .format(ident))
+    # Both booleans, and both validated: `is True` reads "true" and 1 and
+    # anything else as *off*, so an author who wrote `requires_no_open_questions:
+    # "true"` would get a step that silently lost its protection. The parser's
+    # own rule is that a field it understands but cannot act on is a refusal.
+    for flag in ("needs_vocabulary_first", "requires_no_open_questions"):
+        if flag in entry and not isinstance(entry[flag], bool):
+            raise OrderError(
+                "step {!r}: `{}` is {!r}; it must be true or false. A quoted "
+                "or numeric value reads as false and the step loses the rule "
+                "without a word".format(ident, flag, entry[flag]))
     # Required, not defaulted. A step with no `done_when` is a step whose
     # completion nothing records, and letting it default to anything is the
     # false readiness this key was added to stop.
@@ -1668,6 +1679,21 @@ def state_of(ctx: Context, order: Order, step: Step,
                 question.id, question.asked_of, question.text)),
             stopped_by=STOP_OPEN_QUESTION)
 
+    # Blocked by *any* open question, not one named question. `freeze` carries
+    # this because the freeze digests D-013 itself: answering a question edits
+    # the frozen text, so a freeze taken with one still open is invalid from
+    # the next sentence the owner writes. The tool reported `freeze` as the
+    # first thing to do while the guard-failure question was open, and it was
+    # right about the order and wrong about the moment.
+    if step.requires_no_open_questions and order.questions:
+        return Result(BLOCKED_OWNER, (
+            "{} question(s) in D-013 are unanswered — {} — and this step "
+            "records a digest of D-013, so freezing now produces a record that "
+            "an answer invalidates. Not a prerequisite: no work clears it"
+            .format(len(order.questions),
+                    ", ".join(sorted(order.questions)))),
+            stopped_by=STOP_OPEN_QUESTION)
+
     if step.criterion_undefined:
         # Never done, and never "not done" either. Nothing in DECISIONS.md says
         # what records that this step finished, so the tool has no criterion to
@@ -2148,9 +2174,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         generations=args.generations,
     )
 
-    if args.command == "freeze":
-        return cmd_freeze(ctx, args)
-
     try:
         text = ctx.decisions.read_text(encoding="utf-8")
     except OSError as exc:
@@ -2177,6 +2200,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _refuse(args, str(exc))
     broken = violations(order, results)
     workable, stopped, undetermined = next_steps(order, results)
+
+    if args.command == "freeze":
+        # Asked *after* the block is read, and this was the whole defect: the
+        # freeze command used to return before `parse_order` ran, so `status`
+        # could say `blocked_on_owner` while `freeze` wrote the artifact anyway.
+        # A tool that reports a stop and then steps over it is worse than one
+        # that reports nothing. Codex, 2026-09-04.
+        code, reasons = decide(order, results, "freeze")
+        if code != 0:
+            print("Refusing to freeze:", file=sys.stderr)
+            for line in reasons:
+                print("  - {}".format(line), file=sys.stderr)
+            return code
+        return cmd_freeze(ctx, args)
 
     if args.command == "status":
         code = 0

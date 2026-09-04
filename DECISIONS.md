@@ -1308,6 +1308,7 @@ generations:
 steps:
   - id: freeze
     requires: []
+    requires_no_open_questions: true
     done_when: >-
       a freeze record exists, an owner has acknowledged it, and every digest in
       it still matches what is on disk, including the digest of D-013 itself
@@ -1369,6 +1370,17 @@ artifacts would stay invisible. Four steps now carry a real condition. Two remai
 `undefined`, and honestly: `tune`, whose predicates are words no program
 evaluates, and `sonnet_gate`, which has no artifact at all —
 `tools/sentinel_compare.py` prints a verdict and stores nothing.
+
+**`requires_no_open_questions` on the freeze, because the freeze digests this
+file.** Step 1 waits for no other step, so the tool named it first — and
+freezing while D-013 still carries an unanswered question produces a record that
+breaks the moment the question is answered, since answering it edits the text
+whose digest was frozen. Not a hypothetical: the guard-failure question is open
+today, and a freeze taken now would have been invalid by the owner's next
+sentence.
+
+The stop is reported as an unanswered question, which is the state it is —
+not as a missing prerequisite, and not as a failed guard.
 
 **`adjudicate_30` reports `done` on something self-reported, and that is as far
 as it can go.** Step 2 says the thirty are built and adjudicated "without a

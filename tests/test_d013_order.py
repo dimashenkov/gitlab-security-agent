@@ -445,6 +445,24 @@ class TestDivergenceBetweenTheBlockAndTheCheckers:
         assert "merge key" in str(caught.value)
         assert "write each step's fields out" in str(caught.value)
 
+    @pytest.mark.parametrize("value", ['"true"', "1", '"yes"'])
+    def test_a_boolean_field_written_as_something_else(self, value):
+        """`is True` reads every one of these as *off*.
+
+        So `requires_no_open_questions: "true"` would have produced a step that
+        quietly lost the rule — the field understood, the value not acted on,
+        and the parser's own contract says that is a refusal. Codex, alongside
+        the freeze-command defect.
+        """
+        block = BLOCK.replace(
+            "  - id: freeze\n",
+            "  - id: freeze\n    requires_no_open_questions: {}\n".format(value),
+            1)
+        with pytest.raises(order_tool.OrderError) as caught:
+            parse(block)
+        assert "requires_no_open_questions" in str(caught.value)
+        assert "true or false" in str(caught.value)
+
     def test_a_criterion_reworded_without_its_checker(self):
         block = BLOCK.replace(
             "done_when: every alarm carries a non-empty failure_mode",
@@ -768,15 +786,43 @@ class TestWritingTheFreeze:
         for line in refusals:
             assert len(line) > 40, line
 
-    def test_it_will_not_overwrite_an_existing_freeze(self, tmp_path, capsys):
+    def test_it_will_not_overwrite_an_existing_freeze(self, tmp_path, capsys,
+                                                      criteria):
+        # `defined_block()`, because the command now asks the order first and
+        # the default fixture leaves `freeze` with `done_when: undefined` — the
+        # refusal would then be about the criterion and this test would never
+        # reach the overwrite guard it is named for.
         root = frozen_root(tmp_path)
         target = root / "freeze.json"
         target.write_text("{}", encoding="utf-8")
         code = order_tool.main([
-            "--root", str(root), "--decisions", str(write_decisions(root)),
+            "--root", str(root),
+            "--decisions", str(write_decisions(root, defined_block())),
             "freeze", "--out", str(target), "--acknowledge", "me"])
         assert code == 2
         assert "already exists" in capsys.readouterr().err
+
+    def test_the_command_refuses_what_status_calls_blocked(self, tmp_path,
+                                                           capsys, criteria):
+        """`status` said blocked and `freeze` wrote the artifact anyway.
+
+        The command returned before `parse_order` ran, so it never saw the
+        block at all. A tool that reports a stop and then steps over it is
+        worse than one that reports nothing — the report is what somebody
+        trusts. Codex blocked the commit on it, 2026-09-04.
+        """
+        root = frozen_root(tmp_path)
+        target = root / "freeze.json"
+        block = defined_block().replace(
+            "  - id: freeze\n",
+            "  - id: freeze\n    requires_no_open_questions: true\n", 1)
+        code = order_tool.main([
+            "--root", str(root),
+            "--decisions", str(write_decisions(root, block)),
+            "freeze", "--out", str(target), "--acknowledge", "me"])
+        assert code == 1
+        assert "unanswered" in capsys.readouterr().err
+        assert not target.exists(), "the artifact was written despite the block"
 
 
 class TestReadingTheSection:
@@ -1226,6 +1272,36 @@ class TestWaitingIsItsOwnAnswer:
         assert result.stopped_by == order_tool.STOP_PREREQUISITE
         assert "freeze" in result.evidence
 
+    def test_a_freeze_taken_while_a_question_is_open(self, tmp_path, criteria):
+        """The freeze digests D-013, so an answer would invalidate it.
+
+        The tool reported `freeze` as the first thing to do — right about the
+        order, wrong about the moment. One question was open, answering it
+        edits the text whose digest the freeze records, and the record would
+        have been invalid by the owner's next sentence. Found while about to
+        run `freeze` on 2026-09-04, not by a review.
+
+        Blocked by *any* open question, which is why it is not
+        `blocked_on_owner: <id>`: no particular question is the obstacle, the
+        file having unanswered ones is.
+        """
+        root = frozen_root(tmp_path)
+        (root / "freeze.json").write_text(
+            json.dumps(good_freeze(context(root))), encoding="utf-8")
+        block = defined_block().replace(
+            "  - id: freeze\n",
+            "  - id: freeze\n    requires_no_open_questions: true\n", 1)
+        assert "requires_no_open_questions" in block
+        ctx = context(root, alarm_reader=alarms([], []))
+        result = order_tool.evaluate(ctx, parse(block))["freeze"]
+        assert result.state == order_tool.BLOCKED_OWNER
+        assert result.stopped_by == order_tool.STOP_OPEN_QUESTION
+        assert "q_guard" in result.evidence
+        # And without the field the same artifact verifies, so the block is
+        # what stops it and not a broken freeze.
+        plain = order_tool.evaluate(ctx, parse(defined_block()))["freeze"]
+        assert plain.state == order_tool.DONE
+
     def test_the_stops_are_never_the_same_string(self, tmp_path, criteria):
         cases = {"c{}".format(i): case("unclear") for i in range(30)}
         root = frozen_root(tmp_path)
@@ -1492,7 +1568,10 @@ class TestTheCommandLine:
         out = capsys.readouterr().out
         assert code == 2, out
         assert "D-013" in out
-        assert "Next: freeze, classify_alarms" in out
+        # `classify_alarms` alone: `freeze` is stopped on the one open
+        # question, because it digests D-013 and an answer would invalidate it.
+        assert "Next: classify_alarms" in out
+        assert "freeze (blocked_on_owner: open_question)" in out
 
     def test_the_real_repository_denies_spending_today(self, capsys):
         code = order_tool.main(["check", "spend"])
