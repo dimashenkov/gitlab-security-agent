@@ -1031,13 +1031,55 @@ the manifest says so.
 
 Codex, 2026-09-04, on every point above.
 
-**Two more facts about the frame, recorded so the next attempt does not
-rediscover them:**
+**Facts about the frame, recorded so the next attempt does not rediscover
+them.** The numbers below were read out of `pool-30repos.json` and
+`manifest-100.json` directly, not taken from the report of the subagent that
+produced them — Codex asked which of them had been written down on trust, and
+the honest first answer was "all of them". Anything still unverified is marked
+as such where it appears.
 
-* **This pool cannot reach 100.** 118 eligible changes, and the 10-per-
-  repository cap at a target of 100 yields at most 85. More repositories or a
-  wider interval are unavoidable — and new candidates move the hash-ordered
-  draw, so the present thirty are not the frozen set.
+* **The first pool could not reach 100; the second can.** 18 repositories gave
+  118 eligible changes, and the 10-per-repository cap capped the draw at 85.
+  Measured 2026-09-04 on 29 clones: 3056 candidates, **1361 eligible**, and both
+  quotas of 50 fill under the cap — 21 repositories used, 9 languages, four at
+  the cap. The binding constraint is the **quiet** stratum, not the sensitive one
+  and not the cap: 365 eligible against sensitive's 996. **Which remedy would
+  lift a larger target is not established** — more repositories and a wider
+  interval could each supply quiet changes, and this measurement says only where
+  the present pool is tight.
+
+  Frame proportions on this pool: **0.732 sensitive, 0.268 quiet** — the figure
+  the weighting uses. The 0.856/0.144 above is the first pool's and is kept
+  because it is what the strata decision was taken on.
+
+  New candidates move the hash-ordered draw, so no earlier thirty is the frozen
+  set. The freeze in step 1 is what fixes one.
+
+* **Two rules worth looking at again, noticed while measuring the second pool.**
+  `no_supported_source` is the largest non-population exclusion — 248 — and
+  `LANGUAGE_EXTENSIONS` has no `.kt`, so `okhttp` is a Kotlin clone contributing
+  156 candidates to a frame that cannot read them. And 9 candidates carry
+  `record_incomplete`, a rule whose name reads as "cannot be checked"; a subagent
+  reports they are empty commits, which would make them a *population* fact
+  rather than an operability one — **not verified here**, and the three kinds of
+  rule are named apart precisely so that difference does not blur.
+
+  Neither acted on. Changing a rule moves the hash-ordered draw, and the freeze
+  in step 1 has not happened yet — so a repair now would be a repair to something
+  nobody has fixed in place.
+* **One automated security signal, and a manual check on every case.** Every
+  candidate comes from a local clone, which carries no upstream label at all, so
+  every selected row reads `label_evidence: unavailable` — 100 of 100. Missing
+  label evidence is not a filter that let something through; it is a channel that
+  was never available, which is why the manifest says the absence of a label in
+  such a record is not evidence there was none, and makes a human say so. The one
+  automated signal that did fire is `security_signal` on commit text: 17 hits in
+  3056.
+
+  At a target of 100 the manifest's demand is therefore **100 manual
+  confirmations**, and that is a cost of step 3 nothing in the tooling reduces.
+  A change that fixes a vulnerability quietly, with a commit message that does
+  not say so, sits in the frame as an ordinary change and would be scored as one.
 * **`harvest` reads the default branch.** The population the reviewer actually
   meets is proposed changes, before merge. Nothing here establishes that
   post-merge commits have the same mix or the same propensity to draw a
@@ -1053,16 +1095,366 @@ undecided, not "passes".
 
 ### The order
 
-1. Freeze the configuration and this rule.
-2. Build and doubly adjudicate 30 ordinary changes, **without a single model
-   call**.
-3. If fewer than 5 are unclear → extend mechanically to 100 and run it.
-4. In parallel and free of charge: classify the 22 alarms on the fix.
-5. Tune only if the ordinary changes are close to the boundary **and** the 22
-   show a broad, independently repeated cause.
+**Rewritten 2026-09-04.** The assistant worked on the second step for an hour
+without having read that the first comes first, and changed this rule four times
+the same day — which the first step exists to prevent. Nothing was spent, so it
+was repairable. Asked to make the order hold in future, Codex refused the
+enforcement and named the reason: **the order as written could not be enforced,
+because it contradicted itself in four places.** Automating it would have frozen
+the contradictions rather than the order.
+
+* "doubly adjudicate" — the decision above records one adjudicator.
+* "the 22 alarms" — 20 in the latest rows, 21 counting every row ever written.
+  The number did not reproduce.
+* "no tuning whatsoever once the result has been seen" in the boxed rule, and a
+  conditional tuning step here. Both cannot hold.
+* "in parallel" for a step written as the fourth of five, which reads as
+  something that waits for the third.
+
+The steps, with what each waits for stated rather than implied by its number:
+
+1. **Freeze** the configuration and this rule. Waits for nothing.
+2. **Build and adjudicate 30 ordinary changes**, by hand, **without a single
+   model call**. Waits for the freeze. One adjudicator — see above, and see
+   what that costs.
+3. **Extend to 100** mechanically if fewer than 5 of the 30 are `unclear`, and
+   run it. Waits for step 2.
+4. **Classify the alarms on the fixed member** — free, and **waiting for
+   nothing**. It can be done before, during or after any of the rest.
+
+   **Not done, and the reason is worth keeping.** On 2026-09-04 the assistant
+   reported this step complete because all 20 alarming cases carry a ruling in
+   `corpus-real/adjudications.yml`. Checked: 21 rulings, and **not one of them
+   names a cause.** A ruling says whether the finding is *correct* — `real`,
+   `not_real`, `incidental`. Step 5 asks a different question: whether the
+   alarms show a broad, independently repeated **cause**. Nothing recorded
+   answers it.
+
+   So this step needs a `failure_mode` on each alarm. **That it must come from
+   a vocabulary fixed in advance is the assistant's addition, on 2026-09-04, and
+   no owner decision stands behind it** — step 4 as written asked for a
+   classification, not a precommitted taxonomy. The argument for it: a
+   vocabulary drawn up after the cases are read is drawn up to fit them, and
+   step 5 then asks whether a cause *repeats*, which a category invented per
+   case can always be made to answer either way. The argument against it is
+   cost, and the owner may take it. One such field exists already, on a
+   `not_real` ruling from 2026-08-24 — `reachability-discipline`, for a finding
+   correctly described at the statement level and promoted to a security
+   weakness without reading the caller. That is the shape the rest need.
+
+   **How many alarms there are depends on which reading, and both numbers are
+   real.** 20 of 78 in the raw rows; 11 of 69 once the 9 cases a ruling calls
+   malformed are removed. The 9 leave the smaller denominator through
+   `case_is_malformed`, which removes a whole *case*; `incidental` is a
+   different thing that excuses one *finding* by its fingerprint. The two are
+   not alternatives and a case can carry both — `LIMITATIONS.md` records one
+   that does — so "malformed rather than incidental" would be false.
+
+   **Classify all 20, and report the 11 beside them.** *Assistant's reasoning,
+   not an owner decision, and open to being overturned:* the 9 are removed for
+   being bad cases, which is a fact about the corpus and says nothing about why
+   the reviewer alarmed. Dropping them would throw away nine observations of the
+   thing this step is trying to see. Reporting only the 20 would hide that a
+   third of them sit on cases the corpus itself rejects. Both, apart.
+
+   Recorded because the checker had already decided it silently: it reads every
+   raw row with `safe_false_positive: true`, which is the 20, while this prose
+   said the choice was open. A block that is not neutral while the text calls it
+   open is the same defect as a claim nothing enforces, pointed the other way.
+
+   And the constraint that makes the vocabulary hard is already recorded above:
+   every ruling is `adjudicated_by: model`, so nothing here can establish that a
+   cause is *independently* repeated. Step 5's condition asks for exactly that
+   word.
+5. **Tune** only if the ordinary changes are close to the boundary **and** the
+   classified alarms show a broad, independently repeated cause. Waits for 3
+   and 4.
+
+**Step 5, closed by the owner on 2026-09-04: B, and on changes never scored
+before.** How it was reached is kept, because the assistant got it wrong twice
+first and the shape of the error recurs.
+
+The boxed rule says "no tuning whatsoever once the result has been seen"; step 5
+says tune under two conditions. Both are in this decision and they cannot both
+hold. The assistant tried to close it twice the same day, and Codex refused
+both. The first attempt declared that step 5 means the *next* configuration may
+differ — a new decision dressed as a reading. The second attempt wrote the
+question down, but with the first option already deleted: it asked *which kind*
+of iteration is allowed, having assumed some kind is. Both times the
+reconciliation was the assistant's, and both times it read as if D-013 had made
+it.
+
+Put whole, the fork was:
+
+> **A.** The boxed rule governs. Step 5 is deleted — once a result has been
+> seen, this configuration is not tuned, and neither is a successor derived from
+> what the result showed.
+>
+> **B.** Step 5 is a deliberate exception to the boxed rule. Tuning is permitted
+> when its two conditions hold, and the boxed rule means only that the result
+> already obtained is not revised.
+>
+> **C.** Something between them, which the owner states.
+>
+> And if B or C: does the next measurement need changes that have never been
+> scored, or may the same hundred be re-scored?
+
+**The answer: B, and the next measurement is on changes that have never been
+scored.** Chosen by the owner on 2026-09-04. He was asked the fork whole and
+answered it; the assistant's recommendation was given first, and named as a
+recommendation, and it was the same.
+
+**The two paragraphs below are the assistant's reasoning, accepted by the owner,
+not his stated reasons.** He answered "whichever is more correct" and did not
+give grounds. The distinction matters: a reader must not later quote a
+justification the owner never made.
+
+For B over A: A makes the whole exercise a single shot. Measure once, see that
+something is wrong, and there is no permitted way to correct it — the project
+stops at its first result whatever the result says. A rule under which a project
+cannot improve is not caution, it is an ending.
+
+For *unseen changes*: the hundred that produced a result have been read.
+Re-scoring them after a change is the thing the boxed rule exists to prevent —
+adjusting until the number is agreeable, which any set can be made to yield if it
+is scored enough times.
+
+**The cost, corrected.** The first draft of this paragraph said the pool's 1361
+eligible changes carry "roughly thirteen rounds", from 1361 ÷ 100. That is the
+wrong arithmetic and Codex caught it: the draw needs **50 quiet** per round and
+the pool holds **365** quiet, so the ceiling is ⌊365 ÷ 50⌋ = **7 rounds**, before
+the ten-per-repository cap takes any more off. The binding stratum is the one
+this same section identifies as binding, and the undifferentiated total ignored
+it.
+
+**Seven is a ceiling, not a supply.** Nothing establishes that seven disjoint
+rounds can actually be drawn — the per-repository cap and the hash-ordered draw
+both cut into it, and neither has been measured across successive generations.
+The only claim is that more than seven is impossible from this pool.
+
+**This amends the boxed rule; it does not narrow it.** B is an express exception
+to a categorically worded prohibition, and the ban on re-scoring comes from the
+owner's separate answer about unseen changes, not from the box. The rule that now
+governs is: **a result already obtained is never revised, and the changes behind
+it are never scored again.** Calling that what the old rule "keeps" would hide a
+replacement inside a clarification — the move this file has caught four times
+today.
+
+**What this obliges, and it is not free.** A measurement now has an identity, and
+so does the configuration that produced it. Without both recorded there is no way
+to tell a fresh draw from a re-reading, and the decision above becomes a claim
+nothing enforces — which is the defect this file exists to catch. Each generation
+records the digest of its frozen configuration, the case ids it scored, and the
+assertion that those ids appear in no earlier generation. A draw overlapping any
+earlier generation is refused, not warned about.
+
+**None of that is built, and until it is, no measurement is permitted.** Codex,
+2026-09-04: the sentence above reads as a control, `on_overlap: refuse` in the
+block reads as a control, and `check_generations` reads no ledger and compares
+no ids — it returns "cannot tell", every time. So the tool does not select
+between a fresh draw and a re-reading; it denies spending outright, and it is
+the only thing standing between the decision and the defect the decision names.
+
+That is the honest position and it is written here so nobody reads the paragraph
+above as machinery. The requirement was not weakened to fit what exists: the
+consequence of an unbuilt ledger is that the paid step does not run, not that it
+runs unchecked.
 
 The Sonnet gate goes after all of this: it measures the measuring machine, and
 the project's question is a different one.
+
+The same order, in a form a program can read. The prose above is authoritative;
+this block exists so a checker does not have to parse English, and a test
+requires the two to change together.
+
+A prerequisite graph alone was not enough, and Codex said why: it made
+`extend_to_100` unconditional while the prose guards it, and it had no way to say
+"this step is stopped because a decision is missing" as against "this step is
+waiting for the one before it". Those are different answers and a checker that
+merges them lies. So each step also carries what stops it, and every stop names
+its kind:
+
+* `guard` — a condition in the prose, with the field that decides it. It says
+  when the step runs. **It does not say what happens when the condition fails**,
+  because the prose does not, and inventing an answer here was the second thing
+  Codex caught: "extend if fewer than 5" is not the same sentence as "5 or more
+  makes this undecided". A checker meeting a failed guard reports the guard
+  failed and stops. It does not choose between skip, fail and undecided.
+* `blocked_on_owner` — a question in this file that nobody has answered. Not a
+  prerequisite: no work clears it, only an answer, and the answer is the owner's
+  alone. A step in this state is never *ready* and never *done*.
+* `undefined_predicates` — words in the prose no program can evaluate. A step
+  carrying any of these can be reported *not started*, never *done*.
+
+```yaml
+# d013-order
+open_questions:
+  - id: guard_failure_of_extend_to_100
+    asked_of: owner
+    text: >-
+      what happens when 5 or more of the 30 are unclear; the prose says only
+      when the step runs
+answered_questions:
+  - id: step5_fork
+    answered_by: owner
+    answered_on: 2026-09-04
+    text: >-
+      step 5 is an exception to the boxed rule, and the next measurement is on
+      changes that have never been scored
+generations:
+  disjoint: required
+  records: [configuration_digest, case_ids]
+  on_overlap: refuse
+steps:
+  - id: freeze
+    requires: []
+    done_when: >-
+      a freeze record exists, an owner has acknowledged it, and every digest in
+      it still matches what is on disk, including the digest of D-013 itself
+  - id: adjudicate_30
+    requires: [freeze]
+    done_when: >-
+      the manifest and the adjudication file cover the same sample, the cases
+      carry a verdict of ordinary / not_ordinary / unclear, and every one is
+      adjudicated_by human
+  - id: extend_to_100
+    requires: [adjudicate_30]
+    guard: fewer than 5 of the 30 are unclear
+    guard_field: unclear_count
+    guard_below: 5
+    guard_failure_blocked_on: guard_failure_of_extend_to_100
+    done_when: >-
+      the manifest and the adjudication file cover the same sample, the cases
+      carry a verdict of ordinary / not_ordinary / unclear, and every one is
+      adjudicated_by human
+  - id: classify_alarms
+    requires: []
+    needs_field: failure_mode
+    done_when: every alarm carries a non-empty failure_mode
+  - id: tune
+    requires: [extend_to_100, classify_alarms]
+    undefined_predicates: [close to the boundary, broad, independently repeated]
+    next_generation: required
+    done_when: undefined
+  - id: sonnet_gate
+    requires: [extend_to_100, classify_alarms]
+    done_when: undefined
+```
+
+**The Sonnet gate does not wait for `tune`.** An earlier draft had it wait for
+`tune` to be "resolved", which deadlocks: `tune` carries predicates no program
+can evaluate, so it can never be reported done, and the gate would wait forever
+on a step that cannot finish. Codex found it. Both waited on the owner's answer;
+that answer has been given, and neither is blocked on a question any more.
+
+`tune` still cannot be reported *done* — `next_generation: required` means what
+follows it is a fresh measurement, and its three predicates remain words no
+program evaluates. A checker reports it not started, and says which predicates
+stopped it.
+
+**`done_when` says what records that a step finished.** Codex, third round:
+`requires` expresses order, and nothing said what makes a step *done*. Without
+that, the claim "a checker cannot report false readiness" was itself unenforced —
+`sonnet_gate` would have gone ready the moment two flags were asserted, with no
+artifact behind either.
+
+A step whose `done_when` is `undefined` is **never reported done and never
+satisfies another step's `requires`**; the checker names it and exits 2.
+
+**The first version put `undefined` on five of six, and that was worse than the
+hole it filled.** Codex, fourth round: with `freeze` undefined, nothing could
+ever satisfy `adjudicate_30`, so the whole order became unreachable — a permanent
+prohibition wearing the clothes of "cannot tell", under which even completed
+artifacts would stay invisible. Four steps now carry a real condition. Two remain
+`undefined`, and honestly: `tune`, whose predicates are words no program
+evaluates, and `sonnet_gate`, which has no artifact at all —
+`tools/sentinel_compare.py` prints a verdict and stores nothing.
+
+**`adjudicate_30` reports `done` on something self-reported, and that is as far
+as it can go.** Step 2 says the thirty are built and adjudicated "without a
+single model call". The criterion checks that every case records
+`adjudicated_by: human` — which a model-assisted adjudication would also record,
+if whoever wrote it said so. Nothing in any artifact can establish that no model
+was consulted, and nothing here pretends otherwise: `done` on this step means
+*the records claim a human*, not *no model was used*. Codex, 2026-09-04.
+
+The check is kept because the absent case is the one that slips: a case with no
+`adjudicated_by` at all is not "adjudicated by a human", and requiring the field
+catches that. What it cannot do is catch a false claim, and a reader must not
+take an unlocked `spend` as evidence the corpus was built by hand.
+
+**The block does not require a vocabulary, and that is deliberate.** It did for
+one round, with `needs_vocabulary_first: true` and an empty `vocabulary:` list,
+and Codex struck it out: the precommitted vocabulary is the assistant's addition
+with no owner decision behind it, so an empty list made step 4 *impossible*
+rather than unfinished — a rule nobody agreed to, enforced by a program, and
+flatly against "encoded only once it was decided" two paragraphs down. The
+tests asserted the implementation faithfully and the decision not at all.
+
+So the machinery stays and the requirement does not. `vocabulary:` and
+`needs_vocabulary_first:` remain fields this tool acts on — a step carrying them
+has its values checked against the declared list, and a value outside it is
+refused. No step carries them today.
+
+**The question for the owner, and it is cheap:** should the permitted
+`failure_mode` values be fixed *before* the 20 alarms are classified? The
+argument for: a vocabulary drawn up afterwards is drawn up to fit, and step 5
+then asks whether a cause *repeats*, which a category invented per case can be
+made to answer either way. The argument against: it is extra work before any
+classifying starts. If yes, the list goes in the block — and because the block
+sits inside the D-013 text the freeze digests, "fixed beforehand" stops being a
+promise and becomes something an artifact settles.
+
+**What the gate on spending asks for, and why it is not the freeze alone.** The
+first version let a paid run through the moment a freeze existed, while step 2 —
+which D-013 requires to happen "without a single model call" — was still not
+done, and a test asserted that behaviour. Spending now requires `adjudicate_30`
+done (and through it the freeze), a generations ledger, and that the guard on
+`extend_to_100` has not failed. Not `extend_to_100` itself: that step is done
+only once a hundred cases are adjudicated, which is after the run it would be
+gating, so requiring it would forbid the work rather than order it.
+
+**Three requirements on any checker built from this block**, and they are the
+reason the block exists rather than decoration on it:
+
+* **A field it does not understand is a refusal, not a shrug.** The first
+  implementation kept `id` and `requires` and silently dropped everything else,
+  which would have reported `tune` as ready — exactly the false readiness the
+  prose above forbids. An unknown key, or a known key it cannot act on, exits 2.
+* **The three stopped states are reported apart**: waiting for a prerequisite,
+  stopped by a failed guard, stopped on an unanswered question. Merging any two
+  of them answers a question nobody asked.
+* **`done_when: undefined` is not "not done".** It is "this cannot be
+  determined", which is the third answer this project keeps having to add back.
+  It exits 2, not 1.
+
+**Encoded only once it was decided.** Generation identity — which configuration
+produced which result, and which changes it had already seen — was deliberately
+left out while the fork was open, because inventing a field for it would have
+fixed a shape for a decision nobody had made. The owner's answer requires it, so
+`generations:` now exists. **No generation record has been written yet**, and a
+checker reports that as not started rather than as a missing file it should
+create.
+
+**The block declares the property; it does not yet enforce it.** Codex listed
+six ways a draw could satisfy every word of it and still be a re-reading, and
+each is a separate piece of work:
+
+* whether a `case_id` names the underlying change or a row that can be
+  regenerated with a new id — a fresh id on an old change passes as unseen;
+* whether two aliases of one commit compare equal;
+* what the configuration digest covers: the code only, or the prompts, the model
+  and the thresholds too — a digest omitting prompts calls a retuned reviewer
+  the same configuration;
+* who creates a generation record, and where it is authoritative;
+* when overlap is checked, and whether recording, checking and drawing are one
+  operation or three;
+* which generation belongs to which result.
+
+Named so the gap is visible. None is filled by guessing, and until they are
+filled `generations:` is a requirement a checker can read and not one it can
+enforce — which is the exact defect this file exists to catch, so it is written
+down as a gap rather than left to look like a control.
 
 ### The fields the schema asks for
 
