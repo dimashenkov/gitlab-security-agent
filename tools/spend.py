@@ -69,6 +69,39 @@ NOTIONAL = "claude-cli"
 TOKEN_FIELDS = ("input_tokens", "output_tokens",
                 "cache_read_tokens", "cache_write_tokens")
 
+# **Classification comes from the billing arrangement, not the tool's name.**
+# For each vendor this repository calls, one question: if we make one more call
+# right now, does a bill go up? The answer is written here with the date it was
+# established, so nobody re-derives it from the name.
+#
+# `None` means nobody has established it. That is not "probably free": it is the
+# state that stops this tool printing a total, because a figure that silently
+# omits a spend is the defect the whole file exists to prevent.
+BILLING_ARRANGEMENT: Dict[str, Optional[Dict[str, str]]] = {
+    # Established 2026-08-30 with the price worked out: $53 at the median for
+    # the corpus remainder on the API path, and the owner's decision that an
+    # API key is never used. So the CLI path runs on the subscription and its
+    # `total_cost_usd` is list price for tokens nobody was charged for. The
+    # `anthropic-api` path is the opposite and is billed.
+    "anthropic": {"metered": "when `provenance.provider` is `anthropic-api`",
+                  "flat": "the Claude subscription, for every other path",
+                  "established": "2026-08-30"},
+    # NOT established. `docs/grok-on-this-machine.md` says both that
+    # `total_cost_usd` is "the notional price of the call" (line 72) and that
+    # "every call spends the owner's money" (line 141), and the account is a
+    # SuperGrok Lite subscription. Those cannot both be true, and which one is
+    # decides whether the $0.19 recorded so far is money or weight.
+    "xai": None,
+}
+
+# Spending this counter cannot see, named rather than omitted. The test is not
+# "is it large" but "does the counter see it" — and asserting which is largest
+# would be the same unmeasured claim the file refuses everywhere else.
+INVISIBLE = (
+    "the agent session itself, billed to a plan no artifact here records",
+    "Codex review rounds, on a different account and not logged in this tree",
+)
+
 
 def artifacts(paths: Iterable[Path]) -> List[Dict[str, Any]]:
     """Every readable artifact among `paths`, unreadable ones skipped.
@@ -95,10 +128,44 @@ def _provenance(row: Dict[str, Any]) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def as_money(value: Any) -> Optional[float]:
+    """`value` as dollars, or None when it is not money at all.
+
+    Finite and not negative, checked rather than assumed. Codex, 2026-09-05:
+    `float(value)` accepted `-1`, `inf` and `nan`, and each does something
+    worse than being wrong on its own — a negative cost reduces a total, and
+    one `nan` anywhere turns every total containing it into `nan`. A value that
+    is not money is not a cheap run; it is a record nobody can price.
+
+    One function, because there are two places money is read — a review
+    artifact and a vendor ledger — and the second was doing it without any of
+    this. Codex the same day, on the version that had only fixed the first.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if number != number or number in (float("inf"), float("-inf")) \
+            or number < 0:
+        return None
+    return number
+
+
 def cost_of(row: Dict[str, Any]) -> Optional[float]:
-    """The reported cost, or None when the provider reported none."""
-    value = _provenance(row).get("reported_cost_usd")
-    return float(value) if isinstance(value, (int, float)) else None
+    """The reported cost of one review, or None when there is no usable one."""
+    return as_money(_provenance(row).get("reported_cost_usd"))
+
+
+def money(amount: float) -> str:
+    """Dollars without losing the ones that matter here.
+
+    Two decimals was the whole format, and a single model call costs about
+    $0.006 — so every one of them rendered as `$0.00`, which reads as free.
+    Codex, 2026-09-05. Small amounts keep four decimals; a positive amount
+    that would still round to nothing says so rather than printing zero.
+    """
+    if amount and amount < 0.0001:
+        return "<$0.0001"
+    return "${:.4f}".format(amount) if amount < 1 else "${:.2f}".format(amount)
 
 
 # Three, because two could not express the case that matters. The first
@@ -122,14 +189,70 @@ def paid_by(row: Dict[str, Any]) -> str:
     believed while overstating one prompts a question.
     """
     prov = _provenance(row)
+    # A string, or nobody established it. Codex, 2026-09-05: `.strip()` was
+    # called on whatever was truthy, so `"auth_method": 1` raised
+    # `AttributeError` and the command printed neither a figure nor a
+    # diagnostic — a crash where "I could not tell" belongs, in the function
+    # whose whole job is telling those apart.
+    raw = prov.get("auth_method")
+    method = raw.strip() if isinstance(raw, str) else ""
+    # And the subscription by the same rule. Codex, 2026-09-05, immediately
+    # after the fix above: any truthy value counted, so
+    # `"auth_subscription": 1` or `"   "` classified the run as a subscription
+    # and the command printed "$0.00 charged" and exited 0 from provenance
+    # nobody could read. The false answer this tool exists to prevent, from the
+    # one branch that produces it.
+    plan = prov.get("auth_subscription")
+    named = isinstance(plan, str) and bool(plan.strip())
+
+    # **Signals gathered, then weighed** — not a chain of `if`s where whichever
+    # is written first wins. Codex, 2026-09-05, twice in two rounds: the first
+    # version let `provider == anthropic-api` decide over a `claude.ai` login,
+    # and the fix for that was another special case, which left `api-key`
+    # together with a named plan resolving by branch order in exactly the same
+    # way. A contradiction is not a thing to rank; it is a thing nobody
+    # established, and this file counts that in neither column.
+    #
+    # Billed evidence: the Messages API path, or a login that is a key.
+    # Subscription evidence: a plan named at all.
+    charged_because = []
     if prov.get("provider") == BILLED:
-        # The Messages API path: an API key is the only way it runs.
-        return CHARGED
-    method = (prov.get("auth_method") or "").strip()
-    if method == "claude.ai" and prov.get("auth_subscription"):
-        return NOTIONAL_
+        charged_because.append("the provider is the Messages API")
     if method in ("api-key", "console"):
+        charged_because.append("the login is {!r}".format(method))
+
+    subscription_because = []
+    # `claude.ai` is subscription evidence in its own right, and the first
+    # version of this gathering counted only a named plan — so
+    # `{"provider": "anthropic-api", "auth_method": "claude.ai"}` came back
+    # charged from a record whose two halves disagree. Codex, 2026-09-05, the
+    # third round on this one function.
+    if method == "claude.ai":
+        subscription_because.append("the login is `claude.ai`")
+    if named:
+        subscription_because.append("a plan is named")
+
+    if charged_because and subscription_because:
+        return UNKNOWN
+    if charged_because:
         return CHARGED
+    # **The two thresholds are deliberately different, and the asymmetry is the
+    # point.** One subscription signal is enough to *contradict* billed
+    # evidence, because a contradiction means nobody can tell. Both are
+    # required to *classify* a run as a subscription, because that classifies
+    # its money as nothing — and this file's own rule is that understating a
+    # cost is believed while overstating one prompts a question.
+    #
+    # A plan recorded beside no login says which subscription the machine has,
+    # not that this run drew on it. A `claude.ai` login with no plan named is
+    # the CLI reporting half of an answer. Neither is a reason to write $0.
+    #
+    # Codex argued on 2026-09-05 that gathering a signal and then not acting on
+    # it alone is inconsistent. It is asymmetric on purpose: the cost of a
+    # wrong `unknown` is a question, and the cost of a wrong `notional` is a
+    # spend that never appears.
+    if named and method == "claude.ai":
+        return NOTIONAL_
     # An empty method is the CLI declining to say, an unparseable answer, or a
     # timeout. All three are "nobody established this".
     return UNKNOWN
@@ -173,6 +296,12 @@ def queue_rows(path: Path) -> List[Dict[str, Any]]:
     the log says so in `notional_api_cost_source` rather than leaving a reader
     to infer it from the provider.
     """
+    # Reset first, on every path through. Codex, 2026-09-05: the absent-file
+    # branch returned without touching it, so a run that had found a broken log
+    # left `-1` behind and the next call — with no log at all — reported that
+    # earlier failure as its own. Module state that outlives the call it
+    # describes is a wrong answer waiting for a second invocation.
+    globals()["QUEUE_SKIPPED"] = 0
     if not path.is_file():
         return []
     out: List[Dict[str, Any]] = []
@@ -221,6 +350,132 @@ def queue_rows(path: Path) -> List[Dict[str, Any]]:
     # reported; this one had the same obligation and dropped them in silence.
     globals()["QUEUE_SKIPPED"] = skipped
     return out
+
+
+# Where a paid call to a vendor other than Anthropic is recorded, and the block
+# holding one entry per call. Both tools write `vendor` at the top and key their
+# attempts by the unit of *work* — a case id, a finding id — which is not the
+# unit of *billing*. Codex, 2026-09-05: the billing identity is
+# `(vendor, request_id)`; a retry has a new request id and is a second charge,
+# and the same response copied into two aggregates is one.
+VENDOR_GLOBS = ("measurements/**/grok-adjudication.json",
+                "measurements/**/alarm-classification.json")
+VENDOR_CALL_BLOCKS = ("cases", "findings")
+
+
+def _vendor_blocks(body: Any) -> Optional[List[str]]:
+    """The per-call blocks a vendor ledger holds, or `None` if it is not one.
+
+    One predicate, used by the detector and by the reader. Codex, 2026-09-05:
+    they had drifted by a single word — the detector asked `any` and the reader
+    required exactly one — so a file carrying both `cases` and `findings` was
+    excluded from the reviews as a ledger and then refused as a ledger, and
+    disappeared from both counts leaving only an error. Two definitions of one
+    thing, and the gap between them was a file nobody counted.
+    """
+    if not isinstance(body, dict):
+        return None
+    vendor = body.get("vendor")
+    if not isinstance(vendor, str) or not vendor.strip():
+        return None
+    return [name for name in VENDOR_CALL_BLOCKS
+            if isinstance(body.get(name), dict)]
+
+
+def _looks_like_a_vendor_ledger(path: Path) -> bool:
+    """Whether a named file is *shaped* like a metered vendor's ledger.
+
+    By its content, not its name: a caller who renamed the file still means the
+    same thing, and a review artifact that happened to be called
+    `grok-adjudication.json` is still a review. Unreadable is `False` — the
+    artifact reader reports what it could not read, and one file counted in
+    neither place would be worse than one counted as the wrong kind.
+
+    **Shape, and not validity.** Codex, 2026-09-05: this used `_vendor_blocks`,
+    which requires a usable `vendor`, so a ledger that named no vendor was
+    routed to the review reader and came back as an unclassified review rather
+    than the "records no vendor" ledger problem it is. A malformed record of a
+    kind is still a record of that kind, and it belongs in front of the reader
+    that can say what is wrong with it.
+    """
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(body, dict):
+        return False
+    # A review artifact carries `provenance`; a ledger carries per-call blocks.
+    # Asking for both keeps a review that happens to hold a `cases` key on the
+    # review side, where its provenance can still be read.
+    #
+    # `name in body`, not `isinstance(..., dict)`. Codex, 2026-09-05, on the
+    # version that had just been widened once: asking for the right *type* is
+    # still validation, so `{"vendor": "xai", "cases": []}` went to the review
+    # reader and came back as an unclassified review. The reader below says
+    # what is wrong with a block; this only says which reader should look.
+    return ("provenance" not in body
+            and any(name in body for name in VENDOR_CALL_BLOCKS))
+
+
+def vendor_calls(paths: Iterable[Path]) -> Dict[str, Any]:
+    """Every recorded call to a metered vendor, keyed by its billing identity.
+
+    Returns `{"calls": {(vendor, request_id): row}, "problems": [...]}`.
+    Anything that cannot be keyed is a problem rather than a row: a call with
+    no `request_id` cannot be told apart from another, so counting it risks
+    both double-counting and hiding a duplicate.
+    """
+    calls: Dict[Any, Dict[str, Any]] = {}
+    problems: List[str] = []
+    for path in paths:
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            problems.append("{}: could not be read ({})".format(
+                path, type(exc).__name__))
+            continue
+        if not isinstance(body, dict):
+            problems.append("{}: is not an object".format(path))
+            continue
+        blocks = _vendor_blocks(body)
+        if blocks is None:
+            problems.append("{}: records no vendor".format(path))
+            continue
+        vendor = body["vendor"]
+        if len(blocks) != 1:
+            problems.append(
+                "{}: holds {} of the blocks that carry one entry per call "
+                "({}), and it takes exactly one".format(
+                    path, len(blocks), ", ".join(VENDOR_CALL_BLOCKS)))
+            continue
+        for work_id, attempt in sorted(body[blocks[0]].items()):
+            if not isinstance(attempt, dict):
+                problems.append("{}: {} is not a record".format(path, work_id))
+                continue
+            request_id = attempt.get("request_id")
+            if not isinstance(request_id, str) or not request_id.strip():
+                problems.append(
+                    "{}: {} records no `request_id`, so nothing says which "
+                    "charge it is".format(path, work_id))
+                continue
+            key = (vendor.strip(), request_id.strip())
+            if key in calls:
+                # Not summed. The same response appearing twice is either a
+                # copy — in which case adding it invents a charge — or two
+                # charges the records cannot tell apart.
+                problems.append(
+                    "{}: {} repeats a response already counted ({}), so one "
+                    "charge and two are indistinguishable here".format(
+                        path, work_id, request_id))
+                continue
+            calls[key] = {
+                "vendor": vendor.strip(),
+                "request_id": request_id.strip(),
+                "cost_usd": attempt.get("cost_usd"),
+                "when": attempt.get("asked_at") or body.get("started_at") or "",
+                "_path": "{}:{}".format(path, work_id),
+            }
+    return {"calls": calls, "problems": problems}
 
 
 def instant(stamp: str) -> Optional[datetime]:
@@ -365,6 +620,170 @@ def summarise(rows: List[Dict[str, Any]], by: str = "day",
     return 0
 
 
+def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
+               unreadable: int = 0, skipped_lines: int = 0,
+               scope: str = "", since: str = "") -> int:
+    """The whole report, in the form the owner asked for: one line.
+
+    Not a table. He asked for one figure and a breakdown only when he asks for
+    one, and the figure appears in every report from here on — which is exactly
+    why it must not be a number that reads as an answer when it is not.
+
+    **`$0.00 charged` is refused as a headline.** Codex, 2026-09-05: printing it
+    while paid subscription capacity was demonstrably consumed invites "nothing
+    was spent", and this counter cannot establish that. When any observed usage
+    has an unestablished billing arrangement the line says `indeterminate` and
+    names what would settle it. A figure appears only when every call the
+    counter saw could be priced *and* classified.
+    """
+    # Nothing seen is not nothing spent — the invariant `summarise` has carried
+    # since it was written, and this path had lost it. Codex, 2026-09-05: with
+    # no artifacts, no vendor ledgers and no errors, every counter is empty and
+    # the headline said "$0.00 charged — every call the counter saw runs on a
+    # flat subscription" about no calls at all, and exited 0.
+    #
+    # `unreadable` and `skipped_lines` are in the condition because the first
+    # version left them out, and Codex found it on the next pass: an invocation
+    # holding only an unreadable artifact printed "no records were found",
+    # which is a different and more comfortable sentence than "records existed
+    # and could not be read". The shortcut is for a genuinely empty ledger, and
+    # anything else falls through to the diagnostics below.
+    if not rows and not vendor["calls"] and not vendor["problems"] \
+            and not unreadable and not skipped_lines:
+        print("Spend: indeterminate — no records were found, which is not the "
+              "same as nothing having been spent")
+        print("  scope: {} · as of {}".format(
+            scope or "this repository's records",
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")))
+        print("  not counted anywhere, and nothing here can count it: "
+              "{}".format("; ".join(INVISIBLE)))
+        return 2
+
+    charged: List[float] = []
+    subscription = unestablished = unpriced = 0
+
+    for row in rows:
+        cost = cost_of(row)
+        state = paid_by(row)
+        if state == CHARGED and cost is not None:
+            charged.append(cost)
+        elif state == NOTIONAL_:
+            subscription += 1
+        elif state == UNKNOWN:
+            unestablished += 1
+        if cost is None and state == CHARGED:
+            unpriced += 1
+
+    vendor_unestablished: Dict[str, int] = defaultdict(int)
+    vendor_unpriced: List[str] = []
+    for key, call in sorted(vendor["calls"].items()):
+        arrangement = BILLING_ARRANGEMENT.get(call["vendor"])
+        if arrangement is None:
+            vendor_unestablished[call["vendor"]] += 1
+            continue
+        # Through the same predicate the reviews go through. It was reading
+        # `isinstance(..., (int, float))` and adding whatever it found, so a
+        # ledger for a vendor with an established arrangement could print a
+        # total that was reduced by a negative, or `nan`, and exit 0.
+        amount = as_money(call.get("cost_usd"))
+        if amount is None:
+            vendor_unpriced.append("{} {} records {!r} where money belongs"
+                                   .format(key[0], key[1],
+                                           call.get("cost_usd")))
+            continue
+        charged.append(amount)
+
+    # Ledger integrity, which is a different question from what was spent.
+    # Codex, 2026-09-05: exit 2 belongs to "these records cannot be trusted to
+    # add up", not to every exclusion — a known flat fee left out of a metered
+    # total is the tool working, and the permanently invisible agent plan
+    # forcing 2 forever turns the status into noise.
+    integrity = list(vendor["problems"]) + vendor_unpriced
+    if unreadable:
+        integrity.append("{} artifact(s) could not be read".format(unreadable))
+    if skipped_lines == -1:
+        integrity.append("the queue log could not be read at all")
+    elif skipped_lines:
+        integrity.append(
+            "{} line(s) of the queue log did not parse".format(skipped_lines))
+    if unpriced:
+        integrity.append(
+            "{} billed run(s) reported no usable cost".format(unpriced))
+
+    # A call nobody could price stops the figure exactly as a call nobody could
+    # classify does. Codex, 2026-09-05: `vendor_unpriced` reached the ledger
+    # line and not the decision, so one metered call recording `nan` printed
+    # "$0.00 charged — every call runs on a flat subscription" — the headline
+    # contradicting the diagnostic three lines under it. Unpriced and
+    # unclassified are two ways of not knowing, and the figure needs both.
+    total_unestablished = unestablished + sum(vendor_unestablished.values())
+    cannot_price = unpriced + len(vendor_unpriced)
+
+    # And any ledger failure at all. Codex, 2026-09-05, on the version that had
+    # just wired the unpriced count in: an unreadable artifact, a malformed
+    # queue line, a call with no `request_id`, a duplicated response — each
+    # left the headline saying "$0.00 charged, every call runs on a flat
+    # subscription" while the line beneath it reported the error and the exit
+    # code was 2. Records that cannot be trusted to add up do not justify a
+    # number, whatever the reason they cannot.
+    if total_unestablished or cannot_price or integrity:
+        reasons = []
+        for name, count in sorted(vendor_unestablished.items()):
+            reasons.append(
+                "{} {} call(s) — nothing here establishes whether one more "
+                "raises a bill".format(count, name))
+        if unestablished:
+            reasons.append(
+                "{} review(s) whose login the artifact does not name".format(
+                    unestablished))
+        if cannot_price:
+            reasons.append(
+                "{} call(s) recording something other than money where a cost "
+                "belongs".format(cannot_price))
+        if not reasons:
+            reasons.append(
+                "{} problem(s) with the records themselves, so nothing here "
+                "can be trusted to add up".format(len(integrity)))
+        print("Spend: indeterminate — {}{}".format(
+            "; ".join(reasons),
+            "; {} charged so far from {} call(s) that could be classified"
+            .format(money(sum(charged)), len(charged)) if charged else ""))
+    elif charged:
+        print("Spend: {} charged, from {} call(s){}".format(
+            money(sum(charged)), len(charged),
+            "; {} more on a flat subscription and not in that figure".format(
+                subscription) if subscription else ""))
+    else:
+        print("Spend: $0.00 charged — every call the counter saw runs on a "
+              "flat subscription{}".format(
+                  " ({} of them)".format(subscription) if subscription else ""))
+
+    # The scope and the instant, because a bare figure quoted in a report is
+    # about *something* as of *some time*, and two identical reports written on
+    # different days would otherwise carry different numbers with nothing
+    # saying why. Codex, 2026-09-05, who also named the sharper case: `--since`
+    # filters the review rows and does not filter the vendor calls, so the two
+    # halves of one figure would cover different windows in silence.
+    print("  scope: {} · as of {}{}".format(
+        scope or "this repository's records",
+        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
+        " · `--since {}` filters the reviews and not the vendor calls, so the "
+        "two halves cover different windows".format(since) if since else ""))
+
+    if integrity:
+        print("  ledger: {}".format("; ".join(integrity[:3])))
+        if len(integrity) > 3:
+            print("  ledger: and {} more".format(len(integrity) - 3))
+    print("  not counted anywhere, and nothing here can count it: {}".format(
+        "; ".join(INVISIBLE)))
+
+    # 2 only for a ledger this tool cannot trust to add up, and for spending it
+    # saw and could not classify. Exit 0 cannot certify that every call was
+    # recorded — only that every record found was valid — and the line above
+    # does not claim otherwise.
+    return 2 if (integrity or total_unestablished or cannot_price) else 0
+
+
 def detail(rows: List[Dict[str, Any]]) -> None:
     print("\n{:<22} {:<10} {:<38} {}".format("when", "cost", "who paid", "model"))
     print("-" * 96)
@@ -393,6 +812,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--since", default="", help="ISO date; earlier runs are skipped")
     parser.add_argument("--detail", action="store_true", help="one line per run")
     parser.add_argument(
+        "--breakdown", action="store_true",
+        help="the table, by day or month. Without it this prints one line, "
+             "which is what the owner asked to read in every report")
+    parser.add_argument(
         "--source", default="artifacts", choices=("artifacts", "queue"),
         help="artifacts written by a review, or the queue's own log. Separate "
              "on purpose: a review can be in both and nothing keys them "
@@ -406,6 +829,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         skipped = 0
         paths = collect(args)
+        # A vendor ledger is not a review artifact, and it used to be read as
+        # both — 30 metered calls in one column and one nameless "review" in
+        # the other, from one file. One record, one kind.
+        paths = [p for p in paths if not _looks_like_a_vendor_ledger(p)]
         rows = artifacts(paths)
         unreadable = len(paths) - len(rows)
     if args.since:
@@ -421,7 +848,67 @@ def main(argv: Optional[List[str]] = None) -> int:
             rows = [r for r in rows
                     if instant(when(r)) is None or instant(when(r)) >= floor]
 
-    code = summarise(rows, args.by, unreadable, args.source, skipped)
+    # A named path is read as what it is. Codex, 2026-09-05: the first version
+    # passed `[]` whenever the caller named anything, so somebody pointing this
+    # tool at `grok-adjudication.json` got it parsed as a review artifact —
+    # wrong classification and a diagnostic about the wrong thing. Not naming
+    # any path still means "the repository's own records", and naming one still
+    # means the repository's *unrelated* records stay out.
+    if args.paths:
+        vendor_paths = [p for p in (Path(x) for x in args.paths)
+                        if _looks_like_a_vendor_ledger(p)]
+    else:
+        vendor_paths = sorted(p for pattern in VENDOR_GLOBS
+                              for p in ROOT.glob(pattern))
+    vendor = vendor_calls(vendor_paths)
+
+    scope = ("{} named path(s)".format(len(args.paths)) if args.paths
+             else "this repository's records, source " + args.source)
+    # The headline first, always. The owner asked for the figure in every
+    # report, and the breakdown is still a report — Codex, 2026-09-05: the
+    # detail and breakdown paths went straight to `summarise`, so vendor costs
+    # shrank to a call count, vendor ledger failures did not reach the exit
+    # code, and a vendor-only ledger printed "no records were found" from a
+    # `summarise([])` that had never been shown the calls.
+    code = one_figure(rows, vendor, unreadable, skipped, scope, args.since)
+    if not args.breakdown and not args.detail:
+        return code
+
+    print()
+    # The table's own exit code is discarded: it answers "was there anything to
+    # group", and the headline above has already answered the question this
+    # tool is for. Two exit codes from one command is one of them being ignored,
+    # and it should be the narrower.
+    #
+    # And it is not called at all with no review rows. Codex, 2026-09-05: it
+    # prints "No records were found" — a sentence about the whole report — from
+    # a function that was only ever shown the reviews, so a vendor-only ledger
+    # got a headline naming its calls and a paragraph underneath denying they
+    # existed.
+    if rows:
+        summarise(rows, args.by, unreadable, args.source, skipped)
+    elif unreadable or skipped or vendor["problems"]:
+        # Not "the metered calls are the whole of it". Codex, 2026-09-05: that
+        # sentence is true of a vendor-only ledger and false of a report whose
+        # review records existed and could not be read — the difference between
+        # "there were none" and "I could not see them", which is the one this
+        # tool exists to keep.
+        failed = (unreadable + (0 if skipped == -1 else skipped)
+                  + len(vendor["problems"]))
+        print("No review artifacts could be read, and {} record(s) failed. "
+              "This table covers reviews, and it is empty because they could "
+              "not be read rather than because there were none.".format(
+                  failed or "an unknown number of"))
+    elif vendor["calls"]:
+        print("No review artifacts in this report. The metered calls above are "
+              "the whole of it; this table only ever covers reviews.")
+    else:
+        print("No review artifacts and no metered calls. This table covers "
+              "reviews, and there were none to group.")
+    if vendor["calls"] or vendor["problems"]:
+        print("\nMetered vendors, counted apart and never added to the above: "
+              "{} call(s) recorded, {} record(s) this tool could not key."
+              .format(len(vendor["calls"]), len(vendor["problems"])))
     if args.source == "artifacts" and queue_rows(ROOT / QUEUE_LOG):
         print("\nThe queue log holds review rows this source does not: "
               "tools/spend.py --source queue. Not added to the above — a "
