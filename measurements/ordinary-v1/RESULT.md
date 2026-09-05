@@ -21,7 +21,8 @@ applied, and not the case id, which encodes the language.
 |---|---|
 | adjudicator | Grok, `grok-4.6` requested, **`grok-4.6-build` answered** all thirty |
 | CLI | `grok 1.0.13 (5e9a58528b76)` |
-| calls | 30 processes, **30 distinct session ids**, one turn each, none retried |
+| calls | 30 processes, **30 distinct session ids**, none retried |
+| internal work | one turn each — *operational metadata, not evidence of anything* |
 | failures | 0 |
 | cost | **$0.1921**, on the owner's SuperGrok subscription |
 | wall time | 701 seconds |
@@ -106,6 +107,70 @@ The 27 `ordinary` verdicts remain unchecked: **no permitted independent audit
 has looked at them.** The owner is available and declined; the assistant cannot
 stand in, because the question there is whether something is *absent* and its
 own model is the one this key would score.
+
+## A correction to how these were checked
+
+**Written 2026-09-05, after the fact, because the tool that produced these
+verdicts checked one thing while claiming another.**
+
+The frozen protocol said "single-turn", and the tool read that as
+`num_turns == 1`, refusing any reply that reported more — with the stated
+reason that more than one turn meant the context was not fresh. That reason was
+the assistant's inference and it is wrong. `num_turns` counts the model's own
+steps inside one invocation. It says nothing about whether a previous case
+carried over.
+
+Three properties were being conflated, and only two of them bear on
+contamination:
+
+| Property | What shows it |
+|---|---|
+| a fresh invocation | a new process, no `--resume`, no `--session-id` |
+| separation between calls | **no identifier reuse was observed** |
+| how much internal work | `num_turns`, cost, duration — a resource signal |
+
+The middle row is deliberately weaker than "a fresh provider context". A
+distinct id the provider reports is *separation evidence*; it is not proof of
+what the provider held on its own side.
+
+What was missing is the one that matters: **reuse of an identifier across
+cases** was recorded as a boolean and nothing acted on it. It is a refusal now.
+And a runaway turn count is refused as a *resource* failure, under its own
+name, never as a stale context.
+
+**What this does to the thirty.** They remain **thirty model adjudications
+with recorded separation evidence** — thirty processes, no identifier reuse
+observed. They were never thirty independently established judgements, and the
+distinction matters when the number is quoted. What does not stand at all is
+"one turn each" as evidence of freshness: it says only that those calls
+finished cheaply, and it has moved out of the evidence table into operational
+metadata.
+
+Recorded as a correction of an ambiguous term in the frozen protocol, not as a
+claim that the check always meant this. Codex, 2026-09-05, on being asked
+whether the rule was sound.
+
+### Six further checks, and what they do to this result — nothing
+
+The same review found six more ways the tool could accept an answer whose
+evidence was absent rather than checked. All six were fixed. Each was then run
+against **this** artifact rather than assumed harmless, and the result does not
+move:
+
+| The check now made | What this run holds |
+|---|---|
+| `stopReason` must be `end_turn` | `end_turn` on all thirty |
+| the diff must **say** it was captured whole | `diff_truncated: false` on all thirty, explicitly |
+| the candidates file must match the seal's digest | unchanged; the seal and the pool are the ones recorded |
+| distinctness read over **every attempt**, not only accepted ones | all thirty produced a verdict, so the two populations are the same thirty |
+| every call must carry an id for the claim to cover the run | thirty ids present, thirty distinct |
+| `--limit 0` must ask nothing rather than everything | not used on this run |
+
+The artifact predates the fields `calls_made`, `sessions_compared`,
+`responses_compared` and `every_call_compared`, so it does not carry them.
+Recomputed from the cases it does carry: thirty attempts, thirty session ids
+and thirty response ids present, distinct on both. The checks tighten the tool
+for the next run; they do not revise this one.
 
 ## Where the material is
 

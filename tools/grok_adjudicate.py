@@ -29,8 +29,8 @@ a human-adjudicated rate.
 | Requirement | How |
 |---|---|
 | one model call per case | one `subprocess.run` per case, no reuse |
-| no session, no memory | `-p` single-turn; no `--resume`, no `--session-id` |
-| fresh context provable | the distinct `sessionId` and `num_turns` are recorded |
+| no session, no memory | `-p`, one user message; no `--resume`, no `--session-id` |
+| separation observable | distinct `sessionId` per call, and reuse across cases is refused |
 | randomised order | a recorded seed shuffles the cases before the first call |
 | blind to everything else | the prompt carries the diff and nothing else |
 | the served model recorded | `modelUsage` names it; it reports `grok-4.6-build` |
@@ -66,6 +66,7 @@ import ordinary_corpus as oc
 SCHEMA_VERSION = "grok-adjudication/1"
 MODEL = "grok-4.6"
 VENDOR = "xai"
+
 
 # The verdict schema, handed to the CLI so the answer comes back structured
 # rather than as prose to parse. `unclear` is a real answer and is named in the
@@ -117,6 +118,29 @@ def load_material(seal: Dict[str, Any], candidates: Path) -> List[Dict[str, Any]
     `github.com/AutoMapper/AutoMapper` in the pool, and a raw join silently
     loses those two cases. Measured, not guessed: it lost exactly two of thirty.
     """
+    # The seal records the digest of the pool it was cut from, and nothing
+    # checked it. A different or edited candidates file could be adjudicated
+    # while the artifact carried the genuine seal digest beside it — the seal
+    # asserting a provenance the run had not honoured. Checked before the
+    # first call, so a wrong file costs nothing. Codex, 2026-09-05.
+    # `(seal.get("candidates") or {}).get(...)` read as a safe default and was
+    # not one: a seal whose `candidates` is a truthy non-object — a bare
+    # string — reached `.get` on it and raised `AttributeError`, a crash where
+    # the controlled refusal was promised. Codex, 2026-09-05.
+    block = seal.get("candidates")
+    declared = block.get("digest") if isinstance(block, dict) else None
+    if not isinstance(declared, str) or not declared.strip():
+        raise SystemExit(
+            "the seal names no digest for its candidates, so the file handed "
+            "in cannot be shown to be the one that was sealed")
+    actual = oc.digest_file(candidates)
+    if actual != declared:
+        raise SystemExit(
+            "the candidates file does not match the seal: it sealed {} and "
+            "{} is {}. Adjudicating this would record the sealed digest "
+            "beside answers drawn from other material".format(
+                declared, candidates, actual))
+
     pool = json.loads(candidates.read_text(encoding="utf-8"))
     by_identity = {}
     for record in pool:
@@ -155,25 +179,58 @@ def load_material(seal: Dict[str, Any], candidates: Path) -> List[Dict[str, Any]
         if not isinstance(diff, str) or not diff.strip():
             missing.append(row.get("case_id"))
             continue
+        # Not `bool(record.get("diff_truncated"))`. That reads a record with
+        # no such field as "the diff is whole", which is the repository's
+        # recurring defect: absence taken for agreement. What is wanted is a
+        # record that *says* the diff is whole, so anything but an explicit
+        # `False` is refused below. Codex, 2026-09-05, in the very line added
+        # to fix truncation one round earlier.
         material.append({"case_id": row["case_id"], "diff": diff,
-                         "truncated": bool(record.get("diff_truncated"))})
+                         "whole": record.get("diff_truncated") is False,
+                         "truncation": record.get("diff_truncated")})
 
     if missing:
         raise SystemExit(
             "no diff for {} case(s): {}. Adjudicating a subset silently would "
             "produce a rate over a denominator nobody chose".format(
                 len(missing), ", ".join(sorted(str(m) for m in missing))))
+
+    # Truncation was recorded on every case and read by nothing. A cut-off
+    # diff is a change nobody can be asked about: the model would answer over
+    # the half it was shown and the verdict would count as though the whole
+    # change had been read. Refused here, before the first call, because it is
+    # knowable without spending anything. Codex, 2026-09-05.
+    cut = sorted("{} ({!r})".format(item["case_id"], item["truncation"])
+                 for item in material if not item["whole"])
+    if cut:
+        raise SystemExit(
+            "{} case(s) do not say the diff was captured whole: {}. A verdict "
+            "over half a change would be counted as a verdict over the "
+            "change, and a record that says nothing is not a record that says "
+            "no. Re-seal from material captured whole".format(
+                len(cut), ", ".join(cut)))
     return material
 
 
 def ask(diff: str, timeout: int) -> Dict[str, Any]:
-    """One case, one process, one turn. Never retried."""
+    """One case, one process, one user message. Never retried.
+
+    Not "one turn": the model may take several steps inside a single call, and
+    that is cost rather than contamination. See `_evidence_problems`.
+    """
     prompt = RUBRIC.format(diff=diff)
     command = [
         "grok", "-p", prompt,
         "--model", MODEL,
         "--sandbox", "read-only",
         "--disallowed-tools", "bash,edit,write,read,web_search,web_fetch",
+        # `--max-turns 1` was tried on 2026-09-05 and returns "max turns
+        # reached": the model needs a step to work and a step to answer. What
+        # the protocol asks for is one *user message*, which `-p` gives by
+        # construction, and these two stop the call from becoming an agentic
+        # session of its own.
+        "--no-plan",
+        "--no-subagents",
         "--json-schema", json.dumps(VERDICT_SCHEMA),
         "--output-format", "json",
     ]
@@ -231,11 +288,10 @@ def ask(diff: str, timeout: int) -> Dict[str, Any]:
     })
 
     # **Checked, not merely recorded.** The first version wrote all of the
-    # above into the artifact and tested none of it, so a reply with
-    # `num_turns: 2` — which is not the single-turn call the protocol
-    # requires — still produced a verdict and exit 0. Recording evidence and
-    # not reading it is a claim nothing enforces, which is the defect this
-    # whole project is about. Codex, 2026-09-04.
+    # above into the artifact and tested none of it, so a reply carrying no
+    # session id at all still produced a verdict and exit 0. Recording
+    # evidence and not reading it is a claim nothing enforces, which is the
+    # defect this whole project is about. Codex, 2026-09-04.
     missing = _evidence_problems(attempt)
     if missing:
         attempt["failed"] = "; ".join(missing)
@@ -276,14 +332,27 @@ def _evidence_problems(attempt: Dict[str, Any]) -> List[str]:
             problems.append(
                 "no {} in the reply, so this call cannot be shown to be its "
                 "own".format(what))
-    # `turns == 1` alone accepts JSON `true`, because `True == 1` in Python.
-    # A boolean where a count belongs is a reply this tool cannot read, not a
-    # single-turn call.
+    # A boolean where a count belongs is a reply this tool cannot read:
+    # `True == 1` in Python, so an `== 1` check accepted JSON `true`.
+    #
+    # `num_turns` is **not** freshness evidence, and saying it was conflated
+    # three things: a fresh invocation (a new process with no resume or
+    # session argument), a fresh provider context (a distinct session id, not
+    # reused across cases), and how much internal work the model did. Only the
+    # first two bear on contamination. Codex, 2026-09-05, correcting the
+    # frozen protocol's ambiguous word "single-turn", which this tool had read
+    # as `num_turns == 1`.
+    #
+    # Recorded and not capped. A ceiling was tried at 12 — one above the
+    # eleven observed once — and Codex struck it out: that is a threshold from
+    # a single observation, the timeout already bounds the resource
+    # prospectively, and refusing a finished thirteen-turn answer throws away
+    # evidence without saving anything.
     turns = attempt.get("turns")
-    if isinstance(turns, bool) or not isinstance(turns, int) or turns != 1:
-        problems.append(
-            "{!r} turn(s); the protocol requires exactly one, and more than "
-            "one means the context was not fresh".format(turns))
+    if isinstance(turns, bool) or not isinstance(turns, int) or turns < 1:
+        problems.append("{!r} turn(s); the reply reports no usable turn "
+                        "count".format(turns))
+
     # `not [""]` is False, so a list holding an empty name passed as evidence
     # that a model was named. Both edges found by Codex probing the checker
     # rather than by reading it.
@@ -292,6 +361,18 @@ def _evidence_problems(attempt: Dict[str, Any]) -> List[str]:
             isinstance(name, str) and name.strip() for name in served):
         problems.append(
             "the reply names no model, so what answered is not recorded")
+
+    # Require the ending we need rather than listing the ones we can imagine.
+    # A call that stopped for any other reason — a turn limit, an
+    # interruption, an error — did not finish answering, and its structured
+    # output is whatever had been assembled by then. `stopReason` was recorded
+    # and never read, which is the same defect as the identifiers were, and
+    # the instruction in `docs/grok-on-this-machine.md` asserted a check that
+    # did not exist. Codex, 2026-09-05.
+    stop = attempt.get("stop_reason")
+    if stop != "end_turn":
+        problems.append("the call stopped on {!r} rather than finishing its "
+                        "answer".format(stop))
     return problems
 
 
@@ -316,7 +397,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     seed = args.seed if args.seed is not None else int(time.time())
     order = list(material)
     random.Random(seed).shuffle(order)
-    if args.limit:
+    # `if args.limit:` made `--limit 0` mean "no limit", so the flag whose only
+    # purpose is to spend less turned into the full paid run — and `--limit -1`
+    # sliced off the tail and paid for all but one. On a tool that spends the
+    # owner's money that is the worst direction for a falsey value to go.
+    # Codex, 2026-09-05.
+    if args.limit is not None:
+        if args.limit < 0:
+            raise SystemExit(
+                "--limit {} asks for a negative number of cases; it would "
+                "silently drop the tail and pay for the rest".format(
+                    args.limit))
         order = order[:args.limit]
 
     out.mkdir(parents=True, exist_ok=True)
@@ -349,7 +440,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               flush=True)
         attempt = ask(case["diff"], args.timeout)
         attempt["diff_digest"] = digest_text(case["diff"])
-        attempt["diff_truncated"] = case["truncated"]
+        # Recorded as the record stated it, not as a coercion of it. The run
+        # cannot reach here unless every case said `False` explicitly, so this
+        # is provenance rather than a flag somebody downstream has to read.
+        attempt["diff_truncated"] = case["truncation"]
         attempt["asked_at"] = datetime.now(timezone.utc).isoformat()
         record["cases"][case["case_id"]] = attempt
         print("      {}".format(attempt.get("verdict")
@@ -369,12 +463,47 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # `sessions_distinct: True` — the absence certifying the property it was
     # meant to demonstrate. An id is required for a verdict now, so this is a
     # second reading of the same fact rather than the only one.
-    judged = [c for c in record["cases"].values() if c.get("verdict")]
-    ids = [c.get("session_id") for c in judged]
-    requests = [c.get("request_id") for c in judged]
-    record["sessions_distinct"] = bool(judged) and len(set(ids)) == len(ids)
-    record["responses_distinct"] = bool(judged) and \
-        len(set(requests)) == len(requests)
+    # Over **every attempt**, not only the ones that produced a verdict. A
+    # call that failed validation still went to the vendor and still carries
+    # its identifiers, and reuse there is the same contamination: one accepted
+    # answer beside a refused one sharing its session reported
+    # `calls_compared: 1`, `sessions_distinct: true` and printed "every call
+    # its own session: True" over two calls. Codex, 2026-09-05.
+    attempts = list(record["cases"].values())
+    ids = [c.get("session_id") for c in attempts
+           if isinstance(c.get("session_id"), str) and c["session_id"].strip()]
+    requests = [c.get("request_id") for c in attempts
+               if isinstance(c.get("request_id"), str) and c["request_id"].strip()]
+    # `bool(judged) and ...` made a run with nothing to compare report
+    # `sessions_distinct: false`, and the tool then said two or more calls
+    # shared a session id when no call had been made. "I could not check" is
+    # not "it is contaminated", and this repository keeps the two apart.
+    # `null` is the third answer; the counts beside it say why. Found by the
+    # `--limit 0` test, 2026-09-05.
+    record["calls_made"] = len(attempts)
+    # Two counts, because there are two comparisons. One `calls_compared`
+    # stood for both, so an attempt with a session id and no response id was
+    # reported as compared, and a run could claim `every_call_compared: true`
+    # while response distinctness covered one attempt of two. Codex,
+    # 2026-09-05.
+    record["sessions_compared"] = len(ids)
+    record["responses_compared"] = len(requests)
+    # Whether the claim covers the run at all. An attempt whose reply carried
+    # no id cannot be shown to be its own, so distinctness over the rest is
+    # not a statement about every call — and it is only a statement about the
+    # run when *both* identifiers were readable on every attempt.
+    record["every_call_compared"] = bool(attempts) and \
+        len(ids) == len(requests) == len(attempts)
+    record["sessions_distinct"] = (len(set(ids)) == len(ids)
+                                   if ids else None)
+    record["responses_distinct"] = (len(set(requests)) == len(requests)
+                                    if requests else None)
+    # **Reuse across cases is the contamination this looks for**, and it was
+    # reported as a boolean nobody acted on. Distinct identifiers are what
+    # separates one call from another; two cases sharing one is the same
+    # context answering twice. Codex, 2026-09-05.
+    record["identifier_reuse"] = (record["sessions_distinct"] is False
+                                  or record["responses_distinct"] is False)
 
     path = out / "grok-adjudication.json"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n",
@@ -382,11 +511,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print()
     print("{} case(s) into {}".format(len(record["cases"]), path))
     print("  {}".format(record["counts"]))
-    print("  every call its own session: {}".format(record["sessions_distinct"]))
+    # The line used to say "every call" over the calls that were compared,
+    # which is a claim about the run made from a subset of it.
+    print("  of {} call(s): {} carried a session id (distinct: {}), {} "
+          "carried a response id (distinct: {})".format(
+              record["calls_made"], record["sessions_compared"],
+              record["sessions_distinct"], record["responses_compared"],
+              record["responses_distinct"]))
     # Exit 2 when anything failed to produce a verdict: a partial answer key is
     # not an answer key, and this repository never returns success for "I could
     # not check".
-    return 2 if record["counts"]["no_verdict"] else 0
+    if record["identifier_reuse"]:
+        shared = ("session" if record["sessions_distinct"] is False
+                  else "response")
+        print("  two or more calls share a {} id. A repeated session id means "
+              "they were not separate contexts; a repeated response id means "
+              "one answer was counted twice. Either way they are not "
+              "independent observations".format(shared), file=sys.stderr)
+    return 2 if (record["counts"]["no_verdict"]
+                 or record["identifier_reuse"]) else 0
 
 
 if __name__ == "__main__":
