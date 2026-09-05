@@ -600,6 +600,191 @@ def cmd_show(args) -> int:
     return 0
 
 
+HOOK_MARK = "# installed by tools/review_receipt.py"
+
+HOOKS = {
+    "pre-commit": "check",
+    "commit-msg": 'check-message "$1"',
+}
+
+
+def hook_text(name, command):
+    """The hook body. `git rev-parse` rather than a path baked in at install.
+
+    A baked path breaks the moment the repository is moved or cloned
+    elsewhere, and it breaks by running a tool that is not there — which git
+    reports as a failed hook, so a broken gate would look like a refusing one.
+    """
+    return (
+        "#!/bin/sh\n"
+        "{}\n"
+        "#\n"
+        "# Refuses a commit whose staged content is not what a review was\n"
+        "# recorded for. The rule it enforces was executed from memory and\n"
+        "# failed twice on 2026-09-03: review one tree, commit another.\n"
+        "#\n"
+        "#   tools/review_receipt.py write --ruling ready --complete\n"
+        "#   tools/review_receipt.py write --ruling bypass --reason '...'\n"
+        "#\n"
+        "# To remove: tools/review_receipt.py uninstall\n"
+        'root="$(git rev-parse --show-toplevel)" || exit 1\n'
+        'tool="$root/tools/review_receipt.py"\n'
+        '# Fail closed, and say why. Without this the hook dies on a python\n'
+        "# traceback about a missing file, which refuses the commit for a\n"
+        '# reason nobody can read — and an unreadable refusal gets worked\n'
+        '# around rather than fixed.\n'
+        'if [ ! -f "$tool" ]; then\n'
+        '  echo "REFUSED: the review gate is installed but $tool is not '
+        'there." >&2\n'
+        '  echo "  Restore it, or remove the gate with: git config '
+        '--unset core.hooksPath; rm .git/hooks/pre-commit '
+        '.git/hooks/commit-msg" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        'exec python3 "$tool" {}\n'.format(HOOK_MARK, command))
+
+
+def hook_state(path, expected):
+    """`absent`, `ours`, `edited` or `foreign` — four answers, not two.
+
+    `edited` exists because a hook this tool wrote and somebody then changed
+    is neither safe to overwrite nor somebody else's. Collapsing it into
+    either one loses the edit or blocks the ordinary case forever.
+    """
+    if path.is_symlink():
+        # A symlink is not this tool's file, whatever it points at.
+        return "foreign"
+    if not path.exists():
+        return "absent"
+    try:
+        found = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "foreign"
+    if found == expected:
+        return "ours"
+    return "edited" if HOOK_MARK in found else "foreign"
+
+
+def hooks_dir(root):
+    """Where git will actually look, which is not always `.git/hooks`."""
+    configured, _why = git("config", "--get", "core.hooksPath", cwd=root)
+    if configured:
+        path = Path(configured)
+        return path if path.is_absolute() else root / path
+    common, _why = git("rev-parse", "--git-common-dir", cwd=root)
+    base = Path(common) if common else Path(".git")
+    if not base.is_absolute():
+        base = root / base
+    return base / "hooks"
+
+
+def cmd_install(args) -> int:
+    root, why = repo_root()
+    if root is None:
+        print("not a git repository: {}".format(why), file=sys.stderr)
+        return 2
+    target = hooks_dir(root)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print("{} could not be created: {}".format(target, exc),
+              file=sys.stderr)
+        return 2
+
+    # Refused rather than overwritten. A hook somebody else put there does
+    # something, and replacing it silently would remove a control to install
+    # one — the shape this whole file exists to catch.
+    #
+    # Ownership is the *whole* body, not the marker line. Reading ownership
+    # off a comment appearing anywhere meant a hook this tool wrote and
+    # somebody then edited was still "ours", so `install` silently discarded
+    # the edit and `uninstall` deleted it — and a foreign hook that merely
+    # copied the line inherited both. Codex, 2026-09-05.
+    blocked = []
+    for name, command in HOOKS.items():
+        state = hook_state(target / name, hook_text(name, command))
+        if state in ("foreign", "edited"):
+            blocked.append("{} ({})".format(
+                target / name,
+                "this tool did not write it" if state == "foreign"
+                else "written by this tool and edited since"))
+    if blocked and not args.force:
+        print("REFUSED: a hook is already there:\n    {}\n  Read it, and keep "
+              "what it does. Pass --force to replace it once you have."
+              .format("\n    ".join(blocked)), file=sys.stderr)
+        return 1
+
+    for name, command in HOOKS.items():
+        path = target / name
+        try:
+            # Unlinked first, never written through. `write_text` follows a
+            # symlink, so a hook path pointing elsewhere would have this
+            # writing and chmodding a file outside the hooks directory.
+            # Codex, 2026-09-05.
+            if path.is_symlink() or path.exists():
+                path.unlink()
+            path.write_text(hook_text(name, command), encoding="utf-8")
+            path.chmod(0o755)
+        except OSError as exc:
+            print("{} could not be written: {}".format(path, exc),
+                  file=sys.stderr)
+            return 2
+        # Written is not installed: a hook without the executable bit is
+        # ignored by git in silence, which is a gate that reports success and
+        # checks nothing.
+        if not os.access(str(path), os.X_OK):
+            print("{} is not executable, so git would ignore it".format(path),
+                  file=sys.stderr)
+            return 2
+        print("installed {}".format(path))
+    print("Before each commit: tools/review_receipt.py write --ruling ready "
+          "--complete")
+    return 0
+
+
+def cmd_uninstall(args) -> int:
+    root, why = repo_root()
+    if root is None:
+        print("not a git repository: {}".format(why), file=sys.stderr)
+        return 2
+    target = hooks_dir(root)
+    # Every hook is judged before any is removed. Removing one and then
+    # refusing on the next left the gate half installed — `pre-commit` gone,
+    # `commit-msg` still there — which is a worse state than either finishing
+    # or doing nothing, and the refusal read as though nothing had happened.
+    # Codex, 2026-09-05.
+    states = {name: hook_state(target / name, hook_text(name, command))
+              for name, command in HOOKS.items()}
+    refuse = [(name, state) for name, state in states.items()
+              if state not in ("absent", "ours")]
+    if refuse:
+        for name, state in sorted(refuse):
+            print("REFUSED: {} is not what this tool wrote ({}); removing it "
+                  "would delete somebody else's work".format(
+                      target / name,
+                      "written by this tool and edited since"
+                      if state == "edited" else "this tool did not write it"),
+                  file=sys.stderr)
+        print("  Nothing was removed.", file=sys.stderr)
+        return 1
+
+    removed = []
+    for name, state in states.items():
+        path = target / name
+        if state == "absent":
+            continue
+        try:
+            path.unlink()
+        except OSError as exc:
+            print("{} could not be removed: {}".format(path, exc),
+                  file=sys.stderr)
+            return 2
+        removed.append(str(path))
+    print("removed {}".format(", ".join(removed)) if removed
+          else "nothing to remove; the gate was not installed here")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -629,6 +814,14 @@ def main(argv=None) -> int:
 
     show = sub.add_parser("show", help="what is on record")
     show.set_defaults(func=cmd_show)
+
+    install = sub.add_parser("install", help="put the hooks where git looks")
+    install.add_argument("--force", action="store_true",
+                         help="replace a hook this tool did not write")
+    install.set_defaults(func=cmd_install)
+
+    uninstall = sub.add_parser("uninstall", help="remove them again")
+    uninstall.set_defaults(func=cmd_uninstall)
 
     args = parser.parse_args(argv)
     return args.func(args)

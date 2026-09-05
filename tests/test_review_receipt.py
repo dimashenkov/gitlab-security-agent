@@ -6,6 +6,7 @@ here is a form of that, plus the forms that would make the gate unusable if it
 got them wrong.
 """
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -405,6 +406,170 @@ check("a bypass does not excuse content staged after it",
       code == 1 and "not what was reviewed" in out, out)
 
 print()
+print("=== installing, and whether git actually runs it ===")
+
+# The gate passed every case for two days while installed nowhere, so the last
+# thing it asserts is that a real `git commit` goes through it. Codex,
+# 2026-09-05: neither core.hooksPath nor an executable hook existed, so normal
+# commits bypassed both checks entirely.
+root = fresh()
+code, out = tool("install", cwd=root)
+check("install reports what it wrote", code == 0 and "pre-commit" in out, out)
+for name in ("pre-commit", "commit-msg"):
+    path = root / ".git" / "hooks" / name
+    check("{} exists and is executable".format(name),
+          path.is_file() and os.access(str(path), os.X_OK), str(path))
+
+# The hook calls the repository's own copy, so a repository that has none is a
+# hook pointing at nothing. It must say so rather than dying on a traceback.
+done = sh("git", "commit", "--allow-empty", "-m", "x", cwd=root)
+check("a hook whose tool is missing refuses, and says what to do",
+      done.returncode != 0
+      and "the review gate is installed" in (done.stdout + done.stderr)
+      and "remove the gate" in (done.stdout + done.stderr),
+      (done.stdout + done.stderr)[:250])
+
+# Give the temp repository the layout the hook expects, which is the layout the
+# real one has. Copying the tool rather than pointing at this checkout: a hook
+# reaching outside its own repository would keep working after the tool moved,
+# and would then be testing a copy nobody edits.
+(root / "tools").mkdir()
+(root / "tools" / "review_receipt.py").write_bytes(TOOL.read_bytes())
+
+(root / "a.py").write_text("VALUE = 2\n", encoding="utf-8")
+sh("git", "add", "-A", cwd=root)
+done = sh("git", "commit", "-m", "no receipt for this", cwd=root)
+check("a real commit with no receipt is refused",
+      done.returncode != 0 and "no review on record" in (
+          done.stdout + done.stderr),
+      (done.stdout + done.stderr)[:200])
+
+msg = with_message(root, "Raise the value\n\nBecause it was too low.\n")
+tool("write", "--ruling", "ready", "--complete", "--message-file", str(msg),
+     cwd=root)
+done = sh("git", "commit", "-F", str(msg), cwd=root)
+check("a real commit with a receipt goes through",
+      done.returncode == 0, (done.stdout + done.stderr)[:200])
+
+# What the hook is for, end to end: reviewed, then something else staged.
+(root / "b.py").write_text("VALUE = 3\n", encoding="utf-8")
+sh("git", "add", "-A", cwd=root)
+msg2 = with_message(root, "Second\n\nBody.\n")
+tool("write", "--ruling", "ready", "--complete", "--message-file", str(msg2),
+     cwd=root)
+(root / "c.py").write_text("SNEAKED = True\n", encoding="utf-8")
+sh("git", "add", "-A", cwd=root)
+done = sh("git", "commit", "-F", str(msg2), cwd=root)
+check("a real commit staged after the review is refused",
+      done.returncode != 0 and "not what was reviewed" in (
+          done.stdout + done.stderr),
+      (done.stdout + done.stderr)[:200])
+
+# A hook somebody else put there is a control; replacing it silently would
+# remove one to install one.
+root = fresh()
+(root / ".git" / "hooks" / "pre-commit").write_text(
+    "#!/bin/sh\necho somebody else\n", encoding="utf-8")
+code, out = tool("install", cwd=root)
+check("a foreign hook is refused rather than overwritten",
+      code == 1 and "did not write it" in out, out)
+check("and the refusal says how to proceed", "--force" in out, out)
+code, out = tool("install", "--force", cwd=root)
+check("--force replaces it", code == 0, out)
+
+code, out = tool("uninstall", cwd=root)
+check("uninstall removes what it wrote", code == 0 and "removed" in out, out)
+check("and the hooks are gone",
+      not (root / ".git" / "hooks" / "pre-commit").exists(), out)
+code, out = tool("uninstall", cwd=root)
+check("uninstalling twice says so rather than failing",
+      code == 0 and "was not installed" in out, out)
+
+root = fresh()
+(root / ".git" / "hooks" / "commit-msg").write_text(
+    "#!/bin/sh\nexit 0\n", encoding="utf-8")
+code, out = tool("uninstall", cwd=root)
+check("uninstall refuses to delete a hook it did not write",
+      code == 1 and "somebody else" in out, out)
+
+# Ownership from a marker line meant a hook this tool wrote and somebody then
+# edited was still "ours": install discarded the edit, uninstall deleted it,
+# and a foreign hook that merely copied the line inherited both.
+root = fresh()
+tool("install", cwd=root)
+hook = root / ".git" / "hooks" / "pre-commit"
+hook.write_text(hook.read_text(encoding="utf-8") + "\n# my own line\n",
+                encoding="utf-8")
+code, out = tool("install", cwd=root)
+check("an edited hook is not silently overwritten",
+      code == 1 and "edited since" in out, out)
+code, out = tool("uninstall", cwd=root)
+check("and it is not silently deleted either",
+      code == 1 and "edited since" in out, out)
+check("the edit is still there", "my own line" in hook.read_text(
+    encoding="utf-8"), "")
+
+root = fresh()
+(root / ".git" / "hooks" / "pre-commit").write_text(
+    "#!/bin/sh\n# installed by tools/review_receipt.py\necho not really\n",
+    encoding="utf-8")
+code, out = tool("install", cwd=root)
+check("a foreign hook carrying the marker line does not inherit ownership",
+      code == 1, out)
+
+# `write_text` follows a symlink, so a hook path pointing elsewhere had this
+# writing and chmodding a file outside the hooks directory.
+root = fresh()
+outside = root / "not-a-hook.txt"
+outside.write_text("do not touch\n", encoding="utf-8")
+(root / ".git" / "hooks" / "pre-commit").symlink_to(outside)
+code, out = tool("install", cwd=root)
+check("a symlinked hook is refused rather than written through",
+      code == 1 and "did not write it" in out, out)
+check("and the file it pointed at is untouched",
+      outside.read_text(encoding="utf-8") == "do not touch\n", "")
+code, out = tool("install", "--force", cwd=root)
+check("even --force writes the hook, not the target",
+      code == 0 and outside.read_text(encoding="utf-8") == "do not touch\n",
+      out)
+check("and the hook is a real file now",
+      not (root / ".git" / "hooks" / "pre-commit").is_symlink(), "")
+
+# The case the symlink branch exists for. Reading through the link, a symlink
+# pointing at a file holding the expected text looks like this tool's own hook,
+# and install would proceed without a word — replacing a link somebody made on
+# purpose. It is somebody else's arrangement whatever it points at.
+root = fresh()
+tool("install", cwd=root)
+real = root / ".git" / "hooks" / "pre-commit"
+elsewhere = root / "kept-hook.sh"
+elsewhere.write_text(real.read_text(encoding="utf-8"), encoding="utf-8")
+real.unlink()
+real.symlink_to(elsewhere)
+code, out = tool("install", cwd=root)
+check("a symlink is refused even when it points at the expected text",
+      code == 1 and "did not write it" in out, out)
+code, out = tool("uninstall", cwd=root)
+check("and uninstall refuses it too rather than unlinking silently",
+      code == 1, out)
+check("the file it pointed at survives", elsewhere.is_file(), "")
+
+# Judging while removing left the gate half installed: pre-commit gone,
+# commit-msg still there, and the refusal read as though nothing had happened.
+# A half-installed gate is worse than either finished state. Codex, 2026-09-05.
+root = fresh()
+tool("install", cwd=root)
+edited = root / ".git" / "hooks" / "commit-msg"
+edited.write_text(edited.read_text(encoding="utf-8") + "\n# mine\n",
+                  encoding="utf-8")
+code, out = tool("uninstall", cwd=root)
+check("a mixed state removes nothing rather than half of it",
+      code == 1 and "Nothing was removed" in out, out)
+check("the hook it would have removed first is still there",
+      (root / ".git" / "hooks" / "pre-commit").is_file(), "")
+check("and so is the edited one", edited.is_file(), "")
+
+print()
 print("=== check-push, deleted ===")
 
 root = fresh()
@@ -423,7 +588,7 @@ print()
 # and neither can pass while a case fails.
 # --------------------------------------------------------------------------
 
-EXPECTED_CASES = 46
+EXPECTED_CASES = 74
 
 
 def test_every_case_behaves():
