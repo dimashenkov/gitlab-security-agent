@@ -1515,6 +1515,7 @@ steps:
     done_when: undefined
   - id: sonnet_gate
     requires: [extend_to_100, classify_alarms]
+    reference: measurements/reference/sentinel-opus.json
     done_when: undefined
 ```
 
@@ -1544,8 +1545,24 @@ ever satisfy `adjudicate_30`, so the whole order became unreachable — a perman
 prohibition wearing the clothes of "cannot tell", under which even completed
 artifacts would stay invisible. Four steps now carry a real condition. Two remain
 `undefined`, and honestly: `tune`, whose predicates are words no program
-evaluates, and `sonnet_gate`, which has no artifact at all —
-`tools/sentinel_compare.py` prints a verdict and stores nothing.
+evaluates, and `sonnet_gate`, which has **no usable baseline** — the reference
+at `measurements/reference/sentinel-opus.json` is retired, because no row
+anywhere under `measurements/` carries `models_verified`, so it cannot separate
+the model that reviewed from the model that verified. Measured on 2026-09-05 by
+calling the comparator against it: *"No arrangement passes."*
+
+The storage point is the **second** obstacle and was written here as though it
+were the only one: `tools/sentinel_compare.py` prints a verdict and stores
+nothing, so even a comparison that could be performed would leave nothing a
+later reader can check. Both are true; acting on the second first would add a
+`--json` flag and leave the step exactly as uncompletable. The order tool now
+reports the first, by asking `sentinel_compare.validate_reference` rather than
+restating its rules, and the step declares its baseline in `reference:` above
+rather than leaving the path inside the tool.
+
+That is narrower than it reads: `sentinel_compare.py` still takes the reference
+as a positional argument, so nothing binds the file this order reports on to
+the file somebody eventually compares against. Recorded in `LIMITATIONS.md`.
 
 **`requires_no_open_questions` on the freeze, because the freeze digests this
 file.** Step 1 waits for no other step, so the tool named it first — and

@@ -205,12 +205,38 @@ def build() -> dict:
                 "{}: the reference measured a version of the case that is no "
                 "longer on disk".format(case_id))
 
+        shapes = {label: _shape(row) for label, row in rows.items()}
         entry = {
             "outcomes": outcomes,
-            "shape": {label: _shape(row) for label, row in rows.items()},
+            "shape": shapes,
             "case_digest": digest,
             "unstable_under_reference": len(set(outcomes.values())) > 1,
         }
+
+        # A case whose outcomes agree and whose failure *shapes* do not.
+        # `unstable_under_reference` is decided on the outcomes alone, so such
+        # a case was written out as comparable — and `sentinel_compare` refuses
+        # the whole reference for it, because "did a new kind of failure
+        # appear" has nothing to be measured against. The builder could
+        # therefore produce a file the comparator would not read, and nothing
+        # said so until somebody ran the comparison.
+        #
+        # Refused here rather than relabelled: calling it unstable would widen
+        # a word that means one measured thing, and `sentinel_compare` now
+        # requires an unstable case to have disagreeing outcomes. Codex,
+        # 2026-09-05.
+        if not entry["unstable_under_reference"]:
+            disagreed = [kind for kind in ("missed", "false_alarm")
+                         if len({s.get(kind) for s in shapes.values()}) != 1]
+            if disagreed:
+                raise ReferenceError(
+                    "{}: the passes agreed on whether the case passed and "
+                    "disagreed on how it failed ({}). A reference cannot say "
+                    "what shape of failure a change would have to differ from, "
+                    "and marking it unstable would widen a word that means "
+                    "disagreeing outcomes".format(
+                        case_id, ", ".join(sorted(disagreed))))
+
         if entry["unstable_under_reference"]:
             unstable.append(case_id)
         entries[case_id] = entry

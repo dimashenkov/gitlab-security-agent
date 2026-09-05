@@ -49,6 +49,7 @@ quiet zero, and a quiet zero here reads as "the cheaper model is fine".
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -77,6 +78,17 @@ from baseline import _system_identity  # noqa: E402
 # is supposed to judge.
 RULE_VERSION = 2
 
+# What the reference's `environment` has to say, and what the comparison reads
+# out of it — one list, so a field required in one place and ignored in the
+# other cannot happen. Each maps to the provenance field a challenger row must
+# match it against.
+ENVIRONMENT_FIELDS = (
+    ("system_prompt", "system_prompt_sha"),
+    ("verifier_prompt", "verifier_prompt_sha"),
+    ("findings_schema", "schema_sha"),
+    ("agent_version", "agent_version"),
+)
+
 
 def _shape(row: dict, where: str) -> dict:
     """The two kinds of failure, and neither of them coerced.
@@ -96,6 +108,19 @@ def _shape(row: dict, where: str) -> dict:
                     where, field, value))
         out[kind] = (not value) if kind == "missed" else value
     return out
+
+
+def _is_name_list(value) -> bool:
+    """A list of non-blank names, and a `str` is not one.
+
+    Written once because the same predicate is needed in four places and got
+    it wrong differently each time. The `str` exclusion is the point: Python
+    iterates a string into characters, so `"claude-opus-5"` passes any check
+    that only asks whether the value can be walked, and the comparison then
+    runs against thirteen one-letter model names instead of refusing.
+    """
+    return (isinstance(value, (list, tuple))
+            and all(isinstance(m, str) and m.strip() for m in value))
 
 
 def _reference_shape(entry: dict, case_id: str) -> dict:
@@ -142,6 +167,111 @@ def _rows_at(path: Path) -> list:
     return body if isinstance(body, list) else [body]
 
 
+def _check_row_shape(case_id: str, row: dict) -> None:
+    """The structural contract of one challenger row, checked at the boundary.
+
+    Codex, 2026-09-05, after twenty-four review rounds on one change, each
+    finding a different nested field escaping through a different path — a
+    `models_served` that was a bare string, a `settings` erased by `or {}`, a
+    `run_id` that was a list, a `model_substituted` that said `true` and passed
+    a check documented as requiring `false`:
+
+    > 24 rounds of malformed nested fields escaping through different paths is
+    > strong evidence that these documents need structural schema validation
+    > immediately after parsing. Semantic checks — cross-run uniqueness, model
+    > consistency, threshold feasibility — still belong in code, but container
+    > types, required keys, booleans and non-blank strings should be enforced
+    > once at the boundary. Field-by-field guards are demonstrably not
+    > converging reliably enough on their own.
+
+    So this runs for **every** row of every run, not for the comparable ones
+    only: the last defect of the series was that rows belonging to
+    `unstable_under_reference` skipped the guards entirely and still fed the
+    provenance and system-identity comparisons.
+    """
+    stamp = row.get("run_id")
+    if not isinstance(stamp, str) or not stamp.strip():
+        raise ComparisonError(
+            "{}: a row records {!r} for `run_id`, so nothing names which "
+            "execution it is".format(case_id, stamp))
+
+    members = row.get("members")
+    if not isinstance(members, dict):
+        raise ComparisonError(
+            "{}: the run records {} for `members`, where the safe and unsafe "
+            "blocks are required".format(case_id, type(members).__name__))
+
+    # The pair, by name, at the boundary. It was checked in `compare()` and
+    # formatted its complaint with `", ".join(sorted(members))`, which crashes
+    # on a key that is not a string — so a row with a non-string member key
+    # passed this function and raised `TypeError` where a refusal belonged.
+    # Codex, 2026-09-05. JSON cannot produce such a key; an in-process caller
+    # can, and the contract belongs in one place either way.
+    if set(members) != {"safe", "unsafe"}:
+        raise ComparisonError(
+            "{}: a pair is a safe and an unsafe member, and this row has "
+            "{}".format(case_id,
+                        ", ".join(sorted(repr(k) for k in members)) or
+                        "neither"))
+
+    for label, block in members.items():
+        if not isinstance(block, dict):
+            raise ComparisonError(
+                "{}: the run records {} for its {} member, where a block with "
+                "`provenance` is required".format(
+                    case_id, type(block).__name__, label))
+        prov = block.get("provenance")
+        if not isinstance(prov, dict):
+            raise ComparisonError(
+                "{}: the {} member records {} for `provenance`, so nothing "
+                "says what answered it".format(
+                    case_id, label, type(prov).__name__))
+
+        # `is not False`, not `is not None`. The comment that stood over this
+        # check said "required to be false and present, not merely not-true"
+        # while the code implemented "not absent", so a run recording
+        # `model_substituted: true` — the provider saying in as many words
+        # that it answered with a different model — went through.
+        substituted = prov.get("model_substituted")
+        if substituted is not False:
+            raise ComparisonError(
+                "{}: `model_substituted` is {!r}. The run has to say the "
+                "provider did *not* substitute the model — {}".format(
+                    case_id, substituted,
+                    "and this run says it did" if substituted is True else
+                    "absent and unreadable are both 'nobody checked', and "
+                    "this experiment is about which model was asked"))
+
+        served = prov.get("models_served")
+        if not served:
+            raise ComparisonError(
+                "{}: the run records no served model, so nothing says which "
+                "model answered".format(case_id))
+        if not _is_name_list(served):
+            raise ComparisonError(
+                "{}: the run records {} for `models_served`, where a list of "
+                "model names is required".format(
+                    case_id, type(served).__name__))
+
+        # Absence means `[]` because absence here has a defined meaning — the
+        # verifier only fires when there is something to verify. A value that
+        # is present and cannot be read has no such meaning, and `or []` used
+        # to turn `0`, `""` and `{}` into "nothing was verified", which this
+        # file then acts on.
+        verified = prov.get("models_verified", [])
+        if not _is_name_list(verified):
+            raise ComparisonError(
+                "{}: the run records {} for `models_verified`, where a list of "
+                "model names is required".format(
+                    case_id, type(verified).__name__))
+
+        settings = block.get("settings", {})
+        if not isinstance(settings, dict):
+            raise ComparisonError(
+                "{}: a member records {} for `settings`, where an object is "
+                "required".format(case_id, type(settings).__name__))
+
+
 def read_run(path: Path, expected: dict) -> dict:
     """One challenger run: case id to row, refusing anything ambiguous."""
     rows = _rows_at(path)
@@ -167,25 +297,172 @@ def read_run(path: Path, expected: dict) -> dict:
             raise ComparisonError(
                 "{}: {} measured a different version of the case than the "
                 "reference did".format(path, case_id))
+        _check_row_shape(case_id, row)
         out[case_id] = row
     return out
 
 
-def compare(reference_path: Path, run_paths: list) -> dict:
-    reference = json.loads(Path(reference_path).read_text(encoding="utf-8"))
-    cases = reference["cases"]
-    comparable = list(reference["comparable"])
+REF_USABLE = "usable"
+REF_RETIRED = "retired"
+REF_UNUSABLE = "unusable"
+REF_CANNOT_TELL = "cannot tell"
+
+REF_STATES = (REF_USABLE, REF_RETIRED, REF_UNUSABLE, REF_CANNOT_TELL)
+
+
+class ReferenceState:
+    """Everything about a baseline that can be established without runs.
+
+    Extracted from `compare()` on 2026-09-05 so that a second reader — the
+    D-013 order tool, which reports whether the Sonnet gate can be attempted at
+    all — asks this file rather than reimplementing its rules. Codex, the same
+    day: the comparator owns considerably more than the `retired` key (rule
+    compatibility, thresholds, missing cases, duplicate comparable entries,
+    environment presence, two-pass shapes, partition integrity, enough passing
+    cases to detect the threshold), and a second implementation of that list
+    would be the weaker one, deciding.
+
+    It carries the parsed body and its digest so the two readers speak about
+    the same bytes. `compare()` consumes `.reference` and does not reopen the
+    path — Codex again: sharing a validator is not sharing an input, and a file
+    can change between one read and the next.
+
+    No truth value. `usable`, `retired`, `unusable` and `cannot tell` are four
+    answers, and the last is not the third.
+    """
+
+    __slots__ = ("digest", "path", "reference", "state", "why")
+
+    def __init__(self, state, why, path, reference=None, digest=None):
+        if state not in REF_STATES:
+            raise ValueError("unknown reference state {!r}".format(state))
+        self.state = state
+        self.why = why
+        self.path = path
+        self.reference = reference
+        self.digest = digest
+
+    def __bool__(self):
+        raise TypeError(
+            "a reference state is not a boolean: it is {!r}. A retired "
+            "baseline and one that could not be read are different answers, "
+            "and neither is usable.".format(self.state))
+
+    def __repr__(self):
+        return "ReferenceState({!r}, {!r})".format(self.state, str(self.path))
+
+
+def validate_reference(reference_path) -> ReferenceState:
+    """The baseline, judged on its own — no challenger runs involved.
+
+    Never raises for a bad reference: it reports. A caller that wants the old
+    behaviour asks for `.state` and raises itself, which `compare()` does.
+    """
+    path = Path(reference_path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return ReferenceState(REF_CANNOT_TELL, (
+            "the reference at {} could not be read ({}: {}), which is not the "
+            "same as there being nothing wrong with it".format(
+                path, type(exc).__name__, exc)), path)
+    try:
+        reference = json.loads(text)
+    except ValueError as exc:
+        return ReferenceState(REF_CANNOT_TELL, (
+            "the reference at {} is not readable JSON ({}), so none of its "
+            "fields were interpreted".format(path, exc)), path)
+    if not isinstance(reference, dict):
+        return ReferenceState(REF_CANNOT_TELL, (
+            "the reference at {} holds {} where an object is required".format(
+                path, type(reference).__name__)), path)
+
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def refuse(state, why):
+        return ReferenceState(state, why, path, reference, digest)
+
+    try:
+        _reference_problems(reference)
+    except ComparisonError as exc:
+        state = REF_RETIRED if str(exc).startswith("this reference is retired") \
+            else REF_UNUSABLE
+        return refuse(state, str(exc))
+    except Exception as exc:
+        # The promise in this function's docstring, kept rather than asserted.
+        # Every shape a reference can be wrong in is meant to leave here as a
+        # `ComparisonError`; anything that does not is a hole in that list, and
+        # a hole means the reference was not judged — which is `cannot tell`,
+        # never `usable`. A traceback out of the CLI is the same information
+        # delivered as a crash.
+        return refuse(REF_CANNOT_TELL, (
+            "judging the reference at {} raised {}: {} — the baseline was not "
+            "established either way, and this is a gap in the checks above "
+            "rather than a verdict about the file".format(
+                path, type(exc).__name__, exc)))
+    return refuse(REF_USABLE, (
+        "the baseline at {} describes a comparison: {} comparable case(s), "
+        "rule version {}, {} confirmation(s) required".format(
+            path, len(reference["comparable"]),
+            reference["threshold"]["rule_version"],
+            reference["threshold"]["confirmations_required"])))
+
+
+def _reference_problems(reference: dict) -> None:
+    """Raise the first thing wrong with the baseline, or return.
+
+    The body of what `compare()` used to do inline before it opened a single
+    run. Kept as raise-on-first rather than a list because every one of these
+    makes the ones after it meaningless — a reference with no `threshold` has
+    nothing for the threshold checks to say.
+    """
     # Asked first, and asked of the reference rather than of the runs. A
     # retired reference is one somebody has already established cannot answer
     # the question, and every check below it would then report a *reason* — a
     # served-model set, a verifier — for a file that is not a baseline at all,
     # sending the reader to fix the symptom.
-    retired = reference.get("retired")
-    if retired:
+    #
+    # It is also the first thing *read*, which it was not: `cases` and
+    # `comparable` were indexed above it, so `{"retired": true}` raised
+    # `KeyError('cases')` — a traceback out of the CLI where a refusal belongs.
+    # Codex, 2026-09-05.
+    # **Presence, not truthiness.** Codex, 2026-09-05: `if retired:` treats
+    # `false`, `null`, `0`, `""`, `[]` and `{}` exactly as it treats a file
+    # that never mentioned retirement, so a reference carrying a malformed
+    # retirement marker was classified usable. That is this repository's own
+    # recurring defect — an absence read as agreement — sitting on the field
+    # that decides whether a baseline is a baseline at all.
+    #
+    # The only accepted way to say "not retired" is to omit the key. A present
+    # `retired` must be an object naming why, and anything else is refused with
+    # instructions rather than resolved in the file's favour.
+    if "retired" in reference:
+        retired = reference["retired"]
+        if not isinstance(retired, dict) or not retired:
+            raise ComparisonError(
+                "this reference declares `retired` as {!r}, which says neither "
+                "that it is a baseline nor why it is not. Omit the key to say "
+                "the reference is live, or give an object with a `why` — a "
+                "marker nobody can read is refused rather than guessed"
+                .format(retired))
         raise ComparisonError(
             "this reference is retired and is not a baseline: {}".format(
                 retired.get("why", "no reason recorded")))
 
+    # The shapes, before anything indexes them. `validate_reference` promises
+    # its callers that a bad reference is reported rather than raised, and that
+    # promise was only true for the files that happened to have these keys.
+    for name, kind, what in (("cases", dict, "an object of case records"),
+                             ("comparable", list, "a list of case ids"),
+                             ("threshold", dict, "an object")):
+        if not isinstance(reference.get(name), kind):
+            raise ComparisonError(
+                "the reference has no usable `{}`: it holds {} where {} is "
+                "required, so nothing below could be checked".format(
+                    name, type(reference.get(name)).__name__, what))
+
+    cases = reference["cases"]
+    comparable = list(reference["comparable"])
     threshold = reference["threshold"]
 
     # The rule is versioned rather than described by flags. Three booleans sat
@@ -211,46 +488,278 @@ def compare(reference_path: Path, run_paths: list) -> dict:
             raise ComparisonError(
                 "the frozen `{}` is {!r}; a threshold has to be a whole "
                 "number of cases".format(name, value))
-    if reference.get("missing"):
+    # Five places below read a field without first asking what it is, and
+    # Codex found them one per round on 2026-09-05 — `outcomes` as a list whose
+    # `set()` has the right names and whose `.items()` does not exist, `missing`
+    # as a number `sorted()` cannot walk, a case id that is itself a list and so
+    # cannot be looked up, `unstable_under_reference` as a scalar `set()`
+    # refuses, `environment` as anything at all provided it is truthy. Every
+    # one became an `AttributeError` or a `TypeError` that the catch-all in
+    # `validate_reference` reported as "could not tell" about a file whose
+    # defect has a name.
+    #
+    # Repaired together rather than one per round: the class is "a container
+    # read for its contents before anything asked whether it is that
+    # container", and fixing the instance leaves the class.
+    if "missing" in reference:
+        missing = reference["missing"]
+        if not _is_name_list(missing):
+            raise ComparisonError(
+                "the reference records `missing` as {}, where a list of case "
+                "ids is required".format(type(missing).__name__))
+        if missing:
+            raise ComparisonError(
+                "the reference is missing {}, so it describes a narrower suite "
+                "than the one it names".format(", ".join(sorted(missing))))
+
+    bad_ids = [] if _is_name_list(comparable) else [
+        c for c in comparable if not isinstance(c, str) or not c.strip()]
+    if bad_ids:
         raise ComparisonError(
-            "the reference is missing {}, so it describes a narrower suite "
-            "than the one it names".format(
-                ", ".join(sorted(reference["missing"]))))
+            "the comparable list holds {!r}, where case ids are required — a "
+            "value that is not a name cannot be looked up in `cases`".format(
+                bad_ids[0]))
     if len(comparable) != len(set(comparable)):
         raise ComparisonError(
             "a case is listed twice among the comparable ones, which counts "
             "one measurement more than once")
-    if not (reference.get("environment") or {}):
+    # Asked here rather than after the per-case loops: an empty comparable list
+    # makes every complaint below it a detail of a file that could not have
+    # answered the question anyway, and the reader would be sent to fix the
+    # detail.
+    if not comparable:
+        raise ComparisonError(
+            "the reference has no comparable cases, so there is nothing this "
+            "comparison could have found")
+
+    # Required, not merely well-shaped when present. The first version of this
+    # very check wrote `if unstable is not None and ...`, which exempted both
+    # `null` and an absent key — and `compare()` calls `len()` on the field a
+    # hundred lines later. Codex, 2026-09-05, on the sweep that was written to
+    # end this class: the exemption is the class, reintroduced inside the fix
+    # for it. A reference that never says which cases were unstable has not
+    # said none were.
+    unstable = reference.get("unstable_under_reference")
+    if not _is_name_list(unstable):
+        raise ComparisonError(
+            "the reference records `unstable_under_reference` as {}, where a "
+            "list of case ids is required — a reference that does not say "
+            "which cases were unstable has not said that none were".format(
+                type(unstable).__name__))
+    # The same rule the comparable list carries, and it was missing here:
+    # `set()` a hundred lines below collapses a repeat silently, while the
+    # number this file *prints* for how many cases were unstable counts the
+    # list. Codex, 2026-09-05.
+    if len(unstable) != len(set(unstable)):
+        raise ComparisonError(
+            "a case is listed twice among the unstable ones, which reports one "
+            "exclusion as two")
+
+    if not isinstance(reference.get("environment"), dict) or \
+            not reference["environment"]:
         raise ComparisonError(
             "the reference records no environment, so there is nothing for a "
             "challenger to be held against")
+    # And the fields the comparison actually reads. Codex, 2026-09-05:
+    # `{"host": "x"}` satisfied "records an environment" while recording none
+    # of them, and the loop that holds a challenger to the environment skipped
+    # every field the reference left out — so a baseline with an environment
+    # object full of nothing gave every challenger a free pass on the prompts,
+    # the schema and the agent version, and the run that changed all four
+    # would have been reported as a model comparison.
+    for field, _ in ENVIRONMENT_FIELDS:
+        value = reference["environment"].get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ComparisonError(
+                "the reference's environment records {!r} for `{}`. A "
+                "challenger is held to every part of it that is written down, "
+                "so a part left out is a part nobody checks".format(
+                    value, field))
+
+    # `observed_models` is read with `.items()` a hundred lines below and was
+    # validated nowhere, so a truthy non-mapping crashed the comparator *after*
+    # `validate_reference` had called the baseline usable. Codex, 2026-09-05:
+    # the sweep validated the containing mappings and not the nested ones.
+    # The models the baseline is *about*, checked here rather than a hundred
+    # lines into the comparison. Codex, 2026-09-05: `compare()` refuses a
+    # reference that names no `verifier_model`, but only once challenger runs
+    # are in hand — so `validate_reference` called such a baseline usable and
+    # the order tool reported the Sonnet gate's inputs as established for a
+    # file the comparison was certain to reject. The same precondition-only-on-
+    # the-spending-path defect as the two-pass agreement check, one field over.
+    for name in ("model", "verifier_model"):
+        value = reference.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise ComparisonError(
+                "the reference records {!r} for `{}`, so it does not say which "
+                "model it is a baseline for and a challenger cannot be held to "
+                "it".format(value, name))
+
+    observed = reference.get("observed_models")
+    if observed is not None:
+        if not isinstance(observed, dict):
+            raise ComparisonError(
+                "the reference records `observed_models` as {}, where an "
+                "object naming the models each member was answered by is "
+                "required".format(type(observed).__name__))
+        # And its values, not only the outer mapping. Codex, 2026-09-05:
+        # `{"safe": 3}` passed and crashed at `for m in expected`, and
+        # `{"safe": "claude-opus-5"}` was worse — a string walks into
+        # characters, so the comparison ran against thirteen one-letter model
+        # names and produced an answer instead of a refusal.
+        for member, names in sorted(observed.items()):
+            if not _is_name_list(names):
+                raise ComparisonError(
+                    "the reference records {} for `observed_models[{!r}]`, "
+                    "where a list of model names is required".format(
+                        type(names).__name__, member))
     for case_id in comparable:
-        entry = cases[case_id]
+        if case_id not in cases:
+            raise ComparisonError(
+                "{}: listed among the comparable cases and absent from "
+                "`cases`, so the reference names a case it does not "
+                "hold".format(case_id))
+
+    # **Every** record, not the comparable ones only. Codex, 2026-09-05, the
+    # mirror image of the defect that moved the challenger checks to the
+    # boundary: `read_run` reads `expected[case_id]["case_digest"]` for every
+    # case the reference holds, unstable ones included, and this loop covered
+    # `comparable`. So a record missing its digest passed `validate_reference`
+    # as usable and raised `KeyError` from `read_run` instead of a refusal.
+    #
+    # The agreement check further down stays comparable-only, and for a
+    # reason: an unstable case is *defined* by its two passes disagreeing, so
+    # asking it to agree would refuse every reference that records one.
+    for case_id, entry in sorted(cases.items()):
+        # The record itself, before anything reads a field off it. Codex,
+        # 2026-09-05: `cases[case_id]` raised `KeyError` for a comparable id
+        # the `cases` block does not hold, and `entry.get(...)` raised
+        # `AttributeError` for a record that is `null` or a list — both
+        # absorbed by the catch-all in `validate_reference` and reported as
+        # "could not tell". These are shapes with names; a named shape belongs
+        # in the list, or the catch-all starts answering questions that had an
+        # answer.
+        if not isinstance(entry, dict):
+            raise ComparisonError(
+                "{}: the reference holds {} for this case, where a record with "
+                "`outcomes` and `shape` is required".format(
+                    case_id, type(entry).__name__))
         # Both passes, named. A reference carrying one outcome is a reference
         # that never checked itself for stability, and the whole exclusion of
         # unstable cases rests on having two.
-        outcomes = entry.get("outcomes") or {}
-        if set(outcomes) != {"pass-a", "pass-b"}:
+        outcomes = entry.get("outcomes")
+        # `isinstance` first, and then the names. `["pass-a", "pass-b"]` has
+        # exactly the right `set()` and no `.items()` at all, so the name check
+        # passed and the loop below raised.
+        if not isinstance(outcomes, dict) or \
+                set(outcomes) != {"pass-a", "pass-b"}:
             raise ComparisonError(
                 "{}: the reference records {} outcome(s), and it takes two to "
                 "know whether it agreed with itself".format(
-                    case_id, len(outcomes)))
-        for label, verdict in (entry.get("outcomes") or {}).items():
+                    case_id,
+                    len(outcomes) if isinstance(outcomes, dict) else
+                    "no usable"))
+        for label, verdict in outcomes.items():
             if not isinstance(verdict, bool):
                 raise ComparisonError(
                     "{}: the reference records {!r} for {}, which is not a "
                     "verdict".format(case_id, verdict, label))
-        for label, shape in (entry.get("shape") or {}).items():
+        # Both passes, by name, exactly as `outcomes` above demands them.
+        # Codex, 2026-09-05: `_reference_shape` reduces the shapes it finds to
+        # a set and accepts any set of size one, so a case recording *one*
+        # shape passed as two passes agreeing — the missing pass supplying the
+        # agreement. Arbitrary labels passed too, as long as their values
+        # matched. Require the pair; do not infer it from what is there.
+        shapes = entry.get("shape")
+        if not isinstance(shapes, dict) or set(shapes) != {"pass-a", "pass-b"}:
+            raise ComparisonError(
+                "{}: the reference records shapes for {}, and agreement about "
+                "how a case failed takes both passes by name".format(
+                    case_id,
+                    ", ".join(sorted(map(repr, shapes))) if isinstance(
+                        shapes, dict) and shapes else "nothing"))
+        for label, shape in shapes.items():
+            # The pass itself, before its fields. Codex, 2026-09-05:
+            # `"pass-a": null` reached `shape.get(...)`, raised
+            # `AttributeError`, and the catch-all in `validate_reference`
+            # turned a known-malformed reference into "I could not tell" — the
+            # two answers this repository keeps apart everywhere else.
+            if not isinstance(shape, dict):
+                raise ComparisonError(
+                    "{}: the reference records {} for {}, where an object with "
+                    "`missed` and `false_alarm` is required".format(
+                        case_id, type(shape).__name__, label))
             for kind in ("missed", "false_alarm"):
                 if not isinstance(shape.get(kind), bool):
                     raise ComparisonError(
                         "{}: the reference records {!r} for {} in {}, which "
                         "is not a verdict".format(
                             case_id, shape.get(kind), kind, label))
-    if not comparable:
-        raise ComparisonError(
-            "the reference has no comparable cases, so there is nothing this "
-            "comparison could have found")
+        # `read_run` compares every challenger row against this digest, for
+        # every case the reference holds — so it is required here, for every
+        # case, rather than assumed. Without it that comparison raised
+        # `KeyError` from inside a function whose caller had already been told
+        # the baseline was usable.
+        digest = entry.get("case_digest")
+        if not isinstance(digest, str) or not digest.strip():
+            raise ComparisonError(
+                "{}: the reference records {!r} for `case_digest`, so nothing "
+                "says which version of the case it measured".format(
+                    case_id, digest))
+
+        # The same fact is written twice — once as this flag and once by
+        # membership of the top-level list — and only the list was checked.
+        # Codex, 2026-09-05: so a stable case could carry the flag while
+        # sitting in `comparable`, and the invariant held for one
+        # representation of the fact and not for the other. Two spellings of
+        # one thing must agree or one of them is decoration.
+        flag = entry.get("unstable_under_reference")
+        listed = case_id in set(reference["unstable_under_reference"])
+        if not isinstance(flag, bool) or flag != listed:
+            raise ComparisonError(
+                "{}: the record says `unstable_under_reference` is {!r} and "
+                "the reference's own list says {}. The same fact written two "
+                "ways has to say the same thing".format(
+                    case_id, flag, listed))
+
+    # Whether the two passes agree about *how* the case failed is a fact about
+    # the reference alone, and it was only asked inside the comparison loop.
+    # Codex, 2026-09-05: so `validate_reference` could answer `usable` — and
+    # the order tool could report the Sonnet gate's inputs as established — for
+    # a baseline `compare()` was certain to refuse before it looked at a single
+    # challenger row. A precondition checked only on the path that spends is
+    # not a precondition.
+    #
+    # Comparable only, deliberately: an unstable case is the one whose passes
+    # disagree, and demanding agreement of it would refuse every reference that
+    # honestly records one.
+    for case_id in comparable:
+        _reference_shape(cases[case_id], case_id)
+
+    # And the other side of the same label. Codex, 2026-09-05: the validator
+    # proved the comparable cases agree with themselves and never proved the
+    # unstable ones disagree — so a perfectly stable case could be listed as
+    # unstable, pass the partition check below, and be dropped from the
+    # comparison. A sample narrowed by a word, which is the shape this file
+    # refuses under the name "a case dropped from both".
+    #
+    # The condition is the one `sentinel_reference.py` uses when it writes the
+    # label: `len(set(outcomes.values())) > 1`. Written as the same test rather
+    # than a similar one, because the builder and the reader disagreeing about
+    # what the word means is how the label stops meaning anything.
+    for case_id in reference["unstable_under_reference"]:
+        if case_id not in cases:
+            raise ComparisonError(
+                "{}: listed as unstable and absent from `cases`, so the "
+                "reference excludes a case it does not hold".format(case_id))
+        verdicts = set(cases[case_id]["outcomes"].values())
+        if len(verdicts) <= 1:
+            raise ComparisonError(
+                "{}: listed as unstable and its two passes agree ({}). A case "
+                "excluded from the comparison for instability it does not have "
+                "narrows the sample by a word".format(
+                    case_id, verdicts.pop() if verdicts else "no outcomes"))
+
     unstable = set(reference.get("unstable_under_reference") or ())
     if set(comparable) | unstable != set(cases) or set(comparable) & unstable:
         raise ComparisonError(
@@ -265,6 +774,19 @@ def compare(reference_path: Path, run_paths: list) -> dict:
             "threshold needs {} regressions to reject. A reference with "
             "nothing to lose cannot detect a `pass -> fail` at all.".format(
                 steady_passes, threshold["reject_at_net"]))
+
+
+def compare(reference_path, run_paths: list) -> dict:
+    """The comparison itself. The baseline is judged first, by the function the
+    order tool also calls, and its already-parsed body is used from here on —
+    reopening the path would let the two readers speak about different bytes."""
+    state = validate_reference(reference_path)
+    if state.state != REF_USABLE:
+        raise ComparisonError(state.why)
+    reference = state.reference
+    cases = reference["cases"]
+    comparable = list(reference["comparable"])
+    threshold = reference["threshold"]
 
     if len(run_paths) < threshold["confirmations_required"]:
         raise ComparisonError(
@@ -285,13 +807,11 @@ def compare(reference_path: Path, run_paths: list) -> dict:
     #
     # What "two executions" means is that no case was measured once and counted
     # twice: for each case, its stamps across the runs must all differ.
+    # Whether each stamp *is* a name is settled at the boundary, for every row
+    # of every run. What is left here is the one thing that needs more than one
+    # row to answer: no case was measured once and counted twice.
     for case_id in comparable:
-        stamps = [run[case_id].get("run_id") for run in runs
-                  if case_id in run]
-        if any(stamp is None for stamp in stamps):
-            raise ComparisonError(
-                "{}: a row carries no `run_id`, so nothing says which "
-                "execution it is".format(case_id))
+        stamps = [run[case_id]["run_id"] for run in runs if case_id in run]
         if len(set(stamps)) != len(stamps):
             raise ComparisonError(
                 "{}: the same execution appears in two of the files. A "
@@ -300,42 +820,53 @@ def compare(reference_path: Path, run_paths: list) -> dict:
     # A substitution is a fact about the run, checked by name. It used to be
     # smuggled into the identity through `models_served`, where it split cases
     # from one run into two systems — because the verifier only fires when
-    # there is something to verify. Here it says the plain thing: a review the
-    # provider answered with another model did not measure the model it names,
-    # and this whole experiment is about which model was asked.
-    # Required to be false and present, not merely not-true. A row that never
-    # recorded the flag, and was answered by another model, would otherwise
-    # pass — a green result for a change that was not executed.
+    # there is something to verify. It says the plain thing instead: a review
+    # the provider answered with another model did not measure the model it
+    # names, and this whole experiment is about which model was asked.
+    #
+    # That check, and every other structural one over a challenger row, now
+    # lives in `_check_row_shape` and runs from `read_run` — for every row,
+    # including the ones belonging to `unstable_under_reference`, which is how
+    # the last of them escaped. Two copies of one contract drift, and the
+    # weaker copy is the one that decides, so there is one.
     for run in runs:
         for case_id, row in run.items():
-            for block in (row.get("members") or {}).values():
-                prov = (block or {}).get("provenance") or {}
-                if prov.get("model_substituted") is None:
-                    raise ComparisonError(
-                        "{}: the run does not record whether the provider "
-                        "substituted the model".format(case_id))
-                served = prov.get("models_served")
-                if not served:
-                    raise ComparisonError(
-                        "{}: the run records no served model, so nothing says "
-                        "which model answered".format(case_id))
-    for run in runs:
-        for case_id, row in run.items():
-            members = row.get("members") or {}
-            if set(members) != {"safe", "unsafe"}:
-                # A pair is two members. One of them missing would otherwise be
-                # reported as a model or identity complaint, which sends the
-                # reader to the wrong question.
-                raise ComparisonError(
-                    "{}: a pair is a safe and an unsafe member, and this row "
-                    "has {}".format(case_id, ", ".join(sorted(members)) or
-                                    "neither"))
+            # Plain access, not `or {}`. `read_run` has already refused every
+            # row whose `members` is not a mapping of mappings, so a tolerant
+            # read here would only hide a change to that guarantee.
+            members = row["members"]
             for block in members.values():
-                prov = (block or {}).get("provenance") or {}
-                wanted = ((block or {}).get("settings") or {}).get(
-                    "verify_model") or prov.get("model_requested")
-                verified = prov.get("models_verified") or []
-                settings = (block or {}).get("settings") or {}
+                prov = block["provenance"]
+                # The unmodified value, then the check. Codex, 2026-09-05: this
+                # was written `block.get("settings") or {}` **inside the fix
+                # for this class** — the tolerant read turns `null` into an
+                # empty object before anything can refuse it, so the malformed
+                # container is erased by the line that was supposed to catch
+                # it. An absent `settings` is a different matter and stays
+                # allowed, because `verify_model` falls back to the requested
+                # model; a `settings` that is present and is not an object has
+                # said something, and what it said cannot be read.
+                settings = block.get("settings", {})
+                if not isinstance(settings, dict):
+                    raise ComparisonError(
+                        "{}: a member records {} for `settings`, where an "
+                        "object is required".format(
+                            case_id, type(settings).__name__))
+                wanted = settings.get("verify_model") or prov.get(
+                    "model_requested")
+                # Validated before it is defaulted, which is the whole of this
+                # class: `or []` turns `0`, `""` and `{}` into an empty list,
+                # so a malformed field arrives as "nothing was verified" — a
+                # meaningful answer this file acts on. And a bare string walks
+                # into characters below. Absence still means `[]`, because
+                # absence here has a defined meaning; a present value that
+                # cannot be read does not. Codex, 2026-09-05.
+                verified = prov.get("models_verified", [])
+                if not _is_name_list(verified):
+                    raise ComparisonError(
+                        "{}: the run records {} for `models_verified`, where a "
+                        "list of model names is required".format(
+                            case_id, type(verified).__name__))
 
                 # The verifier the reference names is the verifier this run has
                 # to have been configured with. Only the *observed* verifier was
@@ -411,14 +942,13 @@ def compare(reference_path: Path, run_paths: list) -> dict:
         for case_id, row in run.items():
             for block in (row.get("members") or {}).values():
                 prov = (block or {}).get("provenance") or {}
-                for field, recorded in (
-                        ("system_prompt", prov.get("system_prompt_sha")),
-                        ("verifier_prompt", prov.get("verifier_prompt_sha")),
-                        ("findings_schema", prov.get("schema_sha")),
-                        ("agent_version", prov.get("agent_version"))):
-                    expected = environment.get(field)
-                    if not expected:
-                        continue
+                for field, source in ENVIRONMENT_FIELDS:
+                    recorded = prov.get(source)
+                    # No `continue` for a field the reference left out: the
+                    # reference is required to carry all four now, so a skip
+                    # here could only ever mean the guarantee had changed
+                    # without this line noticing.
+                    expected = environment[field]
                     # Absence is not agreement. `if expected and recorded`
                     # let a row that recorded nothing pass the contract, and
                     # `_system_identity` asks only for a prompt and a model —

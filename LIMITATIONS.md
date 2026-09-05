@@ -643,3 +643,93 @@ has been established by anyone but the model itself.
 proof, and nothing here can tell a person's ruling from a model's. It is worth
 recording anyway, because "unrecorded" and "model" and "human" are three
 different states and the file used to show none of them.
+
+## The Sonnet gate has no baseline, and the order now says so
+
+`tools/d013_order.py` reports the step `sonnet_gate` as `done_when: undefined`,
+and until 2026-09-05 that was the only thing it said. D-013's prose gave the
+reason as "`tools/sentinel_compare.py` prints a verdict and stores nothing".
+
+That is true and it is the *second* obstacle. The first, measured by calling
+the comparator against the committed reference:
+
+> this reference is retired and is not a baseline: its rows carry no
+> `models_verified` — no row anywhere in `measurements/` does — so it cannot
+> separate the model that reviewed from the model that verified. No arrangement
+> passes.
+
+So the Sonnet comparison cannot be performed today for a reason no amount of
+storage work would fix. A replacement baseline needs paid runs whose rows carry
+`models_verified`, which is money and a change to what the runner writes.
+
+The order tool now asks `sentinel_compare.validate_reference` rather than
+restating its rules, and the step names its baseline in the block rather than
+in the tool's source.
+
+**That is less than it sounds.** `sentinel_compare.py` still takes the
+reference as a positional argument, so the file the order reports on and the
+file somebody eventually compares against are coupled by nobody but the person
+typing the command. The declaration removes a hard-coded path from the tool; it
+does not bind the command. Codex named this on 2026-09-05 after an earlier
+wording here claimed the two "cannot inspect different files", which was
+exactly the shape of claim this document exists to prevent.
+
+### `validate_reference` is not an exhaustive schema
+
+`sentinel_compare.validate_reference` answers whether a baseline is usable
+without any challenger runs, and the D-013 order tool asks it before reporting
+what blocks the Sonnet gate. It was built by finding, one at a time, every
+field the comparison read before establishing what that field was — a
+`models_served` that was a bare string and walked into thirteen one-letter
+model names, a `settings` erased into `{}` by a tolerant read before the check
+that was written to refuse it, a `run_id` that was a list, a
+`model_substituted` recording `true` and passing a check documented as
+requiring `false`, an `environment` object satisfying "records an environment"
+while recording none of the four fields the comparison holds a challenger to.
+
+Thirty-two rounds of review, each finding one more. Codex said on the
+twenty-fourth what the count already showed: **field-by-field guards are not
+converging**, and container types, required keys, booleans and non-blank
+strings belong at the boundary, once. That was done for the challenger rows —
+`_check_row_shape` runs from `read_run` over every row of every run — and for
+the reference it is a list of checks rather than a schema.
+
+So: `REF_USABLE` means "nothing in the list of known defects applies", not
+"this file is well formed".
+
+What is established: a **known** reference defect is refused before any
+challenger row is read, because `compare()` calls `validate_reference` first.
+What is not: that an unknown malformed shape is refused before a verdict. Such
+a shape that *passes* `validate_reference` makes the preflight report
+`established`; `compare()` may or may not refuse it further on, and without a
+shared schema nothing proves that it does. One that raises on the way through
+comes back as `cannot tell`, which is the third answer and not this one.
+
+The first version of this paragraph said the gap was bounded because "a
+malformed baseline that gets past it is refused later by `compare()`". Codex
+refused that on 2026-09-05: there is no second exhaustive boundary, and the
+sentence contradicted the admission two paragraphs above it. Writing the
+reference's shape down once, as a schema the builder and the reader share, is
+the fix and is not built.
+
+### What the containment check on that path does and does not establish
+
+The step's `reference` is refused at parse time if it is absolute or spelled
+with `..`, and refused again at the read if it resolves outside the repository.
+The second check is **not coupled to the open that follows**: the file or an
+ancestor could be replaced between the resolve and `read_text`, and the read
+would follow the new link. Closing that would take descriptor-relative,
+no-follow traversal.
+
+It is not built. This is a development tool run by the person who owns the
+working tree, and everything it reads is already trusted at that level. The
+check is worth having against a mistake or a stale symlink. It is not a
+boundary against an adversary with write access anywhere in the tree, and
+saying otherwise would be the claim-wider-than-the-evidence this repository
+exists to catch.
+
+The first version of this paragraph justified that with "anyone who can win the
+race can edit `DECISIONS.md` or the tool itself". Codex refused it the same
+day: write access confined to `measurements/` wins the race and grants neither.
+The conclusion rests on the trust model, not on a claim about what such an
+attacker would also be able to reach.

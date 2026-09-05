@@ -499,7 +499,8 @@ def test_a_row_with_no_run_id_is_refused(tmp_path):
 
     with pytest.raises(sentinel_compare.ComparisonError) as caught:
         sentinel_compare.compare(ref, [path, run(tmp_path, "b.json", rows)])
-    assert "no `run_id`" in str(caught.value)
+    assert "for `run_id`, so nothing names which execution" in str(
+        caught.value)
 
 
 def test_a_row_that_cannot_say_what_produced_it_is_refused(tmp_path):
@@ -513,20 +514,266 @@ def test_a_row_that_cannot_say_what_produced_it_is_refused(tmp_path):
     with pytest.raises(sentinel_compare.ComparisonError) as caught:
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
-    # Refused, and the first check to reach it names the first thing missing.
-    # A blank member records neither a verifier nor a prompt digest; either
-    # sentence is the same absence, refused rather than forgiven.
-    # Refused, and the first check to reach it names what is missing: a blank
-    # member records no verification, no verifier and no prompt digest, and
-    # any of those sentences is the same absence refused rather than forgiven.
     # Refused, and the first check to reach it names what is missing. A blank
-    # member records no substitution flag, no served model, no verification,
-    # no verifier and no prompt digest — every one of those sentences is the
-    # same absence, refused rather than forgiven.
+    # member records no `provenance`, no substitution flag, no served model, no
+    # verification, no verifier and no prompt digest — every one of those
+    # sentences is the same absence, refused rather than forgiven, and which
+    # one comes back depends only on the order of the checks.
+    #
+    # The list has grown three times as earlier checks were added, and each
+    # time this assertion was the thing that noticed. That is the point of
+    # accepting any of them rather than pinning one: the test holds "this is
+    # refused and the reason names the absence", not "this exact sentence".
     message = str(caught.value)
     assert any(reason in message for reason in (
         "records no", "verification is None",
-        "does not record whether the provider substituted"))
+        "for `provenance`, so nothing says what answered it",
+        "does not record whether the provider substituted")), message
+
+
+@pytest.mark.parametrize("members,expected", [
+    (None, "for `members`, where the safe and unsafe blocks are required"),
+    ("safe and unsafe",
+     "for `members`, where the safe and unsafe blocks are required"),
+    ([{"safe": {}}], "for `members`, where the safe and unsafe blocks are "
+                     "required"),
+    ({"safe": None, "unsafe": None},
+     "member, where a block with `provenance` is required"),
+    ({"safe": "ok", "unsafe": "ok"},
+     "member, where a block with `provenance` is required"),
+    ({"safe": {"provenance": 3}, "unsafe": {"provenance": 3}},
+     "for `provenance`, so nothing says what answered it"),
+])
+def test_a_malformed_challenger_is_refused_rather_than_crashing(
+        tmp_path, members, expected):
+    """Codex, 2026-09-05, seventeenth gate pass.
+
+    The same class that had just been swept out of the reference checks was
+    still standing on the challenger side: `row.get("members")` was consumed
+    with `.values()`, and each block with `.get()`, before anything said either
+    was a mapping. A malformed run crashed the comparator instead of being
+    refused by it — and a crash is not a verdict.
+    """
+    ref = reference(tmp_path)
+    rows = [row(c, True, members=members) for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert expected in str(caught.value)
+
+
+@pytest.mark.parametrize("settings", ["verify on", 3, [], None])
+def test_settings_that_are_not_an_object_are_refused(tmp_path, settings):
+    """`null` is in this list because the first version of the check read
+    `block.get("settings") or {}` — the tolerant read turned it into an empty
+    object before the check could refuse it, so the malformed container was
+    erased by the line written to catch it. Codex, 2026-09-05."""
+    ref = reference(tmp_path)
+    block = {"provenance": {"model_substituted": False,
+                            "models_served": ["opus"]},
+             "settings": settings}
+    rows = [row(c, True, members={"safe": block, "unsafe": block})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "for `settings`, where an object is required" in str(caught.value)
+
+
+@pytest.mark.parametrize("served", ["opus", 3, {"a": 1}, [1], [""], [None]])
+def test_models_served_that_is_not_a_list_of_names_is_refused(
+        tmp_path, served):
+    """Truthiness was the whole test, and `set().update()` reads the value a
+    hundred lines below — so a truthy non-sequence passed here and crashed
+    there, after the baseline had been called usable. Codex, 2026-09-05."""
+    ref = reference(tmp_path)
+    block = {"provenance": {"model_substituted": False,
+                            "models_served": served}}
+    rows = [row(c, True, members={"safe": block, "unsafe": block})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "where a list of model names is required" in str(caught.value)
+
+
+@pytest.mark.parametrize("observed", ["opus", 3, ["opus"]])
+def test_observed_models_that_is_not_an_object_is_refused(tmp_path, observed):
+    """Read with `.items()` far below and validated nowhere, so a truthy
+    non-mapping crashed the comparator after `validate_reference` had called
+    the baseline usable."""
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text(encoding="utf-8"))
+    body["observed_models"] = observed
+    ref.write_text(json.dumps(body), encoding="utf-8")
+
+    state = sentinel_compare.validate_reference(ref)
+    assert state.state == sentinel_compare.REF_UNUSABLE
+    assert "where an object naming the models" in state.why
+
+
+@pytest.mark.parametrize("names", [3, None, "claude-opus-5", [1], [""]])
+def test_observed_models_values_are_lists_of_names(tmp_path, names):
+    """Codex, 2026-09-05, twentieth gate pass. The outer mapping was checked
+    and its values were not.
+
+    The string case is the one worth keeping: Python walks
+    `"claude-opus-5"` into thirteen characters, so a value nobody validated
+    produced a comparison against thirteen one-letter model names — an answer,
+    not a crash, which is the worse of the two failures.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text(encoding="utf-8"))
+    body["observed_models"] = {"safe": names}
+    ref.write_text(json.dumps(body), encoding="utf-8")
+
+    state = sentinel_compare.validate_reference(ref)
+    assert state.state == sentinel_compare.REF_UNUSABLE
+    assert "where a list of model names is required" in state.why
+
+
+@pytest.mark.parametrize("verified", ["claude-opus-5", 3, {}, "", 0, [1]])
+def test_models_verified_that_is_not_a_list_of_names_is_refused(
+        tmp_path, verified):
+    """The last boundary of this class, and it fails two ways at once.
+
+    `or []` turned `0`, `""` and `{}` into an empty list, so a malformed field
+    arrived as "nothing was verified" — a meaningful answer the comparator acts
+    on. A bare string walked into characters. Codex, 2026-09-05.
+    """
+    ref = reference(tmp_path)
+    block = {"provenance": {"model_substituted": False,
+                            "models_served": ["claude-opus-5"],
+                            "models_verified": verified}}
+    rows = [row(c, True, members={"safe": block, "unsafe": block})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "for `models_verified`, where a list of model names is required" \
+        in str(caught.value)
+
+
+@pytest.mark.parametrize("flag,expected", [
+    (True, "and this run says it did"),
+    ("false", "absent and unreadable are both"),
+    (0, "absent and unreadable are both"),
+    ({}, "absent and unreadable are both"),
+    (None, "absent and unreadable are both"),
+])
+def test_a_substituted_model_is_refused_not_only_an_unrecorded_one(
+        tmp_path, flag, expected):
+    """The comment above the check had said "required to be false and present,
+    not merely not-true" since the check was written, and the code implemented
+    `is None` — so `model_substituted: true`, the provider stating in as many
+    words that it answered with a different model, passed. Codex, 2026-09-05.
+    """
+    ref = reference(tmp_path)
+    block = {"provenance": {"model_substituted": flag,
+                            "models_served": ["claude-opus-5"]}}
+    rows = [row(c, True, members={"safe": block, "unsafe": block})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    message = str(caught.value)
+    assert "`model_substituted` is" in message
+    assert expected in message
+
+
+@pytest.mark.parametrize("stamp", [[], {}, 3, "", "   ", True])
+def test_a_run_id_that_is_not_a_name_is_refused(tmp_path, stamp):
+    """`[]` and `{}` reached `set()` and raised `TypeError`; a number or a
+    blank string was accepted as the identity of an execution, which is the one
+    thing this check exists to establish. Codex, 2026-09-05."""
+    ref = reference(tmp_path)
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    path = run(tmp_path, "a.json", rows)
+    body = json.loads(path.read_text())
+    body[0]["run_id"] = stamp
+    path.write_text(json.dumps(body))
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [path, run(tmp_path, "b.json", rows)])
+    assert "for `run_id`, so nothing names which execution" in str(
+        caught.value)
+
+
+def test_a_row_for_an_unstable_case_is_checked_like_every_other(tmp_path):
+    """Codex, 2026-09-05, twenty-fourth round, and the reason the guards moved
+    to the boundary.
+
+    Every structural check lived in loops over `comparable`, so a row belonging
+    to `unstable_under_reference` skipped all of them — and still fed the
+    provenance and system-identity comparisons. The checks run from `read_run`
+    now, over every row of every run.
+    """
+    ref = reference(tmp_path, cases=("one", "two"), unstable=("three",))
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    broken = json.loads(json.dumps(rows))
+    for r in broken:
+        if r["case_id"] == "three":
+            r["members"]["safe"]["provenance"]["models_served"] = "opus"
+
+    path = run(tmp_path, "a.json", broken)
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [path, run(tmp_path, "b.json", rows)])
+    assert "three: the run records str for `models_served`" in str(
+        caught.value)
+
+
+def test_a_member_key_that_is_not_a_name_is_refused_not_a_crash(tmp_path):
+    """Codex, 2026-09-05, twenty-fifth round.
+
+    The pair-membership complaint formatted its keys with
+    `", ".join(sorted(members))`, which raises `TypeError` on a key that is not
+    a string — so a row with a non-string member key produced a crash where a
+    refusal belonged. JSON cannot write such a key; an in-process caller can,
+    and the contract belongs in one place either way.
+    """
+    ref = reference(tmp_path)
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    block = rows[0]["members"]["safe"]
+    for r in rows:
+        r["members"] = {1: block, "unsafe": block}
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "a pair is a safe and an unsafe member" in str(caught.value)
+
+
+def test_a_name_list_never_accepts_a_bare_string():
+    """The predicate itself, because a string is the case every hand-written
+    version of this check got wrong."""
+    assert sentinel_compare._is_name_list(["a", "b"])
+    assert sentinel_compare._is_name_list([])
+    assert not sentinel_compare._is_name_list("ab")
+    assert not sentinel_compare._is_name_list(None)
+    assert not sentinel_compare._is_name_list([" "])
+    assert not sentinel_compare._is_name_list({"a": 1})
+
+
+def test_a_member_with_no_settings_key_is_still_allowed(tmp_path):
+    """The other half. An absent `settings` is a different thing from one that
+    is present and unreadable: `verify_model` falls back to the requested
+    model, so absence has a defined meaning and is not refused."""
+    ref = reference(tmp_path)
+    block = {"provenance": {"model_substituted": False,
+                            "models_served": ["opus"]}}
+    rows = [row(c, True, members={"safe": block, "unsafe": block})
+            for c in ("one", "two", "three")]
+
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "for `settings`, where an object is required" not in str(
+        caught.value)
 
 
 def test_the_threshold_comes_from_the_reference(tmp_path):
@@ -1131,7 +1378,11 @@ def test_a_reference_that_names_no_verifier_is_refused(tmp_path):
     with pytest.raises(sentinel_compare.ComparisonError) as caught:
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
-    assert "does not name the verifier" in str(caught.value)
+    # The refusal moved earlier on 2026-09-05: it is a fact about the
+    # reference alone, so `validate_reference` answers it before any run is
+    # read, and the D-013 preflight sees it too.
+    assert "for `verifier_model`, so it does not say which model" in str(
+        caught.value)
 
 
 def test_the_machinery_the_reference_saw_must_serve_the_challenger_too(

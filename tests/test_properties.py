@@ -599,6 +599,10 @@ def sc_reference(path: Path, comparable, failing=(), *, confirmations=2,
             "outcomes": {"pass-a": passed, "pass-b": passed},
             "shape": {"pass-a": dict(shape), "pass-b": dict(shape)},
             "case_digest": SC_DIGEST,
+            # Written because the comparator requires the per-case flag and
+            # the top-level list to agree — the same fact spelled twice, and
+            # until 2026-09-05 only one spelling was checked.
+            "unstable_under_reference": False,
         }
     path.write_text(json.dumps({
         "model": REF_MODEL,

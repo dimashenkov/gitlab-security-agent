@@ -122,7 +122,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import yaml
@@ -242,6 +242,18 @@ STEP_KEYS = frozenset({
     "blocked_on_owner", "undefined_predicates",
     "needs_field", "needs_vocabulary_first", "next_generation", "done_when",
     "vocabulary", "requires_no_open_questions", "forbidden_values",
+    # The baseline a step is measured against, named by the decision rather
+    # than hard-coded here. A step that declares none gets `cannot tell` from
+    # its preflight, which is the honest answer and not a default path.
+    #
+    # What it does *not* do: `sentinel_compare.py` takes its reference as a
+    # positional argument, so nothing binds the file this tool reports on to
+    # the file somebody eventually compares against. An earlier comment here
+    # said the two "cannot inspect different files"; Codex refused it on
+    # 2026-09-05, and it survived one round after the same sentence had been
+    # corrected in DECISIONS.md and LIMITATIONS.md — a claim repeated in three
+    # places is corrected in three places or it is still there.
+    "reference",
 })
 
 # The one value of `next_generation` this tool can act on. Anything else is a
@@ -392,6 +404,9 @@ class Step:
         # taken with one open is invalid from the owner's next sentence.
         self.requires_no_open_questions: bool = \
             raw.get("requires_no_open_questions") is True
+        # Repository-relative, and read only as text here: what it points at is
+        # judged by the tool that owns the format, not by this one.
+        self.reference: Optional[str] = raw.get("reference")
 
     @property
     def criterion_undefined(self) -> bool:
@@ -617,6 +632,12 @@ def parse_order(text: str) -> Order:
         seen[ident] = index
         normal = dict(entry)
         normal["id"] = ident
+        if isinstance(entry.get("reference"), str):
+            # Stored as validated. Codex, 2026-09-05: `_check_rest` judged the
+            # stripped text and `Step` kept the original, so a value with
+            # surrounding whitespace passed the containment rules and then
+            # addressed a different pathname.
+            normal["reference"] = entry["reference"].strip()
         normal["requires"] = _id_list(entry, "requires", ident)
         _check_guard(entry, ident, questions)
         _check_rest(entry, ident, questions, answers)
@@ -848,6 +869,32 @@ def _check_rest(entry: Dict[str, Any], ident: str,
                                    or not entry["needs_field"].strip()):
         raise OrderError("step {!r}: `needs_field` must name a field"
                          .format(ident))
+    if "reference" in entry:
+        # Codex, 2026-09-05: the new field went straight into `Step` and past
+        # every rule this function exists for. `reference: false` or `[]` was
+        # accepted and then reported downstream as "the decision names no
+        # reference", which is the *absent* case wearing the clothes of a
+        # written one — an author who declared a baseline and mistyped it would
+        # be told none was declared.
+        value = entry["reference"]
+        if not isinstance(value, str) or not value.strip():
+            raise OrderError(
+                "step {!r}: `reference` is {!r} and it must be a path. A value "
+                "the tool cannot use is refused here rather than reported "
+                "later as though no baseline had been named at all"
+                .format(ident, value))
+        text = value.strip()
+        # Repository-relative, and that is checked rather than documented. An
+        # absolute path or one climbing out of the tree would have the order
+        # tool judging a file outside the repository whose state nothing else
+        # here records.
+        if PurePosixPath(text).is_absolute() or Path(text).is_absolute() \
+                or ".." in PurePosixPath(text).parts:
+            raise OrderError(
+                "step {!r}: `reference` is {!r}; it must be relative to the "
+                "repository and must not climb out of it, or the order would "
+                "be judging a file nothing else here records"
+                .format(ident, text))
     # Both booleans, and both validated: `is True` reads "true" and 1 and
     # anything else as *off*, so an author who wrote `requires_no_open_questions:
     # "true"` would get a step that silently lost its protection. The parser's
@@ -1892,6 +1939,181 @@ def check_classify_alarms(ctx: Context, step: Step) -> Result:
         "naming a `{}`.{}{}".format(len(fired), field, seen, note)))
 
 
+PRE_NOT_APPLICABLE = "not applicable"
+PRE_BLOCKED = "blocked"
+PRE_CANNOT_TELL = "cannot tell"
+PRE_ESTABLISHED = "established"
+
+PRE_STATES = (PRE_NOT_APPLICABLE, PRE_BLOCKED, PRE_CANNOT_TELL,
+              PRE_ESTABLISHED)
+
+
+class Preflight:
+    """What stands between a step and being *attemptable* — a different
+    question from what would record it as finished.
+
+    Today the two are collapsed: `state_of` returns at `criterion_undefined`
+    before any checker runs, so for `tune` and `sonnet_gate` the tool reports
+    only that no artifact would record completion. Everything else about them —
+    that the Sonnet gate has no usable baseline, that the frozen closure may
+    have drifted — is computed by code the tool never reaches.
+
+    The answer is **total**: every step consulted gets one of four states, and
+    `not applicable` is stated rather than left as silence. Codex, 2026-09-05:
+    an optional result makes silence mean "no preflight applies", "everything
+    passed", and "somebody forgot to check" at once, and prose in an evidence
+    string cannot carry that difference to a later caller.
+
+    `established` never means ready. It means the inputs this step needs exist
+    and are usable; the completion criterion is a separate matter and stays
+    undefined. Nothing here can make a step `done`, and nothing here can
+    satisfy another step's `requires`.
+    """
+
+    __slots__ = ("state", "why")
+
+    def __init__(self, state, why):
+        if state not in PRE_STATES:
+            raise ValueError("unknown preflight state {!r}".format(state))
+        self.state = state
+        self.why = why
+
+    def __bool__(self):
+        raise TypeError(
+            "a preflight result is not a boolean: it is {!r}. `established` "
+            "means the inputs exist, not that the step may be reported done."
+            .format(self.state))
+
+    def __repr__(self):
+        return "Preflight({!r})".format(self.state)
+
+
+def preflight_tune(ctx: Context, step: Step) -> Preflight:
+    """The one thing about `tune` an artifact settles.
+
+    `check_tune` computes this and is unreachable: `state_of` returns at
+    `criterion_undefined` first. Measured on 2026-09-05 against the real
+    DECISIONS.md — the checker's message never appears in `evaluate()`. So the
+    drift detector, which is the only file-backed part of this step, was dead
+    code with a green test over it.
+    """
+    closure = _frozen_closure_mutated(ctx)
+    if closure.state == CLOSURE_MUTATED:
+        return Preflight(PRE_BLOCKED, closure.why)
+    if closure.state == CLOSURE_UNREADABLE:
+        return Preflight(PRE_CANNOT_TELL, closure.why)
+    if closure.state == CLOSURE_ABSENT:
+        return Preflight(PRE_CANNOT_TELL, closure.why)
+    return Preflight(PRE_ESTABLISHED, closure.why)
+
+
+def preflight_sonnet_gate(ctx: Context, step: Step) -> Preflight:
+    """Whether there is a baseline to hold a challenger against.
+
+    D-013's prose gives the reason this step has no `done_when` as
+    "`tools/sentinel_compare.py` prints a verdict and stores nothing". That is
+    true and is the *second* obstacle. The operative one, measured on
+    2026-09-05 by calling the comparator against the committed reference:
+
+        REFUSED: this reference is retired and is not a baseline: its rows
+        carry no `models_verified` ... No arrangement passes.
+
+    A reader acting on the storage sentence would add a `--json` flag and be
+    exactly as far from a completable step as before. So the order reports what
+    actually blocks it — and asks `sentinel_compare`, which owns the format,
+    rather than reimplementing its rules here.
+    """
+    if not step.reference:
+        return Preflight(PRE_CANNOT_TELL, (
+            "the decision names no `reference` for {!r}, so nothing says which "
+            "baseline this gate would be measured against. Naming one is a "
+            "decision recorded in DECISIONS.md, not a path guessed here"
+            .format(step.id)))
+
+    # The parser refuses an absolute path and one spelled with `..`, and that
+    # is a check on the *text*. Codex, 2026-09-05: a path with neither can
+    # still leave the tree through a symlink inside it, and this function would
+    # then judge a file nothing in the repository records.
+    #
+    # What this check establishes, stated no wider than it is: **at the moment
+    # it runs**, the reference resolves inside the tree. It is not coupled to
+    # the open that follows — Codex's next round named the gap precisely, that
+    # the file or an ancestor can be replaced between the resolve here and the
+    # `read_text` in `sentinel_compare`, and `read_text` would follow the new
+    # link. Closing that would mean descriptor-relative, no-follow traversal.
+    #
+    # Not built, and the reason is written here rather than left implied: this
+    # is a development tool, run by the person who owns the working tree, and
+    # everything it reads — `DECISIONS.md`, the comparator, this file — is
+    # already trusted at that level. The check is worth having against a
+    # mistake and a stale symlink; it is not a boundary against an adversary
+    # holding write access to any part of the tree, and calling it one would be
+    # the claim-wider-than-the-evidence this repository exists to catch.
+    #
+    # Codex, 2026-09-05, on the first wording: "anyone who can win the race can
+    # edit DECISIONS.md" is not true either — write access confined to
+    # `measurements/` wins the race and grants neither. The conclusion stands
+    # on the trust model, not on a claim about what such an attacker could also
+    # reach.
+    root = ctx.root.resolve()
+    path = (ctx.root / step.reference).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return Preflight(PRE_CANNOT_TELL, (
+            "the reference {!r} resolved to {}, which is outside {} — the "
+            "order would be judging a file nothing here records. A path may "
+            "leave the tree through a symlink without containing '..', so the "
+            "spelling was not enough".format(step.reference, path, root)))
+
+    try:
+        import sentinel_compare
+    except Exception as exc:
+        return Preflight(PRE_CANNOT_TELL, (
+            "the comparator could not be imported ({}: {}), so the baseline "
+            "was not judged".format(type(exc).__name__, exc)))
+
+    state = sentinel_compare.validate_reference(path)
+    if state.state == sentinel_compare.REF_USABLE:
+        # Deliberately narrow, and never the word "ready". A usable baseline
+        # says a comparison could be attempted; it says nothing about whether
+        # one was run, what it cost, or what would record the answer — and
+        # this step still has no `done_when`.
+        return Preflight(PRE_ESTABLISHED, (
+            "{} (digest {}). This says a comparison could be attempted, not "
+            "that one was run and not that anything would record it".format(
+                state.why, (state.digest or "?")[:12])))
+    if state.state == sentinel_compare.REF_CANNOT_TELL:
+        return Preflight(PRE_CANNOT_TELL, state.why)
+    return Preflight(PRE_BLOCKED, state.why)
+
+
+# One entry per step whose `done_when` is `undefined` and which has inputs an
+# artifact can speak about. A step absent from this map is reported
+# `not applicable` explicitly rather than by silence.
+PREFLIGHT: Dict[str, Callable[[Context, Step], Preflight]] = {
+    "tune": preflight_tune,
+    "sonnet_gate": preflight_sonnet_gate,
+}
+
+
+def preflight_of(ctx: Context, step: Step) -> Preflight:
+    """Total: every step gets an answer, including the ones with no entry."""
+    run = PREFLIGHT.get(step.id)
+    if run is None:
+        return Preflight(PRE_NOT_APPLICABLE, (
+            "no preflight is declared for {!r}: nothing on disk speaks to "
+            "whether its inputs exist".format(step.id)))
+    try:
+        return run(ctx, step)
+    except Exception as exc:
+        # Same rule as everywhere else here: a preflight that raised has not
+        # established anything, and must not be reported as though it had.
+        return Preflight(PRE_CANNOT_TELL, (
+            "the preflight for {!r} raised {}: {} — nothing was established"
+            .format(step.id, type(exc).__name__, exc)))
+
+
 def check_tune(ctx: Context, step: Step) -> Result:
     """Never `done`, and for a reason worth printing.
 
@@ -1903,17 +2125,21 @@ def check_tune(ctx: Context, step: Step) -> Result:
     leaves, and the boxed rule's "no tuning whatsoever" is already broken when
     it appears.
     """
-    mutation = _frozen_closure_mutated(ctx)
-    if mutation is not None:
-        return Result(NOT_DONE, mutation)
+    closure = _frozen_closure_mutated(ctx)
+    if closure.state == CLOSURE_MUTATED:
+        return Result(NOT_DONE, closure.why)
+    if closure.state == CLOSURE_UNREADABLE:
+        # Not folded into the sentence below. "I could not look" and "I looked
+        # and nothing moved" are different answers, and this tool reports the
+        # difference everywhere else.
+        return Result(UNKNOWN, closure.why)
     return Result(MANUAL, (
         "not mechanically decidable: the conditions are {} — words no program "
         "evaluates — and the scorer that would place the ordinary changes "
-        "against the boundary does not exist. The frozen closure shows no "
-        "mutation after a result, which is the only part of this step an "
-        "artifact settles".format(
+        "against the boundary does not exist. On the one part an artifact "
+        "settles: {}".format(
             ", ".join(repr(p) for p in step.undefined_predicates)
-            or "judgements no artifact records")))
+            or "judgements no artifact records", closure.why)))
 
 
 def check_sonnet_gate(ctx: Context, step: Step) -> Result:
@@ -2012,26 +2238,127 @@ def check_generations(ctx: Context, spec: Optional[Dict[str, Any]]) -> Result:
                                        ctx.generations)))
 
 
-def _frozen_closure_mutated(ctx: Context) -> Optional[str]:
-    """A sentence when a frozen input changed, or `None`."""
+CLOSURE_ABSENT = "absent"
+CLOSURE_UNREADABLE = "unreadable"
+CLOSURE_INTACT = "intact"
+CLOSURE_MUTATED = "mutated"
+
+
+class ClosureState:
+    """What the freeze record says about drift — four answers, not two.
+
+    It has no truth value on purpose. The previous shape was
+    `Optional[str]`, and three different absences returned `None`: no freeze
+    file, a freeze that would not read or parse, and a freeze whose body is not
+    an object. The one caller turned every `None` into the sentence "the frozen
+    closure shows no mutation", so an unreadable `freeze.json` produced a
+    statement that nothing had drifted. That is this repository's recurring
+    defect sitting inside the detector written to catch drift, and a boolean or
+    an optional cannot express the difference — so this does not offer one.
+    """
+
+    __slots__ = ("state", "why")
+
+    def __init__(self, state, why):
+        self.state = state
+        self.why = why
+
+    def __bool__(self):
+        raise TypeError(
+            "a closure state is not a boolean: it is {!r}. Compare `.state` "
+            "against CLOSURE_MUTATED, CLOSURE_UNREADABLE, CLOSURE_ABSENT or "
+            "CLOSURE_INTACT — an unreadable freeze is not an intact one."
+            .format(self.state))
+
+    def __repr__(self):
+        return "ClosureState({!r})".format(self.state)
+
+
+def _frozen_closure_mutated(ctx: Context) -> ClosureState:
+    """Whether a frozen input changed, whether nothing was frozen, or whether
+    the freeze itself could not be read. Never collapses the last two."""
     if not ctx.freeze.is_file():
         # No freeze, so no closure to mutate. The freeze step reports that;
         # saying it twice would let a caller read "no mutation" as "frozen".
-        return None
+        return ClosureState(CLOSURE_ABSENT, (
+            "no freeze record exists at {}, so there is no closure to compare "
+            "against — which is not the same as a closure that has not moved"
+            .format(ctx.freeze)))
     try:
         body = json.loads(ctx.freeze.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    except (OSError, ValueError) as exc:
+        return ClosureState(CLOSURE_UNREADABLE, (
+            "the freeze record at {} could not be read ({}: {}), so nothing "
+            "was compared. This is not evidence that the closure is intact"
+            .format(ctx.freeze, type(exc).__name__, exc)))
     if not isinstance(body, dict):
-        return None
-    drift = [p for p in _freeze_problems(ctx, body)
+        return ClosureState(CLOSURE_UNREADABLE, (
+            "the freeze record at {} holds {} where an object is required, so "
+            "no digest in it could be checked. This is not evidence that the "
+            "closure is intact".format(ctx.freeze, type(body).__name__)))
+
+    # The same refusal `check_freeze` makes, and it was missing here. Codex,
+    # 2026-09-05: this function called `_freeze_problems` directly, so a record
+    # the authoritative freeze checker rejects outright — a legacy schema, a
+    # foreign artifact, no `schema` key at all — was still read field by field
+    # and could be reported as an intact closure. The fixture written for the
+    # intact case in this very change carried no `schema` and demonstrated it.
+    #
+    # `_freeze_problems` asks what each field says. It never asks whether the
+    # fields mean what this tool thinks they mean.
+    if body.get("schema") != FREEZE_SCHEMA:
+        return ClosureState(CLOSURE_UNREADABLE, (
+            "the freeze record at {} declares schema {!r} and this tool reads "
+            "{!r}, so its fields were not interpreted at all. This is not "
+            "evidence that the closure is intact".format(
+                ctx.freeze, body.get("schema"), FREEZE_SCHEMA)))
+
+    problems = _freeze_problems(ctx, body)
+    drift = [p for p in problems
              if "changed since the freeze" in p or "D-013 has changed" in p]
-    if not drift:
-        return None
-    return ("the frozen closure has been mutated since {}: {} — the "
+    invalid = [p for p in problems if p not in drift]
+
+    # Validity is asked *before* drift, and Codex found it the other way round
+    # on 2026-09-05: a record missing its `owner_acknowledgement` and carrying
+    # one mismatched digest was reported as a mutated closure. That asserts
+    # something moved away from a freeze — from a file that was never a freeze,
+    # so there is nothing for anything to have moved away from.
+    #
+    # Every sentence here is also a reason the comparison did not happen, not
+    # evidence that it happened and found nothing. The drift filter above used
+    # to be the whole test, and it keeps exactly two sentences: a freeze whose
+    # recorded inputs have since been *deleted* produces "frozen and now
+    # unreadable", which matches neither, so the answer was "every digest still
+    # matches what is on disk" about files that were gone. A freeze with no
+    # `inputs` block at all answered the same way, about no digests.
+    #
+    # Require the thing rather than forbidding its opposite: intact means the
+    # record is complete and every comparison in it succeeded.
+    if invalid:
+        also = (" It also shows {} apparent drift sentence(s), which cannot "
+                "be read as drift from a record that is not a valid freeze."
+                .format(len(drift)) if drift else "")
+        return ClosureState(CLOSURE_UNREADABLE, (
+            "the freeze record at {} does not support a comparison: {} — so "
+            "nothing was established about drift either way.{}".format(
+                ctx.freeze, "; ".join(sorted(invalid)[:4]), also)))
+
+    if drift:
+        return ClosureState(CLOSURE_MUTATED, (
+            "the frozen closure has been mutated since {}: {} — the "
             "configuration that produced the results is not the one on disk, "
             "which is what the boxed rule's 'no tuning whatsoever' forbids"
-            .format(body.get("created_at", "the freeze"), "; ".join(drift[:4])))
+            .format(body.get("created_at", "the freeze"), "; ".join(drift[:4]))))
+
+    # Deliberately narrow. This says the digests recorded in the freeze still
+    # match what is on disk. It does not say a measurement was made under them
+    # — the earlier wording claimed "no mutation after a result", and nothing
+    # here reads a result.
+    return ClosureState(CLOSURE_INTACT, (
+        "every digest recorded in the freeze of {} still matches what is on "
+        "disk, and the record names all of them. It does not follow that any "
+        "result was measured under them — nothing here reads a result".format(
+            body.get("created_at", "the freeze"))))
 
 
 def divergence(order: Order) -> List[str]:
@@ -2136,12 +2463,21 @@ def state_of(ctx: Context, order: Order, step: Step,
                        if results[need].state != DONE]
         also = (" It is also waiting for {}, none of which is done.".format(
             ", ".join(outstanding)) if outstanding else "")
+        # The inputs are a separate question from the criterion, and until now
+        # this branch answered neither. It still returns UNDEFINED_CRITERION —
+        # nothing below can make the step done, satisfy another step's
+        # `requires`, or move it out of `undetermined` in `next_steps` — but
+        # what it says now includes what the step is actually waiting on.
+        pre = preflight_of(ctx, step)
+        inputs = " Its inputs, which are a different question: {} — {}.".format(
+            "inputs established; the completion criterion remains undefined"
+            if pre.state == PRE_ESTABLISHED else pre.state, pre.why)
         return Result(UNDEFINED_CRITERION, (
             "`done_when: {}` — DECISIONS.md names no artifact that records this "
             "step as finished, so it can be neither reported done nor used to "
             "satisfy another step's `requires`. Filling it in means naming an "
-            "artifact, which is work rather than wording.{}".format(
-                UNDEFINED, also)))
+            "artifact, which is work rather than wording.{}{}".format(
+                UNDEFINED, also, inputs)))
 
     result = CHECKERS[step.id](ctx, step)
     if result.state == DONE:

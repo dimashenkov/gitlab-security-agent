@@ -108,6 +108,37 @@ def test_a_case_the_reference_answers_two_ways_is_not_comparable(reference):
     assert body["unstable_under_reference"] == ["wobbly"]
 
 
+def test_the_builder_cannot_emit_a_reference_the_comparator_refuses(reference):
+    """A producer/consumer contract defect, found on 2026-09-05.
+
+    `unstable_under_reference` was decided on the outcomes alone, so a case
+    whose two passes agreed on *whether* it passed and disagreed on *how* it
+    failed was written out as comparable — and `sentinel_compare` refuses the
+    whole reference for exactly that case, because "did a new kind of failure
+    appear" has nothing to be measured against. The builder could write a file
+    the comparator would not read, and nothing said so until somebody ran the
+    comparison, by which time the paid runs were already spent.
+
+    Refused here rather than relabelled: `unstable` means disagreeing
+    outcomes, the comparator now requires that of every case carrying the
+    label, and widening the word to cover this would break the other side.
+    """
+    write_row(reference / "experiment", "pass-b", "steady", True,
+              safe_false_positive=True)
+
+    with pytest.raises(sentinel_reference.ReferenceError) as caught:
+        sentinel_reference.build()
+    assert "agreed on whether the case passed and disagreed on how it failed" \
+        in str(caught.value)
+    assert "false_alarm" in str(caught.value)
+
+
+def test_a_case_stable_in_both_senses_is_still_comparable(reference):
+    """The other half: the check must not refuse the ordinary case."""
+    body = sentinel_reference.build()
+    assert body["comparable"] == ["steady"]
+
+
 def test_both_passes_are_recorded_not_the_later_one(reference):
     body = sentinel_reference.build()
 
