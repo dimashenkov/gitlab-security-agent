@@ -62,10 +62,15 @@ from typing import Any, Dict, List, Optional, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ordinary_corpus as oc
+import spend_gate
 
 SCHEMA_VERSION = "grok-adjudication/1"
 MODEL = "grok-4.6"
 VENDOR = "xai"
+# Which class of spending this is, so the order can be asked about the right
+# step. Named here and mapped in `spend_gate.py`, so a renamed step fails a
+# test rather than quietly permitting.
+SPEND_CLASS = "adjudicate_ordinary"
 
 
 # The verdict schema, handed to the CLI so the answer comes back structured
@@ -239,6 +244,14 @@ def ask(diff: str, timeout: int) -> Dict[str, Any]:
     # record would make the artifact unreadable without adding anything the
     # digest does not already fix.
     shape = ["<prompt>" if part is prompt else part for part in command]
+
+    # Asked here, immediately before the billable call, and not once at
+    # startup. A check at the top of `main` and a spend a minute later are
+    # separated by everything that can change in between, and the entry point
+    # is not the only way into this function. `require()` raises for a refusal
+    # and for an undetermined answer alike, so no branch here can read one as
+    # the other. Codex, 2026-09-05.
+    spend_gate.authorise(SPEND_CLASS).require()
 
     started = time.time()
     try:

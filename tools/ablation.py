@@ -57,9 +57,12 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import spend_gate
 from artifact import is_target
 from pair_corpus import build_repo, cost_of, cost_summary, load_cases
 
+# Why this tool's spending is authorised. Mapped in `tools/spend_gate.py`.
+SPEND_CLASS = "ablation"
 SNAP_SUFFIX = "-snap"
 CONSTRUCTIONS = ("regression", "snapshot")
 MEMBERS = ("safe", "unsafe")
@@ -152,6 +155,10 @@ def review(repo: Path, base: str, head: str, out: Path, gate_on: bool) -> dict:
         "--repo", str(repo), "--mode", "diff", "--base", base, "--head", head,
         "--no-comment", "--output-dir", str(out),
     ]
+    # Asked immediately before the process that bills. Codex found this path
+    # ungated on 2026-09-05.
+    spend_gate.authorise(SPEND_CLASS).require()
+
     started = time.monotonic()
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     seconds = time.monotonic() - started

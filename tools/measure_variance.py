@@ -33,10 +33,15 @@ from typing import Optional
 # constants and two of them were wrong — a rate copied into a tool is a rate
 # nobody updates.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import spend_gate
 
 from security_agent.config import MODEL_PRICING
 from security_agent.models import Usage
 
+# Why this tool's spending is authorised. Mapped in `tools/spend_gate.py`.
+SPEND_CLASS = "measure_variance"
 MODEL = "claude-opus-5"
 CACHE_TTL = "1h"
 
@@ -54,6 +59,12 @@ def cost_of(usage: dict) -> Optional[float]:
 
 
 def run_once(args: argparse.Namespace, index: int) -> dict:
+    # First, before a temporary directory or a command exists. Each run is a
+    # separate billable request, so each asks; and a refusal that arrives
+    # before any work is a refusal that costs nothing to obey. Codex found
+    # this path ungated on 2026-09-05.
+    spend_gate.authorise(SPEND_CLASS).require()
+
     out_dir = Path(tempfile.mkdtemp(prefix="variance-{}-".format(index)))
     cmd = [
         sys.executable, "-m", "security_agent",
@@ -72,7 +83,6 @@ def run_once(args: argparse.Namespace, index: int) -> dict:
 
     # check=False on purpose: a non-zero exit is the product here, not a failure.
     started = time.monotonic()
-    # check=False on purpose: a non-zero exit is the product here, not a failure.
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     seconds = time.monotonic() - started
 

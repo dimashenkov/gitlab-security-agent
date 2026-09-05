@@ -60,10 +60,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 import alarm_identities as ai  # noqa: E402
+import spend_gate  # noqa: E402
 
 SCHEMA_VERSION = "alarm-codebook/1"
 MODEL = "grok-4.6"
 VENDOR = "xai"
+# Which class of spending this is; the step it maps to lives in
+# `spend_gate.py`, so a renamed step fails a test rather than permitting.
+SPEND_CLASS = "classify_alarms"
 
 
 ALARM_SOURCE = ["metric", "reviewer", "both", "other", "unclear"]
@@ -203,6 +207,14 @@ def ask(ruling_text: str, timeout: int) -> Dict[str, Any]:
         "--output-format", "json",
     ]
     shape = ["<prompt>" if part is prompt else part for part in command]
+
+    # Immediately before the billable call, not once at startup: a check at
+    # the entry point and a spend a minute later are separated by everything
+    # that can change in between, and this function has callers that are not
+    # the entry point. `require()` raises for a refusal and for an
+    # undetermined answer alike. Codex, 2026-09-05.
+    spend_gate.authorise(SPEND_CLASS).require()
+
     started = time.time()
     try:
         done = subprocess.run(command, capture_output=True, text=True,

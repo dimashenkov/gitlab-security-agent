@@ -28,6 +28,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 import experiment
+import spend_gate
+
+
+@pytest.fixture(autouse=True)
+def order_permits(monkeypatch):
+    """These tests are about the experiment, not about the order.
+
+    `run_case` asks `spend_gate` before the process that bills, and D-013
+    orders no step for `experiment_run`, so the live answer is `undetermined`.
+    Replaced explicitly rather than bypassed with a flag; the gate itself is
+    exercised in `tests/test_spend_gate.py`.
+    """
+    monkeypatch.setattr(spend_gate, "_ask_the_order",
+                        lambda step, **kwargs: (0, []))
+    monkeypatch.setitem(spend_gate.SPEND_CLASSES, "experiment_run", "freeze")
 
 
 @pytest.fixture
@@ -750,7 +765,12 @@ class TestTheSixthRoundOfDefects:
         seen = {}
 
         def fake(case, keep_dir=None, provider="", profile="",
-                 adjudications=None):
+                 adjudications=None, *, spend_class=None):
+            # `spend_class` is named rather than swallowed by `**kwargs`: this
+            # stand-in exists to check what `experiment` passes down, and a
+            # signature that absorbs anything would stop noticing when it
+            # stops passing something.
+            seen["spend_class"] = spend_class
             seen["adjudications"] = adjudications
             return {"case_id": case["case_id"], "pair_success": True,
                     "case_digest": frozen_digest(world, case["case_id"])}
@@ -759,6 +779,10 @@ class TestTheSixthRoundOfDefects:
         experiment.run("e", "a", 1)
 
         assert seen["adjudications"] is not None
+        # And its own class, not `pair_corpus`'s default: an experiment against
+        # a frozen protocol can be ordered differently from a direct corpus
+        # run, even though both end at the same `review`.
+        assert seen["spend_class"] == experiment.SPEND_CLASS
 
     def test_the_passes_read_a_frozen_copy_of_the_prompts(self, world,
                                                           monkeypatch):

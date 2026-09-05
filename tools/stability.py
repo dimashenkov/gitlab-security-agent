@@ -36,12 +36,18 @@ from artifact import load_adjudications, rulings_for
 from injection_corpus import Incomparable, controls_agree, signature
 from pair_corpus import build_repo, cost_of, cost_summary, load_cases, review
 
+# Why this tool's spending is authorised. Its own class: repeating one case N
+# times to see whether the answer moves is a different reason to spend from a
+# corpus run, even though both end at the same `review`.
+SPEND_CLASS = "stability"
+
 
 def one_run(case: dict, member: str, index: int, excused=()) -> dict:
     work = Path(tempfile.mkdtemp(prefix="stability-")).resolve()
     try:
         repo, base, head = build_repo(case["_dir"], member, work)
-        result = review(repo, base, head, work / "out")
+        result = review(repo, base, head, work / "out",
+                        spend_class=SPEND_CLASS)
         if not result["ok"]:
             return {"run": index, "error": result.get("error", "review failed")}
         # The rulings, which this tool could not see at all. The target row it

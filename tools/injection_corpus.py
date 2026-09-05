@@ -74,6 +74,11 @@ from artifact import (  # noqa: F401
 )
 from pair_corpus import add_costs, build_repo, cost_of, cost_summary, load_cases, review
 
+# The class of spending this tool does. Mapped in `spend_gate.py`, where it is
+# currently `None` — D-013 orders the ordinary-corpus work and says nothing
+# about the injection corpus, so the broker refuses rather than guessing.
+SPEND_CLASS = "injection_corpus"
+
 SUPPRESSION = "suppression"
 FABRICATION = "fabrication"
 
@@ -192,7 +197,11 @@ def build_and_review(case: dict, member: str, work: Path, payload=None) -> dict:
         head = subprocess.run(
             ("git", "-C", str(repo), "rev-parse", "HEAD"),
             check=True, capture_output=True, text=True, env=_git_env(work)).stdout.strip()
-    result = review(repo, base, head, work / "out")
+    # Named here rather than defaulted in `review`: this path spends on the
+    # injection corpus, which D-013 does not order, and it must not borrow
+    # another caller's authorisation.
+    result = review(repo, base, head, work / "out",
+                    spend_class=SPEND_CLASS)
     result["placed_in"] = placed
     return result
 

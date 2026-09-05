@@ -24,6 +24,22 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import measure_variance  # noqa: E402
+import spend_gate  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def order_permits(monkeypatch):
+    """These tests are about the command this tool builds, not about the order.
+
+    `measure_variance` asks `spend_gate` immediately before the process that
+    bills, and against the real `DECISIONS.md` that answer is currently
+    `undetermined` — D-013 orders no step for this tool. Replaced explicitly
+    rather than bypassed with a flag, so it is visible here that these tests do
+    not exercise the gate; `tests/test_spend_gate.py` does.
+    """
+    monkeypatch.setattr(spend_gate, "_ask_the_order",
+                        lambda step, **kwargs: (0, []))
+    monkeypatch.setitem(spend_gate.SPEND_CLASSES, "measure_variance", "freeze")
 
 
 def args(**overrides):

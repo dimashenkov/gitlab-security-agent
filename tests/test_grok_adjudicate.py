@@ -22,6 +22,22 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 import grok_adjudicate as ga
+import spend_gate
+
+
+@pytest.fixture(autouse=True)
+def order_permits(monkeypatch):
+    """Every test here is about the adjudicator, not about the order.
+
+    `ask` asks `spend_gate` immediately before the billable call, and against
+    the real `DECISIONS.md` that answer is currently a refusal — correctly, the
+    freeze is stale. Replaced explicitly rather than bypassed with a flag, so
+    it is visible in this file that these tests do not exercise the gate. The
+    gate is exercised in `tests/test_spend_gate.py`, including that a refusal
+    stops the call rather than being reported after it.
+    """
+    monkeypatch.setattr(spend_gate, "_ask_the_order",
+                        lambda step, **kwargs: (0, []))
 
 
 def pool_record(repo: str, commit: str, diff: str = "diff --git a/x b/x\n+ok\n"):

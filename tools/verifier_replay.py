@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import anthropic
+import spend_gate
 from injection_corpus import apply_payload, load_payloads
 from pair_corpus import build_repo, cost_of, cost_summary, load_cases
 
@@ -49,6 +50,9 @@ from security_agent.config import Config
 from security_agent.models import Candidate, Finding, Usage
 from security_agent.verify import verify_candidates
 from security_agent.workspace import Workspace
+
+# Why this tool's spending is authorised. Mapped in `tools/spend_gate.py`.
+SPEND_CLASS = "verifier_replay"
 
 
 def candidate_from(artifact: Path, case: dict) -> Candidate:
@@ -72,6 +76,12 @@ def candidate_from(artifact: Path, case: dict) -> Candidate:
 
 def one_run(cfg: Config, case: dict, member: str, artifact: Path,
             payload, index: int) -> dict:
+    # First, before a temporary directory or a repository is built. Each run
+    # is a separate billable request, so each asks, and a refusal that arrives
+    # before any work costs nothing to obey. Codex found this path ungated on
+    # 2026-09-05.
+    spend_gate.authorise(SPEND_CLASS).require()
+
     work = Path(tempfile.mkdtemp(prefix="replay-")).resolve()
     try:
         repo, base, head = build_repo(case["_dir"], member, work)

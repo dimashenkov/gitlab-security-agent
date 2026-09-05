@@ -56,6 +56,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import spend_gate
 from artifact import (
     case_digest,
     load_adjudications,
@@ -67,6 +68,13 @@ from artifact import is_target as _is_target
 
 from security_agent.config import MODEL_PRICING
 from security_agent.models import Usage
+
+# The class of spending a corpus review is. `run_queue.py` and `experiment.py`
+# do not bill on their own — they drive this file, one by subprocess and one by
+# importing `run_case` — so their spending is this class and they need no
+# separate one. Naming a class per driver would list four where two exist, and
+# a class nobody calls reads as coverage.
+SPEND_CLASS = "pair_corpus_review"
 
 MODEL = "claude-opus-5"
 CACHE_TTL = "1h"
@@ -300,14 +308,23 @@ def build_repo(case: Path, member: str, work: Path) -> tuple:
 
 
 def review(repo: Path, base: str, head: str, out: Path,
-           provider: str = "", profile: str = "") -> dict:
+           provider: str = "", profile: str = "", *, spend_class: str) -> dict:
     """One review of one member.
 
     `provider` and `profile` are passed through rather than defaulted here, so
     a corpus run costs whatever the operator chose and never silently the paid
     path. The corpus is 24 cases and every case is two reviews: a default that
     billed would make measuring the product an expense nobody agreed to.
+
+    `spend_class` is required and has no default. This function is the lowest
+    point three paid paths share — `run_case` here, `run_queue.run_one`, and
+    `injection_corpus.build_and_review` — and gating only the command-line
+    entry points left all three able to bill without passing the broker. A
+    default would put the policy back in one place for callers that mean
+    different things; naming it at each call site keeps the caller's own class
+    with the caller. Codex, 2026-09-05.
     """
+    spend_gate.authorise(spend_class).require()
     cmd = [
         sys.executable, "-m", "security_agent",
         "--repo", str(repo), "--mode", "diff", "--base", base, "--head", head,
@@ -391,7 +408,16 @@ def _keep_artifacts(work: Path, result: dict, keep_dir: Optional[Path]) -> None:
 
 def run_case(case: dict, keep_dir: Optional[Path] = None,
              provider: str = "", profile: str = "",
-             adjudications: Optional[Sequence[dict]] = None) -> dict:
+             adjudications: Optional[Sequence[dict]] = None,
+             *, spend_class: str = SPEND_CLASS) -> dict:
+    """One case, both members.
+
+    `spend_class` travels from whoever had the reason to spend and defaults to
+    this file's own only for a direct corpus run. A queue measurement and a
+    frozen experiment reach the same `review` through here and can be ordered
+    differently, so the class is theirs to name rather than this function's to
+    assume. Codex, 2026-09-05.
+    """
     # Resolved, because on macOS the temp directory is reached through a symlink
     # (/var -> /private/var) and the report writer refuses to write through one.
     work = Path(tempfile.mkdtemp(prefix="pair-{}-".format(case["case_id"]))).resolve()
@@ -435,7 +461,8 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
         for member in ("safe", "unsafe"):
             repo, base, head = build_repo(case["_dir"], member, work / member)
             out = work / (member + "-out")
-            members[member] = review(repo, base, head, out, provider, profile)
+            members[member] = review(repo, base, head, out, provider, profile,
+                                     spend_class=spend_class)
 
         if not all(m["ok"] for m in members.values()):
             result["error"] = next(m.get("error") for m in members.values() if not m["ok"])
@@ -764,6 +791,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--profile", choices=("probe", "normal", "deep"),
         help="Ceilings for each review. Only the claude-cli provider reads it.")
+    parser.add_argument(
+        "--spend-class", default=SPEND_CLASS,
+        choices=sorted(spend_gate.SPEND_CLASSES),
+        help="Why this run is authorised to spend, for the order to be asked "
+             "about. `run_queue.py` passes its own; a direct corpus run keeps "
+             "the default. Constrained to the declared classes, so a typo is "
+             "a refusal at the command line rather than an unknown class "
+             "resolved at the moment of spending.")
     parser.add_argument("-c", "--concurrency", type=int, default=4)
     parser.add_argument("--json", metavar="PATH")
     parser.add_argument("--keep-artifacts", metavar="DIR",
@@ -804,7 +839,9 @@ def main() -> int:
         futures = {pool.submit(run_case, c, keep_dir,
                                args.provider or "",
                                args.profile or "",
-                               adjudications): c for c in cases}
+                               adjudications,
+                               spend_class=args.spend_class): c
+                   for c in cases}
         for future in as_completed(futures):
             r = future.result()
             results.append(r)

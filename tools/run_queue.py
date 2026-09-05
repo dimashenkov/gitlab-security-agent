@@ -66,6 +66,9 @@ from check_accounted import about_this_version, scorable
 
 ROOT = Path(__file__).resolve().parents[1]
 QUEUE = ROOT / "measurements" / "queue"
+# Why this tool's spending is authorised, passed down to `pair_corpus.py`
+# rather than left to its default. Mapped in `tools/spend_gate.py`.
+SPEND_CLASS = "run_queue"
 LOG = QUEUE / "log.jsonl"
 
 # The refusal, and the reset it names. Matched on the sentence rather than on a
@@ -400,9 +403,14 @@ def run_one(case_id: str, args) -> tuple:
     """`(payload, kind, detail)`. The payload is kept unless it was refused."""
     target = QUEUE / (case_id + ".json")
     QUEUE.mkdir(parents=True, exist_ok=True)
+    # Its own class, not `pair_corpus`'s. A queue measurement and a direct
+    # corpus run reach the same `review` and can be ordered differently, so
+    # the reason for spending travels with the caller that has it. Codex,
+    # 2026-09-05.
     command = [sys.executable, "-u", str(ROOT / "tools" / "pair_corpus.py"),
                str(ROOT / "corpus-real"), "--provider", args.provider,
                "--profile", args.profile, "-c", "2",
+               "--spend-class", SPEND_CLASS,
                "--case", case_id, "--json", str(target)]
     proc = subprocess.run(command, cwd=ROOT, check=False)
     if not target.is_file():

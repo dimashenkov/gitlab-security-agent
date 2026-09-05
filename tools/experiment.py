@@ -81,6 +81,8 @@ from sentinel import read_cases
 from security_agent.config import ConfigError
 
 ROOT = Path(__file__).resolve().parents[1]
+# Why this tool's spending is authorised. Mapped in `tools/spend_gate.py`.
+SPEND_CLASS = "experiment_run"
 SUITE = ROOT / "suites" / "sentinel.yml"
 PASSES = ("a", "b")
 
@@ -519,7 +521,12 @@ def run(name: str, label: str, limit: Optional[int]) -> int:
         os.environ["SECURITY_SCAN_PROMPT_DIR"] = str(home(name) / "prompts")
         result = run_case(case, provider=body["protocol"]["provider"],
                           profile=body["protocol"]["profile"],
-                          adjudications=rulings)
+                          adjudications=rulings,
+                          # Its own class: an experiment against a frozen
+                          # protocol can be ordered differently from a direct
+                          # corpus run, even though both end at the same
+                          # `review`. Codex, 2026-09-05.
+                          spend_class=SPEND_CLASS)
 
         # After, before it is written anywhere. The check before the case
         # leaves the case itself unprotected — the reviewer loads its prompts

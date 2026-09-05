@@ -23,6 +23,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 import classify_alarms as ca  # noqa: E402
+import spend_gate  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def order_permits(monkeypatch):
+    """These tests are about the codebook, not about the order.
+
+    `ask` asks `spend_gate` immediately before the billable call. Replaced
+    explicitly rather than bypassed with a flag, so it is visible here that
+    these tests do not exercise the gate — `tests/test_spend_gate.py` does.
+    """
+    monkeypatch.setattr(spend_gate, "_ask_the_order",
+                        lambda step, **kwargs: (0, []))
 
 _SESSIONS = iter(["s-{}".format(n) for n in range(1, 500)])
 
