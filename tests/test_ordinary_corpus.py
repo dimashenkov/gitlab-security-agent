@@ -947,6 +947,56 @@ def test_harvest_writes_records_the_selector_accepts(tmp_path, corpus):
     assert {r["rule"] for r in rows} == {None, "not_single_parent"}
 
 
+SHA = "a" * 40
+
+
+@pytest.mark.parametrize("repo, commit", [
+    ("github.com/O/A", SHA.upper()),
+    ("  github.com/o/a  ", "  " + SHA + "  "),
+])
+def test_the_identity_fold_covers_case_and_whitespace(repo, commit):
+    assert oc.identity(repo, commit) == ("github.com/o/a", SHA)
+
+
+@pytest.mark.parametrize("repo, commit, expected", [
+    ("github.com/o/a.git", SHA, ("github.com/o/a.git", SHA)),
+    ("https://github.com/o/a", SHA, ("https://github.com/o/a", SHA)),
+    ("git@github.com:o/a", SHA, ("git@github.com:o/a", SHA)),
+    ("github.com/o/a", SHA[:7], ("github.com/o/a", SHA[:7])),
+])
+def test_the_identity_fold_covers_nothing_else(repo, commit, expected):
+    """A known limitation, pinned so it cannot vanish either way.
+
+    `identity` folds case and surrounding whitespace and nothing more, so one
+    change written any of these ways is a different identity — and the
+    generations ledger, which reads disjointness through this function, would
+    pass a repeat spelled differently as unseen.
+
+    The assertion is the exact tuple, not merely "not the canonical one". An
+    implementation folding all four onto some other shared value would satisfy
+    `!=` while contradicting the very claim this test records. Codex,
+    2026-09-05.
+
+    This test is not asking for the narrow behaviour. It states it, so that
+    widening the fold is a deliberate change with this test failing in front of
+    it. Widening re-orders `order_hash` for any affected spelling, and whether
+    that re-samples anything was measured rather than assumed: of the 3056
+    records in the pool behind `ordinary-v1`, **none** carries a `.git`
+    suffix, a URL, an ssh remote or a sha that is not forty lower-case hex
+    characters. Three repository strings differ only in case, which the fold
+    already handles — the `AutoMapper/AutoMapper` fold that once cost two of
+    thirty. So the limitation is a hazard for a pool built differently, not a
+    live one, and widening today would move nothing.
+    """
+    assert oc.identity(repo, commit) == expected
+
+
+def test_a_change_with_no_usable_identity_is_none_not_a_guess():
+    """Callers must not invent one; `None` is the third answer."""
+    assert oc.identity(None, SHA) is None
+    assert oc.identity("github.com/o/a", None) is None
+
+
 def test_harvest_labels_git_as_a_source_with_no_label_channel(tmp_path):
     """The empty list git produces must not read as "no security label"."""
     clones = tmp_path / "clones"

@@ -1464,10 +1464,30 @@ def _generation_problem(ctx: Context) -> Optional[str]:
     Today it is always the first reason: no ledger exists. That is deliberately
     not treated as permission — the amendment says the absent ledger blocks the
     run rather than excusing overlap — and it is why this returns a sentence
-    rather than a boolean. The six semantics D-013 leaves open (what a case id
-    names, alias equality, digest coverage, who writes a record, when overlap is
-    checked, which generation owns which result) are unbuilt, so nothing here
-    pretends to check them.
+    rather than a boolean.
+
+    This docstring used to say all six of D-013's open semantics were unbuilt,
+    while a comment forty lines below listed four. Both cannot be right, and a
+    docstring that overstates a gap is the mirror of one that overstates a
+    control. What is actually here:
+
+    * **alias equality, partly.** The comparison goes through
+      `ordinary_corpus.identity`, which folds case and surrounding whitespace
+      and nothing else. `github.com/o/a`, `github.com/o/a.git`,
+      `https://github.com/o/a`, an ssh remote and a shortened sha are five
+      identities for one change, so a repeat spelled any of the other four
+      passes as unseen. Measured on 2026-09-05, not read off the source, and
+      pinned by `test_the_identity_fold_covers_nothing_else`.
+
+      How much this costs today was measured too: of the 3056 records in the
+      pool behind `ordinary-v1`, none carries any of those spellings, so
+      widening the fold would move nothing now. It is a hazard for a pool built
+      differently — a different clone, a URL form — rather than a live one.
+    * **unbuilt:** what a `case_id` names, digest coverage, who writes a record
+      and when overlap is checked (one protocol, not two), which generation
+      owns which result, and the seventh D-013 does not name — concurrency and
+      crash recovery, without which every other semantic can hold while two
+      overlapping paid runs proceed. Codex, 2026-09-05.
     """
     path = ctx.generations
     if path is None:
