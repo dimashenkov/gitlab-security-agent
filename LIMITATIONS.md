@@ -778,3 +778,43 @@ the findings stopped being about the number and became about malformed files
 nobody has produced. The fix, if it is ever wanted, is for `cmd_score` to
 reconstruct the labels from D-014 exactly as it already reconstructs the
 admitted ids.
+
+## The Sonnet trial: what the interleave and the ledger do not establish
+
+D-015 asks for an interleaved order committed before any result is seen, and
+for the reference to be frozen from the Opus passes before the Sonnet ones are
+looked at. Under a genuinely interleaved order the Sonnet rows are on disk long
+before the last Opus row is, so those two cannot both hold in their literal
+reading. `tools/sonnet_trial.py` enforces the narrower thing and says so.
+
+| | |
+|---|---|
+| established | the reference was frozen at a recorded point in the sequence, built from the Opus arm and nothing else, and the file compared against later still has that content |
+| **not** established | that nobody read the challenger rows before the freeze |
+
+Codex, 2026-09-06: *"A ledger records writes, not reads. Plaintext challenger
+files already on disk make that history observationally indistinguishable from
+one where nobody inspected them."* Enforcing the literal rule needs the
+challenger's results to be unreadable until the reference digest is committed.
+That is not built, it is not claimed, and this paragraph exists so that the
+guarantee is not read wider than it is.
+
+Two more boundaries of the same tool:
+
+* **The interleave is at case granularity, not review granularity.** Within one
+  unit both members of a pair are reviewed by the same arm, back to back. A
+  change lasting seconds still lands on both members of one pair together.
+* **`prepared` without `done` is a person's decision, not the tool's.** A crash
+  between writing the result and appending the ledger line leaves a row at the
+  path the open unit expects. Nothing in a JSON file binds it to the review
+  this trial paid for — Codex, 2026-09-06: *"Anyone can place a fabricated row
+  at that unit's expected path after preparation."* So `run` refuses, names the
+  file, and asks for `--recover`; the acceptance is a ledger line carrying
+  `recovered: true`. The row is still trusted, but deliberately and on the
+  record rather than silently.
+* **The chain's head is git, and only if the ledger is committed.** A hash
+  chain kept in the file it protects can be rewritten whole with every hash
+  recomputed. `committed_prefix` asks git whether the ledger on disk extends
+  the committed one, and `run` refuses when it does not — but an uncommitted
+  ledger answers `unknown`, which is "I could not check" and not "it is sound".
+  Commit the ledger as the trial proceeds or this check has nothing to hold.

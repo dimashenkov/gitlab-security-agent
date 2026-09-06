@@ -436,7 +436,8 @@ def accepted(name: str, label: str) -> Dict[str, Any]:
     return out
 
 
-def run(name: str, label: str, limit: Optional[int]) -> int:
+def run(name: str, label: str, limit: Optional[int],
+        only: Optional[str] = None, spend_class: str = SPEND_CLASS) -> int:
     """Run the frozen order, publishing a case only after it is still valid.
 
     The order matters and so does the loop: the conditions are checked before
@@ -444,12 +445,26 @@ def run(name: str, label: str, limit: Optional[int]) -> int:
     check passes. A result produced while something moved underneath it is
     discarded here rather than left on disk to be counted by a later resume,
     which is exactly what the previous design did.
+
+    **`only` names one case and means exactly that one.** `sonnet_trial.py`
+    interleaves the two arms, so the case to buy next comes from its committed
+    schedule rather than from this experiment's own queue — and a caller that
+    asked for one case and silently got another would record a review of the
+    wrong thing under the right name. So an unknown case is refused, a case
+    outside the frozen order is refused, and a case already accepted is
+    reported as nothing to do rather than quietly replaced by the next one in
+    the queue. Codex set that contract on 2026-09-06.
     """
     body = load(name)
     if body is None:
         return 2
     if label not in PASSES:
         print("a pass is one of {}".format(", ".join(PASSES)), file=sys.stderr)
+        return 2
+    if only is not None and only not in body["protocol"]["order"]:
+        print("{} is not in the frozen order of experiment {}, so running it "
+              "here would put a result under a protocol that never named it"
+              .format(only, name), file=sys.stderr)
         return 2
 
     from pair_corpus import load_adjudications, load_cases, run_case
@@ -464,6 +479,12 @@ def run(name: str, label: str, limit: Optional[int]) -> int:
     rulings = load_adjudications(ROOT / "corpus-real")
     have = accepted(name, label)
     queued = [c for c in body["protocol"]["order"] if c not in have]
+    if only is not None:
+        # Narrowed to the one case, and narrowed *after* the accepted rows are
+        # read: a case already answered leaves an empty queue and the "nothing
+        # left" path below, which is the truthful report. Filtering before
+        # would have re-bought it.
+        queued = [c for c in queued if c == only]
 
     print("experiment {} · pass {}".format(name, label))
     print("  {} accepted, {} to run".format(len(have), len(queued)))
@@ -526,7 +547,14 @@ def run(name: str, label: str, limit: Optional[int]) -> int:
                           # protocol can be ordered differently from a direct
                           # corpus run, even though both end at the same
                           # `review`. Codex, 2026-09-05.
-                          spend_class=SPEND_CLASS)
+                          #
+                          # And it travels from the caller when there is one:
+                          # the same two passes bought as part of the Sonnet
+                          # trial are authorised by D-015, not by whatever
+                          # orders a bare experiment. A class says *why* the
+                          # spending is authorised, and the reason belongs to
+                          # whoever had it.
+                          spend_class=spend_class)
 
         # After, before it is written anywhere. The check before the case
         # leaves the case itself unprotected — the reviewer loads its prompts

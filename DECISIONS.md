@@ -1884,3 +1884,164 @@ them. The name of the estimand carries that; the number alone does not.
 **Revisited when.** A human adjudicates any part of the sample, or a second
 independent adjudicator disagrees with Grok on any of the thirty. Either makes
 the estimand nameable more strongly, and neither is planned.
+
+## D-015 · Trying Sonnet: what must be repaired first, and what a pass buys
+
+| | |
+|---|---|
+| **State** | active |
+| **Scope** | `tools/sentinel_reference.py`, `tools/sentinel_compare.py`, the Sonnet trial |
+| **Authorises** | `sentinel_trial` |
+| **Checked against** | `f4872c3` |
+
+**Decided.** The Sonnet trial is approved **after** four repairs and not before.
+The reference builder and the comparator must separate the reviewer role from
+the verifier role; the builder must take its input directory and write a new
+file; the four passes must be interleaved in an order committed before any
+result is seen; and the reference must be frozen from the Opus passes before
+the Sonnet ones are looked at. A pass buys one thing: permission to spend the
+wider measurement on Sonnet. It carries no number across.
+
+**Rejected.** Running the plan as first proposed — 104 reviews the comparator
+would refuse, which is quota spent for nothing. Running the full 78 pairs on
+Sonnet instead of the sentinel — Grok: *"sentinel е евтиният екран; без него
+плащаш тройно, за да откриеш модел, който е очевидно по-лош."* A Latin square
+or any heavier design — the fix is an order written down, not a bigger
+apparatus.
+
+**Reason.** The owner approved trying Sonnet on 2026-09-06 and asked for a
+three-way check. Codex refused the plan; Grok, asked independently and told to
+say plainly if Codex was wrong, confirmed every finding and added three more.
+Recording it before the run is the point: the threshold is 2 confirmed
+regressions and the measured run-to-run instability is 2 of 13, so **one
+confused case is the whole width of the gate**. A rule chosen after the numbers
+are visible is not a rule.
+
+### The defect that blocks it, and why adding the field did not fix it
+
+`note_served(model, verifying=True)` appends the verifier to **both**
+`models_served` and `models_verified`. `sentinel_reference.observed()` collects
+only the first. The comparator then builds its expectation for the challenger
+by replacing the reference's reviewer model everywhere in that set.
+
+| | `models_served` |
+|---|---|
+| a fresh Opus reference, both roles | `{opus}` |
+| the expectation after substitution | `{sonnet}` |
+| a real Sonnet-reviews / Opus-verifies run | `{sonnet, opus}` |
+
+Refused as an instrument change. Adding `models_verified` to new rows did not
+finish the repair, because the aggregation is still role-blind.
+
+**And the test that should have caught it lies.**
+`test_the_verifier_held_where_it_was_is_accepted` passes only because its
+fixture writes `models_served: ["claude-sonnet-5"]` — a shape the agent never
+produces, since `note_served` puts the verifier in that list too. Grok found
+it; verified against `note_served` in `models.py` and the `member` fixture in
+`tests/test_sentinel_compare.py`, which writes a one-element served list.
+
+Grok also named why this is not a corner case: the observed-model set is a
+**union over all cases**, so a single false alarm on one safe member puts Opus
+into `observed_models.safe` and the mismatch fires.
+
+### What a pass means, and what it does not
+
+| | |
+|---|---|
+| **means** | the 13-case tripwire saw no confirmed regression, so buying the wider measurement on Sonnet is worth the quota |
+| **does not mean** | Sonnet has 78% recall, or 0 of 27, or 2 of 13. Those stay Opus numbers |
+
+The sentinel is 13 cases. It detects catastrophe and nothing finer.
+
+### The Opus passes are read before the Sonnet ones
+
+Not only for the freeze. If today's agent no longer reproduces what the retired
+reference recorded on its stable cases, then "the same job" moved **before**
+Sonnet was introduced, and that has to be seen and said before the challenger
+is read. Otherwise a change in the agent is attributed to the model.
+
+**Enforced by.** `spend_gate` refuses the class `sentinel_trial` until this
+entry is active and names it, which it now does. The comparator refuses a
+challenger whose observed models do not match the expectation, which is the
+check being repaired rather than removed. The interleaved order is written to
+the experiment directory before the first review and is part of the artifact.
+
+**Evidence.** Codex, 2026-09-06, on the plan as first written: *"do not approve
+the run as currently proposed"*, with the role-blind aggregation, the
+hard-coded input directory, the refusal to overwrite, the block-separated
+execution and the 104-review count. Grok, the same day, independently: *"Codex
+е прав за отказването. Finding 1 не е предпазливост — компараторът ще откаже
+реалния challenger."*
+
+**Objection.** Grok, on what nobody had raised: `experiment.py` runs one model
+over two passes, so the Opus-then-Sonnet sequence is built into the tooling and
+interleaving is not a flag but a change. And: *"Неуверен колко drift има за
+часове — никой не го е мерил. Уверен, че при този праг не е нужно да е
+измерен, за да бърка решението."*
+
+### Amendment, 2026-09-06: two of these requirements cannot both hold literally
+
+Interleaving and "frozen before the Sonnet passes are looked at" contradict
+each other on their face. Under a genuinely interleaved order, Sonnet rows are
+on disk long before the last Opus row is, so "before the Sonnet ones are looked
+at" cannot mean "before any Sonnet row exists" — read that way the two
+requirements are jointly unsatisfiable, and this repository has already shipped
+one gate whose own rules contradicted each other.
+
+What `tools/sonnet_trial.py` enforces instead:
+
+| | |
+|---|---|
+| **established** | the reference was frozen at a recorded point in the sequence, from the Opus arm's directory only, and the file compared against later still has that content |
+| **not established** | that nobody read the Sonnet rows before the freeze |
+
+Codex, on the draft that claimed the stronger thing: *"A ledger records writes,
+not reads. Plaintext challenger files already on disk make that history
+observationally indistinguishable from one where nobody inspected them."* The
+literal rule would need the challenger's results to be unreadable until the
+reference digest is committed. That is not built, and the docstring says so
+rather than implying otherwise.
+
+### The ledger, and why counting rows was refused
+
+The first design resumed by counting accepted rows per (arm, pass). Codex,
+2026-09-06: *"Aggregate accepted-row counts are not a trustworthy execution
+ledger. A deleted, manually inserted, copied, or out-of-order result can rewind
+or advance the inferred schedule position and cause execution to follow a
+different interleave while the schedule digest still passes."*
+
+So each unit is named in the schedule with its case, and each is recorded twice
+— `prepared` before the review is bought, `done` after it, every line carrying
+the digest of the line before. Two records because two files cannot be written
+at once: *"publishing a result and appending its ledger entry cannot be atomic
+across two files. A crash between them leaves a legitimate result
+indistinguishable from an injected stray and permanently blocks resume."*
+`tests/test_sonnet_trial.py` holds the five histories a count cannot tell apart
+from a good one, and the two states such a crash leaves behind.
+
+`experiment.run` gained `only=case_id` rather than the trial reimplementing the
+per-case loop — Codex: *"duplicating its drift and publication discipline
+invites divergence"* — with the contract that an unknown case is refused and no
+other case is silently substituted. It also takes the spend class from its
+caller: the same two passes bought as part of this trial are authorised by
+D-015 and not by whatever orders a bare experiment, and `sentinel_trial` is
+mapped to this entry in `spend_gate.py`. It was not, while this entry already
+claimed the gate held that class — so the refusal was about the missing mapping
+and the sentence here was true of nothing.
+
+Five rounds on the tool, ending 2026-09-06. The last two findings, kept because
+each was one command away from costing something:
+
+* `--steps` was enforced only in the loop over new units, so `--steps 0` — an
+  operator asking to buy nothing — bought the open one anyway. A recovered unit
+  now counts against the budget too.
+* `_buy` set `SECURITY_SCAN_VERIFY_MODEL` to the arm's own model, which would
+  have bought Sonnet-reviews/**Sonnet**-verifies: a different instrument from
+  the one approved above, refused by the comparator *after* 104 reviews were
+  paid for. The verifier comes from the schedule now, and `ARM_FIELDS` lets
+  only `model_requested` differ between the arms, so a freeze whose verifiers
+  disagree is refused before anything is bought.
+
+**Revisited when.** The repairs land and the four passes are run, or the owner
+withdraws the trial. If a pass is obtained, the decision to buy the wider
+measurement is a separate one and is not implied by this entry.
