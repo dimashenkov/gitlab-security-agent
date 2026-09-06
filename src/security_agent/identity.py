@@ -120,6 +120,25 @@ def digest(identity: Dict[str, Any]) -> str:
     ).hexdigest()[:16]
 
 
+def block(body, name):
+    """One named object out of an artifact, or an empty one.
+
+    **`or {}` is not this.** A truthy value that is not a mapping — a list, a
+    string, a number a hand edit left behind — passes that guard and then
+    raises `AttributeError` at `.items()` or `.get()`, out of the middle of a
+    path whose whole job is to decide carefully whether a stored answer can be
+    trusted. Codex, 2026-09-06: the artifact may be truncated or hand-edited,
+    which is the stated threat model, so every nested object is asked what it
+    is before it is read as one.
+
+    An artifact whose `provenance` is a list has no provenance. Returning the
+    empty mapping says exactly that, and the checks above it then refuse for
+    the reason they exist for rather than crashing.
+    """
+    value = body.get(name) if isinstance(body, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
 def reusable(previous: Dict[str, Any], current: Dict[str, Any]) -> bool:
     """Would the earlier artifact answer the current question?
 
@@ -144,7 +163,7 @@ def reusable(previous: Dict[str, Any], current: Dict[str, Any]) -> bool:
     """
     if not previous.get("complete"):
         return False
-    if not (previous.get("coverage") or {}).get("exposures"):
+    if not block(previous, "coverage").get("exposures"):
         return False
     # And the identity has to *say* what it ran under. `_sha` in `agent.py`
     # returns `""` when a prompt file cannot be read, and the fields below
@@ -158,7 +177,7 @@ def reusable(previous: Dict[str, Any], current: Dict[str, Any]) -> bool:
     # third, so a directory without it is chosen silently.
     for field in ("system_prompt_sha", "verifier_prompt_sha", "schema_sha",
                   "agent_version", "model_requested"):
-        if not (previous.get("identity") or {}).get(field):
+        if not block(previous, "identity").get(field):
             return False
         if not current.get(field):
             return False

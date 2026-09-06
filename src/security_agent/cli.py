@@ -13,7 +13,7 @@ from typing import List, Optional, Sequence
 
 from . import __version__
 from .config import PROVIDER_API, PROVIDER_CLI, PROVIDERS, Config, ConfigError
-from .gate import EXIT_ERROR, EXIT_OK, decide
+from .gate import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, decide
 from .models import VERDICT_REFUTED
 from .workspace import Workspace, WorkspaceError
 
@@ -502,7 +502,7 @@ def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,
     import json
 
     from .agent import _provenance
-    from .identity import reusable, review_identity
+    from .identity import block, reusable, review_identity
     from .models import Provenance, Revision
 
     artifact = Path(cfg.output_dir) / "findings.json"
@@ -530,7 +530,7 @@ def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,
         cfg,
         Revision(mode=mode, base=base, head=head,
                  base_sha=resolve(base), head_sha=resolve(head)),
-        Provenance(**{k: v for k, v in (previous.get("provenance") or {}).items()
+        Provenance(**{k: v for k, v in block(previous, "provenance").items()
                       if k in Provenance.__dataclass_fields__}),
         suppressions=suppressions,
     )
@@ -542,12 +542,55 @@ def _reuse(cfg: Config, args: argparse.Namespace, root: Path, mode: str,
     if not reusable(previous, current):
         return None
 
-    verdict = previous.get("verdict") or {}
+    # **A stored artifact with no verdict is not a stored answer.** The line
+    # below used to be `int(verdict.get("exit_code", EXIT_OK))`, and three
+    # spellings of "no decision was recorded" — an absent key, `null`, an empty
+    # object — all came back as 0. A blocking review whose verdict block was
+    # lost to a truncated write or a hand edit was handed back as a pass, by
+    # the one path that exists to avoid paying for a review. The repository's
+    # own recurring defect: absence read as agreement. Found by `gpt-6-astra`,
+    # 2026-09-06, and measured across all five shapes.
+    #
+    # Exit 2, not 1: this is "I could not establish what the earlier run
+    # decided", which is a different answer from "it found something".
+    # **One of the three codes this tool defines, and nothing else.** I argued
+    # for accepting any integer, so that an artifact written by a newer version
+    # stayed readable. Codex refused it on 2026-09-06 with the argument that
+    # settles it: a POSIX exit status is eight bits, so a stored `256` comes
+    # back through this function and reaches the shell as **0**. A malformed
+    # or future verdict would become "clean" at the process boundary — a worse
+    # failure than refusing to read a newer artifact, and the same one this
+    # whole repair exists to close.
+    #
+    # Forward compatibility here means refusing an unknown code, not
+    # forwarding a meaning this binary does not have.
+    verdict = previous.get("verdict")
+    code = verdict.get("exit_code") if isinstance(verdict, dict) else None
+    if not isinstance(code, int) or isinstance(code, bool) or \
+            code not in (EXIT_OK, EXIT_FINDINGS, EXIT_ERROR):
+        log.error(
+            "the artifact in %s is reusable in every other respect and "
+            "records no verdict, so there is no earlier decision to hand "
+            "back. Re-run without --reuse.", cfg.output_dir)
+        return EXIT_ERROR
     log.info("reusing the review of %s..%s — same code, prompts, model and "
              "settings as the artifact already in %s. Pass --no-reuse to pay "
              "for a replicate.", _abbrev(base), _abbrev(head), cfg.output_dir)
     _record_the_reuse(cfg, args, previous, artifact)
-    return int(verdict.get("exit_code", EXIT_OK))
+    # No default here any more: the check above established the field, and a
+    # fallback beside a check is the fallback that survives when somebody
+    # moves the check.
+    return int(verdict["exit_code"])
+
+
+def _as_count(value) -> int:
+    """A reuse count from an artifact, or zero.
+
+    `int(x)` on whatever the field holds raises for a list and lies for a bool
+    — and this number goes back into the artifact, so a wrong one persists.
+    """
+    return value if isinstance(value, int) and not isinstance(value, bool) \
+        and value >= 0 else 0
 
 
 def _record_the_reuse(cfg: Config, args: argparse.Namespace,
@@ -567,17 +610,18 @@ def _record_the_reuse(cfg: Config, args: argparse.Namespace,
     marked artifact is still reusable and reusing a reuse is harmless: it is
     the same original result, still saying so.
     """
+    from .identity import block
     from .report import ReportError, reuse_notice, write_reused
 
     body = dict(previous)
-    earlier = (body.get("reuse") or {}).get("source_generated_at")
+    earlier = block(body, "reuse").get("source_generated_at")
     body["reuse"] = {
         # Anchored to the original, never to the previous reuse — otherwise a
         # chain of reuses walks the origin forward one run at a time until it
         # names a day on which nothing was reviewed.
         "source_generated_at": earlier or body.get("generated_at", ""),
         "reused_at": _now(),
-        "count": int((body.get("reuse") or {}).get("count", 0)) + 1,
+        "count": _as_count(block(body, "reuse").get("count")) + 1,
     }
 
     try:

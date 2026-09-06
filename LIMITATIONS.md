@@ -80,14 +80,14 @@ takes a revision, so the edit is small, but it changes what every search
 returns and that wants a measurement rather than a patch at the end of a
 session.
 
-## A reused artifact with no verdict is reused as a pass
+## A reused artifact with no verdict was reused as a pass — fixed
 
 `--reuse` hands back the stored decision rather than paying for a replicate.
-The last line of `_reuse` is `int(verdict.get("exit_code", EXIT_OK))` over
-`previous.get("verdict") or {}`, and nothing before it establishes that a
-verdict was recorded at all. Measured on 2026-09-06:
+The last line of `_reuse` was `int(verdict.get("exit_code", EXIT_OK))` over
+`previous.get("verdict") or {}`, and nothing before it established that a
+verdict was recorded. Measured on 2026-09-06 across every shape:
 
-| the stored artifact | reused as |
+| the stored artifact | was reused as |
 |---|---|
 | a blocking verdict | exit 1 |
 | a clean verdict | exit 0 |
@@ -96,15 +96,34 @@ verdict was recorded at all. Measured on 2026-09-06:
 | no `verdict` key at all | **exit 0** |
 
 Three spellings of "no decision was recorded", all read as "the decision was
-that nothing blocks". The identity and exposure checks that make an artifact
-reusable never ask whether it concluded, so a blocking review whose verdict
-block is lost — truncated write, hand-edited file, a producer that changes
-shape — comes back as a pass on the next run.
+that nothing blocks" — in the one path that exists to avoid paying for a
+review. The repository's own recurring defect. Found by `gpt-6-astra`.
 
-The repository's own recurring defect, in the one path that exists to avoid
-paying for a review. Found by `gpt-6-astra`; not fixed, because the honest
-answer is exit 2 and that changes what `--reuse` does to every artifact written
-before the field was required.
+It now requires a verdict object carrying an `exit_code` that is one of the
+three this tool defines, and returns **exit 2** otherwise: "I could not
+establish what the earlier run decided" is a different answer from "it found
+something".
+
+**Restricted to `{0, 1, 2}` on Codex's argument, against mine.** I wanted any
+integer accepted, so an artifact from a newer version stayed readable. A POSIX
+exit status is eight bits: a stored `256` returned from here reaches the shell
+as **0**. A malformed or future verdict would become "clean" at the process
+boundary, which is worse than refusing to read a newer artifact — forward
+compatibility here means refusing an unknown code, not forwarding a meaning
+this binary does not have.
+
+Four containers beside it were read the same way — `provenance`, `coverage`,
+`identity` and the reuse `count`. `or {}` passes any truthy value and then
+raises `AttributeError` on a list, out of the middle of the path that decides
+whether a stored answer can be trusted; `main` turned that into exit 2, a
+crash wearing the code for could-not-check. They go through `identity.block`
+now, which asks what the value is.
+
+What each malformed block does was measured rather than assumed, and they
+differ: `coverage` and `identity` stop the reuse and the run pays, because
+they are what say the stored answer is about *this* code. `provenance` does
+not, because `review_identity` fills the model and the prompts from the
+configuration — an unreadable provenance does not make the artifact stale.
 
 ## The evidence rule guards confirmations and not refutations
 

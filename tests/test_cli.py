@@ -1689,3 +1689,166 @@ class TestTheGuardsAreReachedAtAll:
         client = install_client(monkeypatch, [])
         assert run(git_repo, "--output-dir", str(out), "--reuse") == EXIT_OK
         assert client.requests == [], "it paid again for the same review"
+
+
+class TestAReusedArtifactMustCarryItsVerdict:
+    """`--reuse` hands back the stored decision rather than paying again.
+
+    The last line of `_reuse` was `int(verdict.get("exit_code", EXIT_OK))` over
+    `previous.get("verdict") or {}`, so three spellings of "no decision was
+    recorded" — an absent key, `null`, an empty object — all came back as 0. A
+    blocking review whose verdict block was lost to a truncated write or a hand
+    edit was handed back as a pass, by the one path that exists to avoid paying
+    for a review. Found by `gpt-6-astra`, 2026-09-06.
+
+    Exit 2, not 1: "I could not establish what the earlier run decided" is a
+    different answer from "it found something".
+    """
+
+    def artifact(self, git_repo, tmp_path, monkeypatch, verdict):
+        """A run, then its artifact edited to carry `verdict`.
+
+        The review has to *open* something: an artifact from a run with no
+        exposures is not reusable at all, and a fixture that only speaks would
+        test the exposure rule rather than this one.
+        """
+        out = tmp_path / "out"
+        install_client(monkeypatch, [
+            FakeResponse([tool_use("read_file", {"path": "app/views.py"},
+                                   id="t1")], stop_reason="tool_use"),
+            FakeResponse([text("Nothing found.")], stop_reason="end_turn"),
+        ])
+        assert run(git_repo, "--output-dir", str(out)) == EXIT_OK
+
+        path = out / "findings.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        if verdict is ...:
+            body.pop("verdict", None)
+        else:
+            body["verdict"] = verdict
+        path.write_text(json.dumps(body), encoding="utf-8")
+        return out
+
+    def test_a_stored_verdict_is_handed_back(self, git_repo, monkeypatch,
+                                             tmp_path):
+        """The control. Without it this class would pass on a tool that
+        refused every reuse."""
+        out = self.artifact(git_repo, tmp_path, monkeypatch,
+                            {"exit_code": 0})
+        client = install_client(monkeypatch, [])
+        assert run(git_repo, "--reuse", "--output-dir", str(out)) == EXIT_OK
+        assert client.requests == [], "it paid for a review it could reuse"
+
+    def test_a_blocking_verdict_is_handed_back(self, git_repo, monkeypatch,
+                                               tmp_path):
+        out = self.artifact(git_repo, tmp_path, monkeypatch,
+                            {"exit_code": 1})
+        install_client(monkeypatch, [])
+        assert run(git_repo, "--reuse", "--output-dir", str(out)) == 1
+
+    @pytest.mark.parametrize("verdict", [..., None, {}, {"exit_code": None},
+                                         {"exit_code": "0"}, [],
+                                         # Booleans are integers in Python and
+                                         # `True` would come back as exit 1 —
+                                         # a blocking verdict invented out of
+                                         # a malformed field. Codex asked for
+                                         # these two by name.
+                                         {"exit_code": True},
+                                         {"exit_code": False},
+                                         # A POSIX exit status is eight bits:
+                                         # 256 reaches the shell as 0, so an
+                                         # unknown code is not merely unknown,
+                                         # it can read as clean. Codex named
+                                         # these three.
+                                         {"exit_code": 99},
+                                         {"exit_code": -1},
+                                         {"exit_code": 256}])
+    def test_an_artifact_with_no_usable_verdict_is_refused(
+            self, git_repo, monkeypatch, tmp_path, verdict):
+        out = self.artifact(git_repo, tmp_path, monkeypatch, verdict)
+        client = install_client(monkeypatch, [])
+        assert run(git_repo, "--reuse", "--output-dir", str(out)) == EXIT_ERROR
+        assert client.requests == [], \
+            "a refusal is not a reason to buy a review either"
+
+
+class TestTheOtherContainersInTheReusePath:
+    """Codex, 2026-09-06, on the gate pass for the verdict repair: I fixed one
+    field read without establishing it and left four beside it.
+
+    `(previous.get("provenance") or {}).items()` passes any truthy value and
+    then raises `AttributeError` on a list — out of the middle of a path whose
+    job is to decide carefully whether a stored answer can be trusted. The
+    artifact may be truncated or hand-edited; that is the stated threat model.
+    """
+
+    def opened(self):
+        """A review that actually opens a file: an artifact from a run with no
+        exposures is not reusable at all."""
+        return [
+            FakeResponse([tool_use("read_file", {"path": "app/views.py"},
+                                   id="t1")], stop_reason="tool_use"),
+            FakeResponse([text("Nothing found.")], stop_reason="end_turn"),
+        ]
+
+    def reviewed(self, git_repo, monkeypatch, tmp_path):
+        out = tmp_path / "out"
+        install_client(monkeypatch, self.opened())
+        assert run(git_repo, "--output-dir", str(out)) == EXIT_OK
+        return out
+
+    def test_a_malformed_block_reads_as_absent(self):
+        from security_agent.identity import block
+
+        for value in ([], "text", 3, None, True):
+            assert block({"provenance": value}, "provenance") == {}
+        assert block({"provenance": {"a": 1}}, "provenance") == {"a": 1}
+        assert block(None, "provenance") == {}
+        assert block(["not a body"], "provenance") == {}
+
+    def test_a_reuse_count_that_is_not_a_count_starts_at_zero(self):
+        from security_agent.cli import _as_count
+
+        for value in (None, "3", [], True, False, -1, 2.5):
+            assert _as_count(value) == 0, value
+        assert _as_count(4) == 4
+
+    @pytest.mark.parametrize("value", [[], "text", 3])
+    def test_a_malformed_identity_block_stops_the_reuse(
+            self, git_repo, monkeypatch, tmp_path, value):
+        """`coverage` and `identity` decide whether the stored answer is about
+        this code. Unreadable, they cannot say so, and the run pays."""
+        out = self.reviewed(git_repo, monkeypatch, tmp_path)
+        for field in ("coverage", "identity"):
+            path = out / "findings.json"
+            body = json.loads(path.read_text(encoding="utf-8"))
+            body[field] = value
+            path.write_text(json.dumps(body), encoding="utf-8")
+
+            client = install_client(monkeypatch, self.opened())
+            assert run(git_repo, "--reuse", "--output-dir", str(out)) == EXIT_OK
+            assert client.requests, \
+                "{} = {!r} was served back as an earlier decision".format(
+                    field, value)
+
+    @pytest.mark.parametrize("value", [[], "text", 3])
+    def test_a_malformed_provenance_does_not_stop_it_and_does_not_crash(
+            self, git_repo, monkeypatch, tmp_path, value):
+        """Measured rather than assumed, and the answer is the other one.
+
+        `provenance` is not part of what makes a stored answer the answer to
+        *this* question — `review_identity` fills the model and prompts from
+        the configuration — so an unreadable one does not make the artifact
+        stale. What it used to do was raise `AttributeError` at `.items()`,
+        which `main` turned into exit 2: a crash wearing the code for "could
+        not check". Now it reads as absent and the reuse proceeds.
+        """
+        out = self.reviewed(git_repo, monkeypatch, tmp_path)
+        path = out / "findings.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        body["provenance"] = value
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        client = install_client(monkeypatch, [])
+        assert run(git_repo, "--reuse", "--output-dir", str(out)) == EXIT_OK
+        assert client.requests == [], "it paid for a review it could reuse"
