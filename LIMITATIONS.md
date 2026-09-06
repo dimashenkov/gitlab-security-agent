@@ -71,8 +71,26 @@ it is reported rather than dismissed.
 
 ## What the numbers are, and are not
 
-There is no recall figure and no precision figure. Both were measured, both
-turned out to be measuring something else, and both were withdrawn:
+**There is a corpus recall figure and there is no precision figure.**
+
+Recall on the matched-pair corpus is **61 of 78 = 78%**, 95% Wilson interval
+68–86%, from the frozen configuration D-013 names. The qualification is not
+decoration: it is *corpus* recall, not recall in use. Target matching is
+deliberately coarse — category and file, with no judgement of whether the
+finding is correct — the corpus is retrospective, and "no catastrophe" is not
+"pass".
+
+Precision is withdrawn and stays withdrawn: the corpus is half vulnerable and
+half fixed, and in a pipeline the vulnerable changes are a small minority, so
+a precision computed here is not precision anywhere.
+
+**This paragraph said "there is no recall figure" until 2026-09-06**, and by
+then the repository was gating on one — `tools/stop_rule.py` rejects a
+configuration below 65% recall and recomputes 61/78 from the artifacts every
+time it runs. Codex adjudicated it the same day: *a project cannot
+operationally gate on a measurement while claiming the measurement does not
+exist.* The sentence was true when written and describes the era below, which
+is a different and earlier corpus:
 
 - **10 of 17** on hand-written pairs — seven of the failures were cases scored
   against category names the agent cannot emit. The real figure is somewhere
@@ -733,3 +751,30 @@ race can edit `DECISIONS.md` or the tool itself". Codex refused it the same
 day: write access confined to `measurements/` wins the race and grants neither.
 The conclusion rests on the trust model, not on a claim about what such an
 attacker would also be able to reach.
+
+## The noise measurement, and the one thing its scorer does not check
+
+`tools/ordinary_noise.py` reports how often the reviewer alarms on a change
+with nothing to find — 0 of 27 blocked, 1 of 27 reporting, on 2026-09-06. What
+it verifies before printing anything:
+
+| | |
+|---|---|
+| the sample | exactly one row per admitted case, ids read from the seal and never from the record being scored |
+| the denominator | the whole admitted set, always; an unreadable case is an unknown *inside* it and makes the figure a range |
+| the configuration | every completed row records `claude-cli`, `claude-opus-5` requested **and served**, and `model_substituted: false` |
+| the money | not money: list price on a subscription, and `tools/spend.py` is the answer to what it cost |
+
+**What it does not check: the artifact's own description of itself.** The
+estimand, the list of things the figure may not be called, and the list of
+excluded cases are read from the saved file and printed. A file whose rows are
+untouched but whose labels have been edited would print a misleading
+description and exit 0. Codex, 2026-09-06, after seven rounds on this tool:
+this affects no arithmetic, no denominator, no row identity and no provenance,
+and exploiting it means editing the prose while leaving the measurement intact.
+
+Recorded rather than fixed, because the seventh round was the point at which
+the findings stopped being about the number and became about malformed files
+nobody has produced. The fix, if it is ever wanted, is for `cmd_score` to
+reconstruct the labels from D-014 exactly as it already reconstructs the
+admitted ids.

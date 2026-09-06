@@ -103,6 +103,14 @@ SPLIT = (27, 3)
 PROVIDER = "claude-cli"
 PROFILE = ""
 
+# The reviewer this measurement is about, named so `--resume` can refuse rows
+# that were not made by it. Not passed to `review()` — the model comes from the
+# environment, as it does for every other measurement here — so this is what
+# the rows are *checked against*, and a run whose environment says otherwise
+# will be caught by the resume check on the next invocation rather than
+# silently mixed in.
+MODEL = "claude-opus-5"
+
 
 class Refused(Exception):
     """The inputs cannot answer the question."""
@@ -243,6 +251,75 @@ def one(entry: Dict[str, Any], clones: Path) -> Dict[str, Any]:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def check_configuration(rows: List[Dict[str, Any]], where: str) -> None:
+    """Every completed row was produced by the configuration this run names.
+
+    **Kept rows and new rows alike.** Codex, 2026-09-06, three rounds running:
+    first the check compared the kept rows only with each other, so rows
+    uniformly on another model passed; then it discarded a missing field, so a
+    row carrying one of the two passed; then it was applied to the resumed
+    rows and not to the ones this process had just produced, so a fresh run
+    could carry any provenance at all and still exit as the measurement.
+
+    Both fields are required. A row that cannot say what produced it puts an
+    unattributable review inside a figure about one configuration.
+    """
+    done = [r for r in rows if r.get("complete") is True]
+    if not done:
+        return
+    for name, field, expected in (
+            ("reviewer model", "model_requested", MODEL),
+            ("provider", "provider", PROVIDER)):
+        missing = [r["case_id"] for r in done
+                   if not (r.get("provenance") or {}).get(field)]
+        if missing:
+            raise Refused(
+                "{} {} row(s) record no {} ({}), so nothing says which "
+                "configuration produced them".format(
+                    len(missing), where, name, ", ".join(sorted(missing)[:3])))
+        seen = {r["provenance"][field] for r in done}
+        if seen != {expected}:
+            raise Refused(
+                "the {} rows record {} {} and this run uses {!r}. Mixing "
+                "configurations makes two measurements into one".format(
+                    where, name, ", ".join(sorted(map(repr, seen))), expected))
+
+    # **Requested is not served.** Codex, 2026-09-06: the check compared
+    # `model_requested` only, so a row could ask for Opus, record
+    # `model_substituted: true`, be answered by something else, and still print
+    # the official measurement. This is the same lesson that retired the
+    # sentinel baseline — a run answered by another model did not measure the
+    # model it names — and the fix there was to read what *served* it.
+    substituted = [r["case_id"] for r in done
+                   if (r["provenance"]).get("model_substituted") is not False]
+    if substituted:
+        raise Refused(
+            "{} {} row(s) do not record `model_substituted: false` ({}), so "
+            "nothing says the provider answered with the model that was "
+            "asked for".format(len(substituted), where,
+                               ", ".join(sorted(substituted)[:3])))
+    # A **list**, checked before it is walked. Codex, 2026-09-06: a mapping
+    # like `{"claude-opus-5": false}` iterates over its keys and normalised to
+    # exactly the expected tuple, so a malformed value passed as the right
+    # answer. This repository has found the same class a dozen times today —
+    # a container read for its contents before anything asked what it is.
+    shapes = [r["case_id"] for r in done
+              if not isinstance((r["provenance"]).get("models_served"), list)]
+    if shapes:
+        raise Refused(
+            "{} {} row(s) record something other than a list for "
+            "`models_served` ({}), so nothing says what answered them".format(
+                len(shapes), where, ", ".join(sorted(shapes)[:3])))
+    served = {tuple(sorted(r["provenance"]["models_served"])) for r in done}
+    if served != {(MODEL,)}:
+        raise Refused(
+            "the {} rows were served by {} and this measurement is about "
+            "{!r} alone".format(
+                where,
+                "; ".join(sorted(str(list(s)) for s in served)) or "nothing",
+                MODEL))
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     admitted, excluded = sample()
     out = Path(args.out)
@@ -254,10 +331,53 @@ def cmd_run(args: argparse.Namespace) -> int:
     for entry in admitted:
         repo_for(clones, entry)
 
-    order = admitted[:args.limit] if args.limit else admitted
+    # **Work already done is not thrown away.** A run of twenty-seven takes
+    # most of an hour and this one was stopped at ten; starting over would
+    # spend the subscription's capacity again on reviews that already happened,
+    # and this repository's own rule is that what is paid for is paid for.
+    #
+    # Only *completed* rows are kept. An unfinished one is not a result, and
+    # carrying it forward would freeze a failure into the record where a rerun
+    # might have got an answer.
+    kept: List[Dict[str, Any]] = []
+    if args.resume:
+        try:
+            previous = json.loads(
+                (out / "rows.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise Refused(
+                "--resume was asked for and {} could not be read: {}".format(
+                    out / "rows.json", exc)) from exc
+        wanted = {e["case_id"] for e in admitted}
+        kept = [r for r in previous
+                if isinstance(r, dict) and r.get("complete") is True
+                and r.get("case_id") in wanted]
+        # The configuration each kept row ran under, against **the one this run
+        # will use** — not merely against each other. Codex, 2026-09-06: the
+        # first version compared the kept rows among themselves, so twenty-seven
+        # rows all made by Sonnet agreed perfectly and the new ones would then
+        # be made by the Opus this file hard-codes: one mixed measurement, with
+        # nothing in the artifact saying so. And `str(...)` before subtracting
+        # `{None}` meant a missing model was compared as the string `"None"`
+        # and never removed, so the absence never showed.
+        # **Required, and compared against what this run will do.** Codex,
+        # 2026-09-06, twice: the reviewer field was compared only with itself,
+        # so rows uniformly marked with another model were accepted while the
+        # new ones used the model this file hard-codes; and discarding a
+        # missing value meant a row carrying only `provider` passed the
+        # comparison and the empty-provenance check, because that check
+        # rejected only a wholly empty mapping.
+        check_configuration(kept, "kept")
+        print("resuming: {} completed row(s) kept from {}".format(
+            len(kept), out / "rows.json"))
+
+    done_ids = {r["case_id"] for r in kept}
+    order = [e for e in admitted if e["case_id"] not in done_ids]
+    if args.limit:
+        order = order[:args.limit]
     print("{} case(s) admitted, {} excluded by D-014, running {}".format(
         len(admitted), len(excluded), len(order)))
-    rows = []
+    rows = list(kept)
     for index, entry in enumerate(order, start=1):
         row = one(entry, clones)
         rows.append(row)
@@ -266,6 +386,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             "did not complete" if not row.get("complete")
             else "BLOCKED" if row.get("blocked")
             else "{} finding(s)".format(row.get("findings"))))
+        # Checked before it is written, so a run under the wrong configuration
+        # stops at the first case rather than after twenty-seven.
+        check_configuration([row], "new")
         # Written after every case, not at the end: a crash on case 20 must
         # not throw away the nineteen reviews already paid for in capacity.
         (out / "rows.json").write_text(
@@ -280,7 +403,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         "not_a": ["a false-alarm rate", "a figure over all thirty",
                   "an estimate for the 1361-change frame",
                   "human-audited", "completion of any D-013 step"],
-        "admitted": len(admitted), "ran": len(order),
+        # `len(rows)`, not `len(order)`. `ran` means how many cases this record
+        # covers, and with `--resume` the newly-run ones are only part of that
+        # — the first version wrote 17 into a record holding 27, the scorer
+        # refused it as a prefix, and it was right to: the two numbers
+        # disagreed and one of them was wrong.
+        "admitted": len(admitted), "ran": len(rows),
+        "newly_run": len(order), "resumed": len(kept),
         # The ids, not only the count. Codex, 2026-09-06: reconciling the
         # number of rows against the number of cases let twenty-seven copies of
         # one quiet case pass as a whole run, and let cases outside the sample
@@ -522,6 +651,16 @@ def cmd_score(args: argparse.Namespace) -> int:
         print("the sealed sample could not be read: {}".format(exc),
               file=sys.stderr)
         admitted_ids = None
+
+    # The same validator the runner uses. Codex, 2026-09-06, the fourth round
+    # on this: the checks protected only artifacts made by the current
+    # invocation, so a saved file whose rows carried another model — or none —
+    # printed the official measurement and exited 0 through this path.
+    try:
+        check_configuration(record.get("rows") or [], "recorded")
+    except Refused as exc:
+        print("Refusing: {}".format(exc), file=sys.stderr)
+        return 2
     return score(record, admitted_ids)
 
 
@@ -532,6 +671,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     r = sub.add_parser("run", help="review every admitted case")
     r.add_argument("--clones", required=True)
     r.add_argument("--out", required=True)
+    r.add_argument("--resume", action="store_true",
+                   help="keep the completed rows already in the output "
+                        "directory and run only what is missing. What is "
+                        "spent is spent; an unfinished row is not kept, "
+                        "because it is not a result")
     r.add_argument("--limit", type=int, default=0,
                    help="stop after N cases; the report then covers N and "
                         "says so")

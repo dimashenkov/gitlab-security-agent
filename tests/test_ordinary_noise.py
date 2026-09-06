@@ -55,7 +55,13 @@ def point(monkeypatch, seal_path, adj_path):
 
 def row(case_id="c1", *, complete=True, blocked=False, findings=0, **over):
     out = {"case_id": case_id, "complete": complete, "blocked": blocked,
-           "findings": findings}
+           "findings": findings,
+           # `--resume` compares each kept row's configuration with the one it
+           # is about to use, so a row with no provenance cannot be kept.
+           "provenance": {"provider": "claude-cli",
+                          "model_requested": "claude-opus-5",
+                          "model_substituted": False,
+                          "models_served": ["claude-opus-5"]}}
     out.update(over)
     return out
 
@@ -391,6 +397,337 @@ class TestTheSampleIsTheOneTheDecisionGoverns:
         admitted, excluded = noise.sample()
         assert (len(admitted), len(excluded)) == noise.SPLIT
         assert all(e["verdict"] == "ordinary" for e in admitted)
+
+
+class TestResumeKeepsWhatWasAlreadySpent:
+    """A run of twenty-seven takes most of an hour, and this one was stopped at
+    ten. Starting over spends the subscription's capacity again on reviews that
+    already happened, and this repository's rule is that what is paid for is
+    paid for."""
+
+    def prior(self, tmp_path, *rows):
+        out = tmp_path / "out"
+        out.mkdir(exist_ok=True)
+        (out / "rows.json").write_text(json.dumps(list(rows)),
+                                       encoding="utf-8")
+        return out
+
+    def run_args(self, out, tmp_path, resume=True, limit=0):
+        import argparse
+
+        return argparse.Namespace(out=str(out), clones=str(tmp_path),
+                                  resume=resume, limit=limit)
+
+    def stub(self, monkeypatch, tmp_path, admitted, ran):
+        monkeypatch.setattr(noise, "sample", lambda: (admitted, []))
+        monkeypatch.setattr(noise, "repo_for", lambda clones, entry: tmp_path)
+        monkeypatch.setattr(noise, "score", lambda record, ids: 0)
+
+        def fake(entry, clones):
+            ran.append(entry["case_id"])
+            return row(entry["case_id"])
+
+        monkeypatch.setattr(noise, "one", fake)
+
+    def test_a_completed_row_is_not_run_again(
+            self, tmp_path, monkeypatch, capsys):
+        admitted = [{"case_id": "a"}, {"case_id": "b"}]
+        out = self.prior(tmp_path, row("a"))
+        ran = []
+        self.stub(monkeypatch, tmp_path, admitted, ran)
+        noise.cmd_run(self.run_args(out, tmp_path))
+        assert ran == ["b"]
+        assert "1 completed row(s) kept" in capsys.readouterr().out
+
+    def test_an_unfinished_row_is_run_again(self, tmp_path, monkeypatch):
+        """It is not a result, and carrying it forward would freeze a failure
+        into the record where a rerun might have got an answer."""
+        admitted = [{"case_id": "a"}, {"case_id": "b"}]
+        out = self.prior(tmp_path, row("a", complete=False), row("b"))
+        ran = []
+        self.stub(monkeypatch, tmp_path, admitted, ran)
+        noise.cmd_run(self.run_args(out, tmp_path))
+        assert ran == ["a"]
+
+    def test_a_row_outside_the_admitted_sample_is_not_kept(
+            self, tmp_path, monkeypatch):
+        admitted = [{"case_id": "a"}]
+        out = self.prior(tmp_path, row("a"), row("outsider"))
+        ran = []
+        self.stub(monkeypatch, tmp_path, admitted, ran)
+        noise.cmd_run(self.run_args(out, tmp_path))
+        body = json.loads((out / "ordinary-noise.json").read_text())
+        assert [r["case_id"] for r in body["rows"]] == ["a"]
+
+    def test_rows_from_two_models_are_not_one_measurement(
+            self, tmp_path, monkeypatch):
+        """A resumed run that mixes configurations is two measurements
+        reported as one, and nothing in the artifact would say so."""
+        admitted = [{"case_id": "a"}, {"case_id": "b"}]
+        out = self.prior(
+            tmp_path,
+            row("a", provenance={"model_requested": "claude-opus-5"}),
+            row("b", provenance={"model_requested": "claude-sonnet-5"}))
+        self.stub(monkeypatch, tmp_path, admitted, [])
+        with pytest.raises(noise.Refused, match="Mixing configurations"):
+            noise.cmd_run(self.run_args(out, tmp_path))
+
+    def test_kept_rows_from_another_configuration_refuse(
+            self, tmp_path, monkeypatch):
+        """Codex, 2026-09-06: the check compared the kept rows among
+        themselves, so rows all made by one configuration agreed perfectly and
+        the new ones would then be made by the one this file hard-codes — a
+        mixed measurement with nothing saying so."""
+        admitted = [{"case_id": "a"}, {"case_id": "b"}]
+        out = self.prior(tmp_path, row(
+            "a", provenance={"provider": "anthropic-api",
+                             "model_requested": "claude-opus-5"}))
+        self.stub(monkeypatch, tmp_path, admitted, [])
+        with pytest.raises(noise.Refused, match="Mixing configurations"):
+            noise.cmd_run(self.run_args(out, tmp_path))
+
+    def test_kept_rows_uniformly_on_another_model_refuse(
+            self, tmp_path, monkeypatch):
+        """Codex, 2026-09-06: the reviewer field was compared only with
+        itself, so rows uniformly marked with another model were accepted
+        while the new ones used the model this file names."""
+        admitted = [{"case_id": "a"}, {"case_id": "b"}]
+        out = self.prior(tmp_path, row(
+            "a", provenance={"provider": "claude-cli",
+                             "model_requested": "claude-sonnet-5"}))
+        self.stub(monkeypatch, tmp_path, admitted, [])
+        with pytest.raises(noise.Refused, match="Mixing configurations"):
+            noise.cmd_run(self.run_args(out, tmp_path))
+
+    @pytest.mark.parametrize("provenance", [
+        {"provider": "claude-cli"},                    # no model
+        {"model_requested": "claude-opus-5"},          # no provider
+        {"provider": "claude-cli", "model_requested": ""},
+    ])
+    def test_partial_provenance_refuses(self, tmp_path, monkeypatch,
+                                        provenance):
+        """Discarding a missing value meant a row carrying only one field
+        passed both the comparison and the empty-provenance check, because
+        that check rejected only a wholly empty mapping."""
+        admitted = [{"case_id": "a"}, {"case_id": "b"}]
+        out = self.prior(tmp_path, row("a", provenance=provenance))
+        self.stub(monkeypatch, tmp_path, admitted, [])
+        with pytest.raises(noise.Refused, match="record no"):
+            noise.cmd_run(self.run_args(out, tmp_path))
+
+    def test_a_kept_row_with_no_provenance_refuses(
+            self, tmp_path, monkeypatch):
+        """It cannot be compared with anything, and keeping it puts an
+        unattributable review inside a figure about one configuration."""
+        admitted = [{"case_id": "a"}, {"case_id": "b"}]
+        out = self.prior(tmp_path, row("a", provenance={}))
+        self.stub(monkeypatch, tmp_path, admitted, [])
+        with pytest.raises(noise.Refused, match="record no"):
+            noise.cmd_run(self.run_args(out, tmp_path))
+
+    def test_a_newly_run_row_goes_through_the_same_check(
+            self, tmp_path, monkeypatch):
+        """Codex, 2026-09-06, the third round on this: the check was applied
+        to the resumed rows and not to the ones the process had just produced,
+        so a fresh run could carry any provenance at all and still exit as the
+        measurement."""
+        admitted = [{"case_id": "a"}]
+        out = tmp_path / "out"
+        out.mkdir()
+        monkeypatch.setattr(noise, "sample", lambda: (admitted, []))
+        monkeypatch.setattr(noise, "repo_for", lambda clones, entry: tmp_path)
+        monkeypatch.setattr(
+            noise, "one",
+            lambda entry, clones: row(
+                entry["case_id"],
+                provenance={"provider": "claude-cli",
+                            "model_requested": "claude-sonnet-5"}))
+        with pytest.raises(noise.Refused, match="Mixing configurations"):
+            noise.cmd_run(self.run_args(out, tmp_path, resume=False))
+
+    def test_a_newly_run_row_with_no_provenance_refuses(
+            self, tmp_path, monkeypatch):
+        admitted = [{"case_id": "a"}]
+        out = tmp_path / "out"
+        out.mkdir()
+        monkeypatch.setattr(noise, "sample", lambda: (admitted, []))
+        monkeypatch.setattr(noise, "repo_for", lambda clones, entry: tmp_path)
+        monkeypatch.setattr(
+            noise, "one",
+            lambda entry, clones: row(entry["case_id"], provenance={}))
+        with pytest.raises(noise.Refused, match="record no"):
+            noise.cmd_run(self.run_args(out, tmp_path, resume=False))
+
+    def test_an_unfinished_new_row_is_not_checked_for_configuration(
+            self, tmp_path, monkeypatch):
+        """It has no provenance because it never ran, and refusing it would
+        turn a failed review into a refusal to report at all."""
+        admitted = [{"case_id": "a"}]
+        out = tmp_path / "out"
+        out.mkdir()
+        monkeypatch.setattr(noise, "sample", lambda: (admitted, []))
+        monkeypatch.setattr(noise, "repo_for", lambda clones, entry: tmp_path)
+        monkeypatch.setattr(noise, "one", lambda entry, clones: {
+            "case_id": entry["case_id"], "complete": False,
+            "error": "review failed"})
+        code = noise.cmd_run(self.run_args(out, tmp_path, resume=False))
+        assert code == 2
+
+    def test_resume_without_a_file_refuses_rather_than_starting_over(
+            self, tmp_path, monkeypatch):
+        admitted = [{"case_id": "a"}]
+        out = tmp_path / "empty"
+        self.stub(monkeypatch, tmp_path, admitted, [])
+        with pytest.raises(noise.Refused, match="could not be read"):
+            noise.cmd_run(self.run_args(out, tmp_path))
+
+    def test_the_record_counts_every_row_not_only_the_new_ones(
+            self, tmp_path, monkeypatch):
+        """Found by running it: `ran` was `len(order)`, the newly-run cases,
+        so a resumed run wrote 17 into a record holding 27 and the scorer
+        refused it as a prefix. It was right to — the two numbers disagreed
+        and one of them was wrong."""
+        admitted = [{"case_id": "a"}, {"case_id": "b"}, {"case_id": "c"}]
+        out = self.prior(tmp_path, row("a"), row("b"))
+        self.stub(monkeypatch, tmp_path, admitted, [])
+        noise.cmd_run(self.run_args(out, tmp_path))
+        body = json.loads((out / "ordinary-noise.json").read_text())
+        assert body["ran"] == 3
+        assert body["newly_run"] == 1
+        assert body["resumed"] == 2
+        assert len(body["rows"]) == 3
+
+    def test_a_resumed_record_scores_as_whole(self, tmp_path, monkeypatch,
+                                              capsys):
+        """The other half: after the fix a resumed run is not partial."""
+        admitted = [{"case_id": "a"}, {"case_id": "b"}]
+        out = self.prior(tmp_path, row("a"))
+        monkeypatch.setattr(noise, "sample", lambda: (admitted, []))
+        monkeypatch.setattr(noise, "repo_for", lambda clones, entry: tmp_path)
+        monkeypatch.setattr(noise, "one",
+                            lambda entry, clones: row(entry["case_id"]))
+        code = noise.cmd_run(self.run_args(out, tmp_path))
+        out_text = capsys.readouterr().out
+        assert "PARTIAL" not in out_text
+        assert code == 0
+
+    def test_without_resume_nothing_is_kept(self, tmp_path, monkeypatch):
+        admitted = [{"case_id": "a"}, {"case_id": "b"}]
+        out = self.prior(tmp_path, row("a"))
+        ran = []
+        self.stub(monkeypatch, tmp_path, admitted, ran)
+        noise.cmd_run(self.run_args(out, tmp_path, resume=False))
+        assert ran == ["a", "b"]
+
+
+class TestASavedArtifactIsCheckedToo:
+    """Codex, 2026-09-06: the checks protected only artifacts made by the
+    current invocation, so a saved file whose rows carried another model — or
+    none — printed the official measurement and exited 0 through the scoring
+    path."""
+
+    def saved(self, tmp_path, *rows):
+        import argparse
+
+        path = tmp_path / "ordinary-noise.json"
+        body = record(*rows)
+        path.write_text(json.dumps(body), encoding="utf-8")
+        return argparse.Namespace(results=str(path))
+
+    def test_a_row_from_another_model_refuses(self, tmp_path, capsys):
+        args = self.saved(tmp_path, row(
+            "a", provenance={"provider": "claude-cli",
+                             "model_requested": "claude-sonnet-5"}))
+        code = noise.cmd_score(args)
+        assert "Mixing configurations" in capsys.readouterr().err
+        assert code == 2
+
+    def test_a_row_with_no_provenance_refuses(self, tmp_path, capsys):
+        args = self.saved(tmp_path, row("a", provenance={}))
+        code = noise.cmd_score(args)
+        assert "record no" in capsys.readouterr().err
+        assert code == 2
+
+    def test_an_unfinished_row_stays_exempt(self, tmp_path, capsys):
+        """It has no provenance because it never ran."""
+        args = self.saved(tmp_path, row("a"),
+                          {"case_id": "b", "complete": False})
+        code = noise.cmd_score(args)
+        err = capsys.readouterr().err
+        assert "record no" not in err
+        assert code == 2   # incomplete, so still not a clean answer
+
+    def test_a_well_formed_artifact_scores(self, tmp_path, capsys,
+                                           monkeypatch):
+        """`cmd_score` reads the seal itself, so the sample it checks against
+        is pointed at these two cases rather than the committed twenty-seven."""
+        monkeypatch.setattr(
+            noise, "sample",
+            lambda: ([{"case_id": "a"}, {"case_id": "b"}], []))
+        args = self.saved(tmp_path, row("a"), row("b"))
+        code = noise.cmd_score(args)
+        out = capsys.readouterr().out
+        assert "95% CI" in out
+        assert code == 0
+
+
+class TestRequestedIsNotServed:
+    """The lesson that retired the sentinel baseline: a run answered by
+    another model did not measure the model it names. Codex, 2026-09-06 —
+    the check compared `model_requested` only, so a row could ask for Opus,
+    record a substitution, be answered by something else, and still print the
+    official measurement."""
+
+    def rows(self, **provenance):
+        base = {"provider": "claude-cli", "model_requested": "claude-opus-5",
+                "model_substituted": False,
+                "models_served": ["claude-opus-5"]}
+        base.update(provenance)
+        return [row("a", provenance=base)]
+
+    def test_a_substituted_model_refuses(self):
+        with pytest.raises(noise.Refused, match="model_substituted"):
+            noise.check_configuration(
+                self.rows(model_substituted=True), "recorded")
+
+    def test_an_unrecorded_substitution_flag_refuses(self):
+        """Absent is not `false`: nothing then says the provider answered
+        with the model that was asked for."""
+        rows = self.rows()
+        del rows[0]["provenance"]["model_substituted"]
+        with pytest.raises(noise.Refused, match="model_substituted"):
+            noise.check_configuration(rows, "recorded")
+
+    @pytest.mark.parametrize("served", [
+        ["claude-sonnet-5"],
+        ["claude-opus-5", "claude-haiku-4-5"],
+        [],
+    ])
+    def test_a_served_set_that_is_not_the_model_refuses(self, served):
+        with pytest.raises(noise.Refused, match="served by"):
+            noise.check_configuration(self.rows(models_served=served),
+                                      "recorded")
+
+    @pytest.mark.parametrize("served", [
+        None,
+        # A mapping iterates over its keys and normalised to exactly the
+        # expected tuple, so a malformed value passed as the right answer.
+        {"claude-opus-5": False},
+        "claude-opus-5",
+        ("claude-opus-5",),
+    ])
+    def test_a_served_value_that_is_not_a_list_refuses(self, served):
+        with pytest.raises(noise.Refused, match="other than a list"):
+            noise.check_configuration(self.rows(models_served=served),
+                                      "recorded")
+
+    def test_the_committed_measurement_passes(self):
+        """Against the artifact on disk, not a fixture. All 27 rows record
+        `model_substituted: false` and a served set of exactly the model."""
+        body = json.loads(
+            (ROOT / "measurements" / "ordinary-noise"
+             / "ordinary-noise.json").read_text(encoding="utf-8"))
+        noise.check_configuration(body["rows"], "recorded")
 
 
 class TestTheNumberCarriesItsName:

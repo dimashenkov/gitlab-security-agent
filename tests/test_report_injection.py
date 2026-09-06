@@ -301,9 +301,15 @@ def test_the_limitations_document_exists_and_says_what_is_unmeasured():
     limitations = " ".join(
         (root / "LIMITATIONS.md").read_text(encoding="utf-8").split())
 
-    # The three claims an adopter would otherwise have to reconstruct from
-    # commit messages.
-    assert "no recall figure and no precision figure" in limitations
+    # The claims an adopter would otherwise have to reconstruct from commit
+    # messages. This asked for "no recall figure and no precision figure" until
+    # 2026-09-06, by which time the repository was gating on a recall figure —
+    # `stop_rule.py` rejects a configuration below 65% and recomputes 61/78
+    # every run. Codex adjudicated it that day. What an adopter needs is the
+    # figure **with its qualification**, not its absence.
+    assert "61 of 78 = 78%" in limitations
+    assert "*corpus* recall, not recall in use" in limitations
+    assert "no precision figure" in limitations
     assert "withdrawn" in limitations
     assert "does not mean the change is safe" in limitations
     # And the open defect, named rather than buried.

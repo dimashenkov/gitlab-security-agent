@@ -9,9 +9,17 @@ By **[Dimitar Shenkov](https://github.com/dimashenkov)** · MIT licensed ·
 > **Experimental research preview. Not suitable for reviewing untrusted
 > contributions.** Findings are model-generated leads, not security
 > conclusions. Do not gate merges on it.
-> There is no recall figure and no precision figure: both were measured, both
-> turned out to be measuring something else, and both were withdrawn. What
-> exists is a regression suite over cases this project built itself.
+> **There is a recall figure and there is no precision figure.** Recall on the
+> matched-pair corpus is **78%** — 61 of 78 vulnerable versions raised an alarm
+> — with a 95% interval of 68–86%. Precision was measured twice, turned out
+> both times to be measuring something else, and is withdrawn: the corpus is
+> half vulnerable and half fixed, and in a real pipeline the vulnerable changes
+> are a small minority.
+>
+> The corpus's other number, **26% on the fixed version**, is *not* a
+> false-alarm rate. It counts a finding of the same category in the same file,
+> with no judgement of whether the finding is true, on the patched twin of a
+> vulnerable file — the hardest possible negative. See D-013.
 > **Read [LIMITATIONS.md](LIMITATIONS.md) before putting this in front of
 > anyone's merge requests** — it is written to help you decide against it.
 

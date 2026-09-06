@@ -1,0 +1,899 @@
+{
+  "admitted": 27,
+  "admitted_case_ids": [
+    "ord-cs-041db1ab",
+    "ord-cs-04f87a76",
+    "ord-go-01843501",
+    "ord-go-0338fefe",
+    "ord-go-046a0c9f",
+    "ord-go-04e7b1d7",
+    "ord-js-01da4179",
+    "ord-js-02f665b4",
+    "ord-js-0331ea21",
+    "ord-jv-0229e0d8",
+    "ord-jv-02914bcb",
+    "ord-jv-0684865e",
+    "ord-jv-07d8c3d4",
+    "ord-php-00e04478",
+    "ord-php-028e8426",
+    "ord-py-012ec92a",
+    "ord-py-01395e72",
+    "ord-py-018332f1",
+    "ord-py-02cb4e2f",
+    "ord-py-045238f9",
+    "ord-rb-002b8b92",
+    "ord-rb-04546591",
+    "ord-rs-0290c4aa",
+    "ord-rs-054288f9",
+    "ord-rs-05751605",
+    "ord-ts-0066e4ad",
+    "ord-ts-01ee4b45"
+  ],
+  "decision": "D-014",
+  "estimand": "the observed reviewer alarm rate on the changes Grok classified as ordinary in the sealed pilot sample",
+  "excluded": [
+    {
+      "case_id": "ord-php-00d8cc16",
+      "verdict": "not_ordinary"
+    },
+    {
+      "case_id": "ord-rb-04af7b02",
+      "verdict": "not_ordinary"
+    },
+    {
+      "case_id": "ord-js-0b2b2df3",
+      "verdict": "not_ordinary"
+    }
+  ],
+  "finished_at": "2026-09-06T08:19:28.651159+00:00",
+  "newly_run": 17,
+  "not_a": [
+    "a false-alarm rate",
+    "a figure over all thirty",
+    "an estimate for the 1361-change frame",
+    "human-audited",
+    "completion of any D-013 step"
+  ],
+  "ran": 27,
+  "resumed": 10,
+  "rows": [
+    {
+      "blocked": false,
+      "case_id": "ord-rb-002b8b92",
+      "commit": "e5a47bb11a285fe8dbe633d66abbd6fd0c782035",
+      "complete": true,
+      "cost_usd": 0.3886195,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "ruby",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.3899504999999999,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/puma/puma",
+      "seconds": 54.974207709000005,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-ts-0066e4ad",
+      "commit": "dfbbf1c1ae0c224b8131d80ddf0a264262144086",
+      "complete": true,
+      "cost_usd": 0.1382,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "typescript",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.139532,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/colinhacks/zod",
+      "seconds": 30.431458749999997,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-php-00e04478",
+      "commit": "f7c0786569236dc151f6d6eeb359534874bdea84",
+      "complete": true,
+      "cost_usd": 0.91893,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "php",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.9202570000000002,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/guzzle/guzzle",
+      "seconds": 161.46793858299998,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-py-012ec92a",
+      "commit": "5691f596134c2feb121e595c77a0178921fcce61",
+      "complete": true,
+      "cost_usd": 0.174439,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "python",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.17579999999999998,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/psf/requests",
+      "seconds": 28.803527332999977,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-py-01395e72",
+      "commit": "a09c1c655eef3d43181eb46036b66cf058d72df4",
+      "complete": true,
+      "cost_usd": 0.531012,
+      "exit_code": 0,
+      "findings": 1,
+      "language": "python",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.532343,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/pallets/click",
+      "seconds": 136.755593917,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-py-018332f1",
+      "commit": "73e155006526575548d143ef519995f540547e52",
+      "complete": true,
+      "cost_usd": 0.288749,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "python",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.290071,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/pallets/click",
+      "seconds": 65.43536583299999,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-go-01843501",
+      "commit": "17068fbdc2aafafe58f50b3f08ab5946ffacdf90",
+      "complete": true,
+      "cost_usd": 0.164865,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "go",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.166193,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/sirupsen/logrus",
+      "seconds": 30.659262833000014,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-js-01da4179",
+      "commit": "34adfd90efc9c145488399e1cf7fa96de67080fa",
+      "complete": true,
+      "cost_usd": 0.7752195,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "javascript",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.7765475000000002,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/axios/axios",
+      "seconds": 139.41599370800003,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-ts-01ee4b45",
+      "commit": "85db85e9091d0706910d60c7eb2e9c181edd87bd",
+      "complete": true,
+      "cost_usd": 0.1154115,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "typescript",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.1167675,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/colinhacks/zod",
+      "seconds": 22.106679708,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-jv-0229e0d8",
+      "commit": "203495bbe6f94c1f67a63346a5ed245f64a3da8e",
+      "complete": true,
+      "cost_usd": 0.505595,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "java",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.506927,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/google/guava",
+      "seconds": 74.26043216699998,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-php-028e8426",
+      "commit": "fb827b89d46c2cf91293afd4f83a2fca9780a7bd",
+      "complete": true,
+      "cost_usd": 0.448106,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "php",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.449438,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/guzzle/guzzle",
+      "seconds": 120.192766292,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-rs-0290c4aa",
+      "commit": "27c60cddecf566e746645ce9e93139091627e064",
+      "complete": true,
+      "cost_usd": 0.305652,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "rust",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.30698,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/rayon-rs/rayon",
+      "seconds": 65.58685316600001,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-jv-02914bcb",
+      "commit": "b44c6e5a104aacab11112dccca441df18e183913",
+      "complete": true,
+      "cost_usd": 0.1465155,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "java",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.1478815,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/google/guava",
+      "seconds": 27.515603916999993,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-py-02cb4e2f",
+      "commit": "a3321c9ca14ddb951f04ac981f275b0de2f46208",
+      "complete": true,
+      "cost_usd": 0.2452405,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "python",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.2465965,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/pallets/click",
+      "seconds": 46.805165542000026,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-js-02f665b4",
+      "commit": "3dec28f94ce29d396d5f2d9718805b47428dc7ab",
+      "complete": true,
+      "cost_usd": 0.717527,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "javascript",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.718857,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/axios/axios",
+      "seconds": 186.05329391600003,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-js-0331ea21",
+      "commit": "4918457aad892a32b2b0cd585c40d22870d48c4a",
+      "complete": true,
+      "cost_usd": 0.3072125,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "javascript",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.30854250000000005,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/axios/axios",
+      "seconds": 50.88844791700001,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-go-0338fefe",
+      "commit": "e4f1d8a975011b8521524e17ee71abdbe390b53c",
+      "complete": true,
+      "cost_usd": 0.2599115,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "go",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.26124349999999996,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/sirupsen/logrus",
+      "seconds": 62.18620575,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-cs-041db1ab",
+      "commit": "91275568464b4291846b0dfb7cd0dabb43e6c8b5",
+      "complete": true,
+      "cost_usd": 0.1125985,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "csharp",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.11392749999999999,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/automapper/automapper",
+      "seconds": 24.121404666000103,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-py-045238f9",
+      "commit": "1a15e6e7a6f15fd31e88c694a296f4a8f0d64fb4",
+      "complete": true,
+      "cost_usd": 0.111417,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "python",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.112757,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/pydantic/pydantic",
+      "seconds": 19.887196666000023,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-rb-04546591",
+      "commit": "479b405d4735d39fb4aa8739577a6885448667f2",
+      "complete": true,
+      "cost_usd": 0.1562495,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "ruby",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.1575765,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/puma/puma",
+      "seconds": 29.753175166999995,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-go-046a0c9f",
+      "commit": "fa4818ced582b8d656706b45108fe3b836eb9863",
+      "complete": true,
+      "cost_usd": 0.146265,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "go",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.147622,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/sirupsen/logrus",
+      "seconds": 28.393793332999962,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-go-04e7b1d7",
+      "commit": "4ef87eaf2cfb27d3126d48194e1a84806acc1aed",
+      "complete": true,
+      "cost_usd": 0.171132,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "go",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.17246399999999998,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/go-chi/chi",
+      "seconds": 33.13163641699998,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-cs-04f87a76",
+      "commit": "29a59fb10553bfe4a4ab35a3eb912bfe2cac8a53",
+      "complete": true,
+      "cost_usd": 0.1499025,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "csharp",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.1512335,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/automapper/automapper",
+      "seconds": 28.949460042000055,
+      "stratum": "sensitive"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-rs-054288f9",
+      "commit": "436ff3c5742c31d01d349203e2c8315e909c8463",
+      "complete": true,
+      "cost_usd": 0.2655815,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "rust",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.2669365,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/rayon-rs/rayon",
+      "seconds": 34.117498458,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-rs-05751605",
+      "commit": "0e6ba89ff2da16d0cd300944e6739f5aaa1c1abf",
+      "complete": true,
+      "cost_usd": 0.1180665,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "rust",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.11940049999999999,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/clap-rs/clap",
+      "seconds": 23.573701124999957,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-jv-0684865e",
+      "commit": "2f1ebdd49d945ff2c9e7b80818390cccc32cc034",
+      "complete": true,
+      "cost_usd": 0.179554,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "java",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.18088500000000002,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/google/guava",
+      "seconds": 27.70136120799998,
+      "stratum": "quiet"
+    },
+    {
+      "blocked": false,
+      "case_id": "ord-jv-07d8c3d4",
+      "commit": "e4f54f78c93dae0507fcac5be81253974bc9042d",
+      "complete": true,
+      "cost_usd": 0.1787585,
+      "exit_code": 0,
+      "findings": 0,
+      "language": "java",
+      "provenance": {
+        "agent_version": "0.1.0",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "model_requested": "claude-opus-5",
+        "model_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "models_verified": [],
+        "provider": "claude-cli",
+        "reported_cost_usd": 0.1800905,
+        "schema_sha": "771225ae1a564f71",
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false
+      },
+      "repo": "github.com/google/gson",
+      "seconds": 38.823078500000065,
+      "stratum": "quiet"
+    }
+  ],
+  "schema": "ordinary-noise/1"
+}

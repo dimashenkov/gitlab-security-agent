@@ -217,12 +217,46 @@ def test_the_readme_shows_a_finding():
 
 
 def test_the_readme_does_not_promise_a_number_that_was_withdrawn():
-    """Both the recall and the precision figures were withdrawn. A README that
-    quotes one is the way a withdrawn number comes back."""
+    """Precision was withdrawn. A README that quotes one is the way a
+    withdrawn number comes back.
+
+    This test used to require the sentence "no recall figure and no precision
+    figure", which was true when it was written and stale by 2026-09-06: D-013
+    states 61 of 78 with a Wilson interval and `stop_rule.py` rejects a
+    configuration below 65% recall. Codex adjudicated it that day — *a project
+    cannot operationally gate on a measurement while claiming the measurement
+    does not exist*. So the test now guards the two things that are true: the
+    corpus recall figure is quoted **with its qualification**, and no precision
+    figure comes back.
+    """
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "no recall figure and no precision figure" in readme
+    assert "no precision figure" in readme
+    assert "78%" in readme, "the recall figure D-013 gates on is not stated"
+    assert "68–86%" in readme, "a proportion over 78 cases is not a point"
     assert "LIMITATIONS.md" in readme
+    # The one number that must never come back: precision from a corpus that is
+    # half vulnerable by construction.
+    assert "75%" not in readme
+
+
+def test_the_recall_figure_is_the_one_the_stop_rule_recomputes():
+    """The README, DECISIONS.md and the executable rule must agree.
+
+    Three places carried claims about this number and two of them were stale
+    for four days. A figure quoted in prose and a figure a tool recomputes are
+    the same figure or one of them is decoration.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    decisions = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+    limitations = (ROOT / "LIMITATIONS.md").read_text(encoding="utf-8")
+
+    for name, text in (("README.md", readme), ("DECISIONS.md", decisions),
+                       ("LIMITATIONS.md", limitations)):
+        assert "78%" in text, "{} does not state the recall figure".format(name)
+    assert "61 of 78" in readme or "61 of 78" in limitations
+    assert "no recall figure" not in readme
+    assert "There is no recall figure" not in limitations
 
 
 # ------------------- the guard's input is not the guarded party's to supply
