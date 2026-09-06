@@ -1204,3 +1204,149 @@ class TestACostThatIsNotMoney:
         assert "$0.0062 charged" in out
         assert "indeterminate" not in out
         assert code == 0
+
+
+class TestAFileOfManyRuns:
+    """The 27 ordinary-changes reviews were invisible to this counter.
+
+    `ordinary_noise.py` writes one `rows.json` holding every run it made, and
+    `artifacts()` kept only bodies that were objects — so the array fell
+    through an `isinstance(body, dict)` with nothing said, and the figure
+    quoted in every report was missing a whole measurement. The defect is the
+    project's own recurring one: a container read for its contents before
+    anything asked what it was, and its absence taken for agreement.
+    """
+
+    def rows_file(self, tmp_path, body):
+        path = tmp_path / "rows.json"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        return path
+
+    def run(self, cost=0.5):
+        return {"case_id": "c", "cost_usd": cost,
+                "provenance": {"provider": "claude-cli",
+                               "model_requested": "claude-opus-5",
+                               "auth_method": "claude.ai",
+                               "auth_subscription": "max",
+                               "reported_cost_usd": cost}}
+
+    def test_an_array_of_runs_is_read_as_that_many_runs(self, tmp_path):
+        path = self.rows_file(tmp_path, [self.run(), self.run(), self.run()])
+        rows, unreadable = spend.read_runs([path])
+        assert len(rows) == 3
+        assert unreadable == 0
+
+    def test_each_run_keeps_a_path_that_says_which_one_it_was(self, tmp_path):
+        """One file, many runs: `_path` is what the report prints when a row
+        looks wrong, and three rows all naming the same file cannot be told
+        apart by the person who has to go and look."""
+        path = self.rows_file(tmp_path, [self.run(), self.run()])
+        rows = spend.artifacts([path])
+        assert rows[0]["_path"].endswith("[0]")
+        assert rows[1]["_path"].endswith("[1]")
+
+    def test_an_array_of_something_else_is_unreadable_not_empty(self, tmp_path):
+        """"I could not tell" and "nothing was spent here" are different
+        answers, and this tool exists to keep them apart. Counted per record,
+        which is the unit a file of many runs is measured in."""
+        path = self.rows_file(tmp_path, ["c1", "c2", "c3"])
+        rows, unreadable = spend.read_runs([path])
+        assert rows == []
+        assert unreadable == 3
+
+    def test_a_mixed_file_does_not_swallow_the_elements_it_drops(self,
+                                                                 tmp_path):
+        """Codex, 2026-09-06. The first version kept a file whenever *one*
+        element looked like a run and threw the rest away in a list
+        comprehension, so a half-corrupt file reported zero unreadable and a
+        total that quietly missed part of itself."""
+        path = self.rows_file(tmp_path, [self.run(), "c2", 7, self.run()])
+        rows, unreadable = spend.read_runs([path])
+        assert len(rows) == 2
+        assert unreadable == 2
+
+    def test_an_object_that_is_not_a_run_is_not_read_as_one(self, tmp_path):
+        """The classifier was applied to array elements only, so any object at
+        all — a summary, a scorer's output — became a review with no cost
+        reported, which is a sentence this tool prints and means."""
+        path = tmp_path / "summary.json"
+        path.write_text(json.dumps({"recall": 0.78, "cases": 27}),
+                        encoding="utf-8")
+        rows, unreadable = spend.read_runs([path])
+        assert rows == []
+        assert unreadable == 1
+
+
+class TestOneRunIsCountedOnce:
+    """A run can be written twice — as its own kept `findings.json`, and as a
+    row in the `rows.json` its runner keeps beside it. Reading both counts its
+    cost twice, which is exactly what this tool refuses between the artifacts
+    and the queue log. Codex found the new shape had no such guard,
+    2026-09-06."""
+
+    def test_a_findings_file_beside_a_rows_file_is_folded(self, tmp_path):
+        rows = tmp_path / "rows.json"
+        rows.write_text("[]", encoding="utf-8")
+        kept, folded = spend.fold_representations(
+            [tmp_path / "kept" / "findings.json", rows])
+        assert kept == [rows]
+        assert len(folded) == 1
+
+    def test_the_rows_file_is_the_one_kept(self, tmp_path):
+        """`rows.json` holds every run its tool made; a kept `findings.json` is
+        the selected few that failed. Keeping the subset would drop runs."""
+        rows = tmp_path / "rows.json"
+        rows.write_text("[]", encoding="utf-8")
+        kept, _ = spend.fold_representations([rows])
+        assert kept == [rows]
+
+    def test_an_unrelated_directory_is_untouched(self, tmp_path):
+        rows = tmp_path / "a" / "rows.json"
+        rows.parent.mkdir()
+        rows.write_text("[]", encoding="utf-8")
+        other = tmp_path / "b" / "findings.json"
+        kept, folded = spend.fold_representations([rows, other])
+        assert folded == []
+        assert set(kept) == {rows, other}
+
+    def test_the_folding_is_reported_not_done_quietly(self, tmp_path, capsys):
+        """A report that folds without saying so cannot be told apart from one
+        that never saw those files."""
+        (tmp_path / "kept").mkdir()
+        run = {"cost_usd": 0.5,
+               "provenance": {"provider": "claude-cli",
+                              "reported_cost_usd": 0.5,
+                              "auth_method": "claude.ai",
+                              "auth_subscription": "max"}}
+        (tmp_path / "rows.json").write_text(json.dumps([run]),
+                                            encoding="utf-8")
+        (tmp_path / "kept" / "findings.json").write_text(json.dumps(run),
+                                                         encoding="utf-8")
+
+        spend.main([str(tmp_path / "rows.json"),
+                    str(tmp_path / "kept" / "findings.json")])
+        out = capsys.readouterr().out
+        assert "counted once" in out
+        assert "1 kept artifact(s)" in out
+
+    def test_a_file_that_is_neither_is_counted_too(self, tmp_path):
+        path = tmp_path / "n.json"
+        path.write_text("3", encoding="utf-8")
+        rows, unreadable = spend.read_runs([path])
+        assert rows == [] and unreadable == 1
+
+    def test_the_unreadable_count_does_not_go_negative(self, tmp_path, capsys):
+        """It was `len(paths) - len(rows)`, which one file of 27 runs turns
+        into -26 — printed to the owner as a negative number of files that
+        could not be read."""
+        path = tmp_path / "rows.json"
+        run = {"cost_usd": 0.5,
+               "provenance": {"provider": "claude-cli",
+                              "reported_cost_usd": 0.5,
+                              "auth_method": "claude.ai",
+                              "auth_subscription": "max"}}
+        path.write_text(json.dumps([run] * 27), encoding="utf-8")
+        spend.main([str(path)])
+        out = capsys.readouterr().out
+        assert "-26" not in out
+        assert "could not be read" not in out

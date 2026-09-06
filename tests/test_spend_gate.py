@@ -202,7 +202,7 @@ def test_the_unmapped_classes_are_named_rather_than_absent():
 BILLING_MODULES = ("grok_adjudicate", "classify_alarms", "pair_corpus",
                    "injection_corpus", "run_queue", "experiment",
                    "verifier_replay", "measure_variance", "ablation",
-                   "stability", "ordinary_noise")
+                   "stability", "ordinary_noise", "sonnet_trial")
 
 
 def test_every_class_is_named_by_a_tool_that_spends():

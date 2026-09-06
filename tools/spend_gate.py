@@ -96,6 +96,13 @@ SPEND_CLASSES: Dict[str, Optional[str]] = {
     # DECISIONS.md". This is that, and the gate now reads it rather than
     # treating the sentence as advice nobody acts on.
     "ordinary_noise": {"decision": "D-014"},
+    # The Sonnet trial, on the same footing and for the same reason: D-013
+    # orders nothing about trying a different model, and D-015 is the entry
+    # that does. Until it was written here the gate did refuse — with "no such
+    # class of spending is declared", which is a refusal about the mapping and
+    # not about the decision. D-015 says the gate holds this class to that
+    # entry, so the sentence was true of nothing until this line existed.
+    "sentinel_trial": {"decision": "D-015"},
 }
 
 # What a decision has to say before it authorises anything. `active` and

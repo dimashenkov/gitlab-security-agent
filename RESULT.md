@@ -19,7 +19,7 @@ against that goal.
 | blocks an ordinary change | observed blocks in this 27-case pilot: **0**; 95% upper bound **12%** — not "it never blocks" |
 | mentions anything on an ordinary change | **1 of 27** · 4% · 95% CI 1–18% |
 | gives the same answer twice | **11 of 13.** Two cases flipped with nothing changed — **15% instability** |
-| what the measurement cost | **$0.** $8.02 of API list price on a subscription, charged to nobody |
+| what the measurement cost | **$0.** $8.06 of API list price on a subscription, charged to nobody — the figure `tools/spend.py` prints, which is what the CLI reported for those 27 runs. Repricing their tokens from this repository's own table gives $8.02; both are notional and the 0.4% between them is the table, not a charge |
 | Sonnet | **never run.** 0 records anywhere under `measurements/` |
 
 ## The golden data, and why it is not gameable

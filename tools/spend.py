@@ -51,7 +51,11 @@ DEFAULT_GLOBS = (".security-scan/**/findings.json", "journal/**/findings.json",
                  # This repository's own kept artifacts. Without it the tool
                  # reported "no artifacts found" in the tree that has spent the
                  # most, because the first two are where a *user's* run writes.
-                 "measurements/**/findings.json")
+                 "measurements/**/findings.json",
+                 # Many runs in one file, which `read_runs` unpacks. The
+                 # ordinary-changes measurement writes only this — 27 reviews
+                 # that the counter did not see at all until 2026-09-06.
+                 "measurements/**/rows.json")
 
 # The queue writes one row per invocation, and that is a different record from
 # an artifact: the corpus runs kept an artifact only for the members that
@@ -115,24 +119,64 @@ INVISIBLE = (
 )
 
 
-def artifacts(paths: Iterable[Path]) -> List[Dict[str, Any]]:
-    """Every readable artifact among `paths`, unreadable ones skipped.
+def _looks_like_a_run(row: Any) -> bool:
+    """Does this element describe one review, or is it something else in a list.
 
-    Skipped rather than fatal: this is a report about runs that happened, and
-    one corrupt file should not stop it describing the rest. The count of files
-    that could not be read is printed, because a silently shorter report is the
-    failure this project keeps finding in its own tools.
+    Asked before the element is read as a run, not after. A list of strings, or
+    of the per-case scores some tool happens to write, would otherwise be
+    counted as that many runs with no cost reported — which reads in the report
+    as "runs whose price nobody recorded", the one sentence this tool exists to
+    keep honest.
+    """
+    return isinstance(row, dict) and (
+        "cost_usd" in row or isinstance(row.get("provenance"), dict))
+
+
+def read_runs(paths: Iterable[Path]) -> tuple:
+    """The runs among `paths`, and how many files could not be read as any.
+
+    Two shapes, and the file says which it is rather than the reader guessing:
+    an object is one review's artifact, and an array is a file of many — which
+    is what `ordinary_noise.py` writes, 27 runs in one `rows.json`. Until
+    2026-09-06 the array fell through an `isinstance(body, dict)` and was
+    dropped without a word, so the whole ordinary-changes measurement was
+    invisible to the counter that is quoted in every report. Absence read as
+    agreement, in the tool whose entire job is to say what was spent.
+
+    Unreadable is counted, not skipped silently: a shorter report that does not
+    say it is shorter is the failure this project keeps finding in itself.
     """
     out: List[Dict[str, Any]] = []
+    bad = 0
     for path in paths:
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            bad += 1
             continue
-        if isinstance(body, dict):
-            body["_path"] = str(path)
-            out.append(body)
-    return out
+        # A lone object is one record and is asked what it is on the same
+        # terms as an element of a list. Codex, 2026-09-06: the classifier was
+        # applied to array elements only, so any object at all — a summary, a
+        # scorer's output, a config — became a review whose price nobody
+        # reported, which is a sentence this tool prints and means.
+        records = list(enumerate(body)) if isinstance(body, list) \
+            else [(None, body)]
+        for index, record in records:
+            if not _looks_like_a_run(record):
+                # Counted, one per record, rather than skipped. A mixed file
+                # used to be accepted whole as long as one element looked
+                # right, and the elements that did not simply vanished.
+                bad += 1
+                continue
+            record["_path"] = str(path) if index is None \
+                else "{}[{}]".format(path, index)
+            out.append(record)
+    return out, bad
+
+
+def artifacts(paths: Iterable[Path]) -> List[Dict[str, Any]]:
+    """The runs alone, for callers that do not report the unreadable count."""
+    return read_runs(paths)[0]
 
 
 def _provenance(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -950,13 +994,43 @@ def detail(rows: List[Dict[str, Any]]) -> None:
             _provenance(row).get("model_requested", "")))
 
 
-def collect(args: argparse.Namespace) -> List[Path]:
+def fold_representations(paths: List[Path]) -> tuple:
+    """One representation per measurement, and the ones set aside.
+
+    A run can be written twice: once as its own `findings.json`, and once as a
+    row in the `rows.json` its runner keeps. Reading both counts that run's
+    cost twice, which is the failure this tool already refuses between the
+    artifacts and the queue log — and the second artifact shape arrived on
+    2026-09-06 with no equivalent guard. Codex found it on the gate pass.
+
+    `rows.json` wins, and not by preference: it holds every run its tool made,
+    while a kept `findings.json` is the selected few that failed. Counting the
+    complete record and setting the subset aside is the only choice that does
+    not silently drop runs.
+
+    Scoped by directory tree, because that is how the layout actually works: a
+    measurement writes its rows and any kept artifacts under one directory.
+    """
+    roots = {p.parent for p in paths if p.name == "rows.json"}
+    if not roots:
+        return paths, []
+    kept, folded = [], []
+    for path in paths:
+        if path.name != "rows.json" and any(
+                root == path or root in path.parents for root in roots):
+            folded.append(path)
+        else:
+            kept.append(path)
+    return kept, folded
+
+
+def collect(args: argparse.Namespace) -> tuple:
     if args.paths:
-        return [Path(p) for p in args.paths]
+        return fold_representations([Path(p) for p in args.paths])
     found: List[Path] = []
     for pattern in DEFAULT_GLOBS:
         found += sorted(ROOT.glob(pattern))
-    return found
+    return fold_representations(found)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -980,15 +1054,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         rows = queue_rows(ROOT / QUEUE_LOG)
         unreadable = 0
         skipped = QUEUE_SKIPPED
+        folded: List[Path] = []
     else:
         skipped = 0
-        paths = collect(args)
+        paths, folded = collect(args)
         # A vendor ledger is not a review artifact, and it used to be read as
         # both — 30 metered calls in one column and one nameless "review" in
         # the other, from one file. One record, one kind.
         paths = [p for p in paths if not _looks_like_a_vendor_ledger(p)]
-        rows = artifacts(paths)
-        unreadable = len(paths) - len(rows)
+        # Counted by the reader, not derived from `len(paths) - len(rows)`.
+        # One file can hold many runs, and that subtraction then goes negative
+        # and prints as a negative number of unreadable files.
+        rows, unreadable = read_runs(paths)
     if args.since:
         # Compared as instants, not as text: an offset timestamp sorts by its
         # local hour and belongs at its UTC one. A run whose stamp cannot be
@@ -1025,6 +1102,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     # code, and a vendor-only ledger printed "no records were found" from a
     # `summarise([])` that had never been shown the calls.
     code = one_figure(rows, vendor, unreadable, skipped, scope, args.since)
+    if folded:
+        # Said, not done quietly. Folding is the right answer to one run
+        # written twice, and a report that folds without saying so is a report
+        # whose reader cannot tell it from one that never saw those files.
+        print("  {} kept artifact(s) are also rows in a `rows.json` beside "
+              "them and are counted once, from the rows: {}".format(
+                  len(folded),
+                  ", ".join(sorted(str(p) for p in folded)[:3])
+                  + (" ..." if len(folded) > 3 else "")))
     if not args.breakdown and not args.detail:
         return code
 
