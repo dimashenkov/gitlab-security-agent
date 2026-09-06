@@ -563,13 +563,22 @@ CHALLENGER = "claude-sonnet-5"
 SC_DIGEST = "d" * 16
 
 
-def sc_member() -> dict:
+def sc_member(verified=()) -> dict:
+    """One member in the shape the agent writes.
+
+    `note_served(model, verifying=True)` appends the verifier to
+    `models_served` as well, so a one-element served list beside a different
+    `verify_model` is a shape no run produces. D-015, 2026-09-06.
+    """
+    verifiers = list(verified)
     return {
         "provenance": {"system_prompt_sha": "aaa", "verifier_prompt_sha": "bbb",
                        "schema_sha": "ccc", "agent_version": "0.1.0",
                        "model_requested": CHALLENGER,
                        "model_substituted": False,
-                       "models_served": [CHALLENGER]},
+                       "models_served": [CHALLENGER] + [
+                           m for m in verifiers if m != CHALLENGER],
+                       "models_verified": verifiers},
         "settings": {"verify": True, "verify_model": REF_MODEL,
                      "effort": "high"},
     }
@@ -584,7 +593,10 @@ def sc_row(case_id: str, passed: bool, run_id: str, *,
         "run_id": run_id,
         "unsafe_recall": (not missed) if missed is not None else passed,
         "safe_false_positive": false_alarm,
-        "members": {"safe": sc_member(), "unsafe": sc_member()},
+        # The unsafe member has a finding, so the verifier fired on it; the
+        # safe one does not. The reference records the same asymmetry.
+        "members": {"safe": sc_member(),
+                    "unsafe": sc_member(verified=[REF_MODEL])},
     }
 
 
@@ -607,7 +619,13 @@ def sc_reference(path: Path, comparable, failing=(), *, confirmations=2,
     path.write_text(json.dumps({
         "model": REF_MODEL,
         "verifier_model": REF_MODEL,
-        "observed_models": {"safe": [REF_MODEL], "unsafe": [REF_MODEL]},
+        # By role. One flat set per member cannot say which model verified,
+        # which is what made the Sonnet comparison impossible. D-015.
+        "observed_models": {
+            "any_role": {"safe": [REF_MODEL], "unsafe": [REF_MODEL]},
+            "reviewing": {"safe": [REF_MODEL], "unsafe": [REF_MODEL]},
+            "verifying": {"safe": [], "unsafe": [REF_MODEL]},
+        },
         "environment": {"system_prompt": "aaa", "verifier_prompt": "bbb",
                         "findings_schema": "ccc", "agent_version": "0.1.0"},
         "cases": entries,

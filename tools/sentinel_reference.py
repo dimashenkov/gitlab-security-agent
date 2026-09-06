@@ -46,6 +46,11 @@ sys.path.insert(0, str(ROOT / "tools"))
 from artifact import case_digest, legacy_case_digest  # noqa: E402
 
 CORPUS = ROOT / "corpus-real"
+# The default input, and no longer the only one. Codex, 2026-09-06: with this
+# hard-coded, `--write` kept reading the retired run whatever new passes had
+# been made, so a "fresh" reference would have frozen the old rows under a new
+# name. D-015 requires a new experiment directory and a new output file, and
+# neither is a thing to remember at the command line.
 EXPERIMENT = ROOT / "measurements" / "experiment-noise-floor-2"
 SUITE = ROOT / "suites" / "sentinel.yml"
 PASSES = ("pass-a", "pass-b")
@@ -159,21 +164,74 @@ def _shape(row: dict) -> dict:
     return out
 
 
+def reviewing_models(prov: dict) -> list:
+    """The models that answered the *review* in one member's provenance.
+
+    The same rule `Provenance.review_models` applies, and deliberately the
+    same: subtraction alone drops a model that did both jobs — run the reviewer
+    and the verifier on one model and the list comes back empty, so the run
+    reads as having had no reviewer at all. The requested model is kept when it
+    answered and the subtraction left nothing.
+
+    Written here rather than imported because this tool reads finished
+    artifacts and must not depend on `src/`; the rule is one rule and a second
+    spelling of it would drift. If it ever does, the pair of tests that pin
+    both against the same fixtures is what says so.
+    """
+    served = list(prov.get("models_served") or [])
+    verified = set(prov.get("models_verified") or ())
+    reviewing = [m for m in served if m not in verified]
+    requested = prov.get("model_requested")
+    if requested in served and not reviewing:
+        return [requested]
+    return reviewing
+
+
 def observed() -> dict:
     """Every model that answered anything, by member, across the reference.
 
     Read from the rows rather than declared. The reference used to state which
     model verified it and check nothing; this is what actually served.
+
+    **The two roles are collected apart.** `note_served(model, verifying=True)`
+    appends the verifier to `models_served` as well, so a set built from that
+    field alone cannot say which model reviewed and which verified — and the
+    comparator then predicts the challenger by substituting into an
+    undifferentiated set. With one model doing both roles the set holds one
+    entry, the prediction is "the challenger alone", and a real run where only
+    the reviewer changed records two models and is refused as an instrument
+    change. That is the impossibility recorded in the retirement reason, and
+    adding `models_verified` to the rows did not end it: the aggregation was
+    still role-blind. D-015, 2026-09-06, from Codex and confirmed by Grok.
     """
-    seen: dict = {}
+    any_role: dict = {}
+    reviewing: dict = {}
+    verifying: dict = {}
     cases = yaml.safe_load(SUITE.read_text(encoding="utf-8"))["cases"]
     for case_id in cases:
         for row in _rows(case_id).values():
             for name, block in (row.get("members") or {}).items():
                 prov = (block or {}).get("provenance") or {}
-                seen.setdefault(name, set()).update(
+                # The union of the two roles, taken as a union rather than
+                # read off `models_served` and *called* one. `note_served`
+                # appends the verifier there, so the two agree today — but a
+                # row where they do not would build a reference the comparator
+                # then refuses as not built from the rows, which is a true
+                # statement about a file this function just wrote from them.
+                any_role.setdefault(name, set()).update(
                     prov.get("models_served") or [])
-    return {name: sorted(models) for name, models in sorted(seen.items())}
+                any_role[name].update(prov.get("models_verified") or [])
+                reviewing.setdefault(name, set()).update(
+                    reviewing_models(prov))
+                verifying.setdefault(name, set()).update(
+                    prov.get("models_verified") or [])
+    return {
+        # Kept for readers of the old shape, and no longer what the comparator
+        # substitutes into.
+        "any_role": {n: sorted(m) for n, m in sorted(any_role.items())},
+        "reviewing": {n: sorted(m) for n, m in sorted(reviewing.items())},
+        "verifying": {n: sorted(m) for n, m in sorted(verifying.items())},
+    }
 
 
 def build() -> dict:
@@ -383,7 +441,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", metavar="PATH")
     parser.add_argument("--check", metavar="PATH")
+    parser.add_argument(
+        "--from", dest="source", metavar="DIR",
+        help="the experiment directory to freeze. Defaults to the one that "
+             "produced the retired reference, which is almost never what a "
+             "new freeze wants")
     args = parser.parse_args()
+
+    if args.source:
+        source = Path(args.source)
+        if not source.is_dir():
+            print("{} is not a directory".format(source), file=sys.stderr)
+            return 2
+        # Rebound rather than threaded through: every reader in this file goes
+        # through the module name, and one of them being missed is how a
+        # "fresh" reference ends up half old.
+        globals()["EXPERIMENT"] = source
 
     body = build()
     print(render(body))

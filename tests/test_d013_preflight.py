@@ -56,6 +56,15 @@ from test_d013_order import BLOCK, context, decisions_text, parse  # noqa: E402
 ENVIRONMENT = {"system_prompt": "aaa", "verifier_prompt": "bbb",
                "findings_schema": "ccc", "agent_version": "0.1.0"}
 
+# What a real reference records about which model answered in which role. The
+# safe member carries no verifier because there is nothing to verify when there
+# are no findings; that is the shape `note_served` actually writes.
+OBSERVED_MODELS = {"any_role": {"safe": ["claude-opus-5"],
+                                "unsafe": ["claude-opus-5"]},
+                   "reviewing": {"safe": ["claude-opus-5"],
+                                 "unsafe": ["claude-opus-5"]},
+                   "verifying": {"safe": [], "unsafe": ["claude-opus-5"]}}
+
 
 def evidence_for(ctx, step_id, block=BLOCK):
     """The rendered answer for one step, from the whole evaluation.
@@ -516,8 +525,22 @@ class TestValidateReferenceIsTotal:
     callers that a bad reference is reported and not raised, and the promise
     held only for files that happened to carry the keys it indexed."""
 
+    # A complete `observed_models`, filled in for the bodies below that do not
+    # write one of their own. Every test in this class is about some *other*
+    # field, and `observed_models` became required on 2026-09-06 — without this
+    # they would all stop at the same first refusal and stop proving anything
+    # about the fields they name. The requirement itself is tested where it
+    # belongs, in `tests/test_sentinel_compare.py`.
     def state_of(self, tmp_path, body):
         import sentinel_compare
+
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict) and "observed_models" not in parsed:
+            parsed["observed_models"] = OBSERVED_MODELS
+            body = json.dumps(parsed)
 
         path = tmp_path / "ref.json"
         path.write_text(body, encoding="utf-8")
@@ -661,7 +684,9 @@ class TestValidateReferenceIsTotal:
             "comparable": ["one"], "unstable_under_reference": ["two"],
             "environment": ENVIRONMENT,
             "model": "claude-opus-5", "verifier_model": "claude-opus-5",
-            "observed_models": {"safe": ["opus"]},
+            # By role: a flat set per member cannot say which model verified,
+            # and `validate_reference` refuses that shape now. D-015.
+            "observed_models": OBSERVED_MODELS,
             "threshold": {"rule_version": 2, "reject_at_net": 1,
                           "confirmations_required": 2},
             "cases": {

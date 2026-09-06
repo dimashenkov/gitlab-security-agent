@@ -595,24 +595,78 @@ def _reference_problems(reference: dict) -> None:
                 "model it is a baseline for and a challenger cannot be held to "
                 "it".format(value, name))
 
+    # **Required, not optional.** Codex, 2026-09-06: validating the shape only
+    # when the field was present meant an absent or `null` one passed
+    # validation, `compare()` turned it into `{}`, and the role comparison was
+    # skipped entirely — so a challenger whose reviewer and verifier were
+    # arranged differently from the reference passed the gate. The check that
+    # makes this experiment mean anything, switched off by an omission.
     observed = reference.get("observed_models")
-    if observed is not None:
-        if not isinstance(observed, dict):
+    if observed is None:
+        raise ComparisonError(
+            "the reference records no `observed_models`, so nothing says which "
+            "models answered it and a challenger cannot be held to any "
+            "arrangement. Re-freeze from a run whose rows carry "
+            "`models_verified`")
+    if not isinstance(observed, dict):
+        raise ComparisonError(
+            "the reference records `observed_models` as {}, where an "
+            "object naming the models each member was answered by is "
+            "required".format(type(observed).__name__))
+    # **Three roles, each a mapping of member to model list.** The shape
+    # changed on 2026-09-06 under D-015: one flat mapping per member could
+    # not say which model verified, which made the experiment this tool
+    # exists for impossible. A reference in the old shape is refused with
+    # the reason rather than read as though the roles were known.
+    missing = [role for role in ("any_role", "reviewing", "verifying")
+               if not isinstance(observed.get(role), dict)]
+    if missing:
+        raise ComparisonError(
+            "the reference records no {} in `observed_models`. A single "
+            "set of served models per member cannot say which of them "
+            "verified, so a challenger that changes only the reviewer is "
+            "indistinguishable from one that changed the whole "
+            "instrument. Re-freeze from a run whose rows carry "
+            "`models_verified`".format(", ".join(missing)))
+    # And the values, not only the outer mappings. Codex, 2026-09-05:
+    # `{"safe": 3}` passed and crashed at `for m in expected`, and
+    # `{"safe": "claude-opus-5"}` was worse — a string walks into
+    # characters, so the comparison ran against thirteen one-letter model
+    # names and produced an answer instead of a refusal.
+    for role in ("any_role", "reviewing", "verifying"):
+        # Both members named in every role. Codex, 2026-09-06: three empty
+        # mappings validated and then constrained nothing, which is the
+        # same hole one level in — a check that passes over no data.
+        absent = sorted({"safe", "unsafe"} - set(observed[role]))
+        if absent:
             raise ComparisonError(
-                "the reference records `observed_models` as {}, where an "
-                "object naming the models each member was answered by is "
-                "required".format(type(observed).__name__))
-        # And its values, not only the outer mapping. Codex, 2026-09-05:
-        # `{"safe": 3}` passed and crashed at `for m in expected`, and
-        # `{"safe": "claude-opus-5"}` was worse — a string walks into
-        # characters, so the comparison ran against thirteen one-letter model
-        # names and produced an answer instead of a refusal.
-        for member, names in sorted(observed.items()):
+                "the reference names no {} in `observed_models[{!r}]`. A "
+                "member nobody recorded imposes no constraint, and the "
+                "challenger is then free in exactly that place".format(
+                    " or ".join(absent), role))
+        for member, names in sorted(observed[role].items()):
             if not _is_name_list(names):
                 raise ComparisonError(
-                    "the reference records {} for `observed_models[{!r}]`, "
-                    "where a list of model names is required".format(
-                        type(names).__name__, member))
+                    "the reference records {} for "
+                    "`observed_models[{!r}][{!r}]`, where a list of model "
+                    "names is required".format(
+                        type(names).__name__, role, member))
+
+    # And the three agree with each other. `any_role` is the union by
+    # construction — it is built from `models_served`, which carries both —
+    # so a reference where it is not says the roles were split by something
+    # other than what actually served.
+    for member in ("safe", "unsafe"):
+        union = set(observed["reviewing"][member]) | set(
+            observed["verifying"][member])
+        if set(observed["any_role"][member]) != union:
+            raise ComparisonError(
+                "the reference's {} member was served {} and its two roles "
+                "account for {}. The roles are a partition of what served, "
+                "and a reference where they are not was not built from the "
+                "rows".format(member,
+                              sorted(observed["any_role"][member]),
+                              sorted(union)))
     for case_id in comparable:
         if case_id not in cases:
             raise ComparisonError(
@@ -774,6 +828,51 @@ def _reference_problems(reference: dict) -> None:
             "threshold needs {} regressions to reject. A reference with "
             "nothing to lose cannot detect a `pass -> fail` at all.".format(
                 steady_passes, threshold["reject_at_net"]))
+
+
+def _reviewing(prov: dict) -> list:
+    """The models that answered the *review* in one member's provenance.
+
+    `note_served(model, verifying=True)` appends the verifier to
+    `models_served` as well, so the reviewer is what is left after the
+    verifiers are removed — except when one model did both jobs, where the
+    subtraction empties the list and the run reads as having had no reviewer.
+    The requested model is kept in that case. Same rule as
+    `Provenance.review_models`, deliberately; a second spelling of one rule
+    drifts, and the tests pin them against the same shapes.
+    """
+    served = list(prov.get("models_served") or [])
+    verified = set(prov.get("models_verified") or ())
+    reviewing = [m for m in served if m not in verified]
+    requested = prov.get("model_requested")
+    if requested in served and not reviewing:
+        return [requested]
+    return reviewing
+
+
+def _expectations(observed: dict, reference_model, challenger) -> dict:
+    """What the challenger's two roles must show, from the reference's.
+
+    Accepts both shapes. A reference frozen before 2026-09-06 records one set
+    per member and cannot say which model verified; that is the retirement
+    reason and `validate_reference` refuses such a file long before this runs,
+    so the old shape is handled only to give a clear answer rather than a
+    `KeyError` if one ever reaches here.
+    """
+    if "reviewing" in observed and "verifying" in observed:
+        reviewing = {name: {challenger if m == reference_model else m
+                            for m in models}
+                     for name, models in (observed["reviewing"] or {}).items()}
+        # **Not substituted.** Holding the verifier still is the experiment.
+        verifying = {name: set(models)
+                     for name, models in (observed["verifying"] or {}).items()}
+        return {"reviewing": reviewing, "verifying": verifying}
+    raise ComparisonError(
+        "this reference records one undifferentiated set of served models per "
+        "member and cannot say which of them verified. A challenger that "
+        "changes only the reviewer is indistinguishable from one that changed "
+        "the whole instrument, so no comparison it could produce would mean "
+        "anything. Re-freeze from a run whose rows carry `models_verified`.")
 
 
 def compare(reference_path, run_paths: list) -> dict:
@@ -1001,30 +1100,48 @@ def compare(reference_path, run_paths: list) -> dict:
     # demanding purity would refuse the challenger for the same reason it
     # refuses the reference, and a rule ignoring it would let the measuring
     # instrument change underneath the comparison.
+    # **By role, not as one set.** D-015, 2026-09-06, from Codex and confirmed
+    # independently by Grok: substituting into the undifferentiated served set
+    # makes the intended experiment mechanically impossible. With one model in
+    # both roles the reference set holds one entry, the substitution predicts
+    # "the challenger alone", and a real run where only the reviewer changed
+    # records the challenger *and* the unchanged verifier — refused as an
+    # instrument change. The comparison this tool exists for could never pass.
+    #
+    # The test that should have caught it did not: its fixture wrote a
+    # one-element `models_served` for a run whose verifier was a different
+    # model, which `note_served` never produces.
+    #
+    # So: the reviewer role is where the challenger is substituted, and the
+    # verifier role has to be **unchanged**, which is the whole shape of a
+    # model comparison.
     expected_models = reference.get("observed_models") or {}
     if expected_models:
-        seen: dict = {}
+        by_role = _expectations(expected_models, reference.get("model"),
+                                next(iter(asked)))
+        seen_reviewing: dict = {}
+        seen_verifying: dict = {}
         for run in runs:
             for row in run.values():
                 for name, block in (row.get("members") or {}).items():
                     prov = (block or {}).get("provenance") or {}
-                    seen.setdefault(name, set()).update(
-                        prov.get("models_served") or [])
-        for name, expected in expected_models.items():
-            # The challenger's own model replaces the reference's wherever it
-            # appears; everything else — the models the CLI brings along — has
-            # to match, or the instrument moved as well as the subject.
-            challenger = next(iter(asked))
-            substituted_expectation = {
-                challenger if m == reference.get("model") else m
-                for m in expected}
-            if seen.get(name, set()) != substituted_expectation:
-                raise ComparisonError(
-                    "the {} member was served {} and the reference was served "
-                    "{}. Beside the model under test, the machinery has to be "
-                    "the same or the comparison measures two changes.".format(
-                        name, sorted(seen.get(name, set())) or "nothing",
-                        sorted(substituted_expectation)))
+                    seen_reviewing.setdefault(name, set()).update(
+                        _reviewing(prov))
+                    seen_verifying.setdefault(name, set()).update(
+                        prov.get("models_verified") or [])
+        for role, seen, expectations in (
+                ("reviewed", seen_reviewing, by_role["reviewing"]),
+                ("verified", seen_verifying, by_role["verifying"])):
+            for name, expected in sorted(expectations.items()):
+                if seen.get(name, set()) != expected:
+                    raise ComparisonError(
+                        "the {} member was {} by {} and the reference was {} "
+                        "by {}. Beside the model under test, the machinery has "
+                        "to be the same or the comparison measures two "
+                        "changes.".format(
+                            name, role,
+                            sorted(seen.get(name, set())) or "nothing",
+                            role, sorted(expected) or "nothing"))
 
     # And the verifier that actually ran has to be the one the run asked for.
     # `model_substituted` above says the *reviewer* was answered by something

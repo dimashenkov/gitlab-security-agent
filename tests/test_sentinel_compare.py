@@ -22,16 +22,34 @@ import sentinel_compare
 DIGEST = "d" * 16
 
 
-def member(**overrides) -> dict:
+def member(verified=(), reviewer="claude-sonnet-5", **overrides) -> dict:
+    """One member of a pair, in the shape the agent actually writes.
+
+    **`models_served` carries the verifier too.** `note_served(model,
+    verifying=True)` appends it to both lists, so a one-element served list
+    beside a different `verify_model` is a shape no run produces. This fixture
+    wrote exactly that until 2026-09-06, and
+    `test_the_verifier_held_where_it_was_is_accepted` — the test whose whole
+    job is to prove the intended arrangement passes — was passing on it. Grok
+    found it while adjudicating D-015.
+
+    `verified` defaults to empty because a member with no findings never fires
+    the verifier. The unsafe member of a real pair usually does, and the safe
+    one usually does not; that asymmetry is in the reference and has to be in
+    the challenger.
+    """
+    verifiers = list(verified)
     body = {
         # `model_substituted` is recorded by every real run, and the contract
         # requires it to be present and false: a row that never recorded it,
         # and was answered by another model, would otherwise pass.
         "provenance": {"system_prompt_sha": "aaa", "verifier_prompt_sha": "bbb",
                        "schema_sha": "ccc", "agent_version": "0.1.0",
-                       "model_requested": "claude-sonnet-5",
+                       "model_requested": reviewer,
                        "model_substituted": False,
-                       "models_served": ["claude-sonnet-5"]},
+                       "models_served": [reviewer] + [
+                           m for m in verifiers if m != reviewer],
+                       "models_verified": verifiers},
         # `verify` is recorded by every real run, and the contract requires it
         # to be on: the reference was produced with it on, and a challenger
         # without it measures a different question.
@@ -52,7 +70,10 @@ def row(case_id: str, passed: bool, missed=None, false_alarm=False,
         "run_id": run_id,
         "unsafe_recall": (not missed) if missed is not None else passed,
         "safe_false_positive": false_alarm,
-        "members": {"safe": member(), "unsafe": member()},
+        # The unsafe member has a finding, so the verifier fired on it; the
+        # safe one does not. The reference records the same asymmetry.
+        "members": {"safe": member(),
+                    "unsafe": member(verified=["claude-opus-5"])},
     }
     body.update(overrides)
     return body
@@ -77,11 +98,25 @@ def reference(tmp_path, cases=("one", "two", "three"), unstable=("wobbly",),
     path.write_text(json.dumps({
         "model": "claude-opus-5",
         "verifier_model": "claude-opus-5",
-        # What served the reference, by member. The challenger has to have been
-        # served the same set with its own model in place of the reference's —
-        # the machinery held constant beside the subject under test.
-        "observed_models": {"safe": ["claude-opus-5"],
-                            "unsafe": ["claude-opus-5"]},
+        # What served the reference, **by role and by member**. The challenger
+        # has to have been reviewed by its own model in place of the
+        # reference's, and verified by the same one — the machinery held
+        # constant beside the subject under test.
+        #
+        # One set per member was the old shape and it made this experiment
+        # impossible: with one model in both roles it holds one entry, the
+        # substitution predicts the challenger alone, and a real run where only
+        # the reviewer changed records two models and is refused. D-015.
+        "observed_models": {
+            "any_role": {"safe": ["claude-opus-5"],
+                         "unsafe": ["claude-opus-5"]},
+            "reviewing": {"safe": ["claude-opus-5"],
+                          "unsafe": ["claude-opus-5"]},
+            # Opus verified wherever there was a finding. The safe member of a
+            # clean reference has none, so nothing verified it — and that
+            # asymmetry is real, not a fixture convenience.
+            "verifying": {"safe": [], "unsafe": ["claude-opus-5"]},
+        },
         "environment": {"system_prompt": "aaa", "verifier_prompt": "bbb",
                         "findings_schema": "ccc", "agent_version": "0.1.0"},
         "cases": entries,
@@ -615,6 +650,24 @@ def test_observed_models_that_is_not_an_object_is_refused(tmp_path, observed):
     assert "where an object naming the models" in state.why
 
 
+def test_a_reference_in_the_old_flat_shape_is_refused(tmp_path):
+    """One set of served models per member cannot say which of them verified,
+    so a challenger that changes only the reviewer is indistinguishable from
+    one that changed the whole instrument. D-015, 2026-09-06: that is what made
+    the intended experiment impossible, and it is refused with the reason
+    rather than read as though the roles were known."""
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text(encoding="utf-8"))
+    body["observed_models"] = {"safe": ["claude-opus-5"],
+                               "unsafe": ["claude-opus-5"]}
+    ref.write_text(json.dumps(body), encoding="utf-8")
+
+    state = sentinel_compare.validate_reference(ref)
+    assert state.state == sentinel_compare.REF_UNUSABLE
+    assert "cannot say which of them verified" in state.why
+    assert "models_verified" in state.why
+
+
 @pytest.mark.parametrize("names", [3, None, "claude-opus-5", [1], [""]])
 def test_observed_models_values_are_lists_of_names(tmp_path, names):
     """Codex, 2026-09-05, twentieth gate pass. The outer mapping was checked
@@ -627,12 +680,79 @@ def test_observed_models_values_are_lists_of_names(tmp_path, names):
     """
     ref = reference(tmp_path)
     body = json.loads(ref.read_text(encoding="utf-8"))
-    body["observed_models"] = {"safe": names}
+    body["observed_models"]["reviewing"]["safe"] = names
     ref.write_text(json.dumps(body), encoding="utf-8")
 
     state = sentinel_compare.validate_reference(ref)
     assert state.state == sentinel_compare.REF_UNUSABLE
     assert "where a list of model names is required" in state.why
+
+
+def test_a_reference_with_no_observed_models_at_all_is_refused(tmp_path):
+    """The hole Codex found on the gate pass for D-015's first three repairs.
+
+    Every shape of `observed_models` was validated — except its absence. An
+    absent field skipped validation, `compare()` turned it into `{}`, and the
+    role comparison ran over nothing: a challenger whose reviewer and verifier
+    were arranged any way at all passed. The check the whole experiment rests
+    on, switched off by an omission rather than by a decision.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text(encoding="utf-8"))
+    del body["observed_models"]
+    ref.write_text(json.dumps(body), encoding="utf-8")
+
+    state = sentinel_compare.validate_reference(ref)
+    assert state.state == sentinel_compare.REF_UNUSABLE
+    assert "records no `observed_models`" in state.why
+
+
+def test_a_reference_whose_observed_models_is_null_is_refused(tmp_path):
+    """`null` is the same hole spelt differently: `.get()` returns `None` for
+    both, and a reference that says "I recorded nothing here" must not be read
+    as one that recorded no constraint."""
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text(encoding="utf-8"))
+    body["observed_models"] = None
+    ref.write_text(json.dumps(body), encoding="utf-8")
+
+    state = sentinel_compare.validate_reference(ref)
+    assert state.state == sentinel_compare.REF_UNUSABLE
+    assert "records no `observed_models`" in state.why
+
+
+@pytest.mark.parametrize("role", ["any_role", "reviewing", "verifying"])
+@pytest.mark.parametrize("member", ["safe", "unsafe"])
+def test_a_role_that_names_no_member_is_refused(tmp_path, role, member):
+    """One level in from the absent field, and it passed for the same reason:
+    three mappings of the right type, empty, validated — and then constrained
+    nothing, because the comparison walks the members the reference names.
+    A member nobody recorded leaves the challenger free in exactly that place.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text(encoding="utf-8"))
+    del body["observed_models"][role][member]
+    ref.write_text(json.dumps(body), encoding="utf-8")
+
+    state = sentinel_compare.validate_reference(ref)
+    assert state.state == sentinel_compare.REF_UNUSABLE
+    assert "names no {}".format(member) in state.why
+
+
+def test_the_roles_must_account_for_what_served(tmp_path):
+    """`any_role` is built from `models_served` and the two roles are its
+    partition, so a reference where they do not add up was not built from the
+    rows — it was edited, or built by something other than the freezer, and
+    nothing downstream would have noticed."""
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text(encoding="utf-8"))
+    body["observed_models"]["any_role"]["unsafe"] = ["claude-opus-5",
+                                                    "claude-haiku-4-5-20251001"]
+    ref.write_text(json.dumps(body), encoding="utf-8")
+
+    state = sentinel_compare.validate_reference(ref)
+    assert state.state == sentinel_compare.REF_UNUSABLE
+    assert "two roles account for" in state.why
 
 
 @pytest.mark.parametrize("verified", ["claude-opus-5", 3, {}, "", 0, [1]])
@@ -1034,13 +1154,15 @@ def test_a_verifier_that_fires_on_some_cases_only_is_one_system(tmp_path):
     differs between cases of the *same* run."""
     ref = reference(tmp_path)
     quiet = member()
-    quiet["provenance"] = dict(quiet["provenance"], models_verified=[])
-    verified = member()
-    verified["provenance"] = dict(verified["provenance"],
-                                  models_verified=["claude-opus-5"])
+    verified = member(verified=["claude-opus-5"])
 
-    rows = [row("one", True, members={"safe": quiet, "unsafe": quiet}),
-            row("two", True, members={"safe": verified, "unsafe": verified}),
+    # The reference's safe member was verified by nothing and its unsafe member
+    # by Opus, because that is where the findings are. A challenger whose
+    # verifier fired in the same places is one system; the point of the case is
+    # that *which cases* it fired on may differ, and the union over cases is
+    # what the comparison uses.
+    rows = [row("one", True, members={"safe": quiet, "unsafe": verified}),
+            row("two", True, members={"safe": quiet, "unsafe": verified}),
             row("three", True)]
     result = sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                             run(tmp_path, "b.json", rows)])
@@ -1074,11 +1196,17 @@ def test_the_verifier_held_where_it_was_is_accepted(tmp_path):
     """The intended arrangement has to pass, or the check is useless: a Sonnet
     reviewer with `verify_model` on Opus, and Opus doing the verifying."""
     ref = reference(tmp_path)
-    held = member()
-    held["provenance"] = dict(held["provenance"],
-                              model_requested="claude-sonnet-5",
-                              models_verified=["claude-opus-5"])
-    rows = [row(c, True, members={"safe": held, "unsafe": held})
+    # Sonnet reviews; Opus verifies, and only where there is a finding — so the
+    # safe member records no verifier and the unsafe one records Opus, exactly
+    # as the reference does. Until 2026-09-06 this test built a member whose
+    # `models_served` held one entry beside a different `verify_model`, a shape
+    # `note_served` never writes, and passed on it. Grok found that while
+    # adjudicating D-015; the whole point of this case is that the intended
+    # arrangement passes, so passing on an impossible shape made it worthless.
+    rows = [row(c, True,
+                members={"safe": member(reviewer="claude-sonnet-5"),
+                         "unsafe": member(reviewer="claude-sonnet-5",
+                                          verified=["claude-opus-5"])})
             for c in ("one", "two", "three")]
 
     result = sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
@@ -1398,14 +1526,21 @@ def test_the_machinery_the_reference_saw_must_serve_the_challenger_too(
     """
     ref = reference(tmp_path)
     body = json.loads(ref.read_text())
-    body["observed_models"]["unsafe"] = ["claude-haiku-4-5-20251001",
-                                         "claude-opus-5"]
+    # The helper is part of the *review*, not the verification: the CLI serves
+    # some of the reviewing with a smaller model. So it belongs in the
+    # reviewing role, where the substitution happens, and the challenger has to
+    # show it too.
+    body["observed_models"]["reviewing"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    body["observed_models"]["any_role"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
     ref.write_text(json.dumps(body))
 
-    helped = member()
-    helped["provenance"] = dict(helped["provenance"],
-                                models_served=["claude-sonnet-5",
-                                               "claude-haiku-4-5-20251001"])
+    helped = member(verified=["claude-opus-5"])
+    helped["provenance"] = dict(
+        helped["provenance"],
+        models_served=["claude-sonnet-5", "claude-haiku-4-5-20251001",
+                       "claude-opus-5"])
     matching = [row(c, True, members={"safe": member(), "unsafe": helped})
                 for c in ("one", "two", "three")]
     result = sentinel_compare.compare(ref, [run(tmp_path, "a.json", matching),

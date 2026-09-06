@@ -76,7 +76,11 @@ def reference(tmp_path, monkeypatch):
     experiment = tmp_path / "experiment"
     experiment.mkdir()
     (experiment / "manifest.json").write_text(
-        json.dumps({"environment": {"system_prompt": "aaa"}}), encoding="utf-8")
+        json.dumps({"environment": {"system_prompt": "aaa",
+                                    "verifier_prompt": "bbb",
+                                    "findings_schema": "ccc",
+                                    "agent_version": "ddd"}}),
+        encoding="utf-8")
 
     corpus = tmp_path / "corpus-real"
     for case_id in ("steady", "wobbly"):
@@ -137,6 +141,58 @@ def test_a_case_stable_in_both_senses_is_still_comparable(reference):
     """The other half: the check must not refuse the ordinary case."""
     body = sentinel_reference.build()
     assert body["comparable"] == ["steady"]
+
+
+def test_what_the_builder_writes_the_comparator_accepts(reference, tmp_path):
+    """The chain, not the two links. The comparator gained a rule on
+    2026-09-06 — the two roles must account for what served — and a rule about
+    a file is only worth having if the tool that writes the file obeys it.
+
+    The row here records a verifier that is *not* in `models_served`. Nothing
+    forbids that shape, and until this test the builder took `any_role`
+    straight off `models_served`, so it would have written a reference the
+    comparator refuses as "not built from the rows" — about a file the builder
+    had just built from them.
+    """
+    import sentinel_compare
+
+    # Two more stable cases: the comparator refuses a reference with fewer
+    # comparable passes than the threshold needs, which is a different rule and
+    # would mask the one under test here.
+    for extra in ("steadier", "steadiest"):
+        build_case(reference / "corpus-real", extra)
+        for label in ("pass-a", "pass-b"):
+            write_row(reference / "experiment", label, extra, True)
+    (reference / "sentinel.yml").write_text(
+        yaml.safe_dump({"cases": ["steady", "wobbly", "steadier",
+                                  "steadiest"]}), encoding="utf-8")
+
+    write_row(reference / "experiment", "pass-a", "steady", True,
+              members={"safe": {"provenance": {
+                  "model_requested": "claude-opus-5",
+                  "models_served": ["claude-opus-5"],
+                  "models_verified": ["claude-haiku-4-5-20251001"],
+                  "model_substituted": False},
+                  "settings": {"verify": True,
+                               "verify_model": "claude-haiku-4-5-20251001"}},
+                  "unsafe": {"provenance": {
+                      "model_requested": "claude-opus-5",
+                      "models_served": ["claude-opus-5"],
+                      "models_verified": ["claude-haiku-4-5-20251001"],
+                      "model_substituted": False},
+                      "settings": {"verify": True,
+                                   "verify_model":
+                                       "claude-haiku-4-5-20251001"}}})
+
+    body = sentinel_reference.build()
+    for member in ("safe", "unsafe"):
+        assert body["observed_models"]["any_role"][member] == [
+            "claude-haiku-4-5-20251001", "claude-opus-5"]
+
+    frozen = tmp_path / "reference.json"
+    frozen.write_text(json.dumps(body), encoding="utf-8")
+    state = sentinel_compare.validate_reference(frozen)
+    assert state.state == sentinel_compare.REF_USABLE, state.why
 
 
 def test_both_passes_are_recorded_not_the_later_one(reference):
