@@ -818,3 +818,18 @@ Two more boundaries of the same tool:
   the committed one, and `run` refuses when it does not — but an uncommitted
   ledger answers `unknown`, which is "I could not check" and not "it is sound".
   Commit the ledger as the trial proceeds or this check has nothing to hold.
+* **The reference is built from the arm; the builder is not.**
+  `sentinel_reference.build()` takes its case list from the live
+  `suites/sentinel.yml` and checks each row's digest against the live
+  `corpus-real`, neither of which is the frozen arm — so `sonnet_trial.py
+  reference` asks `experiment.drift` about that arm first and refuses when
+  anything it froze has moved. That makes the two agree at the moment of the
+  freeze. It does not make the builder read the arm's own case list, and a
+  future change to `build()` could reintroduce the gap without this refusal
+  noticing.
+* **`reference --recover` verifies, and the window is still real.** Writing
+  the file and appending its ledger line are two writes, so a crash between
+  them leaves a reference nothing records. Recovery rebuilds the baseline and
+  records the file only if the two match, which is stronger than the unit
+  recovery — but it depends on the arm's rows still building the same thing,
+  which is exactly what the drift check above is for.

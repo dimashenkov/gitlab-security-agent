@@ -152,7 +152,7 @@ class TestTheHistoriesACountCannotTellApart:
         assert frozen() == 0
         for index in range(steps):
             step("t", index)
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert problems == [], problems
         return trial.load_schedule("t")[0]
 
@@ -162,7 +162,7 @@ class TestTheHistoriesACountCannotTellApart:
     def test_a_deleted_result_is_caught(self, trees):
         schedule = self.clean(trees)
         trial._result_path(schedule, schedule["units"][1]).unlink()
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert any("is not there" in p for p in problems), problems
 
     def test_a_result_rewritten_after_the_fact_is_caught(self, trees):
@@ -171,7 +171,7 @@ class TestTheHistoriesACountCannotTellApart:
         schedule = self.clean(trees)
         path = trial._result_path(schedule, schedule["units"][1])
         path.write_text(json.dumps({"pair_success": False}), encoding="utf-8")
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert any("different content" in p for p in problems), problems
 
     def test_a_result_nothing_opened_a_step_for_is_caught(self, trees):
@@ -182,7 +182,7 @@ class TestTheHistoriesACountCannotTellApart:
         path = trial._result_path(schedule, unit)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}", encoding="utf-8")
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert any("no ledger step accounts for" in p for p in problems), \
             problems
 
@@ -192,14 +192,14 @@ class TestTheHistoriesACountCannotTellApart:
         lines = path.read_text(encoding="utf-8").splitlines()
         path.write_text("\n".join(lines[:2] + lines[3:]) + "\n",
                         encoding="utf-8")
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert problems, "a removed line left no trace"
 
     def test_a_step_run_out_of_the_committed_order_is_caught(self, trees):
         assert frozen() == 0
         step("t", 0)
         step("t", 2)                      # unit 1 skipped
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert any("committed order says" in p for p in problems), problems
 
     def test_a_schedule_rewritten_under_a_running_trial_is_caught(self, trees):
@@ -212,7 +212,7 @@ class TestTheHistoriesACountCannotTellApart:
                          in enumerate(reversed(body["units"]))]
         path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n",
                         encoding="utf-8")
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert any("belongs to another trial" in p for p in problems), problems
 
 
@@ -225,7 +225,7 @@ class TestTheCrashBetweenTwoWrites:
         assert frozen() == 0
         step("t", 0)
         step("t", 1, close=False)         # result written, `done` never was
-        _, entries, problems = trial.verify("t")
+        _, _, entries, problems = trial.verify("t")
         assert problems == [], problems
         schedule, _ = trial.load_schedule("t")
         done, open_index = trial.position(schedule, entries)
@@ -239,7 +239,7 @@ class TestTheCrashBetweenTwoWrites:
                      "case_id": unit["case_id"], "arm": unit["arm"],
                      "pass": unit["pass"],
                      "schedule_digest": schedule_digest})
-        _, entries, problems = trial.verify("t")
+        _, _, entries, problems = trial.verify("t")
         assert problems == [], problems
         assert trial.position(schedule, entries) == (0, 0)
 
@@ -249,8 +249,430 @@ class TestTheCrashBetweenTwoWrites:
         assert frozen() == 0
         step("t", 0, close=False)
         step("t", 1, close=False)
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert any("still open" in p for p in problems), problems
+
+
+class TestFreezingTheReference:
+    """The ledger line nothing wrote until now. `status` reported it and the
+    tests manufactured it, which is a record of a thing that never happened."""
+
+    def stub(self, monkeypatch, *, body=None, raises=None):
+        """`sentinel_reference.build` replaced: no rows are read from disk and
+        nothing is bought. Only this tool's decisions are under test."""
+        import sentinel_reference
+
+        def build():
+            if raises is not None:
+                raise raises
+            return body if body is not None else {"comparable": ["one"],
+                                                  "missing": []}
+
+        monkeypatch.setattr(sentinel_reference, "build", build)
+        monkeypatch.setattr(trial, "committed_prefix",
+                            lambda name: ("extends", "committed in git"))
+        # Nothing has moved. `drift` reads the real suite and corpus through
+        # module constants this fixture's tmp_path does not replace, so it is
+        # answered here — and asked for real in its own two tests below.
+        monkeypatch.setattr(experiment, "drift", lambda body: [])
+
+    def all_of_the_reference_arm(self, name="t"):
+        """Every unit of the reference arm recorded, and none of the other."""
+        schedule, _ = trial.load_schedule(name)
+        for unit in schedule["units"]:
+            if unit["arm"] == trial.REFERENCE_ARM:
+                step(name, unit["index"])
+            else:
+                schedule_digest = trial.load_schedule(name)[1]
+                trial.append(name, {"kind": trial.PREPARED,
+                                    "index": unit["index"],
+                                    "case_id": unit["case_id"],
+                                    "arm": unit["arm"], "pass": unit["pass"],
+                                    "schedule_digest": schedule_digest})
+                result_for(name, unit["index"])
+                trial.append(name, {"kind": trial.DONE, "index": unit["index"],
+                                    "result_digest": experiment.digest_file(
+                                        trial._result_path(schedule, unit)),
+                                    "schedule_digest": schedule_digest})
+
+    def test_it_writes_the_file_and_the_ledger_line(self, trees, monkeypatch,
+                                                    tmp_path):
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        target = tmp_path / "reference.json"
+
+        assert trial.reference("t", str(target)) == 0
+        assert target.is_file()
+        recorded = [e for e in trial.read_ledger("t")
+                    if e["kind"] == trial.REFERENCE]
+        assert len(recorded) == 1
+        assert recorded[0]["reference_digest"] == \
+            experiment.digest_file(target)
+        assert trial.REFERENCE_ARM in recorded[0]["built_from"]
+        _, _, _, problems = trial.verify("t")
+        assert problems == [], problems
+
+    def test_it_refuses_before_the_reference_arm_is_finished(
+            self, trees, monkeypatch, tmp_path, capsys):
+        """A baseline built from part of its own arm is a baseline about a
+        smaller experiment, and nothing downstream says which cases it left
+        out."""
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        step("t", 0)
+        assert trial.reference("t", str(tmp_path / "r.json")) == 2
+        assert "have not been recorded" in capsys.readouterr().err
+        assert not (tmp_path / "r.json").exists()
+
+    def test_a_second_reference_is_refused(self, trees, monkeypatch, tmp_path):
+        """Freezing a second one is choosing which baseline the challenger is
+        held to, after some of its answers are known."""
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        assert trial.reference("t", str(tmp_path / "a.json")) == 0
+        assert trial.reference("t", str(tmp_path / "b.json")) == 2
+        assert not (tmp_path / "b.json").exists()
+
+    def test_it_builds_from_the_reference_arm_and_nothing_else(
+            self, trees, monkeypatch, tmp_path):
+        """The one thing this command exists to guarantee: the module-level
+        `EXPERIMENT` every reader in the builder goes through is rebound to the
+        reference arm's directory, and put back afterwards."""
+        import sentinel_reference
+
+        seen = {}
+        original = sentinel_reference.EXPERIMENT
+
+        def build():
+            seen["from"] = sentinel_reference.EXPERIMENT
+            return {"comparable": ["one"], "missing": []}
+
+        monkeypatch.setattr(sentinel_reference, "build", build)
+        monkeypatch.setattr(trial, "committed_prefix",
+                            lambda name: ("extends", "committed in git"))
+        monkeypatch.setattr(experiment, "drift", lambda body: [])
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        assert trial.reference("t", str(tmp_path / "r.json")) == 0
+
+        schedule, _ = trial.load_schedule("t")
+        assert seen["from"] == experiment.home(
+            schedule["arms"][trial.REFERENCE_ARM]["experiment"])
+        assert original == sentinel_reference.EXPERIMENT, \
+            "the builder was left pointing at this trial's directory"
+
+    def test_a_builder_refusal_writes_nothing(self, trees, monkeypatch,
+                                              tmp_path):
+        import sentinel_reference
+
+        self.stub(monkeypatch,
+                  raises=sentinel_reference.ReferenceError("two ways"))
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        assert trial.reference("t", str(tmp_path / "r.json")) == 2
+        assert not (tmp_path / "r.json").exists()
+        assert not [e for e in trial.read_ledger("t")
+                    if e["kind"] == trial.REFERENCE]
+
+    def test_a_moved_suite_or_corpus_stops_the_freeze(self, trees,
+                                                      monkeypatch, tmp_path):
+        """Rebinding `EXPERIMENT` does not make the build arm-only.
+
+        Codex, 2026-09-06: `sentinel_reference.build()` takes its case list
+        from the live `SUITE` and checks every row's digest against the live
+        `CORPUS`, neither of which is the frozen arm — so a suite edited since
+        the arm ran shapes the reference, or refuses it, for a reason that has
+        nothing to do with the rows that were paid for. `experiment.drift`
+        already answers that question about an arm, so it is asked.
+        """
+        self.stub(monkeypatch)
+        monkeypatch.setattr(
+            experiment, "drift",
+            lambda body: ["the sentinel suite file has been rewritten"])
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        assert trial.reference("t", str(tmp_path / "r.json")) == 2
+        assert not (tmp_path / "r.json").exists()
+
+    def test_a_manifest_drift_cannot_read_is_not_agreement(self, trees,
+                                                           monkeypatch,
+                                                           tmp_path):
+        """`drift` indexes keys an older manifest may not carry. A `KeyError`
+        out of the check that authorises the build is "I could not look"
+        arriving as a crash."""
+        self.stub(monkeypatch)
+
+        def explode(body):
+            raise KeyError("suite")
+
+        monkeypatch.setattr(experiment, "drift", explode)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        assert trial.reference("t", str(tmp_path / "r.json")) == 2
+        assert not (tmp_path / "r.json").exists()
+
+    def test_recover_refuses_a_file_the_arm_did_not_produce(self, trees,
+                                                            monkeypatch,
+                                                            tmp_path):
+        """`--recover` says "record this one", not "believe it".
+
+        Codex, 2026-09-06: the first version recorded whatever digest the file
+        happened to carry, so one slip permanently blessed an unrelated
+        baseline. It rebuilds and compares now.
+        """
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        target = tmp_path / "r.json"
+        target.write_text('{"comparable": ["something else"]}',
+                          encoding="utf-8")
+        assert trial.reference("t", str(target), recover=True) == 2
+        assert not [e for e in trial.read_ledger("t")
+                    if e["kind"] == trial.REFERENCE]
+
+    def test_a_ledger_line_appearing_during_the_build_stops_the_write(
+            self, trees, monkeypatch, tmp_path):
+        """Every other check runs before a build that reads dozens of files.
+        Codex, 2026-09-06: another process appending a unit, freezing its own
+        reference, or moving the anchor in that window was published straight
+        over, with an `after_units` that was never true."""
+        import sentinel_reference
+
+        target = tmp_path / "r.json"
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+
+        def build_and_meddle():
+            trial.append("t", {"kind": trial.REFERENCE, "after_units": 0,
+                               "reference_digest": "d" * 16})
+            return {"comparable": ["one"], "missing": []}
+
+        monkeypatch.setattr(sentinel_reference, "build", build_and_meddle)
+        assert trial.reference("t", str(target)) == 2
+        assert not target.exists()
+
+    def test_a_ledger_rewritten_during_the_build_stops_the_freeze(
+            self, trees, monkeypatch, tmp_path):
+        """Codex, 2026-09-06, seventh round on this file.
+
+        `_moved_since` compares verification results and record count, so a
+        whole-ledger rewrite that keeps both passes it — and `seen` was read
+        *after* the build, hashing the file as it already stood. The append
+        then agreed with a ledger nobody in this invocation had ever read: the
+        exact time-of-check defect the byte-state contract replaced the counter
+        to remove, reintroduced by reading the state one line too late.
+
+        Driven through `reference` rather than `append`, because the two direct
+        tests of `append` pass their own `after` and cannot see where this
+        function takes it.
+        """
+        import sentinel_reference
+
+        target = tmp_path / "r.json"
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+
+        def build_and_rewrite():
+            # Same records, same count, different bytes — which is what a
+            # rewrite with recomputed hashes looks like from `_moved_since`.
+            path = trial.ledger_path("t")
+            lines = [json.loads(line) for line
+                     in path.read_text(encoding="utf-8").splitlines()]
+            path.write_text("".join(
+                json.dumps(line, sort_keys=True, separators=(",", ":")) + "\n"
+                for line in lines), encoding="utf-8")
+            return {"comparable": ["one"], "missing": []}
+
+        monkeypatch.setattr(sentinel_reference, "build", build_and_rewrite)
+        with pytest.raises(trial.TrialError) as caught:
+            trial.reference("t", str(target))
+        assert "written against" in str(caught.value)
+        # The refusal lands at the append, after the file was published, so
+        # what is left is the same state a crash between the two writes leaves:
+        # a reference on disk that no line records. `--recover` is the way out
+        # of it, and it rebuilds and compares before recording.
+        assert not [e for e in trial.read_ledger("t")
+                    if e["kind"] == trial.REFERENCE]
+
+    def test_the_recorded_digest_is_of_what_was_produced(self, trees,
+                                                         monkeypatch,
+                                                         tmp_path):
+        """Codex, 2026-09-06, ninth round.
+
+        The digest was taken by reading the path back after publishing, so a
+        file replaced in that instant was recorded as though it were what the
+        arm's rows built — and `_reference_still_there` cannot see it, because
+        both sides of its comparison moved together. The ledger records the
+        bytes this invocation produced.
+
+        `experiment.publish` is wrapped so the substitution happens exactly in
+        the window: the real file is written, then overwritten, and the digest
+        must still be the first one's.
+        """
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        target = tmp_path / "r.json"
+        real = experiment.publish
+
+        def publish_then_meddle(path, text):
+            written = real(path, text)
+            path.write_text('{"substituted": true}', encoding="utf-8")
+            return written
+
+        monkeypatch.setattr(experiment, "publish", publish_then_meddle)
+        assert trial.reference("t", str(target)) == 0
+
+        recorded = next(e for e in trial.read_ledger("t")
+                        if e["kind"] == trial.REFERENCE)
+        expected = json.dumps({"comparable": ["one"], "missing": []},
+                              indent=1) + "\n"
+        assert recorded["reference_digest"] == \
+            trial._digest_bytes(expected.encode("utf-8"))
+        # And the substitution is then visible, which is the whole point of
+        # writing the digest down.
+        _, _, _, problems = trial.verify("t")
+        assert any("different content than the freeze" in p
+                   for p in problems), problems
+
+    def test_a_recovered_digest_is_of_the_bytes_that_were_compared(
+            self, trees, monkeypatch, tmp_path):
+        """Same defect on the other branch: the file was validated, then read
+        again for its digest, so a replacement in between was blessed."""
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        target = tmp_path / "r.json"
+        good = json.dumps({"comparable": ["one"], "missing": []})
+        target.write_text(good, encoding="utf-8")
+
+        real_moved = trial._moved_since
+
+        def moved_then_meddle(name, entries):
+            answer = real_moved(name, entries)
+            target.write_text('{"substituted": true}', encoding="utf-8")
+            return answer
+
+        monkeypatch.setattr(trial, "_moved_since", moved_then_meddle)
+        assert trial.reference("t", str(target), recover=True) == 0
+
+        recorded = next(e for e in trial.read_ledger("t")
+                        if e["kind"] == trial.REFERENCE)
+        assert recorded["reference_digest"] == \
+            trial._digest_bytes(good.encode("utf-8"))
+
+    def test_a_ledger_line_appearing_during_a_recovery_stops_it_too(
+            self, trees, monkeypatch, tmp_path):
+        """Both writers, not one. Codex, 2026-09-06: I put the re-check in
+        front of the ordinary path and the recovery path went on recording a
+        stale `after_units` and a second reference — the same shape as the
+        `--steps 0 --recover` round two hours earlier, in the same file."""
+        import sentinel_reference
+
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        target = tmp_path / "r.json"
+        target.write_text(json.dumps({"comparable": ["one"], "missing": []}),
+                          encoding="utf-8")
+
+        def build_and_meddle():
+            trial.append("t", {"kind": trial.REFERENCE, "after_units": 0,
+                               "reference_digest": "d" * 16})
+            return {"comparable": ["one"], "missing": []}
+
+        monkeypatch.setattr(sentinel_reference, "build", build_and_meddle)
+        assert trial.reference("t", str(target), recover=True) == 2
+        recorded = [e for e in trial.read_ledger("t")
+                    if e["kind"] == trial.REFERENCE]
+        assert len(recorded) == 1, "the recovery recorded a second reference"
+
+    def test_a_diverged_anchor_stops_the_freeze(self, trees, monkeypatch,
+                                                tmp_path):
+        """The same rule as `run`, and from the same function: a writer that
+        enforced it separately would be the way round it."""
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        monkeypatch.setattr(trial, "committed_prefix",
+                            lambda name: ("diverged", "not an extension"))
+        assert trial.reference("t", str(tmp_path / "r.json")) == 2
+        assert not (tmp_path / "r.json").exists()
+
+    def test_an_existing_file_is_never_overwritten(self, trees, monkeypatch,
+                                                   tmp_path):
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        target = tmp_path / "r.json"
+        target.write_text("{}", encoding="utf-8")
+        assert trial.reference("t", str(target)) == 2
+        assert target.read_text(encoding="utf-8") == "{}"
+        assert not [e for e in trial.read_ledger("t")
+                    if e["kind"] == trial.REFERENCE]
+
+    def test_a_file_with_no_ledger_line_is_not_a_dead_end(self, trees,
+                                                          monkeypatch,
+                                                          tmp_path):
+        """The same two-writes problem the units have, found by asking of this
+        command what Codex asked of those.
+
+        Writing the file and appending its line cannot be one operation. A
+        crash between them leaves a reference on disk that no line records —
+        and every check above passes, because no `REFERENCE` line exists, so
+        the run stopped at "already exists, not rewritten" for ever. The trial
+        could never freeze a reference again.
+        """
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        target = tmp_path / "r.json"
+        # Exactly what the arm's rows build — that is the whole point of the
+        # recovery: the interrupted freeze had already written this file.
+        target.write_text(json.dumps({"comparable": ["one"], "missing": []}),
+                          encoding="utf-8")
+
+        assert trial.reference("t", str(target), recover=True) == 0
+        recorded = [e for e in trial.read_ledger("t")
+                    if e["kind"] == trial.REFERENCE]
+        assert len(recorded) == 1
+        assert recorded[0]["recovered"] is True
+        assert recorded[0]["reference_digest"] == \
+            experiment.digest_file(target)
+        # Recorded, never rewritten: the bytes on disk are the ones the
+        # interrupted freeze published, not a second rendering of them.
+        assert json.loads(target.read_text(encoding="utf-8")) == {
+            "comparable": ["one"], "missing": []}
+
+    def test_recovering_a_reference_still_needs_the_arm_finished(
+            self, trees, monkeypatch, tmp_path):
+        """`--recover` accepts a file; it does not excuse a baseline built from
+        part of its arm."""
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        step("t", 0)
+        target = tmp_path / "r.json"
+        target.write_text("{}", encoding="utf-8")
+        assert trial.reference("t", str(target), recover=True) == 2
+        assert not [e for e in trial.read_ledger("t")
+                    if e["kind"] == trial.REFERENCE]
+
+    def test_recovering_a_reference_is_refused_on_a_diverged_anchor(
+            self, trees, monkeypatch, tmp_path):
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        self.all_of_the_reference_arm()
+        target = tmp_path / "r.json"
+        target.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(trial, "committed_prefix",
+                            lambda name: ("diverged", "not an extension"))
+        assert trial.reference("t", str(target), recover=True) == 2
+        assert not [e for e in trial.read_ledger("t")
+                    if e["kind"] == trial.REFERENCE]
 
 
 class TestWhatTheLedgerSaysAboutTheReference:
@@ -266,17 +688,23 @@ class TestWhatTheLedgerSaysAboutTheReference:
         still in the chain, so removing it leaves a trace."""
         assert frozen() == 0
         step("t", 0)
+        # A real reference line names its file and the digest it was frozen
+        # with, and `verify` checks the two against each other now.
+        baseline = trial.home("t") / "reference.json"
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_text('{"comparable": []}', encoding="utf-8")
         append("t", {"kind": trial.REFERENCE, "after_units": 1,
-                     "reference_digest": "d" * 16})
+                     "path": str(baseline),
+                     "reference_digest": experiment.digest_file(baseline)})
         step("t", 1)
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert problems == [], problems
 
         path = trial.ledger_path("t")
         lines = path.read_text(encoding="utf-8").splitlines()
         path.write_text("\n".join(lines[:2] + lines[3:]) + "\n",
                         encoding="utf-8")
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert problems, "the reference record could be removed unnoticed"
 
 
@@ -322,7 +750,7 @@ class TestTheRunnerItself:
         entries = trial.read_ledger("t")
         assert [e["kind"] for e in entries] == [
             trial.PREPARED, trial.DONE] * 3
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert problems == [], problems
 
     def test_a_unit_that_did_not_conclude_stays_open(self, trees,
@@ -414,7 +842,7 @@ class TestTheRunnerItself:
         kinds = [e["kind"] for e in trial.read_ledger("t")]
         assert kinds == [trial.PREPARED, trial.DONE,
                          trial.PREPARED, trial.DONE]
-        _, _, problems = trial.verify("t")
+        _, _, _, problems = trial.verify("t")
         assert problems == [], problems
 
     def test_a_diverged_anchor_stops_the_run(self, trees, monkeypatch):
@@ -444,6 +872,46 @@ class TestTheRunnerItself:
             lambda name: ("diverged", "not an extension of the committed one"))
         assert trial.run("t", None, recover=True) == 2
         assert len(trial.read_ledger("t")) == before
+
+    def test_a_rival_appending_while_a_review_is_bought_stops_this_run(
+            self, trees, monkeypatch):
+        """The window the conditional append exists for, driven through `run`
+        rather than tested on `append` alone.
+
+        A review takes minutes. Another process appending in that window used
+        to be chained onto: this run's `done` line would follow a line it never
+        read, and the two histories would interleave into one that neither
+        process performed.
+        """
+        self.stub(monkeypatch)
+        assert frozen() == 0
+
+        def _buy(schedule, unit):
+            trial.append("t", {"kind": trial.REFERENCE, "after_units": 0,
+                               "reference_digest": "d" * 16})
+            path = trial._result_path(schedule, unit)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}", encoding="utf-8")
+            return 0
+
+        monkeypatch.setattr(trial, "_buy", _buy)
+        with pytest.raises(trial.TrialError) as caught:
+            trial.run("t", 1, recover=False)
+        assert "written against" in str(caught.value)
+
+    def test_that_refusal_leaves_the_cli_with_exit_two(self, trees,
+                                                       monkeypatch, capsys):
+        """A traceback out of a tool that has just paid for a review reads as
+        a crash rather than as the check working, and this repository does not
+        answer "could not establish" with any other code."""
+        self.stub(monkeypatch)
+        assert frozen() == 0
+        step("t", 0)
+        lock = trial.ledger_path("t").with_suffix(".lock")
+        lock.write_text("", encoding="utf-8")
+
+        assert trial.main(["run", "t", "--steps", "1"]) == 2
+        assert "refusing:" in capsys.readouterr().err
 
     def test_an_unanchored_ledger_with_lines_in_it_refuses(self, trees,
                                                            monkeypatch):
@@ -534,6 +1002,197 @@ class TestTheRunnerItself:
         assert "refusing to run" in capsys.readouterr().err
 
 
+class TestTheLedgerIsWrittenByOneWriterWithOneRule:
+    """Codex, 2026-09-06, after finding the same missing guard three times in
+    this file and then being asked to enumerate every writer instead:
+    *"`append()` supplies neither locking nor conditional append semantics,
+    these are real race windows"*.
+
+    Each caller was being fixed one at a time. The rule belongs in the writer.
+    """
+
+    def test_appending_onto_a_ledger_that_moved_is_refused(self, trees):
+        assert frozen() == 0
+        was = trial.ledger_state("t")
+        step("t", 0)
+        with pytest.raises(trial.TrialError) as caught:
+            trial.append("t", {"kind": trial.REFERENCE, "after_units": 0},
+                         after=was)
+        assert "written against" in str(caught.value)
+
+    def test_a_rewrite_that_keeps_the_record_count_is_refused(self, trees):
+        """The class the counter could not see. Codex, 2026-09-06, sixth round
+        on this file, after being asked to enumerate every byte mutation that
+        leaves the parsed count unchanged: whitespace, key order, JSON escape
+        spelling, CRLF, a trailing space before the newline, or a field nothing
+        reads changed in the last line. Every one moves the file while
+        `len(entries)` says it did not — so the writer compares the bytes."""
+        assert frozen() == 0
+        step("t", 0)
+        was = trial.ledger_state("t")
+        path = trial.ledger_path("t")
+        lines = [json.loads(line) for line
+                 in path.read_text(encoding="utf-8").splitlines()]
+        # Same objects, same count, different bytes: re-rendered compactly,
+        # where the writer leaves a space after each separator.
+        path.write_text("".join(json.dumps(line, sort_keys=True,
+                                           separators=(",", ":")) + "\n"
+                                for line in lines), encoding="utf-8")
+        assert len(trial.read_ledger("t")) == len(lines)
+
+        with pytest.raises(trial.TrialError) as caught:
+            trial.append("t", {"kind": trial.REFERENCE, "after_units": 1},
+                         after=was)
+        assert "written against" in str(caught.value)
+
+    def test_an_unread_field_changed_in_the_last_line_is_refused(self, trees):
+        """The other half of the same class: nothing hashes the final line,
+        because nothing follows it, and schema validation does not reject an
+        extra field. The whole-file digest does."""
+        assert frozen() == 0
+        step("t", 0)
+        was = trial.ledger_state("t")
+        path = trial.ledger_path("t")
+        lines = path.read_text(encoding="utf-8").splitlines()
+        last = json.loads(lines[-1])
+        last["a_field_nobody_reads"] = "added"
+        path.write_text("\n".join([*lines[:-1], json.dumps(last,
+                                                           sort_keys=True)])
+                        + "\n", encoding="utf-8")
+
+        with pytest.raises(trial.TrialError):
+            trial.append("t", {"kind": trial.REFERENCE, "after_units": 1},
+                         after=was)
+
+    def test_the_expected_length_is_optional_and_unchecked_when_absent(
+            self, trees):
+        """The tests that manufacture histories pass no `after`, and that is
+        deliberate: they are building a state, not extending a known one."""
+        assert frozen() == 0
+        entry = trial.append("t", {"kind": trial.REFERENCE, "after_units": 0})
+        assert entry["seq"] == 0
+
+    def test_a_blank_line_is_a_mutation_the_counter_must_see(self, trees):
+        """Codex, 2026-09-06, fourth round on this file.
+
+        `read_ledger` skipped blank lines, so `after=N` compared N against the
+        number of *records* rather than the file's length — and a blank line
+        inserted between the read and the write moved the ledger while the
+        conditional append passed anyway, chaining onto a file that had
+        changed. A rule about a file's length has to be about the file.
+        """
+        assert frozen() == 0
+        step("t", 0)
+        path = trial.ledger_path("t")
+        path.write_text(path.read_text(encoding="utf-8") + "\n",
+                        encoding="utf-8")
+
+        with pytest.raises(trial.TrialError) as caught:
+            trial.append("t", {"kind": trial.REFERENCE, "after_units": 1},
+                         after=2)
+        assert "blank" in str(caught.value)
+
+    def test_a_truncated_last_line_is_refused(self, trees):
+        """The blank-line hole one byte along. Codex, 2026-09-06, fifth round:
+        `splitlines()` gives the same record count whether the file ends with a
+        newline or not, so `after=N` passed — and then append mode wrote the
+        next object straight against the previous one, `}{`."""
+        assert frozen() == 0
+        step("t", 0)
+        path = trial.ledger_path("t")
+        path.write_text(path.read_text(encoding="utf-8").rstrip("\n"),
+                        encoding="utf-8")
+
+        with pytest.raises(trial.TrialError) as caught:
+            trial.append("t", {"kind": trial.REFERENCE, "after_units": 1},
+                         after=2)
+        assert "newline" in str(caught.value)
+        # And the file is still what it was: nothing joined two records.
+        assert path.read_text(encoding="utf-8").count("{\"") == 2
+
+    def test_a_blank_line_is_reported_by_verify_too(self, trees):
+        assert frozen() == 0
+        step("t", 0)
+        path = trial.ledger_path("t")
+        path.write_text("\n" + path.read_text(encoding="utf-8"),
+                        encoding="utf-8")
+        with pytest.raises(trial.TrialError):
+            trial.verify("t")
+
+    def test_a_left_over_lock_refuses_rather_than_writing(self, trees):
+        """Two processes that both read a length of seven would both pass the
+        conditional and both write line eight, so the read and the write are
+        held together. A lock nobody released is named, not stepped over."""
+        assert frozen() == 0
+        lock = trial.ledger_path("t").with_suffix(".lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("", encoding="utf-8")
+
+        with pytest.raises(trial.TrialError) as caught:
+            trial.append("t", {"kind": trial.REFERENCE, "after_units": 0})
+        assert "another process is writing" in str(caught.value)
+        assert trial.read_ledger("t") == []
+
+    def test_the_lock_is_released_when_the_append_is_refused(self, trees):
+        """A refusal that leaves the lock behind turns one race into a trial
+        that can never be written to again."""
+        assert frozen() == 0
+        step("t", 0)
+        with pytest.raises(trial.TrialError):
+            trial.append("t", {"kind": trial.REFERENCE}, after=0)
+        assert not trial.ledger_path("t").with_suffix(".lock").exists()
+        trial.append("t", {"kind": trial.REFERENCE, "after_units": 1})
+
+
+class TestTheFrozenBaselineIsCheckedAgainstItsLine:
+    """Codex, 2026-09-06, eighth round, from an audit of every read-then-act in
+    the file: the ledger recorded a path and a digest and nothing ever compared
+    them again. A reference edited after the freeze passed every check here,
+    and the comparison the trial exists for would have run against a baseline
+    nobody recorded."""
+
+    def frozen_reference(self, name="t", body='{"comparable": []}'):
+        baseline = trial.home(name) / "reference.json"
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_text(body, encoding="utf-8")
+        append(name, {"kind": trial.REFERENCE, "after_units": 1,
+                      "path": str(baseline),
+                      "reference_digest": experiment.digest_file(baseline)})
+        return baseline
+
+    def test_a_baseline_edited_after_the_freeze_is_caught(self, trees):
+        assert frozen() == 0
+        step("t", 0)
+        baseline = self.frozen_reference()
+        baseline.write_text('{"comparable": ["one"]}', encoding="utf-8")
+
+        _, _, _, problems = trial.verify("t")
+        assert any("different content than the freeze" in p
+                   for p in problems), problems
+
+    def test_a_baseline_that_is_gone_is_caught(self, trees):
+        assert frozen() == 0
+        step("t", 0)
+        self.frozen_reference().unlink()
+        _, _, _, problems = trial.verify("t")
+        assert any("not at" in p for p in problems), problems
+
+    def test_a_reference_line_with_no_path_is_caught(self, trees):
+        assert frozen() == 0
+        step("t", 0)
+        append("t", {"kind": trial.REFERENCE, "after_units": 1,
+                     "reference_digest": "d" * 16})
+        _, _, _, problems = trial.verify("t")
+        assert any("no path to it" in p for p in problems), problems
+
+    def test_an_untouched_baseline_is_accepted(self, trees):
+        assert frozen() == 0
+        step("t", 0)
+        self.frozen_reference()
+        _, _, _, problems = trial.verify("t")
+        assert problems == [], problems
+
+
 class TestTheChainNeedsAHeadOutsideItself:
     """A hash chain whose head lives in the file it protects can be rewritten
     whole. Codex, 2026-09-06. The anchor available here is git."""
@@ -604,7 +1263,7 @@ class TestAMalformedScheduleIsReportedNotRaised:
         first["seq"] = "nought"
         path.write_text("\n".join([json.dumps(first), *lines[1:]]) + "\n",
                         encoding="utf-8")
-        _, _, problems = trial.verify("t")     # reports, does not raise
+        _, _, _, problems = trial.verify("t")     # reports, does not raise
         assert problems
 
     def test_a_schedule_naming_no_experiment_for_an_arm(self, trees):

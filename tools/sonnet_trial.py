@@ -2,6 +2,8 @@
 """The interleaved order for the Sonnet trial, and the ledger that proves it ran.
 
     tools/sonnet_trial.py freeze NAME --opus EXPERIMENT --sonnet EXPERIMENT
+    tools/sonnet_trial.py run NAME [--steps N] [--recover]
+    tools/sonnet_trial.py reference NAME --write PATH
     tools/sonnet_trial.py status NAME
 
 D-015 requires that the four passes — two models, two passes each — be
@@ -83,6 +85,10 @@ import experiment  # noqa: E402
 ROOT = experiment.ROOT
 PASSES = experiment.PASSES
 ARMS = ("opus", "sonnet")
+# Which of them the baseline is built from. Named rather than indexed out of
+# the tuple at four call sites: "the first arm" and "the arm the reference is
+# built from" are the same thing today and are not the same statement.
+REFERENCE_ARM = "opus"
 
 # Why this tool's spending is authorised. Mapped in `tools/spend_gate.py` to
 # D-015, which is the decision that orders the trial; D-013 orders nothing
@@ -114,6 +120,19 @@ def home(name: str) -> Path:
 
 def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _digest_bytes(raw: bytes) -> str:
+    """The digest of bytes already in hand.
+
+    Deliberately *not* `experiment.digest_file`, which opens the path again.
+    Codex, 2026-09-06: recording a digest read back from the file blesses
+    whatever is at that path by then rather than what this invocation produced
+    — and the later check that compares file to digest cannot see the swap,
+    because both sides of it moved together. The same rule as the digest of a
+    reviewed diff: hash what you had, not what you can fetch again.
+    """
+    return hashlib.sha256(raw).hexdigest()[:16]
 
 
 def line_digest(entry: Dict[str, Any]) -> str:
@@ -319,10 +338,32 @@ def read_ledger(name: str) -> List[Dict[str, Any]]:
     path = ledger_path(name)
     if not path.exists():
         return []
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines()
-             if line.strip()]
+    # **Every physical line, blanks included.** Codex, 2026-09-06: skipping
+    # blank lines meant `append(after=N)` compared N against the number of
+    # *records*, not the file's length — so a blank line inserted between the
+    # read and the write mutated the ledger and the conditional append still
+    # passed, chaining onto a file that had moved. A ledger is a file, and a
+    # rule about its length has to be about the file.
+    text = path.read_text(encoding="utf-8")
+    if text and not text.endswith("\n"):
+        # Same hole, one byte along. Codex, 2026-09-06, fifth round:
+        # `splitlines()` gives the same record count whether the last line ends
+        # or not, so `after=N` passed — and then append mode wrote the next
+        # object straight against the previous one, `}{`, corrupting the file
+        # the next reader has to parse.
+        raise TrialError(
+            "the ledger does not end with a newline, so a line has been cut "
+            "short or something wrote to it without finishing. Appending now "
+            "would join two records into one")
+    lines = text.splitlines()
     out = []
     for number, line in enumerate(lines, start=1):
+        if not line.strip():
+            raise TrialError(
+                "line {} of the ledger is blank. Nothing this tool writes "
+                "produces one, so the file has been edited by something else "
+                "and its length no longer means what the chain assumes"
+                .format(number))
         try:
             entry = json.loads(line)
         except ValueError as exc:
@@ -496,9 +537,59 @@ def _strays(schedule: Dict[str, Any],
     return problems
 
 
-def verify(name: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]],
-                               List[str]]:
-    """The schedule, the ledger, and everything wrong with the history."""
+def _reference_still_there(entries: List[Dict[str, Any]]) -> List[str]:
+    """The frozen baseline, checked against the line that recorded it.
+
+    Codex, 2026-09-06, eighth round: the ledger recorded a path and a digest
+    and nothing ever compared them again. The whole point of writing the digest
+    down is that the file compared against later is the one that was frozen —
+    a reference edited or replaced after the freeze would have passed every
+    check in this file, and the comparison the trial exists for would have run
+    against a baseline nobody recorded.
+    """
+    problems = []
+    for position, entry in enumerate(entries):
+        if entry.get("kind") != REFERENCE:
+            continue
+        where = _where(position)
+        path = entry.get("path")
+        if not isinstance(path, str) or not path:
+            problems.append(
+                "{}: records a frozen reference and no path to it".format(
+                    where))
+            continue
+        target = Path(path)
+        if not target.exists():
+            problems.append(
+                "{}: the reference frozen here is not at {} any more. The "
+                "comparison has nothing to run against".format(where, path))
+            continue
+        try:
+            now = experiment.digest_file(target)
+        except OSError as exc:
+            problems.append(
+                "{}: {} could not be read ({})".format(where, path, exc))
+            continue
+        if now != entry.get("reference_digest"):
+            problems.append(
+                "{}: {} is on disk with a different content than the freeze "
+                "recorded. A baseline that changed after it was frozen is not "
+                "a baseline".format(where, path))
+    return problems
+
+
+def verify(name: str) -> Tuple[Dict[str, Any], str,
+                               List[Dict[str, Any]], List[str]]:
+    """The schedule, its digest, the ledger, and everything wrong with them.
+
+    **The digest travels with the schedule.** Codex, 2026-09-06, eighth round:
+    `run` used the schedule object this function read and then re-read the file
+    for its digest alone, so a schedule rewritten in between let an old unit be
+    recorded against the new digest — and the mismatch that would have caught
+    it was the very thing being recomputed. One read, one digest, and if the
+    file moves afterwards the recorded digest no longer matches it, which is a
+    refusal the next run makes.
+    """
     schedule, schedule_digest = load_schedule(name)
     entries = read_ledger(name)
 
@@ -516,11 +607,12 @@ def verify(name: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]],
         # The chain and the identity come first: with either broken, the
         # unit-by-unit reading is a reading of a document that is not this
         # trial's history, and its findings would be about nothing.
-        return schedule, entries, problems
+        return schedule, schedule_digest, entries, problems
 
     problems += _units_recorded(schedule, entries)
     problems += _strays(schedule, entries)
-    return schedule, entries, problems
+    problems += _reference_still_there(entries)
+    return schedule, schedule_digest, entries, problems
 
 
 def committed_prefix(name: str) -> Tuple[str, str]:
@@ -574,23 +666,83 @@ def position(schedule: Dict[str, Any],
     return done, open_index
 
 
-def append(name: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+def ledger_state(name: str) -> str:
+    """What the ledger *is*, as one short string, or `"empty"`.
+
+    The bytes, not the record count. Codex, 2026-09-06, after being asked to
+    enumerate every byte mutation that leaves the parsed count unchanged: the
+    list came back with a whole class still open — whitespace, key order, JSON
+    escape spelling, CRLF, a trailing space before the newline, or a field
+    nothing reads changed in the last line. Every one of those moves the file
+    while `len(entries)` says it did not, and the writer was comparing counts.
+
+    A digest of the whole file answers all of them at once, which is why this
+    replaced the counter rather than being added beside it.
+    """
+    path = ledger_path(name)
+    if not path.exists():
+        return "empty"
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise TrialError(
+            "the ledger could not be read ({}), so nothing here says whether "
+            "it is the one this was written against".format(exc)) from exc
+    if not raw:
+        return "empty"
+    return "{} byte(s) · {}".format(
+        len(raw), hashlib.sha256(raw).hexdigest()[:16])
+
+
+def append(name: str, entry: Dict[str, Any],
+           after: Optional[str] = None) -> Dict[str, Any]:
     """One ledger line, chained to the one before it, flushed before returning.
 
     Appended rather than rewritten: a file that is only ever added to is one
     whose earlier lines a crash cannot damage.
+
+    **`after` is the line count the caller believes it is extending**, and a
+    ledger that has grown since is refused. Codex, 2026-09-06, after finding
+    the same missing guard three times in this file and then being asked to
+    enumerate every writer instead: *"`append()` supplies neither locking nor
+    conditional append semantics, these are real race windows"*. Every caller
+    was depending on a check it had made minutes earlier, and each of them was
+    fixed one at a time until it became obvious the check belongs here — one
+    writer, one rule, rather than six callers that must each remember it.
+
+    The read and the write are held under a lock file for the same reason: two
+    processes that both read a length of 7 would otherwise both pass the
+    conditional and both write line 8.
     """
-    entries = read_ledger(name)
-    entry = dict(entry, seq=len(entries))
-    entry["previous"] = line_digest(
-        {k: v for k, v in entries[-1].items() if k != "previous"}
-    ) if entries else None
     path = ledger_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    lock = path.with_suffix(".lock")
+    try:
+        handle = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise TrialError(
+            "another process is writing this trial's ledger ({} exists). If "
+            "nothing else is running, that file is left over from a killed "
+            "run and can be removed.".format(lock.name)) from exc
+    os.close(handle)
+    try:
+        entries = read_ledger(name)
+        if after is not None and ledger_state(name) != after:
+            raise TrialError(
+                "the ledger is {} and this was written against {}. Something "
+                "else wrote to it while this was working, and chaining onto a "
+                "history that moved is how two runs record the same unit "
+                "twice".format(ledger_state(name), after))
+        entry = dict(entry, seq=len(entries))
+        entry["previous"] = line_digest(
+            {k: v for k, v in entries[-1].items() if k != "previous"}
+        ) if entries else None
+        with path.open("a", encoding="utf-8") as writer:
+            writer.write(json.dumps(entry, sort_keys=True) + "\n")
+            writer.flush()
+            os.fsync(writer.fileno())
+    finally:
+        lock.unlink(missing_ok=True)
     return entry
 
 
@@ -622,7 +774,7 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
               .format(steps), file=sys.stderr)
         return 2
     try:
-        schedule, entries, problems = verify(name)
+        schedule, schedule_digest, entries, problems = verify(name)
     except TrialError as exc:
         print("cannot run: {}".format(exc), file=sys.stderr)
         return 2
@@ -633,26 +785,22 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
             print("  - {}".format(problem), file=sys.stderr)
         return 2
 
+    # **"I could not check" is not "it is sound", including here.** Codex,
+    # 2026-09-06, on the version that refused only `diverged`: `committed_prefix`
+    # says `unknown` means the anchor could not be asked, and this function then
+    # spent on that answer. An uncommitted ledger can be rewritten whole with
+    # every hash recomputed and resumed, and the chain inside the file agrees
+    # with itself the entire time.
+    #
+    # An *empty* ledger is the one exception, and it is not a weakening: there
+    # is no history to rewrite before the first line exists. One place for the
+    # rule, because `reference` appends too and a rule enforced in one writer
+    # is a rule with a way round it.
+    refusal = _anchor_refusal(name, entries)
+    if refusal:
+        print("refusing to run: {}".format(refusal), file=sys.stderr)
+        return 2
     anchor, why = committed_prefix(name)
-    if anchor == "diverged":
-        print("refusing to run: {}".format(why), file=sys.stderr)
-        return 2
-    if anchor == "unknown" and entries:
-        # **"I could not check" is not "it is sound", including here.** Codex,
-        # 2026-09-06, on the version that refused only `diverged`: this
-        # function's own docstring says `unknown` means the anchor could not be
-        # asked, and then it spent on that answer. An uncommitted ledger can be
-        # rewritten whole with every hash recomputed and resumed, and the chain
-        # inside the file agrees with itself the entire time.
-        #
-        # An *empty* ledger is the one exception, and it is not a weakening:
-        # there is no history to rewrite before the first line exists. From the
-        # first line on, the head lives in git or the run stops.
-        print("refusing to run: {} line(s) are recorded and {}.\nCommit the "
-              "ledger and run this again — until it is committed, the chain "
-              "has no head outside the file it is in.".format(
-                  len(entries), why), file=sys.stderr)
-        return 2
     print("ledger: {}".format(why))
     if anchor == "unknown":
         # **One unit, and then stop.** Codex, 2026-09-06, sixth round: the
@@ -677,10 +825,15 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
 
     done, open_index = position(schedule, entries)
     bought = 0
+    # The ledger length this invocation believes it is extending. Every append
+    # below is conditional on it, so a rival process that appended while a
+    # review was being bought stops this one instead of chaining onto a history
+    # that moved. Kept as a counter rather than re-read, because re-reading is
+    # exactly the check that would pass over the other process's line.
+    recorded = ledger_state(name)
     if open_index is not None:
         unit = schedule["units"][open_index]
         path = _result_path(schedule, unit)
-        _, schedule_digest = load_schedule(name)
         # **Before either branch.** Codex, 2026-09-06, three rounds running on
         # the same shape: the zero-step guard sat inside the "nothing was
         # written" branch only, so `--steps 0 --recover` walked past it and
@@ -712,7 +865,8 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
             append(name, {"kind": DONE, "index": open_index,
                           "result_digest": experiment.digest_file(path),
                           "schedule_digest": schedule_digest,
-                          "recovered": True})
+                          "recovered": True}, after=recorded)
+            recorded = ledger_state(name)
             print("  unit {} recovered: {} accepted by hand".format(
                 open_index, path.relative_to(ROOT)))
             done += 1
@@ -739,11 +893,11 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
                 return code or 2
             append(name, {"kind": DONE, "index": open_index,
                           "result_digest": experiment.digest_file(path),
-                          "schedule_digest": schedule_digest})
+                          "schedule_digest": schedule_digest}, after=recorded)
+            recorded = ledger_state(name)
             done += 1
             bought += 1
 
-    _, schedule_digest = load_schedule(name)
     while done < len(schedule["units"]):
         if steps is not None and bought >= steps:
             print("\nstopping after {} unit(s), as asked. {} left.".format(
@@ -756,7 +910,8 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
         append(name, {"kind": PREPARED, "index": done,
                       "case_id": unit["case_id"], "arm": unit["arm"],
                       "pass": unit["pass"],
-                      "schedule_digest": schedule_digest})
+                      "schedule_digest": schedule_digest}, after=recorded)
+        recorded = ledger_state(name)
         code = _buy(schedule, unit)
         path = _result_path(schedule, unit)
         if code != 0 or not path.exists():
@@ -765,7 +920,8 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
             return code or 2
         append(name, {"kind": DONE, "index": done,
                       "result_digest": experiment.digest_file(path),
-                      "schedule_digest": schedule_digest})
+                      "schedule_digest": schedule_digest}, after=recorded)
+        recorded = ledger_state(name)
         done += 1
         bought += 1
 
@@ -773,9 +929,302 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
     return 0
 
 
+def _anchor_refusal(name: str, entries: List[Dict[str, Any]]) -> Optional[str]:
+    """Why the anchor forbids writing to this ledger, or `None`.
+
+    One place, because `run` and `reference` both append and a rule enforced in
+    one of them is a rule with a way round it.
+    """
+    anchor, why = committed_prefix(name)
+    if anchor == "diverged":
+        return why
+    if anchor == "unknown" and entries:
+        return ("{} line(s) are recorded and {}. Commit the ledger — until it "
+                "is, the chain has no head outside the file it is in".format(
+                    len(entries), why))
+    return None
+
+
+def _build_reference(schedule: Dict[str, Any]) -> Dict[str, Any]:
+    """The baseline, built from the reference arm and refused otherwise.
+
+    Rebinding `sentinel_reference.EXPERIMENT` is not enough, and Codex said so
+    on 2026-09-06: `build()` takes its case list from the live `SUITE` and
+    checks every row's digest against the live `CORPUS`, neither of which is
+    the frozen arm. A suite edited since the arm ran would shape the reference
+    — or refuse it — for a reason that has nothing to do with the rows that
+    were paid for.
+
+    `experiment.drift` already answers exactly this question about an arm, so
+    it is asked rather than reimplemented: it compares the frozen manifest
+    against the suite, the prompts, the schema, the scorer, the reviewer and
+    the model as they stand now. The arm's own model goes into the environment
+    first, because that is one of the things it compares and this shell is not
+    the shell that ran the arm.
+    """
+    import sentinel_reference
+
+    arm = schedule["arms"][REFERENCE_ARM]
+    source = experiment.home(arm["experiment"])
+    body = experiment.load(arm["experiment"])
+    if body is None:
+        raise TrialError(
+            "the {} arm's manifest could not be read, so nothing says what "
+            "case set its rows were bought under".format(REFERENCE_ARM))
+
+    before = (os.environ.get("SECURITY_SCAN_MODEL"),
+              os.environ.get("SECURITY_SCAN_VERIFY_MODEL"))
+    os.environ["SECURITY_SCAN_MODEL"] = arm["model"]
+    os.environ["SECURITY_SCAN_VERIFY_MODEL"] = arm["verifier"]
+    try:
+        moved = experiment.drift(body)
+    except Exception as exc:
+        # A manifest `drift` cannot read is not a manifest that agrees. It
+        # indexes keys a manifest frozen by an older version may not carry, and
+        # a `KeyError` out of the check that authorises this build would be
+        # "I could not look" arriving as a crash.
+        raise TrialError(
+            "the {} arm's manifest could not be checked against what is on "
+            "disk now ({}: {}), and could-not-check is not agreement".format(
+                REFERENCE_ARM, type(exc).__name__, exc)) from exc
+    finally:
+        for key, value in zip(("SECURITY_SCAN_MODEL",
+                               "SECURITY_SCAN_VERIFY_MODEL"), before):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    if moved:
+        raise TrialError(
+            "{} thing(s) have moved since the {} arm was frozen, and the "
+            "builder reads them as they are now rather than as they were:\n  "
+            "{}".format(len(moved), REFERENCE_ARM, "\n  ".join(moved)))
+
+    # Rebound, exactly as `sentinel_reference --from` does it: every reader in
+    # that module goes through the module name, and threading a path through
+    # them is how one gets missed and a "fresh" reference comes out half old.
+    original = sentinel_reference.EXPERIMENT
+    try:
+        sentinel_reference.EXPERIMENT = source
+        built = sentinel_reference.build()
+    except sentinel_reference.ReferenceError as exc:
+        raise TrialError(
+            "the {} arm's rows do not make a baseline ({})".format(
+                REFERENCE_ARM, exc)) from exc
+    finally:
+        sentinel_reference.EXPERIMENT = original
+
+    if built.get("missing"):
+        raise TrialError(
+            "{} case(s) are not in the {} arm's run: {}".format(
+                len(built["missing"]), REFERENCE_ARM,
+                ", ".join(built["missing"][:5])))
+    return built
+
+
+def _moved_since(name: str, entries: List[Dict[str, Any]]) -> Optional[str]:
+    """What changed under this invocation while it was busy, or `None`.
+
+    Read immediately before the write, because every other check in
+    `reference()` happens before a build that reads dozens of files. Another
+    process appending a unit, freezing its own reference, or moving the git
+    anchor in that window would otherwise be published straight over.
+    """
+    try:
+        _, _, now, problems = verify(name)
+    except TrialError as exc:
+        return "the history stopped being readable ({})".format(exc)
+    if problems:
+        return "{} thing(s) went wrong with the recorded history".format(
+            len(problems))
+    if len(now) != len(entries):
+        return "{} ledger line(s) were appended".format(
+            len(now) - len(entries))
+    refusal = _anchor_refusal(name, now)
+    if refusal:
+        return refusal
+    return None
+
+
+def reference(name: str, write_to: str, recover: bool = False) -> int:
+    """Freeze the baseline from the Opus arm, and record where in the order.
+
+    The boundary D-015 asks for, as far as it can be drawn. The reference is
+    built from the reference arm's directory and from nothing else; it is
+    frozen once; and the ledger says at which point in the sequence, so a file
+    compared against later either is that one or is refused.
+
+    What this cannot do is stated in `LIMITATIONS.md` rather than implied here:
+    a ledger records writes, not reads, and the challenger's rows are on disk
+    in plain text throughout.
+    """
+    try:
+        schedule, _, entries, problems = verify(name)
+    except TrialError as exc:
+        print("cannot freeze a reference: {}".format(exc), file=sys.stderr)
+        return 2
+    if problems:
+        print("refusing: {} thing(s) wrong with the recorded history".format(
+            len(problems)), file=sys.stderr)
+        for problem in problems:
+            print("  - {}".format(problem), file=sys.stderr)
+        return 2
+
+    refusal = _anchor_refusal(name, entries)
+    if refusal:
+        print("refusing: {}".format(refusal), file=sys.stderr)
+        return 2
+
+    if any(e.get("kind") == REFERENCE for e in entries):
+        print("refusing: this trial already froze a reference. Freezing a "
+              "second one is choosing which baseline the challenger is held "
+              "to, after some of the challenger's answers are known.",
+              file=sys.stderr)
+        return 2
+
+    # **Every unit of the reference arm, not most of them.** A baseline built
+    # from part of its own arm is a baseline about a smaller experiment, and
+    # nothing downstream would say which cases it left out.
+    done_units = {e["index"] for e in entries if e.get("kind") == DONE}
+    outstanding = [u for u in schedule["units"]
+                   if u["arm"] == REFERENCE_ARM and u["index"] not in done_units]
+    if outstanding:
+        print("refusing: {} of the {} arm's unit(s) have not been recorded, "
+              "so a reference frozen now is built from part of it:\n  {}"
+              .format(len(outstanding), REFERENCE_ARM,
+                      "\n  ".join("unit {} · {} pass {}".format(
+                          u["index"], u["case_id"], u["pass"])
+                          for u in outstanding[:5])
+                      + ("\n  ..." if len(outstanding) > 5 else "")),
+              file=sys.stderr)
+        return 2
+
+    target = Path(write_to)
+    if target.exists():
+        # **The same two-writes problem the units have**, and it needs the same
+        # answer rather than a dead end. Writing the file and appending its
+        # ledger line cannot be one operation, so a crash between them leaves a
+        # reference on disk that no line records — and the checks above pass,
+        # because no `REFERENCE` line exists. Without this the trial could
+        # never freeze a reference again: the file is there and refuses to be
+        # rewritten, and nothing records it.
+        #
+        # Recorded on a person's word, like the unit recovery, because nothing
+        # in the file says which run wrote it.
+        if not recover:
+            print("refusing: {} already exists and no ledger line records "
+                  "it.\nEither a freeze was interrupted between writing the "
+                  "file and recording it, or this file came from somewhere "
+                  "else.\nRun this again with --recover: it rebuilds the "
+                  "baseline and records the file only if the two "
+                  "match.".format(target), file=sys.stderr)
+            return 2
+        # The ledger as it stands before the rebuild, which is what the append
+        # below is conditional on. Read here rather than beside the append: a
+        # digest taken immediately before writing agrees with itself whatever
+        # happened in between, which is a check of nothing.
+        seen = ledger_state(name)
+        # **Verified, not taken on trust.** Codex, 2026-09-06: the first
+        # version recorded whatever digest the file happened to have, so an
+        # operator's slip could permanently bless an unrelated reference. The
+        # baseline is rebuilt from the arm and compared; `--recover` says "I
+        # mean to record this one", not "believe it".
+        try:
+            rebuilt = _build_reference(schedule)
+        except TrialError as exc:
+            print("refusing: {}".format(exc), file=sys.stderr)
+            return 2
+        try:
+            # The bytes, kept. Codex, 2026-09-06, ninth round: the digest was
+            # taken by reading the path *again* after the comparison, so a
+            # replacement in between was recorded as the validated content —
+            # and `_reference_still_there` cannot see it, because the digest it
+            # checks against already belongs to the substituted file.
+            raw = target.read_bytes()
+            on_disk = json.loads(raw.decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            print("refusing: {} could not be read ({}), so there is nothing to "
+                  "compare the rebuilt baseline against".format(target, exc),
+                  file=sys.stderr)
+            return 2
+        if on_disk != rebuilt:
+            print("refusing: {} is not what this arm's rows build. Recording "
+                  "it would bless a baseline the reference arm did not "
+                  "produce.".format(target), file=sys.stderr)
+            return 2
+        # The same re-check as the ordinary path, because this branch appends
+        # too. Codex, 2026-09-06: I put the guard in front of one of the two
+        # writers and the other went on recording a stale `after_units` and a
+        # second reference — the identical shape as the `--steps 0 --recover`
+        # round two hours earlier, in the same file.
+        stale = _moved_since(name, entries)
+        if stale:
+            print("refusing: {} while the baseline was being rebuilt. Nothing "
+                  "was recorded.".format(stale), file=sys.stderr)
+            return 2
+        append(name, {"kind": REFERENCE,
+                      "after_units": len(done_units),
+                      "built_from": str(
+                          experiment.home(
+                              schedule["arms"][REFERENCE_ARM]["experiment"]
+                          ).relative_to(ROOT)),
+                      "path": str(target),
+                      "reference_digest": _digest_bytes(raw),
+                      "recovered": True}, after=seen)
+        print("recorded {} · {} — it matches what the {} arm's rows build"
+              .format(target, _digest_bytes(raw), REFERENCE_ARM))
+        return 0
+
+    source = experiment.home(schedule["arms"][REFERENCE_ARM]["experiment"])
+    # Before the build, which is the long operation. Codex, 2026-09-06,
+    # seventh round: taken afterwards it hashes a file that has *already* been
+    # rewritten, so `append(after=seen)` agrees with a ledger nobody here ever
+    # read — the exact time-of-check defect the byte-state contract replaced
+    # the counter to remove, put back by reading the state one line too late.
+    seen = ledger_state(name)
+    try:
+        body = _build_reference(schedule)
+    except TrialError as exc:
+        print("refusing: {}".format(exc), file=sys.stderr)
+        return 2
+
+    rendered = json.dumps(body, indent=1) + "\n"
+
+    # **Everything checked again, immediately before the write.** Codex,
+    # 2026-09-06: every check above happens before a build that reads dozens of
+    # files, and another process can append units, freeze its own reference or
+    # move the git anchor while it runs. The first version then published and
+    # appended against `entries` and `done_units` read minutes earlier — a
+    # second reference recorded, an `after_units` that was never true, and the
+    # shared anchor rule bypassed by ordering alone.
+    stale = _moved_since(name, entries)
+    if stale:
+        print("refusing: {} while the reference was being built. Nothing was "
+              "written.".format(stale), file=sys.stderr)
+        return 2
+
+    if not experiment.publish(target, rendered):
+        return 2
+    # The digest of the bytes this invocation produced, not of a file read
+    # back afterwards. Same round, same finding: re-reading blesses whatever
+    # is at the path by then, which is the one thing the digest exists to rule
+    # out.
+    append(name, {"kind": REFERENCE,
+                  "after_units": len(done_units),
+                  "built_from": str(source.relative_to(ROOT)),
+                  "path": str(target),
+                  "reference_digest": _digest_bytes(rendered.encode("utf-8"))},
+           after=seen)
+    print("frozen {} · {}".format(target,
+                                  _digest_bytes(rendered.encode("utf-8"))))
+    print("  built from {} after {} unit(s), recorded in the ledger".format(
+        source.relative_to(ROOT), len(done_units)))
+    return 0
+
+
 def status(name: str) -> int:
     try:
-        schedule, entries, problems = verify(name)
+        schedule, _, entries, problems = verify(name)
     except TrialError as exc:
         print("cannot say where this trial is: {}".format(exc), file=sys.stderr)
         return 2
@@ -828,15 +1277,36 @@ def main(argv: Optional[List[str]] = None) -> int:
                          "never closed. Look at the row first: nothing here "
                          "can show it came from the review this trial bought")
 
+    base = sub.add_parser(
+        "reference", help="freeze the baseline from the reference arm")
+    base.add_argument("name")
+    base.add_argument("--write", required=True, metavar="PATH")
+    base.add_argument("--recover", action="store_true",
+                      help="record a reference file that is already on disk "
+                           "and that no ledger line accounts for. Look at it "
+                           "first: nothing here can show which run wrote it")
+
     where = sub.add_parser("status", help="check the recorded history")
     where.add_argument("name")
 
     args = parser.parse_args(argv)
-    if args.command == "freeze":
-        return freeze(args.name, args.opus, args.sonnet)
-    if args.command == "run":
-        return run(args.name, args.steps, args.recover)
-    return status(args.name)
+    # A `TrialError` is a refusal, and a refusal leaves by the door refusals
+    # leave by. `append` raises one from deep inside a run — a ledger that
+    # moved, a lock nobody released — and a traceback out of a tool that has
+    # just spent money on a review reads as a crash rather than as the check
+    # working. Exit 2 throughout: this repository does not answer "could not
+    # establish" with the code for anything else.
+    try:
+        if args.command == "freeze":
+            return freeze(args.name, args.opus, args.sonnet)
+        if args.command == "run":
+            return run(args.name, args.steps, args.recover)
+        if args.command == "reference":
+            return reference(args.name, args.write, args.recover)
+        return status(args.name)
+    except TrialError as exc:
+        print("refusing: {}".format(exc), file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
