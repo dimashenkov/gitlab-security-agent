@@ -18,6 +18,7 @@ against that goal.
 | alarms on the patched twin | **26%** · 95% CI 17–36% · **not** a false-alarm rate |
 | blocks an ordinary change | observed blocks in this 27-case pilot: **0**; 95% upper bound **12%** — not "it never blocks" |
 | mentions anything on an ordinary change | **1 of 27** · 4% · 95% CI 1–18% |
+| gives the same answer twice | **11 of 13.** Two cases flipped with nothing changed — **15% instability** |
 | what the measurement cost | **$0.** $8.02 of API list price on a subscription, charged to nobody |
 | Sonnet | **never run.** 0 records anywhere under `measurements/` |
 
@@ -107,6 +108,27 @@ classified as ordinary in the sealed pilot sample*. It may not be called a
 false-alarm rate, a figure over all thirty, an estimate for the 1361-change
 frame, or human-audited: the 27 carry one unaudited third-party-model
 adjudication, so further security fixes may remain among them.
+
+## The same input, twice
+
+The reviewer is not deterministic, and this is measured rather than assumed.
+`measurements/experiment-noise-floor-2/` holds two passes over the same cases,
+same code, same prompts, same model:
+
+| | |
+|---|---|
+| cases run twice | 13 |
+| gave a **different** answer | **2** |
+
+`go-m6jg-wr9m-cg2f` found the weakness on the first pass and not the second;
+`rb-g65v-27r3-5p6m` did the opposite. Nothing changed between them.
+
+This is why 78% is written as 68–86% and not as a point, why the stop rule
+refuses to judge on one run, and why any single review of a real merge request
+should be read as one draw rather than as the answer. `tools/stability.py`
+repeats one case N times when that question comes up again; 13 cases seeing 2
+flips is a thin sample and puts the instability somewhere around 15%, not
+exactly there.
 
 ## What has not been measured at all
 
