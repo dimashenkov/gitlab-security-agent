@@ -49,8 +49,20 @@ def build(cfg: Config, ws: Workspace, mode: str) -> str:
             _short(ws.diff_base), _short(ws.diff_head)))
 
         changed = ws.changed_files()
+        # Deletions counted apart, not folded into the same number and not
+        # left out of it. `changed_files` holds what can be opened, and a
+        # deleted file cannot be — so a change made of deletions announced
+        # "Files changed: 0" to a reviewer that had just been sent to look at
+        # it, which is the state Codex found on the gate pass for the `_run`
+        # repair. A count of zero beside an instruction to review reads as
+        # "there is nothing here" and the session ends.
+        deleted = [obj.path for obj in ws.changed_objects()
+                   if obj.status == "deleted"]
         lines += [
-            "- **Files changed:** {}".format(len(changed)),
+            "- **Files changed:** {}{}".format(
+                len(changed),
+                " · **{} deleted**, which cannot be opened and are visible "
+                "only in the diff".format(len(deleted)) if deleted else ""),
             "",
             _untrusted_block(gl.mr_title, gl.mr_description),
             "",

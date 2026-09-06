@@ -21,6 +21,179 @@ reassurance, which is the tool's only output.
 A clean result means the agent read some code and reported nothing. It does not
 mean the change is safe, and it does not mean the change was fully examined.
 
+## A file over 292 KB cannot be read at all
+
+`blob_text` refuses a blob over `MAX_READ_BYTES`, and the ceiling is on the
+whole blob rather than on any window of it, so `read_file` cannot reach a large
+file either way. Measured on 2026-09-06 against a 302,057-byte file whose
+change was two lines:
+
+| the attempt | the answer |
+|---|---|
+| the whole file | refused |
+| a window of three lines | **the same refusal, word for word** |
+
+A weakness introduced by a small diff in a large existing file therefore cannot
+be quoted, and a finding whose citation cannot be validated is not recorded.
+The diff itself carries the new lines, so nothing is truncated and no context
+is refused: the gate sees an ordinary, complete review with no findings. That
+is the limitation, and it stands — windowed reading is not built.
+
+**The message is fixed; the limitation is not.** It used to say *"Pass
+start_line and end_line to read a window of it"*, which is the remedy that does
+not work — the window hits the same ceiling and gets the same message,
+repeating the suggestion that had just failed. It now states the limit and
+names no remedy at all, and a test holds it to that.
+
+The correction had the defect twice before it stopped. The first replacement
+pointed at `get_diff`, which exists only in a diff review: `diff()` refuses
+without a `diff_base`, the MCP server does not offer the tool in that mode, and
+the diff has ceilings of its own. Codex found the same class of error inside
+the fix for that class of error, one gate pass later. So the test checks for
+five words rather than one phrase — `get_diff`, `start_line`, `end_line`,
+`instead`, `try` — because the next person to add a helpful suggestion should
+meet the question rather than the wording.
+
+## The search reads the working tree; every other reader reads the revision
+
+`blob_text` says it in its own docstring — the checkout "is material an
+untrusted contributor controls, and what sits at a path on disk need not be
+what the commit says is there" — and `read_file` goes through it. `search`
+builds a `git grep` with no revision, which searches the working tree.
+
+Built as a real repository on 2026-09-06: the reviewed commit has no
+`require_admin`, the working tree has one.
+
+| reader | answer |
+|---|---|
+| `read_file` at the reviewed revision | the guard is absent |
+| `search` for the same name | **1 match** |
+
+A verifier that refutes a finding because "the guard is right there" can be
+looking at code that is not in the change. It needs no attacker: a later
+commit on the branch, an earlier CI step that wrote a file, a checkout that is
+simply ahead. The reasoning `blob_text` gives for not reading the working tree
+applies to `search` word for word and was not applied to it.
+
+Found by `gpt-6-astra` and confirmed by building the tree. Not fixed: `git grep`
+takes a revision, so the edit is small, but it changes what every search
+returns and that wants a measurement rather than a patch at the end of a
+session.
+
+## A reused artifact with no verdict is reused as a pass
+
+`--reuse` hands back the stored decision rather than paying for a replicate.
+The last line of `_reuse` is `int(verdict.get("exit_code", EXIT_OK))` over
+`previous.get("verdict") or {}`, and nothing before it establishes that a
+verdict was recorded at all. Measured on 2026-09-06:
+
+| the stored artifact | reused as |
+|---|---|
+| a blocking verdict | exit 1 |
+| a clean verdict | exit 0 |
+| `verdict` present but empty | **exit 0** |
+| `verdict` is `null` | **exit 0** |
+| no `verdict` key at all | **exit 0** |
+
+Three spellings of "no decision was recorded", all read as "the decision was
+that nothing blocks". The identity and exposure checks that make an artifact
+reusable never ask whether it concluded, so a blocking review whose verdict
+block is lost — truncated write, hand-edited file, a producer that changes
+shape — comes back as a pass on the next run.
+
+The repository's own recurring defect, in the one path that exists to avoid
+paying for a review. Found by `gpt-6-astra`; not fixed, because the honest
+answer is exit 2 and that changes what `--reuse` does to every artifact written
+before the field was required.
+
+## The evidence rule guards confirmations and not refutations
+
+A verifier that confirms a finding without saying what it searched for is
+downgraded to `uncertain` — `_require_evidence` exists for exactly that. It
+returns immediately unless the verdict is `confirmed`, so a verifier that
+*refutes* one is held to nothing.
+
+Measured on 2026-09-06 by handing `_vote_from_payload` the same empty payload
+twice, with the verdict as the only difference:
+
+| the vote | what comes back |
+|---|---|
+| `{"verdict": "confirmed"}` | `uncertain` — "did not state what it searched for that would refute the finding" |
+| `{"verdict": "refuted"}` | **`refuted`**, reasoning `""`, control_search `""` |
+
+So three empty refutations discard a critical finding, and the direction that
+is held to a standard is the one that would have *reported* something. The
+asymmetry may even be deliberate — confirming a weakness is the claim that
+costs a team a merge — but a refutation is what makes a finding disappear, and
+nothing here records that the trade was chosen rather than fallen into.
+
+Found by `gpt-6-astra` and confirmed with the control above; not fixed, because
+requiring evidence to refute changes what a quiet verifier does to every
+finding and that is a measurement, not an edit.
+
+## A reviewer that says "I could not settle this" passes
+
+`finish_review` takes an `unresolved` list, the field exists so the reviewer
+can record a security question it could not answer, and the artifact carries
+it. `decide` never reads it. Measured on 2026-09-06 against `gate.decide`, with
+a control:
+
+| the run | exit |
+|---|---|
+| finished, nothing unresolved | 0 |
+| finished, recording *"cannot establish authentication for /admin/run"* | **0** |
+
+So the sentence a careful reviewer writes when it knows it has not finished
+thinking changes nothing about the decision. `_partial` asks three questions —
+did the model stop early, was the diff truncated, were contexts refused — and
+"did the reviewer leave a security question open" is not among them.
+
+The first two attempts at this check both printed the same exit code for the
+run *and* its control, which proves nothing; the code was coming from
+`_reviewed_nothing`, because the synthetic outcome recorded no exposures. The
+finding stands only because the third attempt made the control exit 0.
+
+Found by `gpt-6-astra` on a hostile pass over the standing product. Not fixed:
+whether an open question should block, warn, or only be printed is a policy
+choice, and the gate has one flag for partial reviews already.
+
+## A change that only deletes files was not reviewed at all — fixed
+
+Recorded because it stood for months and because the shape of the repair is
+worth more than the repair. `changed_files()` applies `--diff-filter=ACMRT`,
+`_run` branched on that list, and a commit whose whole content was the removal
+of a file wrote "no reviewable files changed" and exited 0 without asking the
+model anything. Deleting a whole file that held an authorisation check is the
+strongest form of the thing this product exists to catch. Found by
+`gpt-6-astra` on 2026-09-06 and confirmed by building the tree.
+
+**It took eight repairs, and each was invisible until the one before it
+landed.** Every round the path looked closed and the next gate pass found the
+next link:
+
+| # | where | what it did |
+|---|---|---|
+| 1 | `_run` | branched on the openable list; exit 0 without asking the model |
+| 2 | `Workspace.diff()` | scoped pathspec from `changed_files`, so a scoped run got an empty diff |
+| 3 | `list_changed_files` | answered "no reviewable files" to a change that removed a guard |
+| 4 | the briefing | announced `Files changed: 0` to a reviewer it had just sent to look |
+| 5 | citation validation | read the reviewed revision; every finding dropped as `unknown-path` |
+| 6 | attribution | no line map for `+++ /dev/null`, so the finding came out "pre-existing" and left the gate |
+| 7 | the verifier's brief | reloaded through `raw_text`; the verifier could not see the evidence that admitted the finding |
+| 8 | the verifier's `read_file` | the brief said "read more with the tools" and the tool could not reach the file |
+
+Numbers 5 to 8 are the interesting ones: the finding was *accepted* and then
+lost — silently attributed away, or handed to a verifier that had to refute it
+for want of the file. A control-flow fix alone would have produced a review
+that ran, reported nothing, and looked correct.
+
+`Workspace.removed_text` reads the base blob and refuses any path this change
+did not delete, so none of this became a general way of reading the parent
+commit. The one thing left undone is the field name
+`introduced_by_this_change`, which is true of the deletion and misleading about
+the cited lines; renaming it is an artifact-schema migration and not part of a
+repair.
+
 ## What has actually been evaluated
 
 | | |
@@ -80,6 +253,74 @@ deliberately coarse — category and file, with no judgement of whether the
 finding is correct — the corpus is retrospective, and "no catastrophe" is not
 "pass".
 
+**And the 78 are not 78 independent trials.** They are 42 advisories, 36 of
+them measured in both constructions — regression and snapshot — so most
+advisories contribute two observations of the same underlying weakness. A
+Wilson interval assumes independent trials, and this one was computed as
+though every case were one.
+
+Computed on 2026-09-06 rather than argued: taking each advisory as a single
+trial, with its constructions averaged, gives **79% over 42, interval 64–88%**.
+The rate does not move; that interval is six points wider. The two
+constructions disagree on 10 of the 36, so they are not one observation either
+— collapsing them entirely would be the opposite error.
+
+**That is one alternative calculation, not the size of the dependence.** It
+shows how the figure moves under a specific choice of clustering; it does not
+establish the true correlation between two constructions of one advisory, and
+neither interval has had its coverage checked. `gpt-6-astra` objected to an
+earlier wording here that called it "the measured size", and the objection is
+right.
+
+Found by a hostile review of the standing corpus. The reviewer's own claim was
+larger — that the twins are byte-identical and up to fifty points of recall are
+repeats — and that is false: **0 of the 39 twin pairs have identical trees**.
+The dependence is real; how large it is has not been established, and the two
+calculations above differ by one point on the rate and six on the interval.
+The difference between "the twins are identical and fifty points are repeats"
+and that is why a finding is checked before it is believed.
+
+**And some credited hits may name a different weakness from the one the case
+targets.** Target matching is category and file — `artifact.py` — so a finding
+in the right file under an accepted category is credited whatever mechanism it
+actually describes. That much is a fact about the code.
+
+**Everything in the table below is a hypothesis, not a result.** It is what
+`gpt-6-astra` reported on 2026-09-06 from reading the fixes against the
+credited findings, and the mechanism column has *not* been checked: the stored
+rows carry a count of findings, not their text. Presented as the reviewer's
+reading, with the arithmetic that would follow **if** it is right — not as a
+measured alternative figure. Codex objected to an earlier version of this
+section that stated the four as facts and then qualified them afterwards; a
+caveat below a table does not retract the table.
+
+| case | what the case targets | what the credited finding names |
+|---|---|---|
+| `py-g7gc-gmgp-wgqg-snap` | repeated substitution in `noparenthesis()` | backtracking in a Received-header regex present in **both** members |
+| `ts-w4mq-xh27-6xpx-snap` | the process-wide `Mustache.escape` override | a different injection path, unchanged by the fix |
+| `rs-8rw6-p7m8-63jp-snap` | array-element SELECT permission leakage | computed fields on an unfiltered record |
+| `py-8x5v-cpv7-8jjp-snap` | NAT64-encoded addresses bypassing classification | IP-literal redirects bypassing the resolver |
+
+*If* all four are as described, removing their credits would give 57 of 78 =
+73%, five points below the headline; a fifth, `php-mpmw-f6h6-3g26-snap`, is
+arguable and would take it to 72%. **Neither number is a measurement of this
+agent's recall.** They are what the arithmetic yields under an unchecked
+reading, and the headline figure stands at 78% until somebody does the check.
+
+**What was verified.** All five carry `unsafe_recall: true` in the
+stored rows, and four of them carry `pair_success: false` — so the pair failure
+is already acknowledged while the unsafe-side credit still counts toward
+recall. That much is read off the artifacts. Whether each finding describes a
+different mechanism is a reading of prose the stored rows do not carry: they
+record the number of findings, not their text. The claim is recorded as the
+reviewer made it, with that limit stated, rather than adopted as measured.
+
+The figure that would settle it is a re-scoring with the finding text beside
+each answer key. Whether that is free depends on whether the finding texts
+still exist: the stored rows do not carry them, and nobody has checked which
+artifacts do. "The artifacts exist" was asserted here and is withdrawn —
+confirming a credit in a count-only row establishes nothing about the prose.
+
 Precision is withdrawn and stays withdrawn: the corpus is half vulnerable and
 half fixed, and in a pipeline the vulnerable changes are a small minority, so
 a precision computed here is not precision anywhere.
@@ -133,9 +374,14 @@ the evidence available:
 - **It can promote a real defect to a security claim it is not.** The one
   adjudicated-wrong finding described a genuine bug accurately and called it
   exploitable without checking the caller that prevents it.
-- **Stability is measured on one synthetic case**, four identical runs
-  agreeing. Nothing is known about run-to-run agreement on real code. Assume
-  two runs of the same merge request can disagree.
+- **Two runs of the same merge request can disagree, measured.** Thirteen real
+  cases run twice with nothing changed between the passes: **two flipped**, so
+  about 15% instability, from `measurements/experiment-noise-floor-2`. Until
+  2026-09-06 this line said stability was known only from one synthetic case
+  and that nothing was known about real code — written before that experiment
+  and never revised, so the document was claiming less evidence than the
+  repository held. Thirteen cases is thin and the rate is not established to
+  any useful precision; what is established is that the disagreement happens.
 
 ## Known failure modes
 
@@ -763,7 +1009,7 @@ it verifies before printing anything:
 | the sample | exactly one row per admitted case, ids read from the seal and never from the record being scored |
 | the denominator | the whole admitted set, always; an unreadable case is an unknown *inside* it and makes the figure a range |
 | the configuration | every completed row records `claude-cli`, `claude-opus-5` requested **and served**, and `model_substituted: false` |
-| the money | not money: list price on a subscription, and `tools/spend.py` is the answer to what it cost |
+| the money | not money: list price on a subscription. `tools/spend.py` reports what the records charge, and says so itself when that cannot be established as a total — nothing in these records keys a run, so where a `rows.json` and kept artifacts sit together it cannot tell whether any run is in both, and one that is would be counted twice |
 
 **What it does not check: the artifact's own description of itself.** The
 estimand, the list of things the figure may not be called, and the list of

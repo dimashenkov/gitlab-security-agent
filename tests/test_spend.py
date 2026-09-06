@@ -1284,34 +1284,134 @@ class TestOneRunIsCountedOnce:
     and the queue log. Codex found the new shape had no such guard,
     2026-09-06."""
 
-    def test_a_findings_file_beside_a_rows_file_is_folded(self, tmp_path):
-        rows = tmp_path / "rows.json"
-        rows.write_text("[]", encoding="utf-8")
-        kept, folded = spend.fold_representations(
-            [tmp_path / "kept" / "findings.json", rows])
-        assert kept == [rows]
-        assert len(folded) == 1
+    def run(self, cost=0.5, provider="claude-cli"):
+        return {"cost_usd": cost,
+                "provenance": {"provider": provider,
+                               "reported_cost_usd": cost,
+                               "auth_method": "claude.ai",
+                               "auth_subscription": "max"}}
 
-    def test_the_rows_file_is_the_one_kept(self, tmp_path):
-        """`rows.json` holds every run its tool made; a kept `findings.json` is
-        the selected few that failed. Keeping the subset would drop runs."""
-        rows = tmp_path / "rows.json"
-        rows.write_text("[]", encoding="utf-8")
-        kept, _ = spend.fold_representations([rows])
-        assert kept == [rows]
+    def test_nothing_is_folded_because_nothing_keys_a_run(self, tmp_path):
+        """Two rules were tried on 2026-09-06 and both were wrong.
 
-    def test_an_unrelated_directory_is_untouched(self, tmp_path):
-        rows = tmp_path / "a" / "rows.json"
-        rows.parent.mkdir()
-        rows.write_text("[]", encoding="utf-8")
-        other = tmp_path / "b" / "findings.json"
-        kept, folded = spend.fold_representations([rows, other])
+        By directory: two $5.00 metered artifacts under a rows file of one
+        subscription run were counted as $0.00. By provider and cost: three
+        distinct $5.00 API runs — one row, two artifacts — collapsed to $5.00,
+        and the tests written for that rule encoded it as correct, which is how
+        a test stops being a check.
+
+        No field in these artifacts keys a run. Both directions of error follow
+        from guessing at the join, so the join is not guessed at.
+        """
+        rows = tmp_path / "rows.json"
+        rows.write_text(json.dumps([self.run(5.0, provider="anthropic-api")]),
+                        encoding="utf-8")
+        others = []
+        for name in ("run-a", "run-b"):
+            directory = tmp_path / name
+            directory.mkdir()
+            artifact = directory / "findings.json"
+            artifact.write_text(
+                json.dumps(self.run(5.0, provider="anthropic-api")),
+                encoding="utf-8")
+            others.append(artifact)
+
+        kept, folded = spend.fold_representations([*others, rows])
         assert folded == []
-        assert set(kept) == {rows, other}
+        assert set(kept) == {rows, *others}
 
-    def test_the_folding_is_reported_not_done_quietly(self, tmp_path, capsys):
-        """A report that folds without saying so cannot be told apart from one
-        that never saw those files."""
+        runs, _ = spend.read_runs(kept)
+        assert len(runs) == 3, "three distinct runs collapsed to fewer"
+
+    def test_the_lower_bound_is_dropped_when_a_run_may_be_counted_twice(
+            self, tmp_path, capsys):
+        """`gpt-6-astra`, 2026-09-06, second gate: `≥` asserts a lower bound
+        and a duplicate breaks it the other way.
+
+        One $5.00 run written in both shapes, beside one run that reported no
+        cost at all, printed "≥ $10.00 charged" — against $6.00 if that silent
+        run cost a dollar. A warning three lines below cannot repair an
+        inequality in the headline, so the headline stops making one.
+        """
+        (tmp_path / "kept").mkdir()
+        metered = {"cost_usd": 5.0,
+                   "provenance": {"provider": "anthropic-api",
+                                  "reported_cost_usd": 5.0,
+                                  "auth_method": "api-key",
+                                  "auth_subscription": ""}}
+        silent = {"provenance": {"provider": "anthropic-api",
+                                 "auth_method": "api-key",
+                                 "auth_subscription": ""}}
+        (tmp_path / "rows.json").write_text(json.dumps([metered, silent]),
+                                            encoding="utf-8")
+        (tmp_path / "kept" / "findings.json").write_text(json.dumps(metered),
+                                                         encoding="utf-8")
+
+        spend.main([str(tmp_path / "rows.json"),
+                    str(tmp_path / "kept" / "findings.json")])
+        out = capsys.readouterr().out
+        headline = out.splitlines()[0]
+        assert "≥" not in headline, headline
+        assert "a floor, not the answer" not in headline
+        assert "counted twice" in out
+
+    def test_a_duplicate_is_named_even_when_nothing_else_is_missing(
+            self, tmp_path, capsys):
+        """The state the first fix missed, found by printing all eight of them
+        side by side instead of reasoning about them.
+
+        With metered runs, no silent ones and a possible duplicate, the
+        headline came out as a flat exact charge: "$5.00 charged" for something
+        that could be $2.50. Both qualifying sentences hung off the presence of
+        a silent run, so the duplicate went unmentioned whenever every run
+        happened to report its cost.
+        """
+        (tmp_path / "kept").mkdir()
+        metered = {"cost_usd": 5.0,
+                   "provenance": {"provider": "anthropic-api",
+                                  "reported_cost_usd": 5.0,
+                                  "auth_method": "api-key",
+                                  "auth_subscription": ""}}
+        (tmp_path / "rows.json").write_text(json.dumps([metered]),
+                                            encoding="utf-8")
+        (tmp_path / "kept" / "findings.json").write_text(json.dumps(metered),
+                                                         encoding="utf-8")
+
+        spend.main([str(tmp_path / "rows.json"),
+                    str(tmp_path / "kept" / "findings.json")])
+        headline = capsys.readouterr().out.splitlines()[0]
+        assert "not established as a total" in headline, headline
+        # "would be", not "is". Coexistence in a directory is not duplication,
+        # and the tests in this class build three distinct runs of equal cost
+        # to make that point — a warning stating it as observed fact would
+        # contradict them. Codex, fourth gate, 2026-09-06.
+        assert "would be counted twice" in headline
+
+    def test_the_bound_stays_when_nothing_can_be_double_counted(
+            self, tmp_path, capsys):
+        """The control. Without it this test could pass on a tool that never
+        prints the bound at all."""
+        silent = {"provenance": {"provider": "anthropic-api",
+                                 "auth_method": "api-key",
+                                 "auth_subscription": ""}}
+        path = tmp_path / "rows.json"
+        path.write_text(json.dumps([
+            {"cost_usd": 5.0,
+             "provenance": {"provider": "anthropic-api",
+                            "reported_cost_usd": 5.0,
+                            "auth_method": "api-key",
+                            "auth_subscription": ""}},
+            silent]), encoding="utf-8")
+
+        spend.main([str(path)])
+        headline = capsys.readouterr().out.splitlines()[0]
+        assert "≥" in headline, headline
+
+    def test_both_shapes_in_one_place_is_reported_not_silent(self, tmp_path,
+                                                             capsys):
+        """The double count cannot be resolved here, so it is named. A report
+        that is silent about it cannot be told from one where the question does
+        not arise."""
         (tmp_path / "kept").mkdir()
         run = {"cost_usd": 0.5,
                "provenance": {"provider": "claude-cli",
@@ -1326,8 +1426,9 @@ class TestOneRunIsCountedOnce:
         spend.main([str(tmp_path / "rows.json"),
                     str(tmp_path / "kept" / "findings.json")])
         out = capsys.readouterr().out
-        assert "counted once" in out
-        assert "1 kept artifact(s)" in out
+        assert "cannot be established here" in out
+        assert "if one does it is counted twice" in out
+        assert "Nothing in these records keys a run" in out
 
     def test_a_file_that_is_neither_is_counted_too(self, tmp_path):
         path = tmp_path / "n.json"

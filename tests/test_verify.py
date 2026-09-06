@@ -17,6 +17,7 @@ from security_agent.models import (
     Vote,
 )
 from security_agent.verify import (
+    _brief,
     _could_block,
     _decide,
     _partition,
@@ -1007,3 +1008,57 @@ class TestConfirmationsCarryTheirEvidence:
             corrected_reachable="unclear"))
 
         assert vote.verdict == VERDICT_CONFIRMED
+
+
+class TestTheVerifierSeesWhatAdmittedTheFinding:
+    """Codex, 2026-09-06, on the gate pass for the deletion repair.
+
+    `report_finding` validates a citation from a deleted file through
+    `removed_text`, at the base revision. The verifier reloaded through
+    `raw_text`, which necessarily fails there — so a finding about a removed
+    authorisation check was admitted and then handed to a verifier that could
+    not see the evidence which admitted it. The likely vote is `refuted`, for
+    a reason that has nothing to do with the code.
+    """
+
+    def deletion_only(self, git_repo):
+        import subprocess
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test",
+               "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(git_repo), *args),
+                                  check=True, capture_output=True, text=True,
+                                  env=env).stdout
+
+        (git_repo / "auth.py").write_text(
+            "def check(user):\n"
+            "    if not user.is_admin:\n"
+            "        raise Denied()\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "the guard")
+        base = git("rev-parse", "HEAD").strip()
+        (git_repo / "auth.py").unlink()
+        git("add", "-A")
+        git("commit", "-qm", "remove the guard")
+        return base, git("rev-parse", "HEAD").strip()
+
+    def test_the_brief_carries_the_removed_lines(self, git_repo):
+        from security_agent.config import Config
+        from security_agent.workspace import Workspace
+
+        base, head = self.deletion_only(git_repo)
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head,
+                       excludes=())
+        # `make_candidate` builds its own finding from the same overrides;
+        # a `finding=` kwarg is ignored and the default path survives, which
+        # is how the first version of this test read `app/views.py`.
+        candidate = make_candidate(attributed_by="deleted", file="auth.py",
+                                   line=3, evidence="        raise Denied()")
+
+        brief = _brief(Config.from_env(), ws, candidate, 0)
+        assert "raise Denied()" in brief
+        assert "was deleted by the change" in brief
+        assert "base revision" in brief

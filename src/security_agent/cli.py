@@ -151,7 +151,22 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
                 [path for path, _ in workspace.all_changed_files()])
             log.info("scope %s: reviewing %d of %d changed file(s)",
                      ", ".join(cfg.scope), len(changed), len(changed) + len(skipped))
-        if not changed:
+        # **Both lists, not just the openable one.** `changed_files` applies
+        # `--diff-filter=ACMRT`, so a change made entirely of deletions is
+        # empty here — and this branch then wrote "nothing to review" and
+        # exited 0 without asking the model anything. Removing a whole file
+        # that held an authorisation check is the strongest form of the thing
+        # this product exists to catch, and it was the case it did not look at.
+        # Found by `gpt-6-astra` on 2026-09-06 and confirmed by building the
+        # tree; the shape of the repair was adjudicated rather than chosen.
+        #
+        # The reviewer's open-list stays `changed_files` — a deleted file
+        # cannot be opened. What carries the removal is the diff, which shows
+        # `+++ /dev/null` and every removed line, and `coverage.deleted`
+        # already records the path. That machinery was built for exactly this
+        # and had nothing routing work into it.
+        objects = workspace.changed_objects()
+        if not changed and not objects:
             # Not a bare return. That left no artifact and, worse, left the
             # previous run's note on the merge request still claiming its
             # verdict — so a change that removed the vulnerable file kept the
@@ -170,8 +185,14 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
             return _nothing_to_review(
                 cfg, args, mode,
                 _nothing_reviewable_summary(excluded, out_of_scope, cfg.scope))
-        log.info("reviewing %d changed file(s) in %s..%s",
-                 len(changed), _abbrev(base), _abbrev(head))
+        # The deletions counted beside the openable files rather than folded
+        # into them: "reviewing 0 changed file(s)" while proceeding is a line
+        # an operator reads as a bug in the run.
+        gone = sum(1 for obj in objects if obj.status == "deleted")
+        log.info("reviewing %d changed file(s)%s in %s..%s",
+                 len(changed),
+                 " and {} deletion(s)".format(gone) if gone else "",
+                 _abbrev(base), _abbrev(head))
     else:
         log.info("reviewing %d tracked file(s) at %s",
                  len(workspace.tracked_files()), _abbrev(head))

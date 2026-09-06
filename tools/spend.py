@@ -736,7 +736,8 @@ def summarise(rows: List[Dict[str, Any]], by: str = "day",
 
 def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
                unreadable: int = 0, skipped_lines: int = 0,
-               scope: str = "", since: str = "") -> int:
+               scope: str = "", since: str = "",
+               may_double_count: bool = False) -> int:
     """The whole report, in the form the owner asked for: one line.
 
     Not a table. He asked for one figure and a breakdown only when he asks for
@@ -930,14 +931,35 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
         # not stop the figure — but it did happen, and printing its absence as
         # nothing is the "absent is not zero" defect this file was written
         # against, one level up.
-        print("Spend: {}{} charged{}{}{}".format(
-            "≥ " if silent else "", money(sum(charged)),
+        #
+        # **Unless a run may be counted twice.** `gpt-6-astra`, 2026-09-06:
+        # `≥` asserts a lower bound, and a duplicate breaks it in the other
+        # direction. One $5.00 run written in both shapes, beside one run whose
+        # unreported cost was $1.00, prints "≥ $10.00 charged" against $6.00
+        # actually spent. The diagnostic three lines below cannot repair an
+        # inequality in the headline, so the headline stops claiming one.
+        bound = "≥ " if silent and not may_double_count else ""
+        print("Spend: {}{} charged{}{}{}{}".format(
+            bound, money(sum(charged)),
             ", from {} metered call(s)".format(len(charged)) if charged
             else " — nothing metered was recorded",
             "; {} call(s) on a flat subscription, not in that figure".format(
                 subscription) if subscription else "",
             "; a floor, not the answer — {} run(s) recorded no cost at all"
-            .format(silent) if silent else ""))
+            .format(silent) if silent and not may_double_count else "",
+            # **Said whether or not anything else is missing.** The eight
+            # states of this line were printed side by side rather than
+            # reasoned about, and one of them was wrong: with metered runs, no
+            # silent ones and a possible duplicate, the figure came out as an
+            # exact charge with no qualification at all — $5.00 stated flatly
+            # for something that could be $2.50. The duplicate was only
+            # mentioned when a *silent* run happened to be there too, because
+            # both sentences hung off the same condition.
+            ("; {} run(s) recorded no cost, and a run written in two shapes "
+             "would be counted twice".format(silent) if silent else
+             "; not established as a total — a run written in two shapes "
+             "would be counted twice")
+            if may_double_count else ""))
     else:
         print("Spend: $0.00 charged — every call the counter saw runs on a "
               "flat subscription{}".format(
@@ -994,34 +1016,58 @@ def detail(rows: List[Dict[str, Any]]) -> None:
             _provenance(row).get("model_requested", "")))
 
 
-def fold_representations(paths: List[Path]) -> tuple:
-    """One representation per measurement, and the ones set aside.
-
-    A run can be written twice: once as its own `findings.json`, and once as a
-    row in the `rows.json` its runner keeps. Reading both counts that run's
-    cost twice, which is the failure this tool already refuses between the
-    artifacts and the queue log — and the second artifact shape arrived on
-    2026-09-06 with no equivalent guard. Codex found it on the gate pass.
-
-    `rows.json` wins, and not by preference: it holds every run its tool made,
-    while a kept `findings.json` is the selected few that failed. Counting the
-    complete record and setting the subset aside is the only choice that does
-    not silently drop runs.
-
-    Scoped by directory tree, because that is how the layout actually works: a
-    measurement writes its rows and any kept artifacts under one directory.
-    """
+def _rows_and_artifacts_together(paths: List[Path]) -> List[Path]:
+    """Directories holding both shapes, which is where a run may be counted
+    twice. Reported rather than resolved: see `fold_representations`."""
     roots = {p.parent for p in paths if p.name == "rows.json"}
-    if not roots:
-        return paths, []
-    kept, folded = [], []
-    for path in paths:
-        if path.name != "rows.json" and any(
-                root == path or root in path.parents for root in roots):
-            folded.append(path)
-        else:
-            kept.append(path)
-    return kept, folded
+    return sorted({root for root in roots
+                   for path in paths
+                   if path.name != "rows.json" and root in path.parents})
+
+
+def fold_representations(paths: List[Path]) -> tuple:
+    """Nothing is folded, and the reason is that nothing here can key a run.
+
+    A run can be written twice — once as its own `findings.json`, once as a row
+    in the `rows.json` its runner keeps — and reading both counts its cost
+    twice. That is real, and it is the failure this tool already refuses
+    between the artifacts and the queue log, where the answer was to read one
+    source and say so rather than to guess which rows correspond.
+
+    Two rules were tried here on 2026-09-06 and both were wrong, in opposite
+    directions, for the same reason:
+
+    * **By directory.** Every artifact under a directory holding a `rows.json`
+      was set aside. Directory ancestry does not establish that two files
+      describe one run: two $5.00 metered artifacts under a rows file of one
+      subscription run were counted as $0.00 while the diagnostic said they had
+      been "counted once, from the rows".
+    * **By provider and cost.** Then an artifact was folded only when a row
+      reported the same cost from the same vendor. Equal prices are not
+      identity: three distinct $5.00 API runs — one row, two artifacts —
+      collapsed to $5.00 instead of $15.00, and the tests written for it
+      encoded that as correct. The reverse is also true: one genuine duplicate
+      whose two records round differently is counted twice.
+
+    `gpt-6-astra` found both, the second on the gate pass for the first. The
+    conclusion is not a third heuristic. **No field in these artifacts keys a
+    run** — no request id, no run id, nothing an artifact and a row could be
+    joined on — and every rule that guesses at the join is wrong in one
+    direction or the other. So this folds nothing, and the report names the
+    directories where both shapes are present, which is the same treatment the
+    queue log already gets and the one this repository can defend.
+
+    **The report says what cannot be established, not what happened.** Codex,
+    the fourth gate on this change: two shapes sharing a directory is not
+    duplication, and the first warning announced one as the other — "a run
+    written in both shapes is counted twice" — from evidence that shows only
+    that both shapes are there. The tests build three distinct runs of equal
+    cost to make exactly that point, so the warning contradicted them.
+
+    Kept as a function rather than deleted because the honest answer is a
+    statement in the report, and the place that statement is decided is here.
+    """
+    return paths, []
 
 
 def collect(args: argparse.Namespace) -> tuple:
@@ -1054,14 +1100,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         rows = queue_rows(ROOT / QUEUE_LOG)
         unreadable = 0
         skipped = QUEUE_SKIPPED
-        folded: List[Path] = []
+        # The queue log is one source and holds no artifacts, so the question
+        # below does not arise on this path.
+        beside: List[Path] = []
     else:
         skipped = 0
-        paths, folded = collect(args)
+        paths, _ = collect(args)
         # A vendor ledger is not a review artifact, and it used to be read as
         # both — 30 metered calls in one column and one nameless "review" in
         # the other, from one file. One record, one kind.
         paths = [p for p in paths if not _looks_like_a_vendor_ledger(p)]
+        # **After that filter, not before it.** Codex, fifth gate on this
+        # change: a vendor ledger under a directory holding a `rows.json` is
+        # not a second representation of any run — it is counted in a separate
+        # column entirely — but the check saw a file that was not `rows.json`,
+        # reported "both shapes", and took away a `≥` bound that was true.
+        # A warning about double counting, raised by the one kind of file that
+        # cannot be double counted.
+        beside = _rows_and_artifacts_together(paths)
         # Counted by the reader, not derived from `len(paths) - len(rows)`.
         # One file can hold many runs, and that subtraction then goes negative
         # and prints as a negative number of unreadable files.
@@ -1101,16 +1157,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     # shrank to a call count, vendor ledger failures did not reach the exit
     # code, and a vendor-only ledger printed "no records were found" from a
     # `summarise([])` that had never been shown the calls.
-    code = one_figure(rows, vendor, unreadable, skipped, scope, args.since)
-    if folded:
-        # Said, not done quietly. Folding is the right answer to one run
-        # written twice, and a report that folds without saying so is a report
-        # whose reader cannot tell it from one that never saw those files.
-        print("  {} kept artifact(s) are also rows in a `rows.json` beside "
-              "them and are counted once, from the rows: {}".format(
-                  len(folded),
-                  ", ".join(sorted(str(p) for p in folded)[:3])
-                  + (" ..." if len(folded) > 3 else "")))
+    code = one_figure(rows, vendor, unreadable, skipped, scope,
+                      args.since, may_double_count=bool(beside))
+    if beside:
+        # **Said, because it cannot be fixed here.** A run written both as its
+        # own artifact and as a row is counted twice, and nothing in either
+        # record keys them together — no request id, no run id. Two rules that
+        # guessed at the join were tried on 2026-09-06 and each was wrong in
+        # one direction; see `fold_representations`. The reader is told which
+        # directories hold both shapes so the figure is read as an upper bound
+        # there, rather than a silent double count.
+        print("  {} director{} hold(s) both a `rows.json` and kept "
+              "artifact(s). Nothing in these records keys a run, so whether "
+              "any run appears in both cannot be established here — if one "
+              "does it is counted twice: {}".format(
+                  len(beside), "y" if len(beside) == 1 else "ies",
+                  ", ".join(sorted(str(p) for p in beside)[:3])
+                  + (" ..." if len(beside) > 3 else "")))
     if not args.breakdown and not args.detail:
         return code
 

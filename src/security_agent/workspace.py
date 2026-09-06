@@ -502,7 +502,15 @@ class Workspace:
             # scope that meant one thing to `in_scope` and another to git would
             # put a file in the diff that the coverage accounting says was never
             # in the change.
-            in_scope = [p for p, _ in self.changed_files()]
+            #
+            # **From the objects, not from the openable list.** Codex,
+            # 2026-09-06, adjudicating the deletion-only repair in `cli.py`:
+            # `changed_files` filters deletions out, so a scoped run over a
+            # change made of deletions built its pathspec from an empty list
+            # and returned an empty diff — the removed lines gone from the one
+            # place that carries them. The scope is still applied, by
+            # `changed_objects`, which is where a deleted path lives.
+            in_scope = [obj.path for obj in self.changed_objects()]
             if not in_scope:
                 return ""
             args += ["--", *(self.repo_path(p) for p in in_scope)]
@@ -698,9 +706,29 @@ class Workspace:
             raise WorkspaceError(
                 "{} is not a tracked file at the revision under review".format(rel))
         if size > MAX_READ_BYTES:
+            # **The advice used to name a remedy that does not exist.** It said
+            # to pass `start_line` and `end_line`, and `read_file` reaches the
+            # file through here — so a window hits the same ceiling and gets
+            # the same refusal, with the message repeating the suggestion that
+            # just failed. Measured on 2026-09-06 against a 302,057-byte file:
+            # both attempts refused identically.
+            #
+            # The message is corrected; windowed reading is not built. Doing it
+            # means streaming `git show` and keeping only the requested lines,
+            # which is a change to what a reviewer can see and wants measuring
+            # rather than a patch. Until then a weakness introduced by a small
+            # diff to a large file cannot be quoted, and `LIMITATIONS.md` says
+            # so.
+            # And the replacement named a remedy of its own — "its diff is
+            # still available through get_diff" — which is true only in a diff
+            # review: `diff()` refuses without a `diff_base`, the MCP server
+            # does not offer the tool in that mode, and the diff has ceilings
+            # of its own. Codex caught the same class of error inside its own
+            # correction, one gate pass later. The message now states the
+            # limit and stops there.
             raise WorkspaceError(
-                "{} is {} KB, over the {} KB read limit. Pass start_line and "
-                "end_line to read a window of it.".format(
+                "{} is {} KB, over the {} KB read limit, and this limit is on "
+                "the whole file: a windowed read of it is refused too.".format(
                     rel, size // 1024, MAX_READ_BYTES // 1024))
 
         try:
@@ -752,6 +780,42 @@ class Workspace:
     # `raw_text` is the name the rest of the agent uses; it now means "the blob
     # at the reviewed revision" everywhere.
     raw_text = blob_text
+
+    def removed_text(self, path: str) -> str:
+        """The content of a file **this change deleted**, at the base.
+
+        `raw_text` reads the reviewed revision, where a deleted file is not —
+        so a finding quoting the authorisation check that was removed failed
+        citation validation as `unknown-path` and was dropped. The diff could
+        inspire the finding and nothing could record it. Codex named this on
+        the gate pass for the deletion repair, 2026-09-06.
+
+        Narrow on purpose. It refuses any path this change did not delete, so
+        it cannot become a general way of reading the base revision — the
+        reason `blob_text` gives for reading the reviewed commit rather than
+        the working tree applies just as much to reading whatever the parent
+        happened to contain.
+        """
+        rel = self.repo_path(path)
+        deleted = {obj.path for obj in self.changed_objects()
+                   if obj.status == "deleted"}
+        if rel not in deleted:
+            raise WorkspaceError(
+                "{} is not a file this change deleted; read it with read_file"
+                .format(rel))
+        if not self.diff_base:
+            raise WorkspaceError(
+                "there is no base revision to read {} from".format(rel))
+        proc = subprocess.run(
+            ("git", "--no-pager", "-C", str(self.root), "show",
+             "{}:{}".format(self.diff_base, rel)),
+            capture_output=True, check=False, timeout=GIT_TIMEOUT_SECONDS,
+            env=_git_env(),
+        )
+        if proc.returncode != 0:
+            raise WorkspaceError(
+                "{} could not be read at the base revision".format(rel))
+        return proc.stdout.decode("utf-8", "replace")
 
     def read_file(self, path: str, start_line: int = 1, end_line: int = 0) -> Tuple[str, bool]:
         """Return line-numbered text and whether it was trimmed."""

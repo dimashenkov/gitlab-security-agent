@@ -7,7 +7,7 @@ attempts are tested explicitly rather than assumed.
 
 import pytest
 
-from security_agent.workspace import Workspace, WorkspaceError
+from security_agent.workspace import MAX_READ_BYTES, Workspace, WorkspaceError
 
 
 @pytest.fixture
@@ -429,3 +429,154 @@ class TestTheDiffIsBounded:
         assert ws.diff_truncated is False
         ws.diff()
         assert ws.diff_truncated is True
+
+
+class TestTheReadCeilingSaysWhatItDoes:
+    """`gpt-6-astra`, 2026-09-06. The refusal advised passing `start_line` and
+    `end_line`, and `read_file` reaches the file through `blob_text`, so the
+    ceiling is on the whole blob and the window is refused identically — with
+    the message repeating the suggestion that had just failed.
+
+    A remedy named in an error that the code does not implement costs a reader
+    an afternoon, and costs a *model* a retry it cannot learn from.
+    """
+
+    def big_file(self, git_repo):
+        import subprocess
+        line = "# padding to push this file over the ceiling\n"
+        (git_repo / "big.py").write_text(
+            line * (MAX_READ_BYTES // len(line) + 40), encoding="utf-8")
+        # Committed, because `blob_text` reads the revision and not the disk —
+        # which is the point of that function and would otherwise make this
+        # test refuse for the wrong reason.
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test",
+               "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+        for args in (("add", "big.py"), ("commit", "-qm", "big")):
+            subprocess.run(("git", "-C", str(git_repo), *args), check=True,
+                           capture_output=True, env=env)
+        return "big.py"
+
+    def test_a_window_is_refused_exactly_as_the_whole_file_is(self, ws,
+                                                             git_repo):
+        path = self.big_file(git_repo)
+        with pytest.raises(WorkspaceError) as whole:
+            ws.read_file(path)
+        with pytest.raises(WorkspaceError) as window:
+            ws.read_file(path, start_line=10, end_line=12)
+        assert str(whole.value) == str(window.value)
+
+    def test_the_message_does_not_advise_the_window(self, ws, git_repo):
+        """The defect itself: an error naming a remedy that does not work."""
+        path = self.big_file(git_repo)
+        with pytest.raises(WorkspaceError) as caught:
+            ws.read_file(path, start_line=10, end_line=12)
+        message = str(caught.value)
+        assert "start_line" not in message, message
+        assert "windowed read of it is refused too" in message
+
+    def test_the_message_names_no_remedy_at_all(self, ws, git_repo):
+        """The correction had the same defect as the thing it corrected.
+
+        Replacing the bad advice with "its diff is still available through
+        get_diff" named a remedy that exists only in a diff review: `diff()`
+        refuses without a `diff_base`, the MCP server does not offer the tool
+        in that mode, and the diff has ceilings of its own. Codex found it one
+        gate pass after the first fix.
+
+        A refusal may say what is true of itself. It may not send the caller
+        somewhere without knowing that the somewhere is there.
+        """
+        path = self.big_file(git_repo)
+        with pytest.raises(WorkspaceError) as caught:
+            ws.read_file(path)
+        message = str(caught.value)
+        for remedy in ("get_diff", "start_line", "end_line", "instead", "try"):
+            assert remedy not in message, (remedy, message)
+
+
+class TestADeletionIsPartOfTheChange:
+    """`gpt-6-astra`, 2026-09-06, confirmed by building the tree: a change made
+    entirely of deletions produced an empty `changed_files`, `_run` branched on
+    that, and the review exited 0 without asking the model anything. Removing a
+    whole file holding an authorisation check was reviewed as nothing.
+
+    `changed_files` keeps its filter — a deleted file cannot be opened, and it
+    is the list of files a reviewer is asked to open. What had to change is
+    what decides there is nothing to review, and what the scoped diff is built
+    from.
+    """
+
+    def deletion_only(self, git_repo):
+        import subprocess
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test",
+               "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            subprocess.run(("git", "-C", str(git_repo), *args), check=True,
+                           capture_output=True, env=env)
+
+        (git_repo / "auth.py").write_text(
+            "def check(user):\n"
+            "    if not user.is_admin:\n"
+            "        raise Denied()\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "the guard")
+        base = subprocess.run(("git", "-C", str(git_repo), "rev-parse", "HEAD"),
+                              capture_output=True, text=True, check=True,
+                              env=env).stdout.strip()
+        (git_repo / "auth.py").unlink()
+        git("add", "-A")
+        git("commit", "-qm", "remove the guard")
+        head = subprocess.run(("git", "-C", str(git_repo), "rev-parse", "HEAD"),
+                              capture_output=True, text=True, check=True,
+                              env=env).stdout.strip()
+        return base, head
+
+    def test_the_open_list_is_empty_and_the_inventory_is_not(self, git_repo):
+        base, head = self.deletion_only(git_repo)
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head)
+        assert ws.changed_files() == []
+        assert [(o.path, o.status) for o in ws.changed_objects()] == [
+            ("auth.py", "deleted")]
+
+    def test_the_diff_carries_the_removed_lines(self, git_repo):
+        """The one place the removal exists, and what the reviewer reads."""
+        base, head = self.deletion_only(git_repo)
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head)
+        body = ws.diff()
+        assert "auth.py" in body
+        assert "raise Denied()" in body
+
+    def test_a_scoped_run_still_gets_the_deletion(self, git_repo):
+        """The scoped diff built its pathspec from `changed_files`, which is
+        empty here — so the removed lines vanished from the only place that
+        carries them. Codex named this when adjudicating the repair."""
+        base, head = self.deletion_only(git_repo)
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head,
+                       scope=("auth.py",))
+        body = ws.diff()
+        assert "raise Denied()" in body, body[:200]
+
+    def test_a_deleted_file_is_readable_at_the_base(self, git_repo):
+        """Citation validation reads the reviewed revision, where a deleted
+        file is not — so every finding quoting a removed authorisation check
+        was dropped as `unknown-path`. The diff could inspire the finding and
+        nothing could record it. Codex named it on the gate pass."""
+        base, head = self.deletion_only(git_repo)
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head)
+        with pytest.raises(WorkspaceError):
+            ws.raw_text("auth.py")
+        assert "raise Denied()" in ws.removed_text("auth.py")
+
+    def test_it_refuses_a_path_the_change_did_not_delete(self, git_repo):
+        """Narrow on purpose: the reason `blob_text` reads the reviewed commit
+        rather than the working tree applies just as much to reading whatever
+        the parent happened to contain."""
+        base, head = self.deletion_only(git_repo)
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head)
+        with pytest.raises(WorkspaceError, match="not a file this change"):
+            ws.removed_text("README.md")

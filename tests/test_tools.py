@@ -470,3 +470,96 @@ class TestOneWeaknessHasOneIdentity:
                line=3)
 
         assert session.candidates[0].finding.file == "app/views.py"
+
+
+class TestAFindingAboutSomethingThisChangeDeleted:
+    """The end-to-end case the workspace tests could not reach.
+
+    A change that removes a whole file put every finding about it out of reach
+    twice over. First the citation could not be validated — `raw_text` reads
+    the reviewed revision and the file is not there — so the claim was dropped
+    as `unknown-path`. Then, once it could be read, `attribution` had nothing
+    to say: `changed_line_map` leaves `current` empty for `+++ /dev/null`, so
+    a removed line is in no map, and the finding came out marked "pre-existing,
+    not introduced here" — accepted, and excluded from the gate by the rule for
+    code this change did not touch.
+
+    Codex asked directly whether the attribution survived the repair, on the
+    gate pass for it. It had not.
+    """
+
+    def deletion_only(self, git_repo):
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test",
+               "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(git_repo), *args),
+                                  check=True, capture_output=True, text=True,
+                                  env=env).stdout
+
+        (git_repo / "auth.py").write_text(
+            "def check(user):\n"
+            "    if not user.is_admin:\n"
+            "        raise Denied()\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "the guard")
+        base = git("rev-parse", "HEAD").strip()
+        (git_repo / "auth.py").unlink()
+        git("add", "-A")
+        git("commit", "-qm", "remove the guard")
+        return base, git("rev-parse", "HEAD").strip()
+
+    def test_the_finding_is_recorded_and_attributed_to_the_deletion(
+            self, git_repo, session):
+        base, head = self.deletion_only(git_repo)
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head,
+                       excludes=())
+
+        # Two lines: the citation rule wants enough to identify one place,
+        # and the point of the test is the attribution rather than the quote.
+        result = report(ws, session, file="auth.py", line=2,
+                        evidence="    if not user.is_admin:\n"
+                                 "        raise Denied()")
+
+        assert not result.is_error, result.content
+        assert len(session.candidates) == 1, session.rejected
+        candidate = session.candidates[0]
+        assert candidate.attributed_by == "deleted", candidate.attributed_by
+        assert candidate.in_changed_lines is True
+
+    def test_read_file_reaches_a_deleted_file_at_the_base(self, git_repo,
+                                                          session):
+        """The last link that assumed a reviewed file.
+
+        For a file larger than the verifier's context the brief supplies a
+        window and tells it to read more with the tools — and this handler read
+        the reviewed revision, where a deleted file is not. The verifier was
+        invited to investigate and then refused the file. Codex found it by
+        tracing the whole path rather than by looking for one more defect.
+        """
+        from security_agent.tools import dispatch
+        from security_agent.workspace import Workspace
+
+        base, head = self.deletion_only(git_repo)
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head,
+                       excludes=())
+
+        result = dispatch(ws, session, "read_file", {"path": "auth.py"})
+        assert not result.is_error, result.content
+        assert "raise Denied()" in result.content
+        assert "base revision" in result.content
+
+    def test_read_file_still_refuses_a_path_this_change_kept(self, git_repo,
+                                                             session):
+        """The fallback is not a general way of reading the base."""
+        from security_agent.tools import dispatch
+        from security_agent.workspace import Workspace
+
+        base, head = self.deletion_only(git_repo)
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head,
+                       excludes=())
+
+        result = dispatch(ws, session, "read_file", {"path": "nosuch.py"})
+        assert result.is_error

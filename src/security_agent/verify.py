@@ -820,7 +820,30 @@ def _brief(cfg: Config, ws: Workspace, candidate: Candidate, vote_index: int) ->
     ]
 
     try:
-        file_text = ws.raw_text(finding.file)
+        # **A file this change deleted is read at the base, as the reviewer
+        # read it.** Codex, 2026-09-06: `report_finding` validated the citation
+        # through `removed_text` and the verifier reloaded through `raw_text`,
+        # which necessarily fails at the reviewed revision — so a finding about
+        # a removed authorisation check was admitted and then handed to a
+        # verifier that could not see the evidence which admitted it. The
+        # likely vote is `refuted` or `uncertain`, for the wrong reason.
+        deleted = candidate.attributed_by == "deleted"
+        file_text = (ws.removed_text(finding.file) if deleted
+                     else ws.raw_text(finding.file))
+        if deleted:
+            # Said, because the verifier is about to be shown lines that are
+            # not in the code under review and would otherwise go looking for
+            # them. The location is the base revision, and the weakness is the
+            # removal itself.
+            parts += [
+                "## This file was deleted by the change",
+                "",
+                "The lines below are from the **base revision**, before this "
+                "change removed `{}` entirely. They are not in the reviewed "
+                "code — that is the finding. Judge whether removing them "
+                "introduces the weakness claimed.".format(finding.file),
+                "",
+            ]
         # The whole file when it is small. A sixty-line window is an arbitrary
         # boundary, and the control that decides a finding is routinely on the
         # other side of it — the verifier then spends a turn on `read_file` to

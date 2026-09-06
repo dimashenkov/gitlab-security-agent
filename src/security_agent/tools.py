@@ -500,6 +500,27 @@ _MINIMAL_FINDING_SCHEMA: Dict[str, Any] = {
 def _handle_list_changed_files(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
     changed = ws.changed_files()
     if not changed:
+        # **A change can be real and have nothing to open.** A deletion is not
+        # in `changed_files` — the file is gone and cannot be read — so this
+        # used to answer "no reviewable files" to a change that removed an
+        # authorisation check, and the reviewer stopped there. Codex, on the
+        # gate pass for the `_run` repair: the control flow was fixed to reach
+        # the model and the model was then told there was nothing to look at.
+        #
+        # The deletions are named, and the reviewer is pointed at the diff,
+        # which is where the removed lines are.
+        deleted = [obj.path for obj in ws.changed_objects()
+                   if obj.status == "deleted"]
+        if deleted:
+            return ToolResult(
+                "No files in this change can be opened, because the change "
+                "removes them. {} file(s) deleted:\n{}\n\nRead the diff: it "
+                "carries every removed line. A deleted authorisation check, "
+                "validation routine or other control is a security-relevant "
+                "change and is what this listing cannot show you.".format(
+                    len(deleted), "\n".join("- " + p for p in deleted)),
+                "{} deleted file(s)".format(len(deleted)),
+            )
         return ToolResult(
             "The diff for this merge request contains no reviewable files "
             "(the change may be limited to excluded paths such as lockfiles).",
@@ -644,7 +665,28 @@ def _handle_read_file(ws: Workspace, session: Session, args: Dict[str, Any]) -> 
     path = str(args.get("path") or "")
     start = _as_int(args.get("start_line"), 1)
     end = _as_int(args.get("end_line"), 0)
-    body, trimmed = ws.read_file(path, start_line=start, end_line=end)
+    try:
+        body, trimmed = ws.read_file(path, start_line=start, end_line=end)
+    except WorkspaceError:
+        # **The last link that assumed a reviewed file.** Codex, 2026-09-06,
+        # tracing the whole deletion path: for a file larger than the
+        # verifier's context the brief supplies a window and tells it to read
+        # more with the tools — and this handler read the reviewed revision,
+        # where a deleted file is not. The verifier was invited to investigate
+        # and then refused the file.
+        #
+        # `removed_text` refuses any path this change did not delete, so this
+        # is not a way of reading the base generally.
+        text = ws.removed_text(path)
+        lines = text.splitlines()
+        stop = len(lines) if end <= 0 else min(len(lines), end)
+        begin = max(1, start)
+        body = "\n".join("{:>6} | {}".format(n, lines[n - 1])
+                          for n in range(begin, stop + 1))
+        body = ("`{}` was deleted by this change; these are lines {}-{} of {} "
+                "at the **base revision**, before the removal.\n\n{}".format(
+                    path, begin, stop, len(lines), body))
+        trimmed = False
     if trimmed:
         body += (
             "\n\n[Output trimmed. Re-read with a narrower start_line/end_line "
@@ -787,11 +829,34 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
     final_attempt = attempt >= MAX_CITATION_ATTEMPTS
 
     # --- does the file exist? ---
+    # Carried out of the read, because only the read knows it. `attribution`
+    # works from the diff's line map, and `changed_line_map` leaves `current`
+    # empty for `+++ /dev/null` — a wholly deleted file has no line in the
+    # reviewed revision to attribute anything to. So the map says nothing, and
+    # a finding about a removed authorisation check came out as "pre-existing,
+    # not introduced here": accepted, and then excluded from the gate by the
+    # rule for code this change did not touch. Codex, 2026-09-06, asked
+    # directly whether the attribution survived the repair.
+    from_a_deleted_file = False
     try:
         # Existence is decided by the revision under review, not by the disk —
         # the same authority the quoted evidence is matched against.
         rel_path = ws.repo_path(finding.file)
-        file_text = ws.raw_text(finding.file)
+        try:
+            file_text = ws.raw_text(finding.file)
+        except WorkspaceError:
+            # **A file this change deleted is read at the base.** It is not at
+            # the reviewed revision — that is what deleting it means — so every
+            # finding quoting a removed authorisation check was dropped as
+            # `unknown-path`. The diff could inspire the finding and nothing
+            # could record it. Codex, 2026-09-06, on the gate pass for the
+            # deletion repair: fixing the control flow without this leaves the
+            # reviewer able to see the removal and unable to report it.
+            #
+            # `removed_text` refuses any path this change did not delete, so
+            # this is not a way of reading the base revision generally.
+            file_text = ws.removed_text(finding.file)
+            from_a_deleted_file = True
     except WorkspaceError as exc:
         # Counted on both paths: the drop is a rejection too, and the loudest
         # one. Incrementing only on the retry path made a claim abandoned after
@@ -874,7 +939,8 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
     span = evidence_span(finding.evidence)
     corrected_from = finding.line if finding.line != located else None
     changed = ws.changed_line_map()
-    attributed = attribution(rel_path, located, span, changed)
+    attributed = ("deleted" if from_a_deleted_file
+                  else attribution(rel_path, located, span, changed))
 
     duplicate = next(
         (c for c in session.candidates if c.fingerprint == finding.fingerprint), None
@@ -894,8 +960,12 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
         finding=finding,
         evidence_located_line=located,
         line_corrected_from=corrected_from,
-        in_changed_lines=bool(attributed) if changed else True,
-        attributed_by=attributed if changed else "added",
+        # A deletion is a change to this merge request whatever the line map
+        # can say about it: the file is gone *because of this change*.
+        in_changed_lines=(True if from_a_deleted_file
+                          else bool(attributed) if changed else True),
+        attributed_by=attributed if (changed or from_a_deleted_file)
+        else "added",
         path_verified=True,
     )
     session.candidates.append(candidate)
