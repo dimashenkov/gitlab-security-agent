@@ -1778,3 +1778,109 @@ if any ruling in `corpus-real/adjudications.yml` is ever made by somebody who
 did not produce the findings: `artifact.independence()` counts them and the
 count is zero, and the 40% ceiling was set against a number nobody independent
 has looked at.
+
+## D-014 · The noise measurement, and what it may be called
+
+| | |
+|---|---|
+| **State** | active |
+| **Scope** | `measurements/ordinary-v1`, the alarm rate on ordinary changes |
+| **Authorises** | `ordinary_noise` |
+| **Checked against** | `7a55854` |
+
+**Written before the reviewer was run, and that is the whole point.**
+`measurements/ordinary-v1/RESULT.md` says an alarm on one of the three
+`not_ordinary` cases is *correct*, so a false-alarm rate cannot be computed over
+all thirty — and it says the choice of what to do instead is prospective and
+must not be made after seeing the outcome. This is that choice.
+
+**The goal changed on 2026-09-06.** The owner: *"целта на проекта е работещ
+прототип срещу golden data с приемливи проценти успеваемост, после спираме."*
+The rest of the D-013 programme — the generations ledger, the re-freeze,
+`classify_alarms`, the Sonnet gate — is dropped, because each serves further
+measurement rounds the goal does not ask for. What is missing for the goal is
+one number: how often the reviewer alarms on a change with nothing to find.
+
+### The rule, decided in advance
+
+The three cases Grok ruled `not_ordinary` are **excluded**. The number is
+computed over the 27 it ruled `ordinary`:
+
+```
+alarm rate = (of the 27 ordinary-labelled cases, those producing an alarm) / 27
+```
+
+Codex ruled on the three options on 2026-09-06. Keeping all thirty would mix
+correct security detection with noise and would not answer the question asked.
+Replacing the three would need re-adjudication and the generation discipline the
+owner has just dropped, and would not improve the prototype decision enough to
+justify it.
+
+### What the number may be called
+
+> the observed reviewer alarm rate on the 27 changes Grok classified as
+> ordinary in the sealed pilot sample
+
+### What it may not be called
+
+* an ordinary-change **false-alarm** or false-positive rate;
+* the alarm rate over all thirty;
+* an estimate for the 1361-change frame, or for ordinary changes generally;
+* independently validated, or human-audited;
+* completion of D-013 step 2 or step 3.
+
+The limitation is substantive rather than a formality: the 27 carry **one
+unaudited third-party-model adjudication**, so further security fixes may remain
+among them, and an alarm inside the 27 cannot confidently be called false
+either.
+
+### The audit that was declined, and what it does and does not forbid
+
+The frozen protocol required the owner to adjudicate 6 of the 30 blind. He
+declined on 2026-09-04: *"не искам аз нищо да проверявам, и не смятам, че е
+нужно при 3 AI агента."* Codex, 2026-09-06: that **does not forbid running the
+reviewer** under the narrowed prototype objective. It forbids claiming
+compliance with or completion of the frozen D-013 process, and it constrains
+what the result may claim.
+
+So the run is recorded as a **separate, prospectively defined prototype
+measurement over the existing sealed sample** — not as resumed D-013 execution.
+The freeze is not retaken, for the reason `RESULT.md` already gives: a new
+freeze now would make these thirty appear governed by a rule adopted after they
+were seen.
+
+**Decided.** The three `not_ordinary` cases are excluded and the number is
+computed over the 27. It is named "the observed reviewer alarm rate on the 27
+changes Grok classified as ordinary in the sealed pilot sample", and it is not
+called a false-alarm rate.
+
+**Rejected.** Keeping all thirty and counting an alarm on the three as correct
+— it mixes recall and noise in one figure and answers neither question.
+Replacing the three by drawing more — it needs the re-adjudication and the
+generation discipline the owner dropped the same day, for no gain to the
+prototype decision. Retaking the freeze — it would make thirty cases that have
+already been seen appear governed by a rule adopted afterwards.
+
+**Reason.** A rule chosen after the outcome is not a rule. `RESULT.md` named
+this fork on 2026-09-04 and left it open precisely so it could be closed
+before, not after — and the goal narrowing on 2026-09-06 made the number worth
+having, which is what forced the closure.
+
+**Enforced by.** The scorer refuses to compute over any case whose
+adjudicated verdict is not `ordinary`, and names the excluded ids in its
+output. A number computed over thirty is a different number and says so.
+
+**Evidence.** `measurements/ordinary-v1/grok-adjudication.json` — 30 verdicts,
+27 `ordinary`, 3 `not_ordinary`, each of the three confirmed against the commit
+and the advisory. `sample-30.seal.json` — the sealed draw, 30 of 1361 eligible
+across 21 repositories. All 30 clones present at the right commits, checked
+2026-09-06.
+
+**Objection.** Codex, 2026-09-06, on what the result may claim: *"even an alarm
+within the 27 cannot confidently be labelled false"* — one unaudited
+third-party-model adjudication, and further security fixes may remain among
+them. The name of the estimand carries that; the number alone does not.
+
+**Revisited when.** A human adjudicates any part of the sample, or a second
+independent adjudicator disagrees with Grok on any of the thirty. Either makes
+the estimand nameable more strongly, and neither is planned.

@@ -162,8 +162,27 @@ def test_every_declared_step_is_one_the_order_knows():
     known = set(order.EXTRA_ACTIONS) | {
         step.id for step in order.parse_order(
             (ROOT / "DECISIONS.md").read_text(encoding="utf-8")).steps}
-    named = {step for step in sg.SPEND_CLASSES.values() if step is not None}
+    # Only the classes mapped to a *step*. A class authorised by a decision
+    # carries a mapping instead, and asking the order about it would ask a
+    # question that decision is not an answer to — which is exactly why
+    # `ordinary_noise` names D-014 rather than `spend`.
+    named = {step for step in sg.SPEND_CLASSES.values()
+             if isinstance(step, str)}
     assert named <= known, sorted(named - known)
+
+
+def test_every_decision_mapped_class_names_a_decision_that_is_there():
+    """The other half of the same invariant. A class pointing at a decision
+    nobody wrote would come back `undetermined`, which is the safe answer and
+    also a silent one — the mapping is meant to be checkable from here."""
+    for spend_class, mapped in sorted(sg.SPEND_CLASSES.items()):
+        if not isinstance(mapped, dict):
+            continue
+        name = mapped.get("decision")
+        assert name, spend_class
+        assert sg._decision_state(name) is not None, (
+            "{} names {}, and DECISIONS.md holds no such entry".format(
+                spend_class, name))
 
 
 def test_the_unmapped_classes_are_named_rather_than_absent():
@@ -183,7 +202,7 @@ def test_the_unmapped_classes_are_named_rather_than_absent():
 BILLING_MODULES = ("grok_adjudicate", "classify_alarms", "pair_corpus",
                    "injection_corpus", "run_queue", "experiment",
                    "verifier_replay", "measure_variance", "ablation",
-                   "stability")
+                   "stability", "ordinary_noise")
 
 
 def test_every_class_is_named_by_a_tool_that_spends():

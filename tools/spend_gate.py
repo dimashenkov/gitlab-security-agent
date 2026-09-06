@@ -85,7 +85,23 @@ SPEND_CLASSES: Dict[str, Optional[str]] = {
     "measure_variance": None,
     "ablation": None,
     "stability": None,
+    # Authorised by a **decision**, not by a step of D-013's ordering. D-014
+    # governs the noise measurement over the sealed ordinary sample, and D-013
+    # orders nothing about it — the owner narrowed the goal on 2026-09-06 and
+    # dropped the rest of that programme, so asking `spend` or `adjudicate_30`
+    # about this would get an answer to a different question.
+    #
+    # The refusal message for an unmapped class already said what resolves one:
+    # "deciding what orders this class of spending and recording that in
+    # DECISIONS.md". This is that, and the gate now reads it rather than
+    # treating the sentence as advice nobody acts on.
+    "ordinary_noise": {"decision": "D-014"},
 }
+
+# What a decision has to say before it authorises anything. `active` and
+# nothing else: a superseded or proposed entry is a decision that was made and
+# then unmade, or one nobody has made yet.
+AUTHORISING_STATE = "active"
 
 
 class SpendRefused(RuntimeError):
@@ -148,6 +164,42 @@ def authorise(spend_class: str, **order_kwargs) -> Decision:
             "reason, rather than spending against a name nobody has mapped.")
 
     step = SPEND_CLASSES[spend_class]
+
+    # A class authorised by a decision rather than by a step of the order.
+    # Checked here and not delegated to `d013_order`, which knows one document
+    # and would answer about a step this class does not have.
+    if isinstance(step, dict):
+        name = step.get("decision")
+        try:
+            state, authorises = _decision_state(name, spend_class)
+        except Exception as exc:
+            return Decision(UNDETERMINED, spend_class, name,
+                            "the decision {} could not be read ({}: {}), and "
+                            "an unreadable authorisation is not one".format(
+                                name, type(exc).__name__, exc))
+        if state is None:
+            return Decision(UNDETERMINED, spend_class, name,
+                            "{} names {} and DECISIONS.md holds no such "
+                            "entry".format(spend_class, name))
+        if state != AUTHORISING_STATE:
+            return Decision(REFUSED, spend_class, name,
+                            "{} is {!r} rather than {!r}, so it does not "
+                            "authorise anything".format(
+                                name, state, AUTHORISING_STATE))
+        # **The decision has to say the class by name.** Codex, 2026-09-06:
+        # inferring "governs this class" from an active state meant any
+        # unrelated active decision, placed in the mapping, permitted spending
+        # — the mapping was the only thing binding them, and the mapping is
+        # written here rather than there. Now both ends name each other.
+        if authorises != spend_class:
+            return Decision(REFUSED, spend_class, name,
+                            "{} authorises {!r} and this is {!r}. A decision "
+                            "that does not name the class is a decision about "
+                            "something else".format(
+                                name, authorises, spend_class))
+        return Decision(PERMITTED, spend_class, name,
+                        "{} is active and names this class".format(name))
+
     if step is None:
         return Decision(
             UNDETERMINED, spend_class, None,
@@ -182,6 +234,49 @@ def authorise(spend_class: str, **order_kwargs) -> Decision:
               "({}), so nothing established that spending is permitted".format(
                   code)
     return Decision(state, spend_class, step, why)
+
+
+def _decision_state(name, spend_class=None):
+    """`(state, authorises)` for one decision, or `(None, None)` if absent.
+
+    Read through `check_decisions`, which knows the heading and table format.
+    Parsing it again here would be a second reader of one document, and the
+    weaker reader would be the one deciding whether money moves.
+
+    **The whole document is validated first.** Codex, 2026-09-06: reading one
+    entry's `State` and nothing else meant a malformed decision that kept
+    `State: active` still authorised spending — the field survives edits the
+    rest of the entry does not. A document this checker reports problems in has
+    not authorised anything.
+    """
+    import check_decisions
+
+    text = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
+    # A heading the checker cannot read is an entry nobody can see, and it
+    # would come back from here as "no such decision" — which reads as a
+    # missing authorisation when it is an unreadable one. Refused instead, and
+    # the caller turns it into `undetermined`.
+    unparsed = check_decisions.unparsed_headings(text)
+    if unparsed:
+        raise RuntimeError(
+            "DECISIONS.md holds {} heading(s) this parser cannot read ({}), "
+            "so it cannot say whether {} is among them".format(
+                len(unparsed), "; ".join(unparsed[:2]), name))
+    problems = check_decisions.check(text, run_tests=False)
+    if problems:
+        raise RuntimeError(
+            "DECISIONS.md has {} problem(s) — {} — and a document that does "
+            "not check out has not authorised anything".format(
+                len(problems), "; ".join(problems[:2])))
+
+    seen = [e for e in check_decisions.parse(text) if e.id == name]
+    if len(seen) > 1:
+        raise RuntimeError(
+            "DECISIONS.md holds {} entries called {}, so nothing says which "
+            "one authorises".format(len(seen), name))
+    if not seen:
+        return (None, None)
+    return (seen[0].fields.get("State"), seen[0].fields.get("Authorises"))
 
 
 def _ask_the_order(step, **order_kwargs):
