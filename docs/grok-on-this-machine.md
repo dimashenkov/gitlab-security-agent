@@ -43,7 +43,7 @@ What each flag is for:
 | `--sandbox read-only` | the call must not write anything |
 | `--disallowed-tools …` | it must answer from the text it was given, not go looking |
 | `--no-plan` | stops the call turning into a planning session |
-| `--no-subagents` | one call is one call; subagents make the cost unbounded |
+| `--no-subagents` | one call is one call; subagents make it unbounded work |
 | `--json-schema` | constrains the output; implies `--output-format json` |
 | `--output-format json` | passed anyway, so the shape is stated and not inferred |
 
@@ -118,14 +118,15 @@ six; recording a field and never reading it is a claim nothing enforces.
 
 ## Two more, about the material rather than the reply
 
-These are not about `grok` at all, and they cost nothing to check, so check them
-**before** the first call rather than after the bill.
+These are not about `grok` at all, and they are free and instant to check, so
+check them **before** the first call rather than after thirty answers you then
+have to throw away.
 
 * **A seal that names a digest and nobody compares it is decoration.** If the
   material was sealed, verify the file you were handed against the digest the
   seal recorded. An edited pool was adjudicable while the artifact carried the
   genuine seal digest beside the answers.
-* **Do not pay for a question you cannot ask.** A diff captured cut off gets an
+* **Do not ask a question the material cannot answer.** A diff captured cut off gets an
   answer over the half that was shown, and the answer is then counted as an
   answer over the whole change. Truncation is knowable before the run; refuse
   there, and say which cases and what to do (re-seal from whole material).
@@ -138,23 +139,42 @@ These are not about `grok` at all, and they cost nothing to check, so check them
 
 ## Cost, and the rule about it
 
-Every call spends the owner's money. **A subagent never spends money** — if you
-are a subagent, you do not run `grok` at all, and you do not run `claude`,
-`tools/pair_corpus.py`, `tools/run_queue.py`, `tools/experiment.py run`,
-`tools/injection_corpus.py`, `tools/grok_adjudicate.py` or
-`tools/classify_alarms.py` either.
+**The account is a flat subscription — SuperGrok Lite, €20 a month — so one
+more call does not move a bill.** Established by the owner on 2026-09-06,
+answering the one question that decides this: *if we make one more call right
+now, does a bill go up?*
 
-If you are the main agent: ask the owner before spending, every time, with the
-number. Thirty adjudications cost about $0.19 measured; twenty codings about
-$0.15. Record `total_cost_usd` from each reply rather than estimating.
+An earlier version of this section said "every call spends the owner's money",
+which contradicted the field table above calling `total_cost_usd` notional. It
+was wrong, and it was the wrong half: `total_cost_usd` on this path is API list
+price for the tokens used, charged to nobody — the same shape as Claude Code's
+figure, and the same trap, because it looks exactly like an invoice. It is
+recorded in `tools/spend.py` as `BILLING_ARRANGEMENT["xai"]` with that date,
+so nobody re-derives it from the tool's name.
+
+**A subagent still never runs `grok`** — nor `claude`, `tools/pair_corpus.py`,
+`tools/run_queue.py`, `tools/experiment.py run`, `tools/injection_corpus.py`,
+`tools/grok_adjudicate.py` or `tools/classify_alarms.py`. That rule is not
+about the bill; it is about a subagent starting work nobody asked for.
+
+What the figures are still good for: thirty adjudications came to about $0.19
+of list price, twenty codings about $0.15. Record `total_cost_usd` from each
+reply rather than estimating — it measures the weight of the work, which is
+worth knowing, and it is not money.
 
 ## Testing code that calls `grok`
 
 Replace the subprocess boundary, never the binary. `tests/test_grok_adjudicate.py`
 and `tests/test_classify_alarms.py` both monkeypatch `subprocess.run` and hand
-back a `CompletedProcess` with a JSON body, so the suite runs offline and spends
-nothing. Copy that. A test that shells out to `grok` costs money on every run and
-fails when the network is down.
+back a `CompletedProcess` with a JSON body, so the suite runs offline and calls
+nothing. Copy that.
+
+A test that shells out to `grok` makes a real external call on every run: it
+consumes the subscription's capacity, takes seconds instead of milliseconds, and
+fails when the network is down. It does not raise a bill — the account is flat —
+and that is the one reason it is *not* the worst of the three. An earlier
+version of this sentence said it "costs money on every run", which contradicts
+the arrangement established above; corrected 2026-09-06.
 
 `pytest` on this machine must go through a pipe, or the `rtk` hook rewrites it
 and it dies:

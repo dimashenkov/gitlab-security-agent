@@ -77,21 +77,33 @@ TOKEN_FIELDS = ("input_tokens", "output_tokens",
 # `None` means nobody has established it. That is not "probably free": it is the
 # state that stops this tool printing a total, because a figure that silently
 # omits a spend is the defect the whole file exists to prevent.
+# `kind` is `metered` or `flat`, and nothing else is accepted — an arrangement
+# this tool cannot read is treated exactly as one nobody wrote.
+FLAT = "flat"
+METERED = "metered"
+
+# Anthropic is deliberately **not** in this table. Codex, 2026-09-06: it had an
+# entry with a third `kind`, `per-row`, which the invariant above does not
+# admit — a table whose own contents break its rule. The arrangement there is
+# genuinely per row rather than per vendor: the `anthropic-api` path is metered
+# and every other path is the Claude subscription, established 2026-08-30 with
+# the price worked out ($53 at the median for the corpus remainder) and the
+# owner's decision that an API key is never used. `paid_by` decides it from the
+# provenance of each review, and this table is for vendors whose whole ledger
+# shares one arrangement.
 BILLING_ARRANGEMENT: Dict[str, Optional[Dict[str, str]]] = {
-    # Established 2026-08-30 with the price worked out: $53 at the median for
-    # the corpus remainder on the API path, and the owner's decision that an
-    # API key is never used. So the CLI path runs on the subscription and its
-    # `total_cost_usd` is list price for tokens nobody was charged for. The
-    # `anthropic-api` path is the opposite and is billed.
-    "anthropic": {"metered": "when `provenance.provider` is `anthropic-api`",
-                  "flat": "the Claude subscription, for every other path",
-                  "established": "2026-08-30"},
-    # NOT established. `docs/grok-on-this-machine.md` says both that
-    # `total_cost_usd` is "the notional price of the call" (line 72) and that
-    # "every call spends the owner's money" (line 141), and the account is a
-    # SuperGrok Lite subscription. Those cannot both be true, and which one is
-    # decides whether the $0.19 recorded so far is money or weight.
-    "xai": None,
+    # Established by the owner on 2026-09-06, answering the one question this
+    # table is for: a SuperGrok Lite subscription at €20 a month, so one more
+    # call moves no bill. `total_cost_usd` on that path is list price for
+    # tokens nobody was charged for — the same shape as Claude Code's, and the
+    # same trap: it is the most tempting number here because it looks exactly
+    # like an invoice.
+    #
+    # `docs/grok-on-this-machine.md` said on line 141 that "every call spends
+    # the owner's money" while line 72 called the figure notional. The owner's
+    # answer settles it: line 141 was wrong and is corrected there.
+    "xai": {"kind": FLAT, "established": "2026-09-06",
+            "why": "SuperGrok Lite, €20 a month; one more call moves no bill"},
 }
 
 # Spending this counter cannot see, named rather than omitted. The test is not
@@ -153,6 +165,34 @@ def as_money(value: Any) -> Optional[float]:
 def cost_of(row: Dict[str, Any]) -> Optional[float]:
     """The reported cost of one review, or None when there is no usable one."""
     return as_money(_provenance(row).get("reported_cost_usd"))
+
+
+MONEY, ABSENT, UNREADABLE = "money", "absent", "unreadable"
+
+
+def money_state(holder: Dict[str, Any], field: str) -> str:
+    """`money`, `absent`, or `unreadable` for one field — three answers.
+
+    `as_money` collapses the last two into `None`, which is right for
+    arithmetic and wrong for a report: a record that says nothing bounds a
+    total from below, and one that says something nobody can read does not
+    bound it at all.
+
+    One function for both kinds of record. Codex found this same distinction
+    missing in three places on 2026-09-06 — the headline, the breakdown table,
+    and the vendor ledger — because each had its own spelling of it. `null` is
+    the JSON spelling of "no value" and is absent wherever it appears:
+    `run_queue.py` always writes its cost key and puts `None` in it when the
+    provider reported nothing.
+    """
+    if field not in holder or holder[field] is None:
+        return ABSENT
+    return MONEY if as_money(holder[field]) is not None else UNREADABLE
+
+
+def cost_state(row: Dict[str, Any]) -> str:
+    """`money_state` for one review's recorded cost."""
+    return money_state(_provenance(row), "reported_cost_usd")
 
 
 def money(amount: float) -> str:
@@ -334,8 +374,15 @@ def queue_rows(path: Path) -> List[Dict[str, Any]]:
             "auth_method": row.get("auth_method") or "",
             "auth_subscription": row.get("auth_subscription") or "",
         }
-        if isinstance(cost, (int, float)):
-            provenance["reported_cost_usd"] = float(cost)
+        # The raw value, carried through as it was written. Codex, 2026-09-06:
+        # this used to filter on `isinstance(..., (int, float))`, which both
+        # dropped a present-but-unreadable `"1.25"` — so it arrived downstream
+        # as "no cost recorded" and printed a floor — and let `True` through as
+        # `$1.00`. Sanitising at the reader takes the judgement away from the
+        # one function that makes it, and hands the report a value nobody
+        # weighed. Absence stays absence; anything present reaches `as_money`.
+        if "notional_api_cost" in row:
+            provenance["reported_cost_usd"] = cost
         usage: Dict[str, Any] = {name: row.get(name) for name in TOKEN_FIELDS}
         # `usage_reported` false means the run finished and its figures never
         # arrived: an admitted gap, not four zeros.
@@ -530,11 +577,20 @@ def summarise(rows: List[Dict[str, Any]], by: str = "day",
     for period in sorted(groups):
         members = groups[period]
         pots: Dict[str, List[float]] = {CHARGED: [], NOTIONAL_: []}
-        unknown = silent = 0
+        unknown = silent = unreadable_cost = 0
         for row in members:
             cost = cost_of(row)
             if cost is None:
-                silent += 1
+                # The same three-way split the headline makes. Codex,
+                # 2026-09-06: this counted every unusable cost as "reported no
+                # cost at all", so a queue row carrying `"1.25"` was filed
+                # under absent here while the line above it said the figure
+                # could not be established — two readers of one row, disagreeing
+                # in one report.
+                if cost_state(row) == "unreadable":
+                    unreadable_cost += 1
+                else:
+                    silent += 1
                 continue
             state = paid_by(row)
             if state == UNKNOWN:
@@ -548,6 +604,8 @@ def summarise(rows: List[Dict[str, Any]], by: str = "day",
             totals[state] += pots[state]
         totals["unknown"] += unknown
         totals["silent"] += silent
+        totals["unreadable_cost"] = totals.get(
+            "unreadable_cost", 0) + unreadable_cost
         totals["runs"] += len(members)
         print("{:<12} {:>5} {:>11} {:>12} {:>9} {:>9}".format(
             period, len(members),
@@ -577,9 +635,21 @@ def summarise(rows: List[Dict[str, Any]], by: str = "day",
         print("  {} run(s) reported a cost with no established billing. Their "
               "money is in neither column, because assigning it to the cheaper "
               "one would understate a bill.".format(totals["unknown"]))
+    # These two sentences are about **this table's columns**, and they used to
+    # be about "the total" — a claim that only holds for a row that could have
+    # been charged. Codex, 2026-09-06: with `--breakdown` a subscription review
+    # carrying an absent or malformed notional figure was described as failing
+    # to bound a total it was never part of, while the headline above had just
+    # been fixed to call the same figure irrelevant. The counts here are right;
+    # what they were said to mean was not.
     if totals["silent"]:
-        print("  {} run(s) reported no cost at all. Absent, not $0.00."
-              .format(totals["silent"]))
+        print("  {} run(s) reported no cost at all, and are in neither money "
+              "column. Absent, not $0.00.".format(totals["silent"]))
+    if totals.get("unreadable_cost"):
+        print("  {} run(s) recorded something other than money where a cost "
+              "belongs, and are in neither column. Not the same as recording "
+              "nothing: the headline says which of the two bounds its figure "
+              "and which does not.".format(totals["unreadable_cost"]))
 
     # The four counts, named, or nothing. The previous version printed a
     # sentence about "the token counts above" being a floor while the table
@@ -660,45 +730,110 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
         return 2
 
     charged: List[float] = []
-    subscription = unestablished = unpriced = 0
+    malformed: List[str] = []
+    # Printed and never counted: things worth surfacing that cannot change
+    # the figure. Kept apart from `integrity` on purpose — one stops the
+    # answer and the other does not, and folding them makes every note a
+    # refusal.
+    notes: List[str] = []
+    subscription = unestablished = silent = 0
 
     for row in rows:
         cost = cost_of(row)
         state = paid_by(row)
-        if state == CHARGED and cost is not None:
-            charged.append(cost)
-        elif state == NOTIONAL_:
+        # Not named `money`: that is the formatting function this same
+        # function calls twenty lines further down, and shadowing it would
+        # have turned every printed figure into a `TypeError`.
+        recorded = cost_state(row)
+
+        # **Who paid is decided before the cost is judged**, and it was the
+        # other way round. Codex, 2026-09-06: a review on a named subscription
+        # with a malformed cost made the whole figure indeterminate, while the
+        # identical case on a flat vendor was a note — the same rule applied to
+        # one side and not the other. A number that is list price charged to
+        # nobody cannot make the charged total unknowable, whatever it says.
+        if state == NOTIONAL_:
             subscription += 1
-        elif state == UNKNOWN:
+            if recorded == UNREADABLE:
+                notes.append(
+                    "a subscription review records {!r} where a cost belongs "
+                    "— not in any total, because that path is flat".format(
+                        _provenance(row).get("reported_cost_usd")))
+            continue
+
+        # A run that recorded no cost at all is counted apart from one that
+        # recorded a cost nobody can place. The first cannot change a total it
+        # contributes nothing to, so it makes the figure a **floor** rather
+        # than stopping it; the second is money this tool can see and cannot
+        # assign, and that stops it. "Absent, not $0.00" is this file's oldest
+        # rule, and the distinction is which of the two sentences is owed.
+        if recorded == ABSENT:
+            silent += 1
+        elif recorded == UNREADABLE:
+            malformed.append(
+                "a review records {!r} where a cost belongs".format(
+                    _provenance(row).get("reported_cost_usd")))
+        elif state == CHARGED:
+            charged.append(cost)
+        else:
             unestablished += 1
-        if cost is None and state == CHARGED:
-            unpriced += 1
 
     vendor_unestablished: Dict[str, int] = defaultdict(int)
     vendor_unpriced: List[str] = []
     for key, call in sorted(vendor["calls"].items()):
         arrangement = BILLING_ARRANGEMENT.get(call["vendor"])
-        if arrangement is None:
+        kind = arrangement.get("kind") if isinstance(arrangement, dict) else None
+        if kind not in (FLAT, METERED):
+            # No arrangement, or one this tool cannot read. Both are "nobody
+            # established it" — a `kind` it does not know is not a licence to
+            # pick one.
             vendor_unestablished[call["vendor"]] += 1
+            continue
+        if kind == FLAT:
+            # Counted as a call and its figure counted nowhere. The number in
+            # the record is list price for tokens nobody was charged for, and
+            # adding it is the trap this whole file is built around: it looks
+            # exactly like an invoice.
+            subscription += 1
+            # A note, not a refusal. Codex proposed making a malformed
+            # `cost_usd` here indeterminate; the ruling on 2026-09-06 went the
+            # other way and the reason is worth keeping: for a FLAT
+            # arrangement this field is neither added nor used to classify, so
+            # its contents cannot make the money answer unknowable. Refusing
+            # over it would conflate record hygiene with arithmetic integrity.
+            # It is surfaced because the arrangement can change, and from that
+            # day the same value becomes load-bearing and blocking.
+            if money_state(call, "cost_usd") == UNREADABLE:
+                notes.append(
+                    "{} {} records {!r} where a cost belongs — not in any "
+                    "total, because this vendor is flat".format(
+                        key[0], key[1], call.get("cost_usd")))
             continue
         # Through the same predicate the reviews go through. It was reading
         # `isinstance(..., (int, float))` and adding whatever it found, so a
         # ledger for a vendor with an established arrangement could print a
         # total that was reduced by a negative, or `nan`, and exit 0.
-        amount = as_money(call.get("cost_usd"))
-        if amount is None:
+        state = money_state(call, "cost_usd")
+        if state == ABSENT:
+            # The same floor a review with no recorded cost gets. Codex,
+            # 2026-09-06: the vendor path had its own spelling of this and made
+            # a `null` cost an indeterminate hole, while the identical case on
+            # the review side was a floor. One function decides it now.
+            silent += 1
+            continue
+        if state == UNREADABLE:
             vendor_unpriced.append("{} {} records {!r} where money belongs"
                                    .format(key[0], key[1],
                                            call.get("cost_usd")))
             continue
-        charged.append(amount)
+        charged.append(as_money(call["cost_usd"]))
 
     # Ledger integrity, which is a different question from what was spent.
     # Codex, 2026-09-05: exit 2 belongs to "these records cannot be trusted to
     # add up", not to every exclusion — a known flat fee left out of a metered
     # total is the tool working, and the permanently invisible agent plan
     # forcing 2 forever turns the status into noise.
-    integrity = list(vendor["problems"]) + vendor_unpriced
+    integrity = list(vendor["problems"]) + vendor_unpriced + malformed
     if unreadable:
         integrity.append("{} artifact(s) could not be read".format(unreadable))
     if skipped_lines == -1:
@@ -706,9 +841,6 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
     elif skipped_lines:
         integrity.append(
             "{} line(s) of the queue log did not parse".format(skipped_lines))
-    if unpriced:
-        integrity.append(
-            "{} billed run(s) reported no usable cost".format(unpriced))
 
     # A call nobody could price stops the figure exactly as a call nobody could
     # classify does. Codex, 2026-09-05: `vendor_unpriced` reached the ledger
@@ -717,7 +849,7 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
     # contradicting the diagnostic three lines under it. Unpriced and
     # unclassified are two ways of not knowing, and the figure needs both.
     total_unestablished = unestablished + sum(vendor_unestablished.values())
-    cannot_price = unpriced + len(vendor_unpriced)
+    cannot_price = len(vendor_unpriced) + len(malformed)
 
     # And any ledger failure at all. Codex, 2026-09-05, on the version that had
     # just wired the unpriced count in: an unreadable artifact, a malformed
@@ -734,8 +866,8 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
                 "raises a bill".format(count, name))
         if unestablished:
             reasons.append(
-                "{} review(s) whose login the artifact does not name".format(
-                    unestablished))
+                "{} review(s) that recorded a cost and no login to place it "
+                "against".format(unestablished))
         if cannot_price:
             reasons.append(
                 "{} call(s) recording something other than money where a cost "
@@ -748,11 +880,20 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
             "; ".join(reasons),
             "; {} charged so far from {} call(s) that could be classified"
             .format(money(sum(charged)), len(charged)) if charged else ""))
-    elif charged:
-        print("Spend: {} charged, from {} call(s){}".format(
-            money(sum(charged)), len(charged),
-            "; {} more on a flat subscription and not in that figure".format(
-                subscription) if subscription else ""))
+    elif charged or silent:
+        # `≥`, and the word "floor", whenever a run recorded no cost at all.
+        # Such a run cannot move a total it contributes nothing to, so it does
+        # not stop the figure — but it did happen, and printing its absence as
+        # nothing is the "absent is not zero" defect this file was written
+        # against, one level up.
+        print("Spend: {}{} charged{}{}{}".format(
+            "≥ " if silent else "", money(sum(charged)),
+            ", from {} metered call(s)".format(len(charged)) if charged
+            else " — nothing metered was recorded",
+            "; {} call(s) on a flat subscription, not in that figure".format(
+                subscription) if subscription else "",
+            "; a floor, not the answer — {} run(s) recorded no cost at all"
+            .format(silent) if silent else ""))
     else:
         print("Spend: $0.00 charged — every call the counter saw runs on a "
               "flat subscription{}".format(
@@ -774,6 +915,10 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
         print("  ledger: {}".format("; ".join(integrity[:3])))
         if len(integrity) > 3:
             print("  ledger: and {} more".format(len(integrity) - 3))
+    if notes:
+        print("  noted, and it changes no number above: {}{}".format(
+            "; ".join(notes[:2]),
+            " and {} more".format(len(notes) - 2) if len(notes) > 2 else ""))
     print("  not counted anywhere, and nothing here can count it: {}".format(
         "; ".join(INVISIBLE)))
 
@@ -781,17 +926,26 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
     # saw and could not classify. Exit 0 cannot certify that every call was
     # recorded — only that every record found was valid — and the line above
     # does not claim otherwise.
-    return 2 if (integrity or total_unestablished or cannot_price) else 0
+    # A floor is not a clean answer either. Exit 0 is for a figure with nothing
+    # missing behind it; a run that happened and recorded no cost is missing.
+    return 2 if (integrity or total_unestablished or cannot_price
+                 or silent) else 0
 
 
 def detail(rows: List[Dict[str, Any]]) -> None:
     print("\n{:<22} {:<10} {:<38} {}".format("when", "cost", "who paid", "model"))
     print("-" * 96)
     for row in sorted(rows, key=when):
-        cost = cost_of(row)
+        # The fourth reader of the same three-way answer, and the last one to
+        # be wired to it. Codex, 2026-09-06: it rendered `absent` and
+        # `unreadable` identically as "not reported", so `--detail` showed a
+        # malformed `"1.25"` as a run that reported nothing while the headline
+        # above called the figure indeterminate over it.
+        state = cost_state(row)
         print("{:<22} {:<10} {:<38} {}".format(
             when(row)[:19] or "undated",
-            "{:.3f}".format(cost) if cost is not None else "not reported",
+            "{:.3f}".format(cost_of(row)) if state == MONEY
+            else "not reported" if state == ABSENT else "unreadable",
             who_paid(row),
             _provenance(row).get("model_requested", "")))
 
@@ -900,13 +1054,18 @@ def main(argv: Optional[List[str]] = None) -> int:
               "not be read rather than because there were none.".format(
                   failed or "an unknown number of"))
     elif vendor["calls"]:
-        print("No review artifacts in this report. The metered calls above are "
+        print("No review artifacts in this report. The vendor calls above are "
               "the whole of it; this table only ever covers reviews.")
     else:
-        print("No review artifacts and no metered calls. This table covers "
+        print("No review artifacts and no vendor calls. This table covers "
               "reviews, and there were none to group.")
+    # "Vendor", not "metered". Codex, 2026-09-06: these lines called every
+    # vendor call metered, so a flat xAI ledger reported a flat subscription in
+    # the headline and contradicted it three lines down. Which arrangement a
+    # vendor is on is `BILLING_ARRANGEMENT`'s answer, not a word baked into the
+    # sentence that counts them.
     if vendor["calls"] or vendor["problems"]:
-        print("\nMetered vendors, counted apart and never added to the above: "
+        print("\nVendor calls, counted apart and never added to the above: "
               "{} call(s) recorded, {} record(s) this tool could not key."
               .format(len(vendor["calls"]), len(vendor["problems"])))
     if args.source == "artifacts" and queue_rows(ROOT / QUEUE_LOG):

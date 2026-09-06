@@ -215,6 +215,38 @@ class TestTheQueueLogIsASeparateSource:
         assert not spend.billed(rows[0])
         assert spend.cost_of(rows[0]) == 1.5
 
+    @pytest.mark.parametrize("cost", ["1.25", True, -1, float("nan"),
+                                      {"usd": 1}])
+    def test_a_malformed_queue_cost_is_carried_through_not_sanitised(
+            self, tmp_path, cost):
+        """Codex, 2026-09-06: this reader filtered on
+        `isinstance(..., (int, float))`, which dropped a present-but-unreadable
+        `"1.25"` — so it reached the report as "no cost recorded" and printed a
+        floor — and let `True` through as `$1.00`. Sanitising here takes the
+        judgement away from the one function that makes it."""
+        rows = spend.queue_rows(self.log(
+            tmp_path, self.review(notional_api_cost=cost)))
+        assert "reported_cost_usd" in rows[0]["provenance"], (
+            "a present value was dropped, so the report cannot tell it from "
+            "a run that recorded nothing")
+        assert spend.cost_of(rows[0]) is None
+
+    def test_an_absent_queue_cost_stays_absent(self, tmp_path):
+        row = self.review()
+        del row["notional_api_cost"]
+        rows = spend.queue_rows(self.log(tmp_path, row))
+        assert "reported_cost_usd" not in rows[0]["provenance"]
+
+    def test_the_producers_own_spelling_of_absent_is_absent(self, tmp_path):
+        """Codex, 2026-09-06: `run_queue.py` always writes the key and puts
+        `None` in it when the provider reported nothing, so a presence check
+        alone filed every such row as a malformed cost — an indeterminate hole
+        where the floor belongs. Checked against the producer rather than
+        against a test that deletes the key, which is not what it writes."""
+        rows = spend.queue_rows(self.log(
+            tmp_path, self.review(notional_api_cost=None)))
+        assert spend.cost_state(rows[0]) == "absent"
+
     def test_a_window_row_is_not_a_review(self, tmp_path):
         rows = spend.queue_rows(self.log(
             tmp_path, {"kind": "window", "window_termination": "refused"}))
@@ -348,7 +380,8 @@ class TestTheCommandItself:
         assert "subscription (max)" in out
 
 
-def vendor_record(tmp_path, name="grok-adjudication.json", *, vendor="xai",
+def vendor_record(tmp_path, name="grok-adjudication.json", *,
+                  vendor="nobody-has-mapped-this",
                   block="cases", calls=(("c1", "req-1", 0.006),)):
     body = {"vendor": vendor, "started_at": "2026-09-05T10:00:00+00:00",
             block: {work: {"request_id": request, "cost_usd": cost,
@@ -407,7 +440,7 @@ class TestTheOneFigure:
         code = spend.one_figure([], calls)
         out = capsys.readouterr().out
         assert "indeterminate" in out
-        assert "1 xai call(s)" in out
+        assert "1 nobody-has-mapped-this call(s)" in out
         assert "whether one more raises a bill" in out
         assert code == 2
 
@@ -469,7 +502,7 @@ class TestTheOneFigure:
         path = vendor_record(tmp_path)
         spend.main([str(path)])
         out = capsys.readouterr().out
-        assert "1 xai call(s)" in out
+        assert "1 nobody-has-mapped-this call(s)" in out
 
     def test_a_vendor_ledger_is_not_also_counted_as_a_review(
             self, tmp_path, capsys):
@@ -484,7 +517,7 @@ class TestTheOneFigure:
         """A caller who renamed the file still means the same thing."""
         path = vendor_record(tmp_path, "whatever.json")
         spend.main([str(path)])
-        assert "1 xai call(s)" in capsys.readouterr().out
+        assert "1 nobody-has-mapped-this call(s)" in capsys.readouterr().out
 
     def test_a_review_artifact_named_like_a_ledger_is_still_a_review(
             self, tmp_path, capsys):
@@ -549,7 +582,7 @@ class TestTheOneFigure:
         code = spend.main([str(path), "--breakdown"])
         out = capsys.readouterr().out
         assert out.startswith("Spend:")
-        assert "1 xai call(s)" in out
+        assert "1 nobody-has-mapped-this call(s)" in out
         # The assertion this test was missing, and the whole point of it: the
         # table denied the calls the headline had just named.
         assert "no records were found" not in out.lower()
@@ -598,7 +631,7 @@ class TestTheOneFigure:
         monkeypatch.setattr(spend, "VENDOR_GLOBS", ())
         spend.main(["--breakdown", "--source", "queue"])
         out = capsys.readouterr().out
-        assert "no metered calls" in out
+        assert "no vendor calls" in out
         assert "the whole of it" not in out
 
     def test_a_vendor_ledger_failure_reaches_the_exit_code_in_a_breakdown(
@@ -744,6 +777,226 @@ class TestTheOneFigure:
         assert "filters the reviews and not the vendor calls" in out
 
 
+class TestAFlatVendorIsCountedAndNotSummed:
+    """Established by the owner on 2026-09-06: SuperGrok Lite, €20 a month, so
+    one more call moves no bill. The figure in each record is list price for
+    tokens nobody was charged for — the same shape as Claude Code's, and the
+    most tempting number in the file because it looks exactly like an invoice.
+    """
+
+    def test_the_arrangement_is_recorded_with_its_date(self):
+        entry = spend.BILLING_ARRANGEMENT["xai"]
+        assert entry["kind"] == spend.FLAT
+        assert entry["established"] == "2026-09-06"
+
+    def test_a_flat_call_is_counted_and_its_figure_is_not(
+            self, tmp_path, capsys):
+        path = vendor_record(tmp_path, vendor="xai",
+                             calls=(("c1", "r1", 0.006), ("c2", "r2", 0.006)))
+        code = spend.main([str(path)])
+        out = capsys.readouterr().out
+        assert "$0.00 charged" in out
+        assert "flat subscription (2 of them)" in out
+        assert "0.0120" not in out, "a flat figure was added to the total"
+        assert "0.0062" not in out, "a flat figure reached the headline"
+        assert "indeterminate" not in out
+        assert code == 0
+
+    # `None` is not in this list: it is the JSON spelling of "no value" and is
+    # absent, not malformed, on both the vendor and the review side.
+    @pytest.mark.parametrize("cost", ["bad", True, -1, float("nan")])
+    def test_a_bad_cost_on_a_flat_call_is_a_note_not_a_refusal(
+            self, tmp_path, capsys, cost):
+        """Adjudicated with Codex on 2026-09-06, against his first position.
+
+        For a FLAT arrangement `cost_usd` is neither added nor used to
+        classify, so its contents cannot make the money answer unknowable.
+        Refusing over it would conflate record hygiene with arithmetic
+        integrity. It is surfaced because the arrangement can change, and from
+        that day the same value is load-bearing and blocking.
+        """
+        path = vendor_record(tmp_path, vendor="xai",
+                             calls=(("c1", "r1", cost),))
+        code = spend.main([str(path)])
+        out = capsys.readouterr().out
+        assert "noted, and it changes no number above" in out
+        assert "because this vendor is flat" in out
+        assert "indeterminate" not in out
+        assert code == 0
+
+    def test_the_same_bad_cost_on_a_metered_call_does_refuse(
+            self, tmp_path, capsys, monkeypatch):
+        """The other side of the ruling: change the arrangement and the same
+        value stops the figure."""
+        monkeypatch.setitem(spend.BILLING_ARRANGEMENT, "xai",
+                            {"kind": spend.METERED, "established": "test"})
+        path = vendor_record(tmp_path, vendor="xai",
+                             calls=(("c1", "r1", "bad"),))
+        code = spend.main([str(path)])
+        out = capsys.readouterr().out
+        assert "indeterminate" in out
+        assert code == 2
+
+    def test_an_arrangement_this_tool_cannot_read_is_not_a_licence_to_pick_one(
+            self, tmp_path, capsys, monkeypatch):
+        """A `kind` the tool does not know is nobody having established it —
+        not a reason to choose the cheaper reading."""
+        monkeypatch.setitem(spend.BILLING_ARRANGEMENT, "xai",
+                            {"kind": "probably free", "established": "x"})
+        path = vendor_record(tmp_path, vendor="xai")
+        code = spend.main([str(path)])
+        out = capsys.readouterr().out
+        assert "indeterminate" in out
+        assert code == 2
+
+
+class TestAFloorIsNotAnAnswer:
+    """A run that recorded no cost at all cannot move a total it contributes
+    nothing to, so it does not stop the figure — but it happened, and printing
+    its absence as nothing is "absent is not zero" one level up."""
+
+    def test_the_figure_is_marked_as_a_floor(self, tmp_path, capsys):
+        priced = artifact(tmp_path, "a.json", subscription="", cost=2.00,
+                          auth_method="api-key")
+        # Not a subscription row: a review whose path is flat has a notional
+        # cost, and an absent notional cost cannot bound a charged total. The
+        # floor is for a run that *could* have been charged and said nothing.
+        silent = artifact(tmp_path, "b.json", cost=None, subscription="",
+                          auth_method="")
+        code = spend.main([str(priced), str(silent)])
+        out = capsys.readouterr().out
+        assert out.startswith("Spend: ≥ ")
+        assert "a floor, not the answer" in out
+        assert "1 run(s) recorded no cost at all" in out
+        assert code == 2
+
+    def test_a_complete_ledger_carries_no_floor_mark(self, tmp_path, capsys):
+        priced = artifact(tmp_path, "a.json", subscription="", cost=2.00,
+                          auth_method="api-key")
+        code = spend.main([str(priced)])
+        out = capsys.readouterr().out
+        assert "≥" not in out
+        assert "floor" not in out
+        assert "$2.00 charged" in out
+        assert code == 0
+
+    @pytest.mark.parametrize("cost", [-1, "1.25", float("nan"),
+                                      float("inf"), True])
+    def test_a_malformed_cost_is_not_a_floor(self, tmp_path, capsys, cost):
+        """Codex, 2026-09-06: `cost_of` returns `None` both for an absent cost
+        and for one that is present and unreadable, so `-1` or `"1.25"` was
+        printed as a floor. A floor says "at least this much"; a malformed
+        amount cannot be bounded at all."""
+        row = artifact(tmp_path, "a.json", subscription="",
+                       auth_method="api-key", cost=cost)
+        code = spend.main([str(row)])
+        out = capsys.readouterr().out
+        assert "indeterminate" in out
+        assert "floor" not in out
+        assert "where a cost belongs" in out
+        assert code == 2
+
+    def test_the_table_agrees_with_the_headline_about_a_bad_cost(
+            self, tmp_path, capsys):
+        """Codex, 2026-09-06: `summarise` filed every unusable cost under
+        "reported no cost at all", so the headline said the figure could not be
+        established while the table underneath called the same row absent —
+        two readers of one row disagreeing inside one report."""
+        row = artifact(tmp_path, "a.json", subscription="",
+                       auth_method="api-key", cost="1.25")
+        spend.main([str(row), "--breakdown"])
+        out = capsys.readouterr().out
+        assert "indeterminate" in out
+        assert "reported no cost at all" not in out
+        assert "other than money where a cost belongs" in out
+        assert "are in neither column" in out
+
+    def test_the_table_still_says_absent_for_a_run_with_no_cost(
+            self, tmp_path, capsys):
+        row = artifact(tmp_path, "a.json", cost=None, subscription="",
+                       auth_method="")
+        spend.main([str(row), "--breakdown"])
+        out = capsys.readouterr().out
+        assert "reported no cost at all, and are in neither money column" in out
+        assert "other than money where a cost belongs" not in out
+
+    def test_a_null_cost_is_a_floor_and_not_a_hole(self, tmp_path, capsys):
+        """The whole point of the split, through the CLI: `null` is the JSON
+        spelling of "no value" and belongs with the runs that recorded
+        nothing, which bound the total from below."""
+        path = tmp_path / "a.json"
+        path.write_text(json.dumps({
+            "generated_at": "2026-08-30T12:00:00+00:00",
+            "provenance": {"provider": "claude-cli", "auth_method": "",
+                           "reported_cost_usd": None},
+            "usage": {}}), encoding="utf-8")
+        code = spend.main([str(path)])
+        out = capsys.readouterr().out
+        assert "a floor, not the answer" in out
+        assert "where a cost belongs" not in out
+        assert code == 2
+
+    def test_a_subscription_review_with_no_cost_is_not_a_floor(
+            self, tmp_path, capsys):
+        """A review whose path is flat has a notional cost, and an absent
+        notional cost cannot bound a charged total. The floor is for a run that
+        could have been charged and said nothing."""
+        row = artifact(tmp_path, "a.json", subscription="max", cost=None)
+        code = spend.main([str(row)])
+        out = capsys.readouterr().out
+        assert "floor" not in out
+        assert "flat subscription" in out
+        assert code == 0
+
+    def test_a_subscription_review_with_a_bad_cost_is_a_note(
+            self, tmp_path, capsys):
+        """Codex, 2026-09-06: the cost was judged before who paid, so a review
+        on a named subscription with a malformed notional figure made the whole
+        figure indeterminate — while the identical case on a flat vendor was a
+        note. The same rule now applies to both sides."""
+        row = artifact(tmp_path, "a.json", subscription="max", cost="1.25")
+        code = spend.main([str(row)])
+        out = capsys.readouterr().out
+        assert "noted, and it changes no number above" in out
+        assert "because that path is flat" in out
+        assert "indeterminate" not in out
+        assert code == 0
+
+    def test_the_detail_view_tells_absent_from_unreadable(
+            self, tmp_path, capsys):
+        """The fourth reader of the same three-way answer. Codex, 2026-09-06:
+        it rendered both as "not reported", so `--detail` showed a malformed
+        `"1.25"` as a run that reported nothing while the headline above called
+        the figure indeterminate over it."""
+        bad = artifact(tmp_path, "a.json", subscription="max", cost="1.25")
+        none = artifact(tmp_path, "b.json", subscription="max", cost=None)
+        spend.main([str(bad), str(none), "--detail"])
+        out = capsys.readouterr().out
+        assert "unreadable" in out
+        assert "not reported" in out
+
+    def test_only_anthropic_is_absent_from_the_arrangement_table(self):
+        """It had a third `kind`, `per-row`, which the table's own invariant
+        does not admit. Its arrangement is per row, and `paid_by` decides it."""
+        assert "anthropic" not in spend.BILLING_ARRANGEMENT
+        for name, entry in spend.BILLING_ARRANGEMENT.items():
+            assert entry is None or entry["kind"] in (spend.FLAT,
+                                                      spend.METERED), name
+
+    def test_a_cost_nobody_can_place_still_stops_the_figure(
+            self, tmp_path, capsys):
+        """The other half of the split: a run that recorded no cost is a floor,
+        a run that recorded a cost and no login is money this tool can see and
+        cannot assign, and only the second stops the figure."""
+        row = artifact(tmp_path, "a.json", cost=2.00, subscription="",
+                       auth_method="")
+        code = spend.main([str(row)])
+        out = capsys.readouterr().out
+        assert "indeterminate" in out
+        assert "recorded a cost and no login to place it against" in out
+        assert code == 2
+
+
 class TestMoneyIsNotRoundedAway:
     """A single model call costs about $0.006, and two decimals rendered every
     one of them as `$0.00`, which reads as free. Codex, 2026-09-05."""
@@ -882,8 +1135,27 @@ class TestACostThatIsNotMoney:
         assert "indeterminate" in out
         assert code == 2
 
+    def test_a_null_vendor_cost_is_a_floor_like_a_review_with_none(
+            self, tmp_path, capsys, monkeypatch):
+        """Codex, 2026-09-06: the vendor path had its own spelling of the
+        three-way split and made a `null` cost an indeterminate hole, while
+        the identical case on the review side was a floor. One function decides
+        it now, and this pins the two sides agreeing."""
+        monkeypatch.setitem(spend.BILLING_ARRANGEMENT, "xai",
+                            {"kind": spend.METERED, "established": "test"})
+        path = tmp_path / "x.json"
+        path.write_text(json.dumps({
+            "vendor": "xai",
+            "cases": {"c1": {"request_id": "r1", "cost_usd": None}}}),
+            encoding="utf-8")
+        code = spend.main([str(path)])
+        out = capsys.readouterr().out
+        assert "a floor, not the answer" in out
+        assert "indeterminate" not in out
+        assert code == 2
+
     @pytest.mark.parametrize("value", [-1, float("inf"), float("nan"), True,
-                                       "0.006", None])
+                                       "0.006"])
     def test_a_vendor_ledger_goes_through_the_same_predicate(
             self, tmp_path, capsys, value, monkeypatch):
         """Codex, 2026-09-05, on the version that had fixed only the reviews:
@@ -891,7 +1163,7 @@ class TestACostThatIsNotMoney:
         it found, so a ledger for a vendor with an established arrangement
         could print a total reduced by a negative, or `nan`, and exit 0."""
         monkeypatch.setitem(spend.BILLING_ARRANGEMENT, "xai",
-                            {"metered": "every call", "established": "test"})
+                            {"kind": spend.METERED, "established": "test"})
         path = tmp_path / "x.json"
         path.write_text(json.dumps({
             "vendor": "xai",
@@ -920,7 +1192,7 @@ class TestACostThatIsNotMoney:
         """The other half: with an arrangement established and real money in
         the record, the line is a number rather than `indeterminate`."""
         monkeypatch.setitem(spend.BILLING_ARRANGEMENT, "xai",
-                            {"metered": "every call", "established": "test"})
+                            {"kind": spend.METERED, "established": "test"})
         path = tmp_path / "x.json"
         path.write_text(json.dumps({
             "vendor": "xai",
