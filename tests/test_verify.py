@@ -925,9 +925,9 @@ class TestConfirmationsCarryTheirEvidence:
     """
 
     def test_a_confirmation_that_shows_no_search_becomes_uncertain(self):
-        from security_agent.verify import _require_evidence
+        from security_agent.panel import require_evidence
 
-        vote = _require_evidence(Vote(
+        vote = require_evidence(Vote(
             verdict=VERDICT_CONFIRMED,
             reasoning="The 404 is discarded and the action runs anyway."))
 
@@ -938,18 +938,18 @@ class TestConfirmationsCarryTheirEvidence:
 
     def test_a_token_answer_does_not_count_as_a_search(self):
         """"checked" is not a statement about the code."""
-        from security_agent.verify import _require_evidence
+        from security_agent.panel import require_evidence
 
         for excuse in ("", "n/a", "checked", "yes", "looked"):
-            vote = _require_evidence(Vote(
+            vote = require_evidence(Vote(
                 verdict=VERDICT_CONFIRMED, reasoning="Confirmed.",
                 control_search=excuse))
             assert vote.verdict == VERDICT_UNCERTAIN, excuse
 
     def test_a_confirmation_that_names_what_it_searched_survives(self):
-        from security_agent.verify import _require_evidence
+        from security_agent.panel import require_evidence
 
-        vote = _require_evidence(Vote(
+        vote = require_evidence(Vote(
             verdict=VERDICT_CONFIRMED,
             reasoning="No caller validates.",
             control_search="Searched modules/backend for a call to "
@@ -960,9 +960,9 @@ class TestConfirmationsCarryTheirEvidence:
 
     def test_claiming_unauthenticated_reach_requires_naming_the_entry(self):
         """The claim that escalates severity is the claim that needs evidence."""
-        from security_agent.verify import _require_evidence
+        from security_agent.panel import require_evidence
 
-        vote = _require_evidence(Vote(
+        vote = require_evidence(Vote(
             verdict=VERDICT_CONFIRMED, reasoning="Reachable.",
             control_search="Searched app/ and lib/ for an auth decorator on "
                            "the route; there is none.",
@@ -972,9 +972,9 @@ class TestConfirmationsCarryTheirEvidence:
         assert "entry point" in vote.reasoning
 
     def test_naming_the_entry_point_lets_it_stand(self):
-        from security_agent.verify import _require_evidence
+        from security_agent.panel import require_evidence
 
-        vote = _require_evidence(Vote(
+        vote = require_evidence(Vote(
             verdict=VERDICT_CONFIRMED, reasoning="Reachable.",
             control_search="Searched app/ and lib/ for an auth decorator on "
                            "the route; there is none.",
@@ -984,24 +984,111 @@ class TestConfirmationsCarryTheirEvidence:
 
         assert vote.verdict == VERDICT_CONFIRMED
 
-    def test_a_refutation_needs_no_evidence_fields(self):
-        """The rule exists to make confirming harder, not refuting.
+    def test_an_empty_refutation_is_downgraded_too(self):
+        """This test used to assert the opposite, with the reasoning that
+        "refuting is the direction that already costs it something".
 
-        A verifier that refutes is arguing against the gate, which is the
-        direction that already costs it something.
+        It costs nothing. `refuted` removes the candidate from the report
+        entirely; `uncertain` keeps it visible, tagged "unverified chain", at
+        low confidence. So the rule guarded the direction that would *report*
+        something and left open the one that makes a finding disappear — three
+        empty refutations discarded a critical finding with no reasoning and no
+        search recorded anywhere. Found by `gpt-6-astra` on 2026-09-06.
+
+        Codex adjudicated the shape on 2026-09-07: leaving it "preserves an
+        unauditable path for deleting findings", and demanding prose alone
+        "only proves the model produced prose; it does not prove it inspected
+        code" — so a refutation states the control, caller or broken link it
+        found and where.
         """
-        from security_agent.verify import _require_evidence
+        from security_agent.panel import require_evidence
 
-        for verdict in (VERDICT_REFUTED, VERDICT_UNCERTAIN):
-            vote = _require_evidence(Vote(verdict=verdict, reasoning="No."))
-            assert vote.verdict == verdict
+        vote = require_evidence(Vote(verdict=VERDICT_REFUTED, reasoning="No."))
+        assert vote.verdict == VERDICT_UNCERTAIN
+        assert "downgraded from refuted" in vote.reasoning
+        assert "control, caller or broken link" in vote.reasoning
+
+    def test_a_downgraded_vote_carries_no_decision_with_it(self):
+        """Codex, 2026-09-07, on the gate pass for this very repair.
+
+        `replace` kept every field but the verdict, so a unanimous panel of
+        evidence-free refutations carrying `removes_existing_control: yes`
+        became usable `uncertain` seats whose flag still set `removes_control`
+        — and that flag gates whatever the severity and confidence say. The
+        repair for silent deletion would have turned quiet refuters into a
+        merge wall instead: the same verifiers, the opposite failure.
+
+        A vote that could not say what it looked at has not established the
+        control was removed either. The seat is kept; its claims are not.
+        """
+        from security_agent.panel import decide
+        from security_agent.panel import require_evidence
+
+        votes = [require_evidence(Vote(verdict=VERDICT_REFUTED,
+                                        reasoning="No.",
+                                        removes_control="yes"))
+                 for _ in range(3)]
+        assert all(v.verdict == VERDICT_UNCERTAIN for v in votes)
+        assert all(v.removes_control == "" for v in votes)
+
+        decided = decide(make_finding(severity="high"), votes)
+        assert decided.removes_control is False, \
+            "evidence-free refutations blocked the merge as a removed control"
+
+    def test_a_real_removed_control_still_gates(self):
+        """The control. A rule that cleared the flag from every vote would make
+        the removed-control path unreachable, which is a different failure."""
+        from security_agent.panel import decide
+        from security_agent.panel import require_evidence
+
+        votes = [require_evidence(Vote(
+            verdict=VERDICT_CONFIRMED,
+            reasoning="The check is gone.",
+            control_search="require_admin, removed from views.py line 40",
+            removes_control="yes")) for _ in range(3)]
+        assert all(v.verdict == VERDICT_CONFIRMED for v in votes)
+
+        decided = decide(make_finding(severity="high"), votes)
+        assert decided.removes_control is True
+
+    def test_a_refutation_that_says_what_it_found_stands(self):
+        """The other half. A rule that refused every refutation would make the
+        panel unable to discard anything, which is a different failure."""
+        from security_agent.panel import require_evidence
+
+        vote = require_evidence(Vote(
+            verdict=VERDICT_REFUTED,
+            reasoning="Every caller validates first.",
+            control_search="require_admin in views.py line 40, on both paths"))
+        assert vote.verdict == VERDICT_REFUTED
+
+    def test_an_uncertain_vote_is_left_alone(self):
+        """It is already the answer this rule downgrades *to*."""
+        from security_agent.panel import require_evidence
+
+        vote = require_evidence(Vote(verdict=VERDICT_UNCERTAIN,
+                                      reasoning="Could not establish it."))
+        assert vote.verdict == VERDICT_UNCERTAIN
+        assert "downgraded" not in vote.reasoning
+
+    def test_a_refutation_is_not_asked_for_an_entry_point(self):
+        """The entry-point rule is about reachability being *claimed*, not
+        denied. Asking a refutation to name the attacker's way in would be
+        asking it to argue the case it is refuting."""
+        from security_agent.panel import require_evidence
+
+        vote = require_evidence(Vote(
+            verdict=VERDICT_REFUTED, reasoning="Not reachable.",
+            control_search="the router registers no public path for it",
+            corrected_reachable="yes"))
+        assert vote.verdict == VERDICT_REFUTED
 
     def test_a_finding_that_does_not_claim_unauthenticated_reach_needs_no_entry(self):
         """A hardcoded credential has no call chain, and demanding one would
         push a whole class of true findings into `uncertain`."""
-        from security_agent.verify import _require_evidence
+        from security_agent.panel import require_evidence
 
-        vote = _require_evidence(Vote(
+        vote = require_evidence(Vote(
             verdict=VERDICT_CONFIRMED, reasoning="The key is in the repository.",
             control_search="Searched for a vault lookup or env indirection "
                            "around this constant; the literal is used directly.",

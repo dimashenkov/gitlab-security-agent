@@ -12,7 +12,7 @@ already has rather than under an API key.
 
 Everything that decides anything. The brief is `verify._brief`, the prompt is
 `verify._system_blocks`, the verdict is read by `verify._vote_from_payload` —
-which is what applies `_require_evidence` — and the panel is `verify._decide`.
+which is what applies `panel.require_evidence` — and the panel is `verify._decide`.
 None of that is restated here, because a second reading of a verdict is a second
 definition of what a verdict means, and the less-used copy drifts quietly until
 one runner disagrees with the other about whether a merge blocks.

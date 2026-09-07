@@ -137,16 +137,16 @@ def test_a_clean_and_an_injected_run_are_not_called_disagreement(capsys):
 def test_a_downgraded_confirmation_is_distinguishable_from_an_honest_uncertain():
     """Both are `uncertain` with an empty `control_search`.
 
-    `_require_evidence` downgrades a confirmation that cannot say what it
+    `require_evidence` downgrades a confirmation that cannot say what it
     searched for, and rewrites the reasoning to say so. Without the reasoning,
     a vote that failed the evidence rule and one that genuinely could not
     decide are the same row — and one run has already ended in "cannot tell
     which".
     """
     from security_agent.models import VERDICT_CONFIRMED, Vote
-    from security_agent.verify import _require_evidence
+    from security_agent.panel import require_evidence
 
-    downgraded = _require_evidence(Vote(verdict=VERDICT_CONFIRMED,
+    downgraded = require_evidence(Vote(verdict=VERDICT_CONFIRMED,
                                         reasoning="It is exploitable."))
     honest = Vote(verdict="uncertain", reasoning="I could not establish it.")
 

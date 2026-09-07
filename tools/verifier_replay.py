@@ -120,7 +120,7 @@ def one_run(cfg: Config, case: dict, member: str, artifact: Path,
             "reason": candidate.verdict_reason,
             "votes": [
                 {"verdict": v.verdict, "confidence": v.corrected_confidence,
-                 # The vote's own reasoning, not the panel's. `_require_evidence`
+                 # The vote's own reasoning, not the panel's. `panel.require_evidence`
                  # rewrites it to say "(downgraded from confirmed: ...)" when a
                  # confirmation could not state what it searched for — and an
                  # `uncertain` with an empty `control_search` looks identical to

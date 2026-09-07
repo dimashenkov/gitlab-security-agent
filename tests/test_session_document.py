@@ -756,3 +756,70 @@ class TestWhatARuntimeCheckCatchesThatATestCannot:
             _read(tampered)
 
         assert "override" in str(raised.value)
+
+
+def _stored_vote(**overrides):
+    """A vote as the document actually stores one — every field present.
+
+    `_decode_vote` requires them all, which is deliberate: a document missing
+    a field is a document from another version, not a vote with a default.
+    """
+    payload = {"verdict": VERDICT_REFUTED, "reasoning": "No.",
+               "corrected_impact": "", "corrected_reachable": "",
+               "corrected_interaction": "", "corrected_confidence": "",
+               "removes_control": "", "control_search": "", "entry_point": "",
+               "files_read": [], "exposures": [], "error": "",
+               "channel": "submit_verdict", "served_models": []}
+    payload.update(overrides)
+    return payload
+
+
+class TestAStoredVoteIsHeldToTheEvidenceRule:
+    """`verify` applies the rule where a vote is parsed from a provider's
+    payload. This loader built `Vote`s straight from the stored document and
+    handed them to `panel.decide`, so a saved artifact carrying three
+    evidence-free refutations was reloaded, recomputed, and silently deleted
+    the finding — the same defect the live path had just been fixed for, on
+    the other entry point. Codex found it on the gate pass, 2026-09-07.
+    """
+
+    def test_a_stored_refutation_with_no_evidence_is_downgraded(self, tmp_path):
+        from security_agent.session_document import _decode_vote
+
+        vote = _decode_vote(_stored_vote(), "votes[0]")
+        assert vote.verdict == VERDICT_UNCERTAIN
+        assert "downgraded from refuted" in vote.reasoning
+
+    def test_a_stored_refutation_that_says_what_it_found_survives(self):
+        from security_agent.session_document import _decode_vote
+
+        vote = _decode_vote(_stored_vote(
+            reasoning="Every caller validates first.",
+            control_search="require_admin in views.py line 40, both paths",
+        ), "votes[0]")
+        assert vote.verdict == VERDICT_REFUTED
+
+    def test_whitespace_is_not_evidence(self):
+        """Codex, 2026-09-07, on the gate pass for the placement.
+
+        The live path strips these fields on the way in and this decoder keeps
+        a stored string verbatim, so twenty-four spaces in `control_search`
+        passed as evidence and removed a finding. An invariant that depends on
+        what each caller did first is not one invariant, so the strip moved
+        inside `require_evidence`.
+        """
+        from security_agent.session_document import _decode_vote
+
+        vote = _decode_vote(_stored_vote(control_search=" " * 40),
+                            "votes[0]")
+        assert vote.verdict == VERDICT_UNCERTAIN
+
+    def test_the_decision_bearing_fields_go_with_it(self):
+        """A stored vote that could not say what it looked at has not
+        established that a control was removed either — and that flag gates
+        whatever the severity says."""
+        from security_agent.session_document import _decode_vote
+
+        vote = _decode_vote(_stored_vote(removes_control="yes"), "votes[0]")
+        assert vote.verdict == VERDICT_UNCERTAIN
+        assert vote.removes_control == ""

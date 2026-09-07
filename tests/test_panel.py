@@ -39,6 +39,17 @@ from security_agent.verify import _could_block, _decide, _votes_for
 
 
 def vote(verdict=VERDICT_CONFIRMED, **kwargs):
+    """A vote as a verifier now produces one, evidence included.
+
+    `control_search` is filled by default from 2026-09-07: `require_evidence`
+    downgrades a confirmation *or* a refutation that cannot say what it looked
+    at, and the loader recomputes dispositions from stored votes — so a fixture
+    building bare votes writes a document the loader will not read back. These
+    tests are about counting seats, not about evidence, and a helper that
+    produces a shape the system no longer emits tests neither.
+    """
+    kwargs.setdefault("control_search",
+                      "looked for a validator on the caller, app/views.py:40")
     return Vote(verdict=verdict, reasoning=kwargs.pop("reasoning", "because"), **kwargs)
 
 

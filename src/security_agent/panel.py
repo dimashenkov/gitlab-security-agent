@@ -36,7 +36,7 @@ nothing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Tuple
 
 from .models import (
@@ -48,6 +48,7 @@ from .models import (
     confidence_rank,
     severity_rank,
 )
+from .evidence import MIN_EVIDENCE_CHARS
 from .severity import derive
 
 
@@ -92,6 +93,103 @@ def initial_rating(finding: Finding) -> Tuple[str, str]:
     # An impact the table cannot rate leaves the reviewer's own label standing,
     # and says so rather than inventing a number.
     return finding.severity, "not derived ({}); using the reviewer's own rating".format(why)
+
+
+def require_evidence(vote: Vote) -> Vote:
+    """A confirmation that cannot say what it checked is not a confirmation.
+
+    Winter's reviewer reported a real local defect — a discarded 404 — as a
+    security weakness, and a verifier confirmed it, without either of them
+    opening the caller. Every caller validates with the identical predicate on
+    the identical object first, so the finding was refutable by reading one
+    function. Both prompts already said to read the callers. They had said it
+    for weeks.
+
+    So this is not another sentence of prose. `confirmed` is downgraded to
+    `uncertain` unless the vote states what would have refuted the finding and
+    where it looked, and — where the finding rests on being reachable by an
+    unauthenticated caller — which entry point that is. `uncertain` is a real
+    answer here, the same way it is everywhere else in this project: a
+    consistent "I could not establish it" beats a confident guess.
+
+    **And `refuted` is held to it too, from 2026-09-07.** It was not: this
+    function returned immediately for anything that was not a confirmation, so
+    the same empty payload gave `uncertain` for a confirmation and stood as a
+    refutation with no reasoning and no search. The rule guarded the direction
+    that would *report* something and left open the direction that makes a
+    finding disappear — and `refuted` removes the candidate from the report
+    entirely, while `uncertain` keeps it visible, tagged "unverified chain", at
+    low confidence.
+
+    Found by `gpt-6-astra`; the shape was adjudicated rather than chosen.
+    Codex, 2026-09-07: *"C preserves an unauditable path for deleting
+    findings"*, and requiring prose alone *"only proves the model produced
+    prose; it does not prove it inspected code"* — so a refutation states the
+    control, caller or broken link it found and where, which is the same
+    `control_search` field a confirmation fills. The entry-point rule stays on
+    confirmations only: it is about reachability being claimed, not denied.
+
+    What this costs is operational and was weighed: quiet verifiers stop
+    suppressing false positives, so reports carry more unresolved findings. At
+    the default confidence threshold that is visible clutter and not a merge
+    wall. An installation gating at `low` would feel it, and the answer there
+    is verifier compliance rather than accepting evidence-free refutations —
+    which is the wrong pressure-release valve.
+    """
+    if vote.verdict not in (VERDICT_CONFIRMED, VERDICT_REFUTED):
+        return vote
+
+    # **Measured after stripping, inside the rule.** Codex, 2026-09-07: the
+    # live path strips these fields on the way in and `_decode_vote` keeps a
+    # stored string verbatim, so twenty-four spaces in `control_search` passed
+    # as evidence and removed a finding. An invariant that depends on what each
+    # caller did first is not one invariant.
+    # **Non-whitespace, not post-strip length.** Codex, 2026-09-07, one round
+    # after the strip went in: `"x" + " " * 24 + "x"` survives `strip()` and
+    # measures twenty-six, while conveying two characters. Stripping the ends
+    # answers padding; it does not answer padding in the middle.
+    def _substantive(text: str) -> int:
+        return len("".join(text.split()))
+
+    missing = []
+    if _substantive(vote.control_search) < MIN_EVIDENCE_CHARS:
+        missing.append(
+            "what it searched for that would refute the finding"
+            if vote.verdict == VERDICT_CONFIRMED
+            else "the control, caller or broken link it found, and where")
+    if vote.verdict == VERDICT_CONFIRMED and (
+            vote.corrected_reachable or "").lower() == "yes" and (
+            _substantive(vote.entry_point) < MIN_EVIDENCE_CHARS):
+        missing.append("the entry point an unauthenticated attacker comes through")
+    if not missing:
+        return vote
+
+    # **The decision-bearing fields go with the verdict.** Codex, 2026-09-07,
+    # on the gate pass for the refutation half: `replace` kept everything but
+    # the verdict, so a unanimous panel of evidence-free refutations carrying
+    # `removes_existing_control: yes` became usable `uncertain` seats whose
+    # flag still set `removes_control` — and that flag gates whatever the
+    # severity and confidence say. The repair for silent deletion would have
+    # turned quiet refuters into a merge wall instead.
+    #
+    # A vote that could not say what it looked at has not established the
+    # control was removed either, and its factual corrections rest on the same
+    # nothing. The seat is kept — it is a real verifier that answered — and its
+    # claims are not.
+    return replace(
+        vote,
+        verdict=VERDICT_UNCERTAIN,
+        removes_control="",
+        corrected_impact="",
+        corrected_reachable="",
+        corrected_interaction="",
+        corrected_confidence="",
+        reasoning=(
+            "{} (downgraded from {}: the verdict did not state {})"
+        ).format(vote.reasoning, vote.verdict,
+                 " or ".join(missing)).strip(),
+    )
+
 
 
 def decide(finding: Finding, votes: List[Vote]) -> Disposition:

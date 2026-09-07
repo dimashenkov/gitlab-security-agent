@@ -48,7 +48,7 @@ from .models import (
     ToolCallRecord,
     Vote,
 )
-from .panel import decide
+from .panel import decide, require_evidence
 from .severity import BASE_SEVERITY
 from .tools import MIN_SUMMARY_CHARS, Session
 from .vocabulary import categories
@@ -630,9 +630,23 @@ def _decode_finding(payload: Any, where: str) -> Finding:
 
 
 def _decode_vote(payload: Any, where: str) -> Vote:
+    """One stored vote, held to the same evidence rule as a live one.
+
+    Codex, 2026-09-07: `verify` applies `require_evidence` where a vote is
+    parsed from a provider's payload, and this function built `Vote`s straight
+    from the stored document and handed them to `panel.decide` — so a saved
+    artifact carrying three evidence-free refutations was reloaded, recomputed,
+    and silently deleted the finding. This loader treats the document as
+    untrusted and was checking the field types without this.
+
+    Applied here rather than inside `decide`, which is about counting votes and
+    says of itself that it changes nothing; putting a normalisation there made
+    every aggregation test carry evidence fields to test an unrelated rule.
+    Two entry points, one definition, imported from `panel`.
+    """
     payload = _object(payload, where)
     _only(payload, _VOTE_FIELDS, where)
-    return Vote(
+    return require_evidence(Vote(
         verdict=_choice(payload, "verdict", where, VERDICTS),
         reasoning=_text(payload, "reasoning", where),
         corrected_impact=_choice(
@@ -651,7 +665,7 @@ def _decode_vote(payload: Any, where: str) -> Vote:
         error=_text(payload, "error", where),
         channel=_choice(payload, "channel", where, CHANNELS),
         served_models=_strings(payload, "served_models", where),
-    )
+    ))
 
 
 def _decode_candidate(payload: Any, where: str) -> Candidate:

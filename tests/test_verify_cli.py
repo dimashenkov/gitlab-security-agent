@@ -298,7 +298,7 @@ class TestAVoteReachesTheCandidate:
 class TestTheEvidenceRuleStillApplies:
     def test_a_confirmation_that_cannot_say_what_it_searched_is_downgraded(
             self, cfg, ws, budget, fake_cli):
-        """`_require_evidence` lives behind `_vote_from_payload`, and this path
+        """`require_evidence` lives behind `_vote_from_payload`, and this path
         must go through it rather than around it. A verifier that confirms a
         finding without opening the caller is the exact defect it was written
         for, and on this transport the verdict arrives by a different route."""

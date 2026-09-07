@@ -125,30 +125,46 @@ they are what say the stored answer is about *this* code. `provenance` does
 not, because `review_identity` fills the model and the prompts from the
 configuration — an unreadable provenance does not make the artifact stale.
 
-## The evidence rule guards confirmations and not refutations
+## The evidence rule guarded confirmations and not refutations — fixed
 
 A verifier that confirms a finding without saying what it searched for is
-downgraded to `uncertain` — `_require_evidence` exists for exactly that. It
-returns immediately unless the verdict is `confirmed`, so a verifier that
-*refutes* one is held to nothing.
+downgraded to `uncertain`. `_require_evidence` returned immediately for
+anything that was not a confirmation, so a verifier that *refuted* one was held
+to nothing. Measured on 2026-09-06 by handing the same empty payload through
+twice with only the verdict differing:
 
-Measured on 2026-09-06 by handing `_vote_from_payload` the same empty payload
-twice, with the verdict as the only difference:
-
-| the vote | what comes back |
+| the vote | what came back |
 |---|---|
-| `{"verdict": "confirmed"}` | `uncertain` — "did not state what it searched for that would refute the finding" |
+| `{"verdict": "confirmed"}` | `uncertain` — "did not state what it searched for" |
 | `{"verdict": "refuted"}` | **`refuted`**, reasoning `""`, control_search `""` |
 
-So three empty refutations discard a critical finding, and the direction that
-is held to a standard is the one that would have *reported* something. The
-asymmetry may even be deliberate — confirming a weakness is the claim that
-costs a team a merge — but a refutation is what makes a finding disappear, and
-nothing here records that the trade was chosen rather than fallen into.
+Three empty refutations discarded a critical finding. The direction held to a
+standard was the one that would have *reported* something.
 
-Found by `gpt-6-astra` and confirmed with the control above; not fixed, because
-requiring evidence to refute changes what a quiet verifier does to every
-finding and that is a measurement, not an edit.
+**And refuting costs nothing, which is why the old rule was wrong.** The test
+that recorded the behaviour said "refuting is the direction that already costs
+it something". It does not: `refuted` removes the candidate from the report
+entirely, while `uncertain` keeps it visible, tagged "unverified chain", at low
+confidence. So the asymmetry was not a considered trade — it was a hole where
+findings left without a trace.
+
+A refutation now states the control, caller or broken link it found and where.
+Adjudicated rather than chosen: prose alone "only proves the model produced
+prose; it does not prove it inspected code", and leaving it "preserves an
+unauditable path for deleting findings".
+
+**What it costs, weighed before it was done.** Quiet verifiers stop suppressing
+false positives, so reports carry more unresolved findings. At the default
+confidence threshold that is visible clutter and not a merge wall; an
+installation gating at `low` would feel it, and the answer there is verifier
+compliance rather than evidence-free refutations.
+
+Three further rounds each found the next thing, and the first is worth keeping
+in view: the repair would have turned silent deletion into a **merge wall**,
+because the downgrade preserved `removes_control` and that flag gates whatever
+the severity says. Same verifiers, opposite failure. Then the stored-document
+decoder bypassed the rule entirely; then forty spaces passed as evidence,
+because the live path stripped these fields and the decoder did not.
 
 ## A reviewer that says "I could not settle this" passes
 

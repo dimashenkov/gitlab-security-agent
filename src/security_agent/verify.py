@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import replace
 from typing import Any, Dict, List, Optional, Tuple
 
 import anthropic
@@ -34,7 +33,7 @@ from .models import (
     confidence_rank,
     severity_rank,
 )
-from .panel import decide
+from .panel import decide, require_evidence
 from .tools import Session, dispatch, verifier_tool_definitions
 from .transport import TransportFailure, stream_message
 from .workspace import Workspace, WorkspaceError
@@ -595,46 +594,6 @@ def _stream(client: Any, **params: Any) -> Any:
 
 
 # Long enough to name a file and a thing looked for. A verifier that answers
-# "checked" or "n/a" has not made the statement the field exists to extract.
-MIN_EVIDENCE_CHARS = 24
-
-
-def _require_evidence(vote: Vote) -> Vote:
-    """A confirmation that cannot say what it checked is not a confirmation.
-
-    Winter's reviewer reported a real local defect — a discarded 404 — as a
-    security weakness, and a verifier confirmed it, without either of them
-    opening the caller. Every caller validates with the identical predicate on
-    the identical object first, so the finding was refutable by reading one
-    function. Both prompts already said to read the callers. They had said it
-    for weeks.
-
-    So this is not another sentence of prose. `confirmed` is downgraded to
-    `uncertain` unless the vote states what would have refuted the finding and
-    where it looked, and — where the finding rests on being reachable by an
-    unauthenticated caller — which entry point that is. `uncertain` is a real
-    answer here, the same way it is everywhere else in this project: a
-    consistent "I could not establish it" beats a confident guess.
-    """
-    if vote.verdict != VERDICT_CONFIRMED:
-        return vote
-
-    missing = []
-    if len(vote.control_search) < MIN_EVIDENCE_CHARS:
-        missing.append("what it searched for that would refute the finding")
-    if (vote.corrected_reachable or "").lower() == "yes" and (
-            len(vote.entry_point) < MIN_EVIDENCE_CHARS):
-        missing.append("the entry point an unauthenticated attacker comes through")
-    if not missing:
-        return vote
-
-    return replace(
-        vote,
-        verdict=VERDICT_UNCERTAIN,
-        reasoning=(
-            "{} (downgraded from confirmed: the verdict did not state {})"
-        ).format(vote.reasoning, " or ".join(missing)).strip(),
-    )
 
 
 def _parse_verdict(response: Any) -> Optional[Vote]:
@@ -679,7 +638,7 @@ def _vote_from_payload(data: Any) -> Optional[Vote]:
     verdict = str(data.get("verdict", "")).strip()
     if verdict not in (VERDICT_CONFIRMED, VERDICT_UNCERTAIN, VERDICT_REFUTED):
         return None
-    return _require_evidence(Vote(
+    return require_evidence(Vote(
         verdict=verdict,
         reasoning=str(data.get("reasoning", "")).strip(),
         corrected_impact=str(data.get("corrected_impact", "") or "").strip(),
