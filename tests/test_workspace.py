@@ -580,3 +580,185 @@ class TestADeletionIsPartOfTheChange:
         ws = Workspace(root=git_repo, diff_base=base, diff_head=head)
         with pytest.raises(WorkspaceError, match="not a file this change"):
             ws.removed_text("README.md")
+
+
+class TestSearchReadsTheReviewedRevision:
+    """`blob_text` says in its own docstring why the working tree must not be
+    trusted — the checkout is material an untrusted contributor controls — and
+    `search` ran `git grep` with no revision, which searches exactly that.
+
+    Built as a real tree on 2026-09-06: a commit with no `require_admin` beside
+    a working tree that has one gave "absent" from `read_file` and one match
+    from `search`, so a verifier could refute a finding on a control that is
+    not in the change. No attacker needed — a later commit on the branch, an
+    earlier CI step, a checkout that is simply ahead.
+    """
+
+    def ahead_of_the_commit(self, git_repo):
+        """A committed revision without the guard, a working tree with it."""
+        import subprocess
+        env = {"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.com",
+               "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(git_repo), *args),
+                                  check=True, capture_output=True, text=True,
+                                  env=env).stdout
+
+        (git_repo / "app" / "auth.py").write_text(
+            "def run(request):\n    return do(request)\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "the reviewed commit")
+        head = git("rev-parse", "HEAD").strip()
+        # The checkout moves on. Nothing commits it.
+        (git_repo / "app" / "auth.py").write_text(
+            "def run(request):\n    require_admin(request)\n"
+            "    return do(request)\n", encoding="utf-8")
+        return head
+
+    def test_the_guard_in_the_working_tree_is_not_found(self, git_repo):
+        head = self.ahead_of_the_commit(git_repo)
+        ws = Workspace(root=git_repo, diff_head=head, excludes=())
+
+        body, count = ws.search("require_admin")
+        assert count == 0, body
+        assert "require_admin" not in ws.read_file("app/auth.py")[0]
+
+    def test_what_is_in_the_revision_is_still_found(self, git_repo):
+        """The control. A search that found nothing at all would pass the test
+        above for the wrong reason."""
+        head = self.ahead_of_the_commit(git_repo)
+        ws = Workspace(root=git_repo, diff_head=head, excludes=())
+
+        body, count = ws.search("def run")
+        assert count == 1, body
+
+    def test_the_revision_prefix_never_reaches_the_reader(self, git_repo):
+        """`git grep REV` returns `REV:path:line:text`, and three things take
+        the first field as the path: the exclude check, the exposure record,
+        and the model — which can only open a repository path."""
+        head = self.ahead_of_the_commit(git_repo)
+        ws = Workspace(root=git_repo, diff_head=head, excludes=())
+
+        body, _ = ws.search("def run")
+        assert head not in body, body
+        assert "app/auth.py:" in body
+
+    def test_an_excluded_path_is_still_excluded(self, git_repo):
+        """The prefix broke this check by making every path look like the
+        revision, so nothing matched an exclude and excluded files came back."""
+        head = self.ahead_of_the_commit(git_repo)
+        ws = Workspace(root=git_repo, diff_head=head, excludes=("*/auth.py",))
+
+        _, count = ws.search("def run")
+        assert count == 0
+
+    def test_context_lines_carry_no_revision_either(self, git_repo):
+        """`git grep` writes a match as `REV:path:line:text` and a context line
+        as `REV-path-line-text`. A version that knew only the colon left the
+        revision on every context line — which failed the exclude check, was
+        recorded as an exposure under a path nobody can open, and was shown to
+        the model as a path `read_file` refuses. Codex, 2026-09-07; the first
+        version of this had no test with context at all.
+        """
+        head = self.ahead_of_the_commit(git_repo)
+        ws = Workspace(root=git_repo, diff_head=head, excludes=())
+
+        body, count = ws.search("return do", context_lines=2)
+        # `count` is lines kept, and context lines are kept too — the match
+        # plus the one line of context above it in this two-line file.
+        assert count == 2, body
+        assert head not in body, body
+        # The context line above the match is there, and addressable.
+        assert "def run" in body
+        # The first line is the "N match(es)" heading; the rest are results.
+        for line in body.splitlines()[1:]:
+            if line.strip() and not line.startswith("--"):
+                assert line.startswith("app/auth.py"), line
+
+    def test_an_excluded_file_is_excluded_with_context_too(self, git_repo):
+        """The exclude check reads the first field. With the revision still on
+        a context line, nothing matched the pattern and excluded content came
+        back."""
+        head = self.ahead_of_the_commit(git_repo)
+        ws = Workspace(root=git_repo, diff_head=head, excludes=("*/auth.py",))
+
+        _, count = ws.search("return do", context_lines=2)
+        assert count == 0, "excluded content came back through a context line"
+
+    def test_a_path_whose_name_looks_like_a_line_number(self, git_repo):
+        """`app/case-12-data.py:7:match` was read as `app/case-12-data` by the
+        heuristic that preceded `-z`, so an excluded file with a
+        line-number-shaped name came back. Codex refused that parser;
+        `git grep -z` puts a NUL after the path, which no path can contain."""
+        import subprocess
+        env = {"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.com",
+               "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(git_repo), *args),
+                                  check=True, capture_output=True, text=True,
+                                  env=env).stdout
+
+        (git_repo / "app" / "case-12-data.py").write_text(
+            "def run(request):\n    return do(request)\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "a name with separators and digits")
+        head = git("rev-parse", "HEAD").strip()
+
+        ws = Workspace(root=git_repo, diff_head=head, excludes=())
+        body, _ = ws.search("return do")
+        assert "app/case-12-data.py:2:" in body, body
+
+        hidden = Workspace(root=git_repo, diff_head=head,
+                           excludes=("*/case-12-data.py",))
+        shown, count = hidden.search("return do")
+        assert "case-12-data" not in shown, shown
+
+    def test_a_hunk_separator_is_not_a_result(self, git_repo):
+        """git writes `--` between context blocks. It carries no path, so it
+        cannot be excluded — and counting it means a search whose every real
+        line was excluded reports a nonzero result made of nothing else."""
+        head = self.ahead_of_the_commit(git_repo)
+        ws = Workspace(root=git_repo, diff_head=head, excludes=("*/auth.py",))
+
+        # A pattern only the excluded file matches: every real line goes, and
+        # what would be left is the separator between the hunks.
+        body, count = ws.search("return do", context_lines=1)
+        assert count == 0, body
+        assert "--" not in body.replace("no matches", "")
+
+    def test_a_path_containing_a_newline(self, git_repo):
+        """`-z` makes the *delimiter* unambiguous and leaves the *framing*: the
+        stream was still read line by line, and a path may legally contain a
+        newline, so one record arrived as two malformed ones and the exclude
+        check was handed a path that was never there. Measured on 2026-09-07
+        against real git output; Codex named it on the gate pass for `-z`."""
+        import subprocess
+        env = {"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.com",
+               "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(git_repo), *args),
+                                  check=True, capture_output=True, text=True,
+                                  env=env).stdout
+
+        odd = git_repo / "app" / "od\nd.py"
+        odd.write_text("def run(request):\n    return do(request)\n",
+                       encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "a path with a newline in its name")
+        head = git("rev-parse", "HEAD").strip()
+
+        ws = Workspace(root=git_repo, diff_head=head, excludes=())
+        body, count = ws.search("return do")
+        assert count == 1, body
+        assert head not in body, body
+
+        hidden = Workspace(root=git_repo, diff_head=head,
+                           excludes=("*/od\nd.py",))
+        shown, count = hidden.search("return do")
+        assert count == 0, shown

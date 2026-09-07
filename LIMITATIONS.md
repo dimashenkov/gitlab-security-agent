@@ -54,31 +54,48 @@ five words rather than one phrase — `get_diff`, `start_line`, `end_line`,
 `instead`, `try` — because the next person to add a helpful suggestion should
 meet the question rather than the wording.
 
-## The search reads the working tree; every other reader reads the revision
+## The search read the working tree; every other reader read the revision — fixed
 
 `blob_text` says it in its own docstring — the checkout "is material an
 untrusted contributor controls, and what sits at a path on disk need not be
-what the commit says is there" — and `read_file` goes through it. `search`
-builds a `git grep` with no revision, which searches the working tree.
-
-Built as a real repository on 2026-09-06: the reviewed commit has no
-`require_admin`, the working tree has one.
+what the commit says is there" — and `search` built a `git grep` with no
+revision, which searches exactly that. Built as a real repository on
+2026-09-06: the reviewed commit has no `require_admin`, the working tree has
+one.
 
 | reader | answer |
 |---|---|
 | `read_file` at the reviewed revision | the guard is absent |
 | `search` for the same name | **1 match** |
 
-A verifier that refutes a finding because "the guard is right there" can be
-looking at code that is not in the change. It needs no attacker: a later
-commit on the branch, an earlier CI step that wrote a file, a checkout that is
-simply ahead. The reasoning `blob_text` gives for not reading the working tree
-applies to `search` word for word and was not applied to it.
+A verifier that refuted a finding because "the guard is right there" could be
+looking at code that is not in the change. It needed no attacker: a later
+commit on the branch, an earlier CI step that wrote a file, a checkout simply
+ahead. The reasoning `blob_text` gives had never been applied to the function
+beside it.
 
-Found by `gpt-6-astra` and confirmed by building the tree. Not fixed: `git grep`
-takes a revision, so the edit is small, but it changes what every search
-returns and that wants a measurement rather than a patch at the end of a
-session.
+**Four rounds, each finding the layer under the last.** Passing the revision
+makes `git grep` prefix every line, and three things downstream read the first
+field as a path — the exclude check, the exposure record, and the model, which
+can only open a repository path. Stripping `REV:` then missed context lines,
+which git spells `REV-path-line-text`. Parsing that by hand was refused,
+because a path may contain either separator and `app/case-12-data.py:7:x` was
+read as `app/case-12-data`. So the search runs with `-z`, whose NUL no path can
+contain — and `-z` fixes the delimiter while leaving the framing: a path may
+legally contain a newline, so reading the stream by line split one record into
+two. Measured against real output rather than assumed.
+
+**It also uncovered an older defect.** The exclude check read the path as
+everything before the first colon, so on a context line it tested
+`app/auth.py-1-def run(...)` and matched nothing. Searching an excluded file
+with `context_lines=2` returned a line of it. That predates all of this; the
+revision prefix only made it visible.
+
+What is not established, named because it is the one thing here that is merely
+assumed: that a successful `git grep` ends with a complete record. Eleven other
+assumptions the parser makes are documented git behaviour or measured in the
+tests; a partial tail is yielded rather than dropped, because discarding it
+would make a truncated stream look like a shorter answer.
 
 ## A reused artifact with no verdict was reused as a pass — fixed
 
@@ -166,31 +183,34 @@ the severity says. Same verifiers, opposite failure. Then the stored-document
 decoder bypassed the rule entirely; then forty spaces passed as evidence,
 because the live path stripped these fields and the decoder did not.
 
-## A reviewer that says "I could not settle this" passes
+## A reviewer that says "I could not settle this" still passes — by decision
 
-`finish_review` takes an `unresolved` list, the field exists so the reviewer
-can record a security question it could not answer, and the artifact carries
-it. `decide` never reads it. Measured on 2026-09-06 against `gate.decide`, with
-a control:
+`finish_review` takes an `unresolved` list so the reviewer can record a
+security question it could not answer, and the artifact carries it. `decide`
+never read it. Measured on 2026-09-06 with a control:
 
 | the run | exit |
 |---|---|
 | finished, nothing unresolved | 0 |
 | finished, recording *"cannot establish authentication for /admin/run"* | **0** |
 
-So the sentence a careful reviewer writes when it knows it has not finished
-thinking changes nothing about the decision. `_partial` asks three questions —
-did the model stop early, was the diff truncated, were contexts refused — and
-"did the reviewer leave a security question open" is not among them.
+**Making it block was adjudicated and refused.** `_partial` asks whether the
+machinery denied the reviewer evidence — it stopped early, the diff was cut,
+contexts were refused. An unresolved question is the opposite: the reviewer
+examined the evidence and cannot justify a conclusion. Codex, 2026-09-07:
+merging the two would teach a model that admitting uncertainty fails the job,
+so reviewers would omit marginal questions, force yes-or-no conclusions, or
+operators would switch off the partial-review protection — all three worse than
+what it fixes. A separate flag was refused for the same reason one level down:
+the field is free-form and carries nothing saying whether a question is
+security-material, so a policy over it would postpone the same failure.
 
-The first two attempts at this check both printed the same exit code for the
-run *and* its control, which proves nothing; the code was coming from
-`_reviewed_nothing`, because the synthetic outcome recorded no exposures. The
-finding stands only because the third attempt made the control exit 0.
+So it does not gate, and it is no longer invisible. The artifact counts it and
+the terminal prints `exit 0 — nothing blocking, with 1 unresolved question`.
 
-Found by `gpt-6-astra` on a hostile pass over the standing product. Not fixed:
-whether an open question should block, warn, or only be printed is a policy
-choice, and the gate has one flag for partial reviews already.
+The route to gating, if it is ever wanted, is a structured field — whether the
+question can change the verdict, and what would settle it — not an inference
+from prose.
 
 ## A change that only deletes files was not reviewed at all — fixed
 

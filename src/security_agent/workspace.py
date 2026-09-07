@@ -41,6 +41,47 @@ MAX_SEARCH_HITS = 20_000
 GIT_TIMEOUT_SECONDS = 120
 
 
+def _grep_records(stream):
+    """`git grep -z` output, one record at a time.
+
+    A record is `path NUL number NUL text` terminated by a newline, except the
+    bare `--` git writes between hunks. The newline inside a *path* belongs to
+    the record, so the split is on the second NUL rather than on every newline.
+    """
+    buffer = ""
+    for chunk in stream:
+        buffer += chunk
+        while True:
+            if buffer.startswith("--\n"):
+                yield "--"
+                buffer = buffer[3:]
+                continue
+            first = buffer.find("\0")
+            if first < 0:
+                break
+            second = buffer.find("\0", first + 1)
+            if second < 0:
+                break
+            end = buffer.find("\n", second + 1)
+            if end < 0:
+                break
+            yield buffer[:end]
+            buffer = buffer[end + 1:]
+    # **What is left when the stream ends mid-record.** Codex enumerated every
+    # assumption this function makes about git's output on 2026-09-07; eleven
+    # are documented behaviour or measured here, and this is the one that is
+    # merely assumed — that a successful run ends with a complete record.
+    #
+    # Yielded rather than dropped: a partial tail is a line the search did
+    # produce, and discarding it silently would make a truncated stream look
+    # like a shorter answer. It is framed like any other record downstream, so
+    # a fragment with no NUL becomes a path that matches nothing and is
+    # excluded — which is the safe direction.
+    tail = buffer.strip("\n")
+    if tail:
+        yield tail
+
+
 class Workspace:
     def __init__(
         self,
@@ -889,12 +930,31 @@ class Workspace:
         if not pattern.strip():
             raise WorkspaceError("pattern must not be empty")
         max_results = max(1, min(max_results, 300))
-        args = ["grep", "--no-color", "-n", "-E", "-I"]
+        # `-z` puts a NUL between the path, the line number and the text.
+        # Without it the parser has to guess where a path ends, and a path may
+        # contain both separators git uses: `app/case-12-data.py:7:match` was
+        # read as `app/case-12-data`, so an excluded file with a
+        # line-number-shaped name came back. Codex, 2026-09-07 — and measured
+        # against real `git grep` output rather than assumed.
+        args = ["grep", "--no-color", "-n", "-E", "-I", "-z"]
         if not case_sensitive:
             args.append("-i")
         if context_lines > 0:
             args.append("-C{}".format(min(context_lines, 10)))
         args += ["-e", pattern]
+        # **The revision under review, as every other reader uses.** `blob_text`
+        # says in its own docstring why the working tree must not be trusted —
+        # the checkout is material an untrusted contributor controls — and this
+        # ran `git grep` with no revision, which searches exactly that. Built
+        # as a real tree on 2026-09-06: a commit with no `require_admin` beside
+        # a working tree that has one gave "absent" from `read_file` and one
+        # match from here, so a verifier could refute a finding on a control
+        # that is not in the change. No attacker needed: a later commit on the
+        # branch, an earlier CI step, a checkout that is simply ahead.
+        #
+        # `blob_text` resolves the same way, so the two cannot disagree.
+        rev = self.diff_head or "HEAD"
+        args.append(rev)
         if path_glob:
             args += ["--", ":(glob)" + path_glob.lstrip("/")]
 
@@ -906,7 +966,7 @@ class Workspace:
         # SIGKILL, and a killed process cannot write "the review did not
         # complete": it is the one failure that defeats the exit-2 contract,
         # because `except Exception` never runs.
-        hits, truncated = self._grep_stream(args)
+        hits, truncated = self._grep_stream(args, rev)
         total = len(hits)
         if total == 0:
             # `truncated` before the count. A search that ran out of time
@@ -950,7 +1010,29 @@ class Workspace:
         head = "at least {}".format(total) if truncated else str(total)
         return "{} match(es) for {!r}:\n{}{}".format(head, pattern, body, note), total
 
-    def _grep_stream(self, args):
+    @staticmethod
+    def _without_revision(line: str, rev: str) -> str:
+        """A `git grep REV` line with its revision prefix removed.
+
+        Matched against the revision the search actually passed rather than by
+        counting separators: a path may contain either of them, and a line that
+        merely begins with something prefix-shaped is not one. Passed in rather
+        than re-read from the workspace, so the stripping cannot disagree with
+        the search that produced the line.
+
+        Only the colon form reaches here now: with `-z` the path is a NUL-
+        terminated field, so `REV:path` is the whole of it whether the line is
+        a match or context. Before `-z` the two spellings differed —
+        `REV:path:line:text` against `REV-path-line-text` — and a version that
+        knew only the colon left the revision on every context line, which then
+        failed the exclude check and was shown to the model as a path
+        `read_file` refuses. Codex found that on the gate pass, 2026-09-07, and
+        refused the heuristic that replaced it as well.
+        """
+        prefix = rev + ":"
+        return line[len(prefix):] if line.startswith(prefix) else line
+
+    def _grep_stream(self, args, rev=""):
         """Run `git grep` and stop reading at the ceiling.
 
         Returns (kept lines, whether more were left unread). Excluded paths are
@@ -965,14 +1047,51 @@ class Workspace:
         )
         hits, size, truncated = [], 0, False
         try:
-            for raw in proc.stdout:
+            # **Records, not lines.** With `-z` the path is a NUL-terminated
+            # field, and a path may legally contain a newline — measured on
+            # 2026-09-07: `app/od\nd.py` arrives as two `readline` results, so
+            # iterating the stream by line split one record into two malformed
+            # ones and handed the exclude check a path that was never there.
+            # A record is `REV:path NUL number NUL text` and ends at the first
+            # newline *after* the second NUL. Codex named it on the gate pass
+            # for `-z` itself, which fixed the delimiter and left the framing.
+            for raw in _grep_records(proc.stdout):
                 if time.monotonic() > deadline:
                     truncated = True
                     break
-                line = raw.rstrip("\n")
-                if not line or self.is_excluded(line.split(":", 1)[0]):
+                line = raw
+                # The hunk separator git writes between context blocks. It
+                # carries no path, so it cannot be excluded and it must not be
+                # counted: a search whose every real line was excluded would
+                # otherwise report a nonzero result made of nothing but these.
+                if line == "--":
                     continue
-                hits.append(line)
+                # **The revision prefix comes off before anything reads the
+                # path.** `git grep REV` returns `REV:path:line:text`, and
+                # three things downstream take the first colon-separated field
+                # as the path: this exclude check, `_paths_in_search` recording
+                # exposures, and the model, which is shown the path and can
+                # only open it through `read_file` — which takes repository
+                # paths. Codex named all three on the adjudication, 2026-09-07.
+                line = self._without_revision(line, rev)
+                # **The path, however this line spells its separator.** A match
+                # is `path:line:text` and a context line is `path-line-text`,
+                # and this check read up to the first colon — so on a context
+                # line it tested the whole `path-1-def run(...)` against the
+                # excludes, matched nothing, and let excluded content through.
+                # Measured on 2026-09-07: searching an excluded file with
+                # `context_lines=2` returned one line of it. Older than the
+                # revision repair; the revision prefix only made it visible.
+                # `REV:path\0line\0text`, measured. The revision comes off
+                # first, then the path is everything up to the first NUL —
+                # a delimiter no path can contain, which is the whole reason
+                # for `-z`.
+                path, _, rest = line.partition("\0")
+                path = self._without_revision(path, rev)
+                if not path or self.is_excluded(path):
+                    continue
+                number, _, text = rest.partition("\0")
+                hits.append("{}:{}:{}".format(path, number, text))
                 size += len(line) + 1
                 # Twice the rendered ceiling: enough that `max_results` and the
                 # character trim still have something to choose from, bounded

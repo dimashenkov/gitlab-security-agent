@@ -899,6 +899,23 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
             "refuted": len(outcome.refuted),
             "suppressed": len(outcome.suppressed),
             "rejected_claims": len(outcome.rejected_claims),
+            # **Counted where a reader counts things, because it does not
+            # gate.** `decide` never reads `unresolved`, so a run that recorded
+            # "cannot establish authentication for /admin/run" exits 0 exactly
+            # like one that settled everything — measured with a control on
+            # 2026-09-06. Making it block was adjudicated and refused: it would
+            # merge "the machinery denied the reviewer evidence" with "the
+            # reviewer examined the evidence and cannot justify a conclusion",
+            # and teach a model that admitting uncertainty fails the job.
+            # Codex, 2026-09-07: reviewers would omit marginal questions, force
+            # yes/no conclusions, or operators would switch off the partial
+            # review protection — all three worse than what it fixes.
+            #
+            # So it is visible instead: an operator reads "exit 0, with N
+            # unresolved questions" rather than a settled clean result. A
+            # gating rule wants a field saying whether a question is
+            # security-material, which this one does not carry.
+            "unresolved": len(outcome.unresolved),
             "by_severity": outcome.counts_by_severity(),
         },
         "findings": [c.to_dict() for c in sorted(outcome.reported, key=lambda c: c.sort_key)],

@@ -313,6 +313,16 @@ def _footer(
     word = {EXIT_OK: "exit 0 — nothing blocking",
             EXIT_ERROR: "exit 2 — the review did not complete"}.get(
                 code, "exit 1 — blocking findings")
+    # **Beside the verdict, because it does not change it.** An open question
+    # the reviewer recorded exits 0 exactly like a settled review, and that was
+    # adjudicated as the right decision — but a reader who sees only "nothing
+    # blocking" mistakes an honest "I could not tell about the authentication"
+    # for a clean result. The count travels with the code, on the one line
+    # everybody reads. Codex, 2026-09-07.
+    open_questions = len(outcome.unresolved)
+    if open_questions:
+        word += ", with {} unresolved question{}".format(
+            open_questions, "" if open_questions == 1 else "s")
     lines += [
         " " + s(word, "1" if code == EXIT_OK else "1;31"),
         "",

@@ -414,3 +414,41 @@ class TestHostileTextThroughRender:
         assert "SQL injection" in rendered
         assert "app/views.py" in rendered
         assert "db.execute(q)" in rendered
+
+
+class TestAnOpenQuestionIsVisibleBesideTheVerdict:
+    """`decide` never reads `unresolved`, so a run that recorded "cannot
+    establish authentication for /admin/run" exits 0 exactly like one that
+    settled everything — measured with a control on 2026-09-06.
+
+    Making it *block* was adjudicated and refused: it would merge "the
+    machinery denied the reviewer evidence" with "the reviewer examined the
+    evidence and cannot justify a conclusion", and teach a model that admitting
+    uncertainty fails the job. Codex, 2026-09-07. So the answer is visibility —
+    an operator reads "exit 0, with N unresolved questions" rather than a
+    settled clean result.
+    """
+
+    def rendered(self, unresolved):
+        from security_agent.gate import EXIT_OK, Decision
+        from security_agent.models import ScanOutcome
+        from security_agent.terminal import render
+
+        outcome = ScanOutcome(mode="advisory", model="claude-opus-5")
+        outcome.unresolved = list(unresolved)
+        return render(outcome, Decision(exit_code=EXIT_OK, reason=""))
+
+    def test_the_count_travels_with_the_exit_code(self):
+        text = self.rendered(["cannot establish authentication for /admin/run"])
+        assert "exit 0 — nothing blocking, with 1 unresolved question" in text
+
+    def test_it_is_plural_when_it_should_be(self):
+        text = self.rendered(["one", "two"])
+        assert "with 2 unresolved questions" in text
+
+    def test_a_settled_review_says_nothing_extra(self):
+        """The control. A line that always mentioned questions would carry no
+        information."""
+        text = self.rendered([])
+        assert "exit 0 — nothing blocking" in text
+        assert "unresolved" not in text
