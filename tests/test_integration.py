@@ -465,11 +465,15 @@ class TestStageMetrics:
             FakeResponse([text("withdrawn")], stop_reason="end_turn"),
         ])
         outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
-        assert outcome.metrics.citations_accepted + sum((
-            outcome.metrics.citations_rejected_not_found,
-            outcome.metrics.citations_rejected_ambiguous,
-            outcome.metrics.citations_rejected_too_short,
-        )) == 1
+        # Every reason, derived from the dataclass rather than listed: a
+        # reason added to the metrics and left out of a hand-written tuple is
+        # a rejection the invariant stops accounting for, which is what this
+        # test exists to catch. It listed three of five when Codex found it on
+        # 2026-09-07 — `unknown-path` had been missing since it was written.
+        counted = sum(getattr(outcome.metrics, name)
+                      for name in vars(type(outcome.metrics))["__annotations__"]
+                      if name.startswith("citations_rejected_"))
+        assert outcome.metrics.citations_accepted + counted == 1
 
     def test_a_corrected_line_is_counted(self, cfg, ws):
         wrong_line = self._finding(line=999)

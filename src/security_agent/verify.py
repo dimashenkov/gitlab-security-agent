@@ -822,7 +822,12 @@ def _brief(cfg: Config, ws: Workspace, candidate: Candidate, vote_index: int) ->
                 "",
             ]
         else:
-            window, start, stop = excerpt(file_text, candidate.line, radius=60)
+            # The prompt's own ceiling, not the line count. The branch above
+            # is taken when the whole file fits `verifier_context_chars`, so
+            # without the same bound here the *else* — the branch for files too
+            # large to paste — could paste more than the branch for small ones.
+            window, start, stop = excerpt(file_text, candidate.line, radius=60,
+                                          limit=cfg.verifier_context_chars)
             parts += [
                 "## Starting context",
                 "",

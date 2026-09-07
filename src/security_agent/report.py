@@ -591,6 +591,7 @@ def _suppressed_section(candidates: Sequence[Candidate]) -> List[str]:
 def _rejected_section(outcome: ScanOutcome) -> List[str]:
     reasons = {
         "unknown-path": "cited a file that does not exist",
+        "file-too-large": "cited a real file too large to open and check",
         "evidence-not-found": "quoted code that is not in the file",
     }
     lines = []
@@ -760,8 +761,12 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
                           for path, why in cov.unreadable[:8])),
             "",
         ]
+    # Every rejection reason, and the sum is the place that goes wrong: a
+    # reason added to the metrics and left out of this line is a claim the
+    # report says nothing about, which is what the counter existed to stop.
     rejected = (m.citations_rejected_not_found + m.citations_rejected_ambiguous
-                + m.citations_rejected_too_short + m.citations_rejected_unknown_path)
+                + m.citations_rejected_too_short + m.citations_rejected_unknown_path
+                + m.citations_rejected_too_large)
     if m.citations_accepted or rejected:
         lines += [
             "**Citation checks:** {} accepted, {} rejected{}{}".format(

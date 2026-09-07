@@ -280,8 +280,12 @@ def _footer(
     s: Style, outcome: ScanOutcome, decision: Decision, report_path: str
 ) -> List[str]:
     m = outcome.metrics
+    # Every rejection reason, and the sum is the place that goes wrong: a
+    # reason added to the metrics and left out of this line is a claim the
+    # report says nothing about, which is what the counter existed to stop.
     rejected = (m.citations_rejected_not_found + m.citations_rejected_ambiguous
-                + m.citations_rejected_too_short + m.citations_rejected_unknown_path)
+                + m.citations_rejected_too_short + m.citations_rejected_unknown_path
+                + m.citations_rejected_too_large)
     lines = ["", s("─" * WIDTH, "2")]
 
     rows = [

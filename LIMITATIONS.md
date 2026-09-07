@@ -21,38 +21,62 @@ reassurance, which is the tool's only output.
 A clean result means the agent read some code and reported nothing. It does not
 mean the change is safe, and it does not mean the change was fully examined.
 
-## A file over 292 KB cannot be read at all
+## One read ceiling was serving two different purposes — fixed
 
-`blob_text` refuses a blob over `MAX_READ_BYTES`, and the ceiling is on the
-whole blob rather than on any window of it, so `read_file` cannot reach a large
-file either way. Measured on 2026-09-06 against a 302,057-byte file whose
-change was two lines:
+`MAX_READ_BYTES` exists to stop a hostile change exhausting the model's
+context. Four readers of a file were being judged by it, and three of them put
+none of the file in front of the model.
 
-| the attempt | the answer |
+| reader | what happened, measured on a built repository |
 |---|---|
-| the whole file | refused |
-| a window of three lines | **the same refusal, word for word** |
+| `read_file`, a window of three lines | refused, **word for word** as the whole file was |
+| the generated-file classifier | refused, swallowed into `head = ""`; a 658 KB protobuf was never labelled generated |
+| the citation check | refused, and the claim dropped as `unknown-path` — *"still does not resolve to a readable file"* |
+| the deleted-file reader | **no ceiling at all**: the same 4,999,982 bytes were refused while live and returned whole once deleted |
 
-A weakness introduced by a small diff in a large existing file therefore cannot
-be quoted, and a finding whose citation cannot be validated is not recorded.
-The diff itself carries the new lines, so nothing is truncated and no context
-is refused: the gate sees an ordinary, complete review with no findings. That
-is the limitation, and it stands — windowed reading is not built.
+So a weakness introduced by a small diff to a large file could be seen in the
+diff and not reported, and the artifact recorded a reason that was not the
+reason. The path resolved; the file was merely large.
 
-**The message is fixed; the limitation is not.** It used to say *"Pass
-start_line and end_line to read a window of it"*, which is the remedy that does
-not work — the window hits the same ceiling and gets the same message,
-repeating the suggestion that had just failed. It now states the limit and
-names no remedy at all, and a test holds it to that.
+**Split by purpose.** `MAX_READ_BYTES` keeps its meaning — the ceiling on what
+is *emitted to the model* — and a whole-file read above it is still refused,
+with a message that now names a window, which now works. `MAX_LOCAL_SCAN_BYTES`
+is the ceiling on what local code may hold and never emits. A test asserts the
+second is not below the first, because lowering the wrong one would make
+citation stricter than reading and restore the defect through an edit to a
+number.
 
-The correction had the defect twice before it stopped. The first replacement
-pointed at `get_diff`, which exists only in a diff review: `diff()` refuses
-without a `diff_base`, the MCP server does not offer the tool in that mode, and
-the diff has ceilings of its own. Codex found the same class of error inside
-the fix for that class of error, one gate pass later. So the test checks for
-five words rather than one phrase — `get_diff`, `start_line`, `end_line`,
-`instead`, `try` — because the next person to add a helpful suggestion should
-meet the question rather than the wording.
+**Every blob read goes through one revision-aware fetcher.** That is the
+structural half, and it is what the deleted-file hole argued for: a ceiling
+added at the fetcher applies at head and at base alike, and a future reader
+cannot acquire a revision without also acquiring a limit. The narrow guard on
+reading the base survives — any path this change did not delete is still
+refused.
+
+**"Not there" and "too large" are now different errors.** They were one, and
+the fallback branched on nothing: `except WorkspaceError` around the live read
+took every failure as evidence of a deletion, so a large file entered the
+deletion branch, was refused there for an unrelated second reason, and reached
+the artifact as `unknown-path` with the detail *"is not a file this change
+deleted; read it with read_file"* — advising the tool that had refused it
+first. A file above the local ceiling is now rejected as `file-too-large`, with
+its own counter and its own line in the report.
+
+**And the window had to be bounded in characters, not only in lines.**
+`excerpt` bounded a window at 25 lines and both callers put the result straight
+into something a model reads. A file that is one enormous line has one line: a
+299,990-byte single-line file produced a 299,999-character "window of 25 lines"
+and every line-based check called it small. Widening the local ceiling would
+have made it 8 MB. Each line is clipped, then the window is narrowed towards
+the cited line until the body fits — and the cited line survives either way,
+because a window that drops the code being argued about answers a different
+question from the one asked.
+
+**What is still true.** A file above `MAX_LOCAL_SCAN_BYTES` cannot be cited at
+all: nothing can confirm a quotation from it. That is now said out loud, in the
+rejection and in the report, rather than recorded as a missing path. And 8 MB
+is chosen, not derived — large enough that no honest source file reaches it,
+small enough to hold, and no measurement says 8 rather than 2 or 32.
 
 ## The search read the working tree; every other reader read the revision — fixed
 

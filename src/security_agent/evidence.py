@@ -39,13 +39,39 @@ class DiffFormatError(ValueError):
     """
 
 
+def lines_of(text: str) -> List[str]:
+    """Lines as git counts them: separated by LF and nothing else.
+
+    `str.splitlines()` also splits on bare CR, vertical tab, form feed, the
+    file/group/record separators, NEL, and the Unicode line and paragraph
+    separators. Git does not. A form feed is an ordinary page break in older C
+    and Lisp, and one of them shifts every line after it by one.
+
+    **The two halves of the citation check disagreed about where a line was.**
+    `read_file` was changed to number by LF, as git does, and this module was
+    not — so the reviewer read `int three(void);` at line 3, quoted it, and
+    `locate_evidence` found it at line 4 and *corrected* the finding to that.
+    The report then cited a line the reader never saw, and `attribution`
+    checked it against a changed-lines map git had numbered the first way, so a
+    finding on changed code could come out as pre-existing, which does not
+    block. Measured on 2026-09-07 with a four-line file.
+
+    Lives here rather than in `workspace` because this is the module that
+    decides what a line is, and one definition is the point.
+    """
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def normalize(line: str) -> str:
     """Collapse all whitespace so indentation and tab/space choices don't matter."""
     return " ".join(line.split())
 
 
 def _evidence_lines(evidence: str) -> List[str]:
-    return [normalize(line) for line in evidence.splitlines() if normalize(line)]
+    return [normalize(line) for line in lines_of(evidence) if normalize(line)]
 
 
 def _strip_diff_markers(lines: Sequence[str]) -> List[str]:
@@ -127,7 +153,7 @@ def locate_evidence(file_text: str, evidence: str, claimed_line: int = 0) -> int
                 len(wanted), sum(len(line) for line in wanted),
                 MAX_EVIDENCE_LINES))
 
-    haystack = [normalize(line) for line in file_text.splitlines()]
+    haystack = [normalize(line) for line in lines_of(file_text)]
     if not haystack:
         raise EvidenceProblem("the file is empty")
 
@@ -381,7 +407,7 @@ def changed_lines(diff_text: str) -> ChangedLines:
     # Lines of the hunk body still owed to each side, from its header.
     old_left = new_left = 0
 
-    for line in diff_text.splitlines():
+    for line in lines_of(diff_text):
         # Column zero belongs to the diff's own structure. Every line of a hunk
         # body carries a marker column — `+`, `-`, or a space — so a line
         # beginning `diff ` or `@@ ` cannot have come out of a file, whatever
@@ -555,15 +581,76 @@ def evidence_span(evidence: str) -> int:
     return max(1, len(_evidence_lines(evidence)))
 
 
-def excerpt(file_text: str, line: int, radius: int = 25) -> Tuple[str, int, int]:
-    """A line-numbered window around a line, for showing a verifier the context."""
-    lines = file_text.splitlines()
+# A source line longer than this is minified, generated, or a blob pasted into
+# a string. Emitting it whole is what makes a "25-line window" arbitrarily
+# large, and nobody reads character 40,000 of it either way.
+MAX_EXCERPT_LINE_CHARS = 2_000
+
+
+def excerpt(file_text: str, line: int, radius: int = 25,
+            limit: int = 0) -> Tuple[str, int, int]:
+    """A line-numbered window around a line, for showing a verifier the context.
+
+    Bounded in characters as well as in lines. The radius alone bounds
+    nothing: a file that is one enormous line satisfies any line count, and
+    both callers put the result straight into something a model reads — the
+    citation-retry response and the verifier's prompt. Measured against the
+    code as it stood on 2026-09-07: a 299,990-byte single-line file produced a
+    299,999-character "window of 25 lines", and every line-based check in the
+    chain called it small. Codex found it on the gate pass for the large-file
+    repair, where widening the local read ceiling would have made the same
+    window 8 MB.
+
+    Two bounds, because one does not do it. Each line is clipped at
+    `MAX_EXCERPT_LINE_CHARS`, which is what stops a single line; then the
+    window is narrowed towards the centre until the body fits `limit`, which
+    is what stops many merely long ones. The cited line is kept whichever way
+    the narrowing goes — it is the reason the excerpt exists — and a clip is
+    always announced in the text, because a window that silently drops the
+    code being argued about is worse than a refusal.
+    """
+    lines = lines_of(file_text)
     if not lines:
         return "", 0, 0
     center = max(1, min(line or 1, len(lines)))
     start = max(1, center - radius)
     stop = min(len(lines), center + radius)
-    body = "\n".join(
-        "{:>6} | {}".format(n, lines[n - 1]) for n in range(start, stop + 1)
-    )
+
+    def rendered(n: int) -> str:
+        text = lines[n - 1]
+        if len(text) > MAX_EXCERPT_LINE_CHARS:
+            text = "{}… [line clipped, {} more characters]".format(
+                text[:MAX_EXCERPT_LINE_CHARS], len(text) - MAX_EXCERPT_LINE_CHARS)
+        return "{:>6} | {}".format(n, text)
+
+    def body_of(first: int, last: int) -> str:
+        return "\n".join(rendered(n) for n in range(first, last + 1))
+
+    body = body_of(start, stop)
+    if limit > 0 and len(body) > limit:
+        # The notice is part of what is emitted, so the room for it comes out
+        # of the limit rather than being added on top. Codex, 2026-09-07: a cap
+        # that the announcement of the cap then exceeds is not a cap.
+        notice = "\n[window narrowed to fit the context limit]"
+        room = max(0, limit - len(notice))
+        # Narrow from the edges inwards. The centre line survives even when it
+        # alone exceeds the limit: a truncated body that does not contain the
+        # cited line answers a different question from the one asked.
+        while len(body) > room and (start < center or stop > center):
+            if stop - center >= center - start and stop > center:
+                stop -= 1
+            elif start < center:
+                start += 1
+            else:
+                stop -= 1
+            body = body_of(start, stop)
+        if len(body) > room:
+            # Only the cited line is left and it is still too long. Clipping it
+            # from the front keeps its number and the code that follows the
+            # number, so `start` and `stop` do not claim a line the body does
+            # not show. A limit too small even for that leaves the marker and
+            # nothing else, which is honest; it cannot leave a body that
+            # silently belongs to some other line.
+            body = body[:room] if room else ""
+        body += notice
     return body, start, stop

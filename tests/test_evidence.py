@@ -13,7 +13,9 @@ from security_agent.evidence import (
     EvidenceProblem,
     changed_lines,
     evidence_span,
+    MAX_EXCERPT_LINE_CHARS,
     excerpt,
+    lines_of,
     locate_evidence,
     normalize,
     touches_change,
@@ -332,3 +334,145 @@ class TestAmbiguousEvidenceIsRefused:
     def test_absent_code_says_so_rather_than_something_vaguer(self):
         with pytest.raises(EvidenceProblem, match="does not appear"):
             locate_evidence(SOURCE, 'os.system("rm -rf " + user_input)')
+
+
+class TestTheWindowIsBoundedInCharactersToo:
+    """Codex, 2026-09-07, on the gate for the large-file repair.
+
+    `excerpt` bounded the window in *lines*, and both callers put the result
+    straight into something a model reads — the citation-retry response and the
+    verifier's prompt. A file that is one enormous line satisfies any line
+    count. Measured against the code as it then stood: a 299,990-byte
+    single-line file produced a 299,999-character "window of 25 lines", and
+    every line-based check in the chain called it small. Widening the local
+    read ceiling would have made the same window 8 MB.
+
+    Two bounds are needed and one is not enough: the per-line clip stops a
+    single line, the total limit stops many merely long ones.
+    """
+
+    def test_one_enormous_line_does_not_become_the_whole_window(self):
+        body, _start, _stop = excerpt("x" * 500_000, line=1, radius=20,
+                                      limit=60_000)
+        assert len(body) < 60_000 + 200
+        assert "line clipped" in body
+
+    def test_the_clip_says_how_much_it_dropped(self):
+        body, _s, _e = excerpt("y" * 10_000, line=1, radius=0, limit=60_000)
+        assert "[line clipped, {} more characters]".format(
+            10_000 - MAX_EXCERPT_LINE_CHARS) in body
+
+    def test_many_long_lines_are_narrowed_and_it_is_announced(self):
+        text = "\n".join("z" * 1_500 for _ in range(200))
+        body, start, stop = excerpt(text, line=100, radius=60, limit=20_000)
+        assert len(body) <= 20_000 + 60
+        assert "window narrowed" in body
+        assert start <= 100 <= stop
+
+    def test_the_cited_line_survives_even_when_it_alone_exceeds_the_limit(self):
+        """A truncated body that does not contain the cited line answers a
+        different question from the one asked."""
+        text = "\n".join(["short"] * 50 + ["Q" * 30_000] + ["short"] * 50)
+        body, start, stop = excerpt(text, line=51, radius=40, limit=5_000)
+        assert start <= 51 <= stop
+        assert "    51 |" in body
+
+    def test_the_limit_includes_the_notice_it_appends(self):
+        """A cap that the announcement of the cap then exceeds is not a cap.
+
+        Codex, 2026-09-07: the body was cut to `limit` and the notice added on
+        top, so every narrowed window was over the ceiling by the length of the
+        sentence saying it had been narrowed.
+        """
+        text = "\n".join("w" * 400 for _ in range(400))
+        for limit in (60, 200, 1_000, 20_000):
+            body, _s, _e = excerpt(text, line=200, radius=60, limit=limit)
+            assert len(body) <= limit, (limit, len(body))
+
+    def test_a_narrowed_window_never_shows_another_line_as_the_cited_one(self):
+        """The clip keeps the number attached to its own text.
+
+        Cutting from the end of the body leaves the cited line's marker and the
+        start of its code; cutting from the start would leave text under a
+        number belonging to a different line, which is worse than showing less.
+        """
+        text = "\n".join(["short line here"] * 40
+                          + ["CITED" + "z" * 8_000]
+                          + ["short line here"] * 40)
+        body, start, stop = excerpt(text, line=41, radius=30, limit=300)
+        assert start <= 41 <= stop
+        assert len(body) <= 300
+        assert "    41 |" in body
+
+    def test_no_limit_keeps_the_old_behaviour(self):
+        """The default is unbounded, so every caller that has not been given a
+        ceiling is unchanged rather than silently trimmed."""
+        text = "\n".join("line {}".format(n) for n in range(1, 60))
+        body, _s, _e = excerpt(text, line=30, radius=25)
+        assert "window narrowed" not in body
+
+    def test_the_narrowing_terminates_and_keeps_the_centre(self):
+        """Exhaustive over small shapes, not a spot check.
+
+        The loop has three branches and an escape condition, and an off-by-one
+        in any of them is an infinite loop in production on an input nobody
+        would build by hand. Every combination is cheap; the alternative is
+        trusting that the three cases tried above were the interesting ones.
+        """
+        for n_lines in range(1, 12):
+            for line_len in (1, 5, 3_000):
+                text = "\n".join("q" * line_len for _ in range(n_lines))
+                for center in range(1, n_lines + 1):
+                    for radius in (0, 1, 3, 50):
+                        for limit in (0, 1, 10, 60, 500, 60_000):
+                            body, start, stop = excerpt(
+                                text, center, radius=radius, limit=limit)
+                            assert start <= center <= stop, (
+                                n_lines, line_len, center, radius, limit)
+                            if limit >= 20:
+                                assert "{:>6} |".format(center) in body, (
+                                    n_lines, line_len, center, radius, limit)
+
+
+class TestOneDefinitionOfALine:
+    """The reader and the validator have to number the same file the same way.
+
+    Fixing `read_file` to number by LF, as git does, and leaving this module on
+    `str.splitlines()` created the disagreement rather than closing it — which
+    is the mirror of the defect it fixed. Measured on 2026-09-07 with a
+    four-line C file containing one form feed: `int three(void);` is line 3 to
+    the reader and line 4 to `locate_evidence`, and the quote is authoritative,
+    so the finding would have been *corrected* onto a line the reader never
+    saw — and then attributed against a changed-lines map git had numbered the
+    first way.
+    """
+
+    FORM_FEED = ("int one(void);\n"
+                 "\x0cint two(void);\n"
+                 "int three(void);\n"
+                 "int four(void);\n")
+
+    def test_a_form_feed_does_not_shift_the_numbering(self):
+        assert lines_of(self.FORM_FEED) == [
+            "int one(void);", "\x0cint two(void);", "int three(void);",
+            "int four(void);"]
+
+    def test_the_quote_is_found_where_the_reader_shows_it(self):
+        assert locate_evidence(
+            self.FORM_FEED, "int three(void);\nint four(void);") == 3
+
+    def test_the_excerpt_agrees_with_the_same_numbering(self):
+        body, start, stop = excerpt(self.FORM_FEED, 3, radius=0)
+        assert start == stop == 3
+        assert "int three" in body
+
+    def test_a_trailing_newline_does_not_add_a_line(self):
+        """The one shape `splitlines` got right and a naive `split` does not."""
+        assert lines_of("a\nb\n") == ["a", "b"]
+        assert lines_of("a\nb") == ["a", "b"]
+        assert lines_of("") == []
+
+    def test_a_carriage_return_stays_in_the_line_it_belongs_to(self):
+        """A CRLF file's CR is part of what the blob holds, and a quotation
+        checked against the file is checked against what is in it."""
+        assert lines_of("a\r\nb\r\n") == ["a\r", "b\r"]

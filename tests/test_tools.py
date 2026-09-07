@@ -140,7 +140,8 @@ class TestEveryRejectionReachesTheCounters:
         counted = (session.metrics.citations_rejected_unknown_path
                    + session.metrics.citations_rejected_not_found
                    + session.metrics.citations_rejected_ambiguous
-                   + session.metrics.citations_rejected_too_short)
+                   + session.metrics.citations_rejected_too_short
+                   + session.metrics.citations_rejected_too_large)
         assert counted == attempts
         assert session.candidates == []
 
@@ -563,3 +564,231 @@ class TestAFindingAboutSomethingThisChangeDeleted:
 
         result = dispatch(ws, session, "read_file", {"path": "nosuch.py"})
         assert result.is_error
+
+
+class TestALargeFileIsNotAMissingFile:
+    """Codex, 2026-09-07, and the measurement that followed.
+
+    The citation check caught an undifferentiated `WorkspaceError` around
+    `raw_text` and treated every failure as evidence the file had been deleted.
+    A file that merely exceeded the ceiling entered the deletion branch, was
+    refused there for a second and unrelated reason, and reached the artifact
+    as:
+
+        reason = "unknown-path"
+        detail = "big.py is not a file this change deleted; read it with
+                  read_file"
+
+    The path resolves, nothing deleted it, and the recorded advice named the
+    tool that had refused it first. Two wrong messages stacked on one real
+    condition.
+    """
+
+    def large_repo(self, git_repo, monkeypatch):
+        import subprocess
+
+        import security_agent.workspace as W
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test",
+               "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+        (git_repo / "app" / "views.py").write_text(
+            'def get_user(request, db):\n'
+            '    user_id = request.args.get("id")\n'
+            '    return db.execute("SELECT * FROM users WHERE id = " + user_id)\n'
+            + "# padding\n" * 40_000, encoding="utf-8")
+        for args in (("add", "-A"), ("commit", "-qm", "grow it")):
+            subprocess.run(("git", "-C", str(git_repo), *args), check=True,
+                           capture_output=True, env=env)
+        # Lowered rather than a 9 MB file written: what is under test is which
+        # branch a size refusal takes, not the value of the constant.
+        monkeypatch.setattr(W, "MAX_LOCAL_SCAN_BYTES", 100_000)
+        return Workspace(root=git_repo, excludes=())
+
+    def test_the_reason_recorded_is_the_one_that_is_true(self, git_repo,
+                                                          session, monkeypatch):
+        ws = self.large_repo(git_repo, monkeypatch)
+        for _ in range(MAX_CITATION_ATTEMPTS):
+            result = report(ws, session, evidence=REAL_EVIDENCE, line=3)
+        assert result.is_error
+        assert session.rejected[0].reason == "file-too-large"
+        assert "not a file this change deleted" not in session.rejected[0].detail
+
+    def test_it_is_counted_under_its_own_reason(self, git_repo, session,
+                                                monkeypatch):
+        ws = self.large_repo(git_repo, monkeypatch)
+        for _ in range(MAX_CITATION_ATTEMPTS):
+            report(ws, session, evidence=REAL_EVIDENCE, line=3)
+        assert session.metrics.citations_rejected_too_large == MAX_CITATION_ATTEMPTS
+        assert session.metrics.citations_rejected_unknown_path == 0
+
+    def test_the_message_does_not_advise_a_tool_that_refuses_it(
+            self, git_repo, session, monkeypatch):
+        ws = self.large_repo(git_repo, monkeypatch)
+        result = report(ws, session, evidence=REAL_EVIDENCE, line=3)
+        assert "read it with read_file" not in result.content
+        assert "The path is real" in result.content
+
+
+class TestTheClassifierSeesTheTopOfALargeFile:
+    """Generated files are the large ones, and the classifier reached them
+    through the ceiling on what may be shown to the model — so it was handed
+    `""` and answered nothing. Measured on a 658 KB protobuf: the real head
+    classifies as a Go generator banner, the empty string as nothing.
+    """
+
+    def test_a_large_generated_file_is_still_labelled(self, git_repo, session):
+        import subprocess
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test",
+               "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(git_repo), *args),
+                                  check=True, capture_output=True, text=True,
+                                  env=env).stdout
+
+        git("rev-parse", "HEAD")
+        base = git("rev-parse", "HEAD").strip()
+        (git_repo / "pb.go").write_text(
+            "// Code generated by protoc-gen-go. DO NOT EDIT.\n"
+            + "const X = 1  // padding\n" * 30_000, encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "generated")
+        head = git("rev-parse", "HEAD").strip()
+
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head,
+                       excludes=())
+        result = dispatch(ws, session, "list_changed_files", {})
+        assert "generated" in result.content
+        assert "pb.go" in result.content
+
+
+class TestAnAbsentPathIsNotADeletedOne:
+    """Three states, not two: at the revision, deleted by this change, and
+    never there at all. The read handler falls back to the base when a file is
+    absent at head — and when the fallback's own guard refuses, its message
+    (*"is not a file this change deleted; read it with read_file"*) would
+    answer a `read_file` call by advising `read_file`.
+
+    Circular advice is worse than none: the reason it gives is not the reason,
+    and a model that follows it retries the call that just failed.
+    """
+
+    def test_reading_a_path_that_never_existed_says_so(self, ws, session):
+        result = dispatch(ws, session, "read_file",
+                          {"path": "app/never_written.py"})
+        assert result.is_error
+        assert "read it with read_file" not in result.content
+        assert "not a tracked file" in result.content
+
+    def test_a_claim_about_an_invented_path_records_the_true_reason(
+            self, ws, session):
+        """The same defect on the citation check's copy of the fallback.
+
+        The deletion guard's message would become the artifact's `detail` for a
+        claim about a path the reviewer invented — advising `read_file`, which
+        refuses it too.
+        """
+        for _ in range(MAX_CITATION_ATTEMPTS):
+            report(ws, session, file="app/invented.py")
+        assert session.rejected[0].reason == "unknown-path"
+        assert "read it with read_file" not in session.rejected[0].detail
+        assert "not a tracked file" in session.rejected[0].detail
+
+
+class TestALargeDeletedFileKeepsItsReason:
+    """Codex, 2026-09-07, inside the gate for the change that created the
+    distinction: the read handler caught `WorkspaceError` around the base read
+    and re-raised the original absence, so a *large deleted* file was reported
+    as a path that is not there. The distinction was created and then lost one
+    line later.
+    """
+
+    def repo(self, git_repo, monkeypatch):
+        import subprocess
+
+        import security_agent.workspace as W
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test",
+               "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(git_repo), *args),
+                                  check=True, capture_output=True, text=True,
+                                  env=env).stdout
+
+        (git_repo / "vendor.py").write_text("x = 1  # padding\n" * 30_000,
+                                            encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "vendor")
+        base = git("rev-parse", "HEAD").strip()
+        (git_repo / "vendor.py").unlink()
+        git("add", "-A")
+        git("commit", "-qm", "remove it")
+        head = git("rev-parse", "HEAD").strip()
+        monkeypatch.setattr(W, "MAX_LOCAL_SCAN_BYTES", 100_000)
+        return Workspace(root=git_repo, diff_base=base, diff_head=head,
+                         excludes=())
+
+    def test_the_handler_reports_the_size_and_not_the_absence(
+            self, git_repo, session, monkeypatch):
+        ws = self.repo(git_repo, monkeypatch)
+        result = dispatch(ws, session, "read_file", {"path": "vendor.py"})
+        assert result.is_error
+        assert "not a tracked file" not in result.content
+        assert "over the" in result.content and "limit" in result.content
+
+
+class TestAnEmptyFileReadsAsEmptyAndNotAsAFailure:
+    """The `0 lines` body is a success return, so the chain has to treat it as
+    one. This project's recurring defect is the opposite reading: no numbered
+    lines taken for "nothing could be read".
+    """
+
+    def empty_repo(self, git_repo):
+        import subprocess
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test",
+               "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(git_repo), *args),
+                                  check=True, capture_output=True, text=True,
+                                  env=env).stdout
+
+        (git_repo / "blank.py").write_text("", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "blank")
+        head = git("rev-parse", "HEAD").strip()
+        return Workspace(root=git_repo, diff_head=head, excludes=())
+
+    def test_the_handler_does_not_report_it_as_an_error(self, git_repo,
+                                                        session):
+        ws = self.empty_repo(git_repo)
+        result = dispatch(ws, session, "read_file", {"path": "blank.py"})
+        assert not result.is_error
+        assert "0 lines" in result.content
+
+    def test_it_is_recorded_as_examined_and_exposed(self, git_repo, session):
+        """A file the model opened is a file the model opened, whatever it
+        held. `gate._reviewed_nothing` reads exposures to tell a review that
+        stopped early from one that never started."""
+        ws = self.empty_repo(git_repo)
+        dispatch(ws, session, "read_file", {"path": "blank.py"})
+        assert "blank.py" in session.files_examined
+        assert ("blank.py", "read_file") in session.exposures
+
+    def test_a_window_into_an_empty_file_is_the_same_answer(self, git_repo,
+                                                            session):
+        """Not "past the end": there is no end to be past, and the two are
+        different things to say."""
+        ws = self.empty_repo(git_repo)
+        result = dispatch(ws, session, "read_file",
+                          {"path": "blank.py", "start_line": 1,
+                           "end_line": 10})
+        assert not result.is_error
+        assert "0 lines" in result.content

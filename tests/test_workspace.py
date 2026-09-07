@@ -7,7 +7,13 @@ attempts are tested explicitly rather than assumed.
 
 import pytest
 
-from security_agent.workspace import MAX_READ_BYTES, Workspace, WorkspaceError
+from security_agent.workspace import (
+    MAX_READ_BYTES,
+    FileNotAtRevision,
+    FileTooLarge,
+    Workspace,
+    WorkspaceError,
+)
 
 
 @pytest.fixture
@@ -433,12 +439,15 @@ class TestTheDiffIsBounded:
 
 class TestTheReadCeilingSaysWhatItDoes:
     """`gpt-6-astra`, 2026-09-06. The refusal advised passing `start_line` and
-    `end_line`, and `read_file` reaches the file through `blob_text`, so the
-    ceiling is on the whole blob and the window is refused identically — with
+    `end_line`, and `read_file` reached the file through `blob_text`, so the
+    ceiling was on the whole blob and the window was refused identically — with
     the message repeating the suggestion that had just failed.
 
-    A remedy named in an error that the code does not implement costs a reader
-    an afternoon, and costs a *model* a retry it cannot learn from.
+    Then the message was corrected to name no remedy, because there was none.
+    Now there is one: the window is real, and these tests assert that instead.
+    They were written against the defect and the defect is gone; what has to
+    stay covered is that the advice a refusal gives *works*, which is the
+    property both of the earlier versions broke in opposite directions.
     """
 
     def big_file(self, git_repo):
@@ -458,42 +467,324 @@ class TestTheReadCeilingSaysWhatItDoes:
                            capture_output=True, env=env)
         return "big.py"
 
-    def test_a_window_is_refused_exactly_as_the_whole_file_is(self, ws,
-                                                             git_repo):
+    def test_the_whole_file_is_still_refused(self, ws, git_repo):
+        """The ceiling on what is emitted has not moved."""
         path = self.big_file(git_repo)
-        with pytest.raises(WorkspaceError) as whole:
+        with pytest.raises(FileTooLarge) as caught:
             ws.read_file(path)
-        with pytest.raises(WorkspaceError) as window:
-            ws.read_file(path, start_line=10, end_line=12)
-        assert str(whole.value) == str(window.value)
+        assert "over the 292 KB limit" in str(caught.value)
 
-    def test_the_message_does_not_advise_the_window(self, ws, git_repo):
-        """The defect itself: an error naming a remedy that does not work."""
-        path = self.big_file(git_repo)
-        with pytest.raises(WorkspaceError) as caught:
-            ws.read_file(path, start_line=10, end_line=12)
-        message = str(caught.value)
-        assert "start_line" not in message, message
-        assert "windowed read of it is refused too" in message
+    def test_the_window_the_message_advises_actually_works(self, ws, git_repo):
+        """The defect, stated as the property it broke.
 
-    def test_the_message_names_no_remedy_at_all(self, ws, git_repo):
-        """The correction had the same defect as the thing it corrected.
-
-        Replacing the bad advice with "its diff is still available through
-        get_diff" named a remedy that exists only in a diff review: `diff()`
-        refuses without a `diff_base`, the MCP server does not offer the tool
-        in that mode, and the diff has ceilings of its own. Codex found it one
-        gate pass after the first fix.
-
-        A refusal may say what is true of itself. It may not send the caller
-        somewhere without knowing that the somewhere is there.
+        The first version advised a window that was refused identically; the
+        second advised nothing, because nothing worked. A refusal may only name
+        a remedy it has checked is there — so the test takes the advice out of
+        the message and follows it.
         """
         path = self.big_file(git_repo)
-        with pytest.raises(WorkspaceError) as caught:
+        with pytest.raises(FileTooLarge) as caught:
             ws.read_file(path)
-        message = str(caught.value)
-        for remedy in ("get_diff", "start_line", "end_line", "instead", "try"):
-            assert remedy not in message, (remedy, message)
+        assert "start_line and end_line" in str(caught.value)
+
+        body, _trimmed = ws.read_file(path, start_line=10, end_line=12)
+        assert "lines 10-12" in body
+        assert "    10 | # padding" in body
+
+    def test_a_window_does_not_carry_the_rest_of_the_file(self, ws, git_repo):
+        """Bounded by the window, not by the output cap after the fact.
+
+        Slicing a file already in memory would answer this test the same way
+        and would not have fixed anything, so the assertion is on the count of
+        lines returned rather than on the size of the answer.
+        """
+        path = self.big_file(git_repo)
+        body, trimmed = ws.read_file(path, start_line=100, end_line=104)
+        assert not trimmed
+        numbered = [ln for ln in body.splitlines() if "|" in ln]
+        assert len(numbered) == 5
+        assert "   100 |" in body and "   104 |" in body
+        assert "    99 |" not in body and "   105 |" not in body
+
+    def test_the_reported_total_is_measured_and_not_guessed(self, ws, git_repo):
+        path = self.big_file(git_repo)
+        body, _ = ws.read_file(path, start_line=1, end_line=2)
+        line_count = MAX_READ_BYTES // len(
+            "# padding to push this file over the ceiling\n") + 40
+        assert "of {}".format(line_count) in body
+
+    def test_a_window_past_the_end_is_a_refusal_and_not_an_empty_answer(
+            self, ws, git_repo):
+        """Absence is not agreement: no lines there is not "those lines are
+        blank"."""
+        path = self.big_file(git_repo)
+        with pytest.raises(WorkspaceError, match="past the end"):
+            ws.read_file(path, start_line=900_000, end_line=900_010)
+
+    def test_a_backwards_window_is_refused(self, ws):
+        with pytest.raises(WorkspaceError, match="before start_line"):
+            ws.read_file("app/views.py", start_line=3, end_line=1)
+
+
+class TestOneCeilingWasServingTwoPurposes:
+    """Codex, 2026-09-07, on the design for windowed reading — and the
+    measurements that answered it.
+
+    `MAX_READ_BYTES` is a ceiling on what is *emitted to the model*; that is
+    what its comment says it is for. Two readers of a blob emit none of it and
+    were refused by it anyway, and one reader had no ceiling at all.
+    """
+
+    def env(self, root):
+        return {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "t@example.com",
+                "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(root)}
+
+    def git(self, root, *args):
+        import subprocess
+        return subprocess.run(("git", "-C", str(root), *args), check=True,
+                              capture_output=True, text=True,
+                              env=self.env(root)).stdout
+
+    def a_large_deleted_file(self, git_repo, size=1_000_000):
+        """A base holding a large file, and a change that removes it."""
+        (git_repo / "vendor.py").write_text(
+            "x = 1  # vendored padding\n" * (size // 25), encoding="utf-8")
+        self.git(git_repo, "add", "-A")
+        self.git(git_repo, "commit", "-qm", "vendor")
+        base = self.git(git_repo, "rev-parse", "HEAD").strip()
+        (git_repo / "vendor.py").unlink()
+        self.git(git_repo, "add", "-A")
+        self.git(git_repo, "commit", "-qm", "remove the vendored blob")
+        head = self.git(git_repo, "rev-parse", "HEAD").strip()
+        return Workspace(root=git_repo, diff_base=base, diff_head=head)
+
+    def a_large_live_file(self, git_repo, size=700_000):
+        (git_repo / "big.py").write_text(
+            "y = 2  # padding\n" * (size // 17), encoding="utf-8")
+        self.git(git_repo, "add", "-A")
+        self.git(git_repo, "commit", "-qm", "big")
+        head = self.git(git_repo, "rev-parse", "HEAD").strip()
+        return Workspace(root=git_repo, diff_head=head)
+
+    def test_the_deleted_file_reader_has_a_ceiling(self, git_repo,
+                                                   monkeypatch):
+        """It had none — measured, not argued.
+
+        The same content was refused at 292 KB while it was live and returned
+        whole once the change deleted it. The attacker chooses both the
+        deletion and the size, and a merge request removing a large vendored
+        blob looks ordinary. The ceiling is lowered here rather than a 9 MB
+        file written, because what is under test is that a limit is consulted
+        at all.
+        """
+        import security_agent.workspace as W
+        ws = self.a_large_deleted_file(git_repo)
+        monkeypatch.setattr(W, "MAX_LOCAL_SCAN_BYTES", 400_000)
+        with pytest.raises(FileTooLarge) as caught:
+            ws.removed_text("vendor.py")
+        assert "over the 390 KB limit" in str(caught.value)
+
+    def test_a_deleted_file_can_still_be_read_through_a_window(self, git_repo):
+        """Bounded is not refused. The deletion is the finding, so the base
+        content has to stay reachable."""
+        ws = self.a_large_deleted_file(git_repo)
+        body, _ = ws.read_removed_file("vendor.py", start_line=5, end_line=7)
+        assert "at the base revision" in body
+        assert "     5 | x = 1" in body
+        assert "     8 |" not in body
+
+    def test_the_citation_check_is_not_bounded_by_the_context_ceiling(
+            self, git_repo):
+        """`raw_text` emits nothing to the model and was refused by the
+        ceiling on what is emitted.
+
+        The consequence was a weakness that could be seen in the diff and not
+        reported: the check could not open the file to confirm the quote, so
+        the claim was dropped.
+        """
+        ws = self.a_large_live_file(git_repo)
+        with pytest.raises(FileTooLarge):
+            ws.read_file("big.py")          # still refused: this one is emitted
+        assert len(ws.raw_text("big.py")) > MAX_READ_BYTES
+
+    def test_the_local_ceiling_is_not_below_the_emitted_one(self):
+        """Two constants that can drift, and the direction that would hurt.
+
+        Lowering the local one below the emitted one would make the citation
+        check stricter than reading — a file the reviewer can read and cannot
+        cite, which is the defect this change removed, restored by an edit to
+        a number.
+        """
+        from security_agent.workspace import MAX_LOCAL_SCAN_BYTES
+        assert MAX_LOCAL_SCAN_BYTES >= MAX_READ_BYTES
+
+    def test_a_head_read_sees_the_top_of_a_file_too_large_to_open(
+            self, git_repo):
+        """The generated-file classifier went blind on the file class it
+        exists for: generated files are the large ones."""
+        banner = "// Code generated by protoc-gen-go. DO NOT EDIT.\n"
+        (git_repo / "pb.go").write_text(
+            banner + "const X = 1  // padding\n" * 30_000, encoding="utf-8")
+        self.git(git_repo, "add", "-A")
+        self.git(git_repo, "commit", "-qm", "generated")
+        head = self.git(git_repo, "rev-parse", "HEAD").strip()
+        ws = Workspace(root=git_repo, diff_head=head)
+
+        with pytest.raises(FileTooLarge):
+            ws.read_file("pb.go")
+        assert ws.head_text("pb.go").startswith(
+            "// Code generated by protoc-gen-go")
+
+    def test_a_binary_file_is_refused_by_the_window_too(self, git_repo):
+        """The two readers must agree about what is text.
+
+        Streaming with `errors="replace"` would hand a model a wall of
+        replacement characters, which reads as a file it has seen.
+        """
+        (git_repo / "blob.bin").write_bytes(b"\x00\x01\x02\xff" * 4000)
+        self.git(git_repo, "add", "-A")
+        self.git(git_repo, "commit", "-qm", "binary")
+        head = self.git(git_repo, "rev-parse", "HEAD").strip()
+        ws = Workspace(root=git_repo, diff_head=head)
+        with pytest.raises(WorkspaceError, match="binary file"):
+            ws.read_file("blob.bin", start_line=1, end_line=2)
+
+    def test_a_scan_stopped_at_the_ceiling_says_at_least(self, git_repo,
+                                                          monkeypatch):
+        """A total that was not measured is never printed as if it were."""
+        import security_agent.workspace as W
+        ws = self.a_large_live_file(git_repo)
+        monkeypatch.setattr(W, "MAX_LOCAL_SCAN_BYTES", 50_000)
+        body, _ = ws.read_file("big.py", start_line=2, end_line=4)
+        assert "of at least" in body
+
+    def test_reading_the_base_is_still_refused_for_a_live_file(self, git_repo):
+        """The narrow guard survives the rewrite: this is not a general way of
+        reading whatever the parent happened to contain."""
+        ws = self.a_large_deleted_file(git_repo)
+        with pytest.raises(WorkspaceError, match="not a file this change deleted"):
+            ws.removed_text("app/views.py")
+        with pytest.raises(WorkspaceError, match="not a file this change deleted"):
+            ws.read_removed_file("app/views.py", start_line=1, end_line=2)
+
+
+class TestTheGateOnTheGateFoundSeven:
+    """Codex, 2026-09-07, on the diff that split the ceilings. Every one of
+    these is a place where the new distinction was created and then lost, or a
+    reader the new fetcher did not reach.
+    """
+
+    def env(self, root):
+        return {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "t@example.com",
+                "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(root)}
+
+    def git(self, root, *args):
+        import subprocess
+        return subprocess.run(("git", "-C", str(root), *args), check=True,
+                              capture_output=True, text=True,
+                              env=self.env(root)).stdout
+
+    def commit(self, git_repo, message="x"):
+        self.git(git_repo, "add", "-A")
+        self.git(git_repo, "commit", "-qm", message)
+        return self.git(git_repo, "rev-parse", "HEAD").strip()
+
+    def test_the_prompt_baseline_reader_has_a_ceiling_too(self, git_repo,
+                                                          monkeypatch):
+        """`blob_bytes` bypassed the fetcher entirely.
+
+        Its caller compares a prompt file against its baseline, and "the file
+        we ship is small" is an assumption about a tree the change controls.
+        """
+        import security_agent.workspace as W
+        (git_repo / "prompt.md").write_text("a\n" * 200_000, encoding="utf-8")
+        head = self.commit(git_repo, "prompt")
+        ws = Workspace(root=git_repo, diff_head=head)
+        monkeypatch.setattr(W, "MAX_LOCAL_SCAN_BYTES", 100_000)
+        with pytest.raises(FileTooLarge):
+            ws.blob_bytes(head, "prompt.md")
+
+    def test_an_absent_path_is_still_None_and_not_an_error(self, git_repo):
+        """The other half of the same call: absent is an answer there.
+
+        A prompt file this change *added* did not exist at the baseline, and
+        that is a legitimate answer rather than a failure — so the new ceiling
+        must not turn it into one.
+        """
+        head = self.git(git_repo, "rev-parse", "HEAD").strip()
+        ws = Workspace(root=git_repo, diff_head=head)
+        assert ws.blob_bytes(head, "never/written.md") is None
+
+    def test_a_form_feed_does_not_shift_the_line_numbers(self, git_repo):
+        """Lines are what git says they are: separated by LF.
+
+        `str.splitlines()` also splits on form feed — an ordinary page break in
+        older C and Lisp — so the window would be numbered differently from the
+        file a finding cites.
+        """
+        (git_repo / "pager.c").write_text(
+            "int one(void);\n\x0cint two(void);\nint three(void);\n",
+            encoding="utf-8")
+        head = self.commit(git_repo, "form feed")
+        ws = Workspace(root=git_repo, diff_head=head)
+        body, _ = ws.read_file("pager.c", start_line=2, end_line=2)
+        assert "int two" in body
+        assert "int three" not in body
+
+    def test_a_windowed_read_of_a_deleted_file_says_it_is_not_there(
+            self, git_repo):
+        """The two paths must expose the same taxonomy.
+
+        A failing windowed `git show` raised the base class, so `read_file`
+        with a window on a deleted file never reached the fallback that reads
+        the base — the deletion repair covered the whole-file path only.
+        """
+        (git_repo / "gone.py").write_text("def check():\n    pass\n",
+                                          encoding="utf-8")
+        base = self.commit(git_repo, "add")
+        (git_repo / "gone.py").unlink()
+        head = self.commit(git_repo, "delete")
+        ws = Workspace(root=git_repo, diff_base=base, diff_head=head)
+        with pytest.raises(FileNotAtRevision):
+            ws.read_file("gone.py", start_line=1, end_line=2)
+
+    def test_the_head_reader_reports_absence_the_same_way(self, git_repo):
+        """A third caller of the window, and it had neither taxonomy.
+
+        `head_text` goes straight to the primitive, so settling existence in
+        `_render_window` would have left it raising the base class for a path
+        that is not there — the same split the windowed and whole-file paths
+        had. The check belongs in the primitive, where every caller reaches it.
+        """
+        head = self.git(git_repo, "rev-parse", "HEAD").strip()
+        ws = Workspace(root=git_repo, diff_head=head)
+        with pytest.raises(FileNotAtRevision):
+            ws.head_text("app/never_written.py")
+
+    def test_the_head_of_an_empty_file_is_empty_and_not_an_error(self,
+                                                                 git_repo):
+        (git_repo / "blank.py").write_text("", encoding="utf-8")
+        head = self.commit(git_repo, "blank")
+        ws = Workspace(root=git_repo, diff_head=head)
+        assert ws.head_text("blank.py") == ""
+
+    def test_an_empty_file_is_not_a_missing_file(self, git_repo):
+        """Two distinct states in git, collapsed into the absence exception.
+
+        A tracked empty file then fell through to the deleted-file fallback and
+        was refused there as a path nothing deleted — two untrue things about a
+        file that is simply blank.
+        """
+        (git_repo / "blank.py").write_text("", encoding="utf-8")
+        head = self.commit(git_repo, "blank")
+        ws = Workspace(root=git_repo, diff_head=head)
+        body, trimmed = ws.read_file("blank.py")
+        assert not trimmed
+        assert "0 lines" in body
 
 
 class TestADeletionIsPartOfTheChange:
@@ -762,3 +1053,61 @@ class TestSearchReadsTheReviewedRevision:
                            excludes=("*/od\nd.py",))
         shown, count = hidden.search("return do")
         assert count == 0, shown
+
+
+class TestTheHeaderNamesWhatTheBodyHolds:
+    """Codex, 2026-09-07, second gate round on this change.
+
+    The body was cut at `MAX_OUTPUT_CHARS` mid-character and the header was
+    built from the range that had been *asked for*, so a three-line window of
+    30,000-character lines answered `lines 1-3` with line 3 absent. A claim
+    about what was delivered that nothing checked — the shape this tool exists
+    to hunt, inside the tool.
+    """
+
+    def wide(self, git_repo, line_len=30_000, count=6):
+        import subprocess
+        env = {"GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "Test",
+               "GIT_COMMITTER_EMAIL": "t@example.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(git_repo)}
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(git_repo), *args),
+                                  check=True, capture_output=True, text=True,
+                                  env=env).stdout
+
+        (git_repo / "wide.js").write_text(
+            "\n".join("var x{} = {!r};".format(n, "z" * line_len)
+                      for n in range(1, count + 1)) + "\n",
+            encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "wide")
+        head = git("rev-parse", "HEAD").strip()
+        return Workspace(root=git_repo, diff_head=head, excludes=())
+
+    def test_every_line_the_header_names_is_in_the_body(self, git_repo):
+        ws = self.wide(git_repo)
+        body, trimmed = ws.read_file("wide.js", start_line=1, end_line=6)
+        assert trimmed
+        header = body.splitlines()[0]
+        import re
+        first, last = re.search(r"lines (\d+)-(\d+)", header).groups()
+        for n in range(int(first), int(last) + 1):
+            assert "{:>6} |".format(n) in body, (n, header)
+
+    def test_the_body_never_ends_mid_line(self, git_repo):
+        """Cutting mid-character produced a fragment under a line number,
+        which reads as the code at that line and is not."""
+        ws = self.wide(git_repo)
+        body, _ = ws.read_file("wide.js", start_line=1, end_line=6)
+        last = body.splitlines()[-1]
+        assert last.endswith("';") or last.endswith('";'), last[-40:]
+
+    def test_one_line_too_long_is_still_answered(self, git_repo):
+        """Dropping it would answer a different question from the one asked."""
+        ws = self.wide(git_repo, line_len=200_000, count=2)
+        body, trimmed = ws.read_file("wide.js", start_line=1, end_line=1)
+        assert trimmed
+        assert "     1 |" in body
+        assert "lines 1-1" in body

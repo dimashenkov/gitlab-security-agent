@@ -23,6 +23,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
+# One definition of what a line is. `read_file` numbering blobs one way
+# and the citation check numbering them another is how a finding comes to
+# cite a line the reader never saw.
+from .evidence import lines_of
+
 log = logging.getLogger(__name__)
 
 
@@ -30,15 +35,82 @@ class WorkspaceError(Exception):
     """A tool argument was rejected, or git could not answer the question."""
 
 
+class FileNotAtRevision(WorkspaceError):
+    """No blob at that path in that tree.
+
+    Deleted by the change, renamed, or a path the model invented — this says
+    only that the tree does not have it. Which of the three it is comes from
+    `changed_objects`, never from the absence itself.
+    """
+
+
+class FileTooLarge(WorkspaceError):
+    """The blob is there, and larger than the ceiling in force.
+
+    Separate from `FileNotAtRevision` because the callers act on the two
+    oppositely, and until 2026-09-07 they could not tell them apart. The
+    citation check caught an undifferentiated `WorkspaceError` around
+    `raw_text` and took every failure as evidence the file had been deleted,
+    so a file that merely exceeded the ceiling entered the deletion branch,
+    was refused there for a second and unrelated reason, and reached the
+    artifact as `unknown-path` with the detail *"is not a file this change
+    deleted; read it with read_file"* — advising the tool that had refused it
+    first. Measured on a built repository, not reasoned about.
+
+    Carries the size and the ceiling, so a caller can say which limit was hit
+    rather than repeating a number it assumed.
+    """
+
+    def __init__(self, message: str, *, size: int = 0, ceiling: int = 0):
+        super().__init__(message)
+        self.size = size
+        self.ceiling = ceiling
+
+
 # Ceilings that keep one tool call from filling the context window. Tools report
 # when they trim, so the agent knows to narrow its request rather than assuming
 # it saw everything.
 MAX_READ_BYTES = 300_000
 MAX_OUTPUT_CHARS = 60_000
+# **What local code may hold, which is a different question.** `MAX_READ_BYTES`
+# is a ceiling on what is *emitted to the model*, and that is what the comment
+# above it means. Two readers of a blob emit none of it: the generated-file
+# classifier looks for a banner, and the citation check matches a quoted
+# snippet against the file. Both were refused by the context ceiling anyway —
+# so a 658 KB generated file was never labelled generated, and a real weakness
+# in a large file could be seen in the diff and not reported, because the
+# citation check could not open the file to confirm the quote.
+#
+# Kept a ceiling rather than removed: the size is chosen by whoever wrote the
+# merge request. It is checked before the read, so an enormous blob is refused
+# rather than loaded and then discovered.
+MAX_LOCAL_SCAN_BYTES = 8_000_000
+# The head a generated-file banner can be in. Generators write it on the first
+# line; this is that with room for a licence header above it.
+MAX_HEAD_BYTES = 8_000
 # A hard stop on how many matches are read at all, independent of how
 # many are shown. The pattern is chosen by the model.
 MAX_SEARCH_HITS = 20_000
 GIT_TIMEOUT_SECONDS = 120
+
+
+def _decoded(chunk: bytes, rel: str) -> str:
+    """UTF-8 or a refusal, never mojibake.
+
+    Decoding with `errors="replace"` would let a binary blob through as a wall
+    of replacement characters, which reads to a model as a file it has seen.
+    The whole-file reader refused those; the streaming window has to refuse
+    them the same way or the two readers disagree about what is text.
+
+    Strict is safe here because every chunk handed in ends at a newline or is
+    the final one, so a multi-byte character is never split across the
+    boundary.
+    """
+    try:
+        return chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        raise WorkspaceError(
+            "{} is not UTF-8 text (binary file)".format(rel)) from None
 
 
 def _grep_records(stream):
@@ -285,6 +357,26 @@ class Workspace:
         """
         if not revision:
             return None
+        # **The one blob reader left without a ceiling.** Codex, 2026-09-07, on
+        # the gate for this change: it bypasses `_blob_at` and reads whatever
+        # is there. Comparing a prompt file against its baseline is a small
+        # read for a file we ship — but the revision and the tree are the
+        # change's, and "the file we expect there is small" is an assumption
+        # about material the change controls, which is the one kind this
+        # project does not make.
+        #
+        # `FileTooLarge` rather than `None`: `None` means the path held
+        # nothing, the caller treats that as a legitimate answer, and a file
+        # too large to compare is not a file that was not there.
+        size = self._blob_size(revision, path)
+        if size is None:
+            return None
+        if size > MAX_LOCAL_SCAN_BYTES:
+            raise FileTooLarge(
+                "{} at {} is {} KB, over the {} KB limit for this read".format(
+                    path, _abbrev(revision), size // 1024,
+                    MAX_LOCAL_SCAN_BYTES // 1024),
+                size=size, ceiling=MAX_LOCAL_SCAN_BYTES)
         proc = subprocess.run(
             ("git", "--no-pager", "-C", str(self.root), "--no-optional-locks",
              "show", "{}:{}".format(revision, path)),
@@ -739,38 +831,35 @@ class Workspace:
         symlink is returned as its own content — a link — rather than followed
         to whatever it points at.
         """
-        rel = self.repo_path(path)
-        rev = self.diff_head or "HEAD"
+        return self._blob_at(self.diff_head or "HEAD", self.repo_path(path),
+                             MAX_READ_BYTES)
 
+    def _blob_at(self, rev: str, rel: str, ceiling: int) -> str:
+        """One blob, at one revision, under one named ceiling.
+
+        **Every** whole-blob read goes through here, and each caller names the
+        revision it means and the ceiling that belongs to its purpose. Before
+        2026-09-07 the readers fetched their own: `blob_text` checked the size
+        first and `removed_text`, written later for the deletion repair, ran
+        `git show` straight into `capture_output=True` with no check at all.
+        Measured on a built repository — the same 4,999,982-byte content was
+        refused at 292 KB when it was live and returned whole when the change
+        had deleted it. The attacker chooses both the deletion and the size,
+        and a merge request removing a large vendored blob looks ordinary.
+
+        The structural point is that the fix is not a second size check. A
+        ceiling added here applies at head and at base alike, and a future
+        reader cannot acquire a revision without also acquiring a limit.
+        """
         size = self._blob_size(rev, rel)
         if size is None:
-            raise WorkspaceError(
-                "{} is not a tracked file at the revision under review".format(rel))
-        if size > MAX_READ_BYTES:
-            # **The advice used to name a remedy that does not exist.** It said
-            # to pass `start_line` and `end_line`, and `read_file` reaches the
-            # file through here — so a window hits the same ceiling and gets
-            # the same refusal, with the message repeating the suggestion that
-            # just failed. Measured on 2026-09-06 against a 302,057-byte file:
-            # both attempts refused identically.
-            #
-            # The message is corrected; windowed reading is not built. Doing it
-            # means streaming `git show` and keeping only the requested lines,
-            # which is a change to what a reviewer can see and wants measuring
-            # rather than a patch. Until then a weakness introduced by a small
-            # diff to a large file cannot be quoted, and `LIMITATIONS.md` says
-            # so.
-            # And the replacement named a remedy of its own — "its diff is
-            # still available through get_diff" — which is true only in a diff
-            # review: `diff()` refuses without a `diff_base`, the MCP server
-            # does not offer the tool in that mode, and the diff has ceilings
-            # of its own. Codex caught the same class of error inside its own
-            # correction, one gate pass later. The message now states the
-            # limit and stops there.
-            raise WorkspaceError(
-                "{} is {} KB, over the {} KB read limit, and this limit is on "
-                "the whole file: a windowed read of it is refused too.".format(
-                    rel, size // 1024, MAX_READ_BYTES // 1024))
+            raise FileNotAtRevision(
+                "{} is not a tracked file at {}".format(rel, _abbrev(rev)))
+        if size > ceiling:
+            raise FileTooLarge(
+                "{} is {} KB, over the {} KB limit for this read".format(
+                    rel, size // 1024, ceiling // 1024),
+                size=size, ceiling=ceiling)
 
         try:
             proc = subprocess.run(
@@ -789,6 +878,100 @@ class Workspace:
             return proc.stdout.decode("utf-8")
         except UnicodeDecodeError:
             raise WorkspaceError("{} is not UTF-8 text (binary file)".format(rel)) from None
+
+    def _window_at(self, rev: str, rel: str, start: int, stop: int,
+                   size: Optional[int] = None):
+        """The lines in ``[start, stop]`` of a blob, without holding the blob.
+
+        Streams `git show` and keeps only the requested lines, so the memory
+        cost is the window and not the file. Returns
+        ``(lines, total, complete)``: ``total`` is the line count when the
+        stream was read to the end, and ``complete`` says whether it was — a
+        scan stopped at `MAX_LOCAL_SCAN_BYTES` knows the file has *at least*
+        that many lines and must not print the number as if it were the answer.
+
+        The size is not used as a *ceiling*. That is the difference between
+        this and `_blob_at`: a window into a file too large to hold is exactly
+        the case this exists for, and refusing on size would restore the defect
+        it was written to remove. It is looked up for existence only —
+        `_render_window` passes the value it already has so the probe is not
+        run twice.
+
+        **Existence is settled here rather than by each caller**, because it
+        was settled by each caller and they disagreed. A failing `git show`
+        raised the base class, so a windowed read of a *deleted* file never
+        reached the fallback that reads the base — the whole-file path had the
+        taxonomy and the windowed path did not, and `head_text` had neither.
+        Codex, 2026-09-07.
+        """
+        if size is None:
+            size = self._blob_size(rev, rel)
+        if size is None:
+            raise FileNotAtRevision(
+                "{} is not a tracked file at {}".format(rel, _abbrev(rev)))
+        proc = subprocess.Popen(
+            ("git", "--no-pager", "-C", str(self.root), "show",
+             "{}:{}".format(rev, rel)),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_git_env(),
+        )
+        kept = []
+        number = 0
+        scanned = 0
+        complete = True
+        drained = False
+        pending = b""
+        try:
+            while True:
+                chunk = proc.stdout.read(65_536)
+                if not chunk:
+                    break
+                scanned += len(chunk)
+                pending += chunk
+                # Split on the last newline so a multi-byte character never
+                # straddles a chunk boundary and decodes as two replacements.
+                cut = pending.rfind(b"\n")
+                if cut < 0:
+                    if scanned > MAX_LOCAL_SCAN_BYTES:
+                        complete = False
+                        break
+                    continue
+                ready, pending = pending[: cut + 1], pending[cut + 1 :]
+                for line in lines_of(_decoded(ready, rel)):
+                    number += 1
+                    if start <= number <= stop:
+                        kept.append((number, line))
+                if scanned > MAX_LOCAL_SCAN_BYTES:
+                    complete = False
+                    break
+            if complete and pending:
+                # A final line with no trailing newline is a line.
+                for line in lines_of(_decoded(pending, rel)):
+                    number += 1
+                    if start <= number <= stop:
+                        kept.append((number, line))
+            drained = True
+        finally:
+            # Killed unless the pipe was read to the end — and `drained` says
+            # that, where `complete` does not. A binary file raises out of the
+            # decode with `complete` still True, and waiting on a git that is
+            # still writing into a pipe nobody is reading is a deadlock, not a
+            # tidy-up.
+            if not drained:
+                proc.kill()
+            proc.stdout.close()
+            stderr = proc.stderr.read()
+            proc.stderr.close()
+            status = proc.wait()
+
+        # A scan cut short at the ceiling kills git, so a non-zero status is
+        # expected there and says nothing. Only a completed read can report a
+        # failure, and it must: `git show` on a path that is not in the tree
+        # exits non-zero having printed nothing, which is indistinguishable
+        # from an empty file if the status is ignored.
+        if complete and status != 0:
+            raise WorkspaceError("cannot read {} at {}: {}".format(
+                rel, _abbrev(rev), stderr.decode("utf-8", "replace").strip()))
+        return kept, (number if complete else None), complete
 
     def _blob_size(self, rev: str, rel: str) -> Optional[int]:
         """Size of the blob at that revision, or None when the path is not one.
@@ -818,9 +1001,40 @@ class Workspace:
         except ValueError:
             return None
 
-    # `raw_text` is the name the rest of the agent uses; it now means "the blob
-    # at the reviewed revision" everywhere.
-    raw_text = blob_text
+    def raw_text(self, path: str) -> str:
+        """The blob at the reviewed revision, for local code that emits none of it.
+
+        Was an alias of `blob_text` and is no longer, because the two answer
+        different questions. `blob_text` serves `read_file` and is bounded by
+        what may be *shown to the model*; this serves the citation check, which
+        matches a quoted snippet against the file and emits nothing — and was
+        being refused by a context ceiling it never spends. The consequence was
+        measured: a weakness in a 658 KB file could be seen in the diff and not
+        reported, because the check could not open the file to confirm the
+        quote, and the artifact recorded the drop as `unknown-path`.
+
+        Still bounded — by `MAX_LOCAL_SCAN_BYTES`, which is about memory rather
+        than about context, and is checked before the read.
+        """
+        return self._blob_at(self.diff_head or "HEAD", self.repo_path(path),
+                             MAX_LOCAL_SCAN_BYTES)
+
+    def head_text(self, path: str, limit: int = MAX_HEAD_BYTES) -> str:
+        """The first lines of a blob, for a reader that only needs the top.
+
+        The generated-file classifier looks for a banner, which generators put
+        on the first line. It reached the file through `blob_text`, so every
+        file over the context ceiling raised, `tools.py` swallowed that into
+        `head = ""`, and `classify("")` answered None — the classifier went
+        blind on exactly the file class it exists for, since the generated
+        files are the large ones. Measured: `classify` on the real head of a
+        658 KB protobuf returns "Go generator banner"; on the empty string it
+        returns nothing, and nothing is what it was being given.
+        """
+        rev = self.diff_head or "HEAD"
+        rel = self.repo_path(path)
+        lines, _total, _complete = self._window_at(rev, rel, 1, 200)
+        return "\n".join(text for _n, text in lines)[:limit]
 
     def removed_text(self, path: str) -> str:
         """The content of a file **this change deleted**, at the base.
@@ -837,6 +1051,24 @@ class Workspace:
         the working tree applies just as much to reading whatever the parent
         happened to contain.
         """
+        rel = self._deleted_path(path)
+        # **A ceiling this had none of.** Written for the deletion repair, it
+        # ran `git show` straight into `capture_output=True`, so the size check
+        # that guards every live-file read was absent on the one path an
+        # attacker chooses the size of. Measured on 2026-09-07: the same
+        # 4,999,982-byte content was refused at 292 KB while it was live and
+        # returned whole once the change deleted it.
+        return self._blob_at(self.diff_base, rel, MAX_LOCAL_SCAN_BYTES)
+
+    def _deleted_path(self, path: str) -> str:
+        """The repo path, having established this change actually deleted it.
+
+        Narrow on purpose. Reading the base is refused for any path this change
+        did not delete, so it cannot become a general way of reading whatever
+        the parent happened to contain — the reason `blob_text` gives for
+        reading the reviewed commit rather than the working tree applies just
+        as much there.
+        """
         rel = self.repo_path(path)
         deleted = {obj.path for obj in self.changed_objects()
                    if obj.status == "deleted"}
@@ -847,39 +1079,117 @@ class Workspace:
         if not self.diff_base:
             raise WorkspaceError(
                 "there is no base revision to read {} from".format(rel))
-        proc = subprocess.run(
-            ("git", "--no-pager", "-C", str(self.root), "show",
-             "{}:{}".format(self.diff_base, rel)),
-            capture_output=True, check=False, timeout=GIT_TIMEOUT_SECONDS,
-            env=_git_env(),
-        )
-        if proc.returncode != 0:
-            raise WorkspaceError(
-                "{} could not be read at the base revision".format(rel))
-        return proc.stdout.decode("utf-8", "replace")
+        return rel
 
     def read_file(self, path: str, start_line: int = 1, end_line: int = 0) -> Tuple[str, bool]:
         """Return line-numbered text and whether it was trimmed."""
-        rel = self.repo_path(path)
-        text = self.blob_text(path)
+        return self._render_window(
+            self.diff_head or "HEAD", self.repo_path(path), start_line, end_line)
 
-        lines = text.splitlines()
-        total = len(lines)
+    def read_removed_file(self, path: str, start_line: int = 1,
+                          end_line: int = 0) -> Tuple[str, bool]:
+        """The same window, at the base, for a file this change deleted."""
+        return self._render_window(
+            self.diff_base, self._deleted_path(path), start_line, end_line,
+            at_base=True)
+
+    def _render_window(self, rev: str, rel: str, start_line: int, end_line: int,
+                       at_base: bool = False) -> Tuple[str, bool]:
+        """A window of a file, line-numbered, whatever the file's size.
+
+        **The window is why this exists.** Until 2026-09-07 `read_file` fetched
+        the whole blob and sliced it, so the ceiling on the whole file was also
+        a ceiling on any part of it: a `start_line`/`end_line` read of a large
+        file was refused with the identical message, which for a while
+        suggested passing `start_line` and `end_line`. A weakness introduced by
+        a small diff to a large file could not be quoted at all.
+
+        A read with no window still refuses above `MAX_READ_BYTES`, because
+        that is what would be emitted — and the refusal now names a remedy that
+        works, which the previous one deliberately did not, there having been
+        none.
+        """
+        # **Existence is settled before anything is streamed, on every path.**
+        # It used to be settled only for a whole-file read, and the windowed
+        # one inferred it: a failing `git show` raised a bare `WorkspaceError`,
+        # so `read_file` with a window on a *deleted* file never reached the
+        # fallback that reads the base — the taxonomy the whole-file path
+        # exposes and the one the windowed path exposed were different, and the
+        # deletion repair only covered the first. Codex, 2026-09-07.
+        size = self._blob_size(rev, rel)
+        if size is None:
+            raise FileNotAtRevision(
+                "{} is not a tracked file at {}".format(rel, _abbrev(rev)))
+        want_whole = end_line <= 0 and start_line <= 1
+        if want_whole and size > MAX_READ_BYTES:
+            raise FileTooLarge(
+                "{} is {} KB, over the {} KB limit for reading a whole "
+                "file. Pass start_line and end_line to read part of it."
+                .format(rel, size // 1024, MAX_READ_BYTES // 1024),
+                size=size, ceiling=MAX_READ_BYTES)
+
         start = max(1, start_line)
-        stop = total if end_line <= 0 else min(total, end_line)
-        if start > total:
+        stop = end_line if end_line > 0 else (1 << 62)
+        if stop < start:
             raise WorkspaceError(
-                "{} has {} lines; start_line {} is past the end".format(rel, total, start))
+                "end_line {} is before start_line {}".format(end_line, start))
+        selected, total, complete = self._window_at(rev, rel, start, stop,
+                                                    size=size)
+        if total == 0:
+            # An empty file, and not a missing one — two distinct states in
+            # git, which this collapsed into the absence exception. A tracked
+            # empty file then fell through to the deleted-file fallback and was
+            # refused there as a path nothing deleted, so the reviewer was told
+            # two untrue things about a file that is simply blank.
+            return "{}{} (0 lines)".format(
+                rel, " at the base revision" if at_base else ""), False
+        if not selected:
+            # Not an empty answer: `start_line` past the end is a question with
+            # no lines behind it, and returning nothing would read as "those
+            # lines are blank".
+            if complete:
+                raise WorkspaceError(
+                    "{} has {} lines; start_line {} is past the end".format(
+                        rel, total, start))
+            raise WorkspaceError(
+                "{} was read up to the {} KB scan limit without reaching line "
+                "{}; how many lines it has is not established".format(
+                    rel, MAX_LOCAL_SCAN_BYTES // 1024, start))
 
-        selected = lines[start - 1 : stop]
-        body = "\n".join(
-            "{:>6} | {}".format(n, line) for n, line in enumerate(selected, start=start)
-        )
+        # **Whole lines, and a header built from what survived.** The body was
+        # cut mid-character and the header still named the range that had been
+        # asked for, so a three-line window of 30,000-character lines answered
+        # `lines 1-3` with line 3 absent — a claim about what was delivered
+        # that nothing checked, which is the shape this tool exists to hunt.
+        # Codex, 2026-09-07.
+        #
+        # The first line is kept whatever its length: dropping it would answer
+        # a different question from the one asked, and a reader who sees one
+        # clipped line knows more than one who sees none.
+        rendered = ["{:>6} | {}".format(n, line) for n, line in selected]
         trimmed = False
-        if len(body) > MAX_OUTPUT_CHARS:
-            body = body[:MAX_OUTPUT_CHARS]
+        kept_lines = []
+        used = 0
+        for index, text in enumerate(rendered):
+            cost = len(text) + (1 if kept_lines else 0)
+            if kept_lines and used + cost > MAX_OUTPUT_CHARS:
+                trimmed = True
+                break
+            kept_lines.append(text)
+            used += cost
+        if len(kept_lines) == 1 and len(kept_lines[0]) > MAX_OUTPUT_CHARS:
+            kept_lines[0] = kept_lines[0][:MAX_OUTPUT_CHARS]
             trimmed = True
-        header = "{} (lines {}-{} of {})".format(rel, start, stop, total)
+        selected = selected[: len(kept_lines)]
+        body = "\n".join(kept_lines)
+        # "of at least N" when the scan stopped at the ceiling. The exact count
+        # is not known then, and printing one would be a guess dressed as a
+        # measurement.
+        counted = ("{}".format(total) if complete
+                   else "at least {}".format(selected[-1][0]))
+        header = "{}{} (lines {}-{} of {})".format(
+            rel, " at the base revision" if at_base else "",
+            selected[0][0], selected[-1][0], counted)
         return "{}\n{}".format(header, body), trimmed
 
     def list_directory(self, path: str = "", depth: int = 1) -> str:

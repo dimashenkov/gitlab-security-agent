@@ -32,7 +32,13 @@ from .evidence import (
     unquote_path,
 )
 from .models import Candidate, Finding, RejectedClaim, StageMetrics, ToolCallRecord
-from .workspace import Workspace, WorkspaceError
+from .workspace import (
+    MAX_OUTPUT_CHARS,
+    FileNotAtRevision,
+    FileTooLarge,
+    Workspace,
+    WorkspaceError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -541,8 +547,16 @@ def _handle_list_changed_files(ws: Workspace, session: Session, args: Dict[str, 
         # so every anchored banner pattern would silently miss. The anchors are
         # load-bearing — they are what stops a marker in a string literal from
         # reclassifying hand-written code.
+        #
+        # And the head, not the whole file: reading it whole went through the
+        # context ceiling, so every file over 292 KB raised, the error was
+        # swallowed into `head = ""`, and `classify("")` answered None. The
+        # classifier was blind on exactly the file class it exists for —
+        # generated files are the large ones. Measured on a 658 KB protobuf:
+        # the real head classifies as "Go generator banner", the empty string
+        # as nothing.
         try:
-            head = ws.blob_text(path)
+            head = ws.head_text(path)
         except WorkspaceError:
             head = ""
         reason = generated.classify(path, head)
@@ -667,7 +681,7 @@ def _handle_read_file(ws: Workspace, session: Session, args: Dict[str, Any]) -> 
     end = _as_int(args.get("end_line"), 0)
     try:
         body, trimmed = ws.read_file(path, start_line=start, end_line=end)
-    except WorkspaceError:
+    except FileNotAtRevision as absent:
         # **The last link that assumed a reviewed file.** Codex, 2026-09-06,
         # tracing the whole deletion path: for a file larger than the
         # verifier's context the brief supplies a window and tells it to read
@@ -675,18 +689,28 @@ def _handle_read_file(ws: Workspace, session: Session, args: Dict[str, Any]) -> 
         # where a deleted file is not. The verifier was invited to investigate
         # and then refused the file.
         #
-        # `removed_text` refuses any path this change did not delete, so this
-        # is not a way of reading the base generally.
-        text = ws.removed_text(path)
-        lines = text.splitlines()
-        stop = len(lines) if end <= 0 else min(len(lines), end)
-        begin = max(1, start)
-        body = "\n".join("{:>6} | {}".format(n, lines[n - 1])
-                          for n in range(begin, stop + 1))
-        body = ("`{}` was deleted by this change; these are lines {}-{} of {} "
-                "at the **base revision**, before the removal.\n\n{}".format(
-                    path, begin, stop, len(lines), body))
-        trimmed = False
+        # `FileNotAtRevision` and not `WorkspaceError`: catching the base class
+        # took *every* failure as evidence of a deletion, so a file that was
+        # merely over the ceiling entered this branch and was refused here for
+        # an unrelated second reason. `read_removed_file` refuses any path this
+        # change did not delete, so this is not a way of reading the base
+        # generally.
+        try:
+            body, trimmed = ws.read_removed_file(path, start_line=start, end_line=end)
+        except FileTooLarge:
+            # Named before the base class, or the fix below swallows it: a
+            # large *deleted* file would be re-raised as "not at this
+            # revision", losing the distinction this change exists to make.
+            # Codex caught it in the gate for the change that introduced it.
+            raise
+        except WorkspaceError:
+            # The path is absent and this change did not delete it, which is a
+            # path that never existed. Raising the deletion guard's message
+            # here would answer `read_file` with *"read it with read_file"* —
+            # circular advice, and the reason it gives is not the reason.
+            raise absent from None
+        body = ("`{}` was deleted by this change; the lines below are from the "
+                "**base revision**, before the removal.\n\n{}".format(path, body))
     if trimmed:
         body += (
             "\n\n[Output trimmed. Re-read with a narrower start_line/end_line "
@@ -844,7 +868,7 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
         rel_path = ws.repo_path(finding.file)
         try:
             file_text = ws.raw_text(finding.file)
-        except WorkspaceError:
+        except FileNotAtRevision as absent:
             # **A file this change deleted is read at the base.** It is not at
             # the reviewed revision — that is what deleting it means — so every
             # finding quoting a removed authorisation check was dropped as
@@ -853,10 +877,50 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
             # deletion repair: fixing the control flow without this leaves the
             # reviewer able to see the removal and unable to report it.
             #
-            # `removed_text` refuses any path this change did not delete, so
-            # this is not a way of reading the base revision generally.
-            file_text = ws.removed_text(finding.file)
+            # `FileNotAtRevision` and not `WorkspaceError`. Catching the base
+            # class meant "over the ceiling" also entered this branch, where
+            # `removed_text` refused it a second time for an unrelated reason —
+            # and *that* message became the artifact's detail: `unknown-path`,
+            # *"is not a file this change deleted; read it with read_file"*,
+            # advising the tool that had already refused it. Measured on
+            # 2026-09-07, not reasoned about.
+            try:
+                file_text = ws.removed_text(finding.file)
+            except FileTooLarge:
+                raise
+            except WorkspaceError:
+                # Absent at head and not deleted by this change, which is a
+                # path that never existed. The deletion guard's own message —
+                # *"read it with read_file"* — would become the artifact's
+                # detail for a claim the reviewer made about a path it
+                # invented, advising a tool that refuses it too. The reason
+                # recorded is the one that is true: not at this revision.
+                raise absent from None
             from_a_deleted_file = True
+    except FileTooLarge as exc:
+        # A file too large to scan is a different answer from a path that does
+        # not exist, and until now it was recorded as the second. It is still a
+        # dropped claim — nothing can confirm the quote — but the reason is the
+        # one that is true, and it names its own limit rather than a path.
+        session.metrics.citations_rejected_too_large += 1
+        if final_attempt:
+            session.rejected.append(RejectedClaim(
+                title=finding.title, file=finding.file,
+                reason="file-too-large", detail=str(exc)))
+            return ToolResult(
+                "Dropped: {} Nothing can confirm a quotation from it, so the "
+                "finding cannot be recorded. Do not report it again."
+                .format(exc),
+                "dropped: file too large {}".format(finding.file),
+                is_error=True,
+            )
+        return ToolResult(
+            "Not recorded — {} The path is real; the file is too large for the "
+            "citation check to open. If the weakness is also visible in a "
+            "smaller file, report it there instead.".format(exc),
+            "rejected: file too large {}".format(finding.file),
+            is_error=True,
+        )
     except WorkspaceError as exc:
         # Counted on both paths: the drop is a rejection too, and the loudest
         # one. Incrementing only on the retry path made a claim abandoned after
@@ -906,7 +970,11 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
                 "dropped: {}".format(problem[:60]),
                 is_error=True,
             )
-        window, start, stop = excerpt(file_text, finding.line, radius=20)
+        # The same ceiling every other tool result honours. The radius bounds
+        # lines and a file that is one long line has one line, so without this
+        # a rejected citation could return the whole file as "lines 1-1".
+        window, start, stop = excerpt(file_text, finding.line, radius=20,
+                                      limit=MAX_OUTPUT_CHARS)
         return ToolResult(
             "Not recorded — {} in {}. Evidence must be copied verbatim from the "
             "file, with no diff markers, ellipses, or paraphrasing, and must "

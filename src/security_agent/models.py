@@ -873,6 +873,9 @@ class StageMetrics:
     citations_rejected_not_found: int = 0
     citations_rejected_ambiguous: int = 0
     citations_rejected_too_short: int = 0
+    # A path that resolves and a file that cannot be opened are different
+    # answers, and until 2026-09-07 the second was counted as the first.
+    citations_rejected_too_large: int = 0
     lines_corrected: int = 0
 
     # Layers 2 and 3.
@@ -902,6 +905,7 @@ class StageMetrics:
                 "rejected_not_found": self.citations_rejected_not_found,
                 "rejected_ambiguous": self.citations_rejected_ambiguous,
                 "rejected_too_short": self.citations_rejected_too_short,
+                "rejected_too_large": self.citations_rejected_too_large,
                 "lines_corrected": self.lines_corrected,
             },
             "verification": {
