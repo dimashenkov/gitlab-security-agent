@@ -555,3 +555,333 @@ def test_a_null_verification_is_not_a_crash():
                "findings": [{"category": "injection", "file": "app/views.py",
                              "fingerprint": "fp", "verification": None}]}
     assert target_disposition(payload, {"expected_category": "injection"})["verdict"] == ""
+
+
+class TestOneCaseBuildsToOneCommit:
+    """`build_repo` pinned the author and committer names and not the dates, so
+    two builds of one case produced different SHAs and different timestamps —
+    and `briefing` hands the model the diff range those SHAs name. Two arms of
+    a trial would have reviewed literally different objects for one case, and
+    the difference would have been recorded as a difference between the models.
+
+    Codex named it on the third design round, 2026-09-07, one gate before 104
+    reviews were to be bought.
+
+    **The pause is the test.** The first measurement of this showed identical
+    SHAs and looked like a refutation; both builds had landed inside the same
+    second. A test without the pause passes against the unpinned code too, and
+    so establishes nothing about the fix.
+    """
+
+    def a_case(self, tmp_path):
+        case = tmp_path / "case"
+        (case / "unsafe").mkdir(parents=True)
+        (case / "unsafe" / "app.py").write_text(
+            "def handler(request):\n    return run(request)\n",
+            encoding="utf-8")
+        change = case / "unsafe" / "change"
+        change.mkdir()
+        (change / "app.py").write_text(
+            "def handler(request):\n    return eval(request.body)\n",
+            encoding="utf-8")
+        return case
+
+    def revisions(self, case, work):
+        import subprocess
+
+        import pair_corpus
+        repo, base, head = pair_corpus.build_repo(case, "unsafe", work)
+        stamp = subprocess.run(
+            ("git", "-C", str(repo), "show", "-s", "--format=%H|%aI|%cI", head),
+            capture_output=True, text=True, check=True).stdout.strip()
+        return base, head, stamp
+
+    def test_two_builds_a_second_apart_agree(self, tmp_path):
+        import time
+        case = self.a_case(tmp_path)
+        first = self.revisions(case, tmp_path / "one")
+        time.sleep(2)
+        second = self.revisions(case, tmp_path / "two")
+        assert first == second, (
+            "two builds of one case produced different commits:\n"
+            "  {}\n  {}".format(first[2], second[2]))
+
+    def test_the_stamp_is_the_fixed_one_and_not_now(self, tmp_path):
+        """A date that happens to be stable within a test run is not a pinned
+        date. This asserts the value, so a future edit that makes it `now()`
+        again fails here rather than in a trial six weeks later."""
+        case = self.a_case(tmp_path)
+        _base, _head, stamp = self.revisions(case, tmp_path / "one")
+        assert "2020-01-01T00:00:00" in stamp, stamp
+
+
+class TestTheCorpusChildIsGivenNoForgeContext:
+    """A corpus case has no merge request, and the child was reading one anyway.
+
+    `review` launched the reviewer with `dict(os.environ)`, so whatever
+    merge-request metadata sat in the shell — a developer who had exported it, a
+    CI job running the corpus, a `.env` sourced weeks ago — was read by
+    `ForgeContext.from_env` in the child and handed to the model by
+    `briefing.py`, which puts the title and the description into the brief and
+    the branch names beside them.
+
+    Measured on 2026-09-07, before any change: a planted
+    `CI_MERGE_REQUEST_TITLE`, description, both branch names, labels, iid and
+    token all arrived in the child's `Config`, and `resolve_mode()` answered
+    `diff` because the stray iid made the child believe it was in a merge
+    request. A hint in a title read by one arm of a two-model comparison and not
+    by the other lands in the table as a difference between the models — and a
+    stray `skip-ai-security` in `CI_MERGE_REQUEST_LABELS` skips the review
+    outright and exits 0, which the runner scores as a completed review that
+    found nothing.
+
+    Codex ruled on the same day: the child's context is constructed from
+    nothing rather than emptied field by field, and its token is empty.
+    """
+
+    # Both forges, because `from_env` chooses between them from the environment
+    # too: a run that planted only the GitLab half would leave the GitHub branch
+    # of the choice untested.
+    PLANTED = (
+        ("CI_MERGE_REQUEST_TITLE", "Fix the SQL injection in the login handler"),
+        ("CI_MERGE_REQUEST_DESCRIPTION", "app/views.py is the unsafe one"),
+        ("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", "fix/sql-injection"),
+        ("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", "main"),
+        ("CI_MERGE_REQUEST_IID", "42"),
+        ("CI_MERGE_REQUEST_LABELS", "skip-ai-security"),
+        ("CI_PROJECT_ID", "1234"),
+        ("CI_PROJECT_PATH", "acme/webapp"),
+        ("CI_API_V4_URL", "https://gitlab.example.invalid/api/v4"),
+        ("CI_COMMIT_SHA", "0" * 40),
+        ("SECURITY_SCAN_GITLAB_TOKEN", "glpat-not-a-real-token"),
+        ("GITHUB_ACTIONS", "true"),
+        ("GITHUB_REPOSITORY", "acme/webapp"),
+        ("GITHUB_HEAD_REF", "fix/sql-injection"),
+        ("GITHUB_TOKEN", "ghp-not-a-real-token"),
+    )
+
+    def child_env(self, tmp_path, monkeypatch):
+        """The environment `review` hands the child, with the shell polluted.
+
+        `subprocess.run` is replaced before `review` is called, so no reviewer
+        starts and nothing is billed. The real entry point is held first: the
+        module `pair_corpus` imports is this test's own `subprocess`, so
+        patching it would otherwise silence the probe below as well — measured,
+        after the first attempt returned an empty answer that looked like a
+        clean child.
+        """
+        import subprocess
+
+        import pair_corpus
+
+        for name, value in self.PLANTED:
+            monkeypatch.setenv(name, value)
+
+        captured = {}
+
+        class Permitted:
+            def require(self):
+                return None
+
+        class Finished:
+            returncode, stdout, stderr = 0, "", ""
+
+        def fake_run(cmd, **kwargs):
+            captured["env"] = kwargs.get("env")
+            return Finished()
+
+        real_run = subprocess.run
+        monkeypatch.setattr(pair_corpus.spend_gate, "authorise",
+                            lambda _class: Permitted())
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        pair_corpus.review(tmp_path / "repo", "base", "head", tmp_path / "out",
+                           spend_class="pair_corpus_review")
+        return captured["env"], real_run
+
+    def test_no_forge_variable_survives_into_the_child(self, tmp_path, monkeypatch):
+        """Every name the forge context reads, not only the ones the brief quotes.
+
+        Asserted over the whole derived set rather than a chosen few: a check
+        that looked only at the title would pass while the labels — which decide
+        whether the review happens at all — still went through.
+        """
+        import pair_corpus
+
+        env, _ = self.child_env(tmp_path, monkeypatch)
+        leaked = sorted(name for name in pair_corpus._forge_env_names()
+                        if name in env)
+        assert leaked == [], (
+            "the corpus child was handed forge variables from the shell: "
+            "{}".format(leaked))
+
+    def test_the_context_the_child_builds_is_the_empty_one(self, tmp_path,
+                                                           monkeypatch):
+        """The chain, not the link: a real child, building a real `Config`.
+
+        Stripping names off a dict is not the claim. The claim is about the
+        object `briefing.py` reads, so this runs a child under exactly the
+        environment `review` produced and compares its `ForgeContext` against a
+        freshly constructed default — every field, so a variable that survives
+        anywhere shows up as an inequality rather than as a field nobody thought
+        to assert on.
+        """
+        import dataclasses
+        import json as _json
+
+        from security_agent.config import ForgeContext
+
+        env, real_run = self.child_env(tmp_path, monkeypatch)
+        probe = (
+            "import dataclasses, json;"
+            "from security_agent.config import Config;"
+            "print(json.dumps(dataclasses.asdict(Config.from_env().gitlab)))"
+        )
+        result = real_run([sys.executable, "-c", probe], env=env,
+                          capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr[-2000:]
+        built = _json.loads(result.stdout)
+        empty = dataclasses.asdict(ForgeContext())
+
+        assert built["token"] == "", "the child was given a forge token"
+        assert built == empty, (
+            "the child's forge context is not the constructed default: {}".format(
+                {key: value for key, value in built.items()
+                 if value != empty[key]}))
+
+    def test_the_list_is_read_off_config_and_not_transcribed(self):
+        """A hand-copied list drifts, and drift here is silent.
+
+        Two properties, both of which a transcribed list loses. The names come
+        from `config.py` itself — including `GITHUB_EVENT_PATH`, which is read
+        in a module-level helper two calls below the entry point and is the
+        first name anybody copying by hand would miss. And a variable added to
+        `from_gitlab_env` tomorrow is picked up without anyone editing the
+        runner, which is what the synthetic source below asserts.
+        """
+        import pair_corpus
+
+        real = pair_corpus._forge_env_names()
+        assert {"GITHUB_EVENT_PATH", "CI_MERGE_REQUEST_TITLE",
+                "SECURITY_SCAN_GITHUB_TOKEN"} <= real
+
+        source = pair_corpus.CONFIG_SOURCE.read_text(encoding="utf-8")
+        grown = source.replace(
+            'api_url=_env("CI_API_V4_URL"),',
+            'api_url=_env("CI_API_V4_URL"),\n'
+            '            nickname=_env("CI_MERGE_REQUEST_NICKNAME"),')
+        assert grown != source, (
+            "the synthetic edit did not apply, so this test would pass "
+            "vacuously — the anchor in config.py has moved")
+        assert "CI_MERGE_REQUEST_NICKNAME" in pair_corpus._forge_env_names(grown)
+
+    def test_a_name_it_cannot_read_is_refused_rather_than_skipped(self):
+        """"Could not enumerate" is not "there is nothing to strip".
+
+        A computed variable name cannot be listed by reading the source.
+        Falling through would leave the list quietly short — the same failure
+        reached from the other side — so it raises and the corpus run stops
+        before it buys anything.
+        """
+        import pair_corpus
+        import pytest
+
+        source = pair_corpus.CONFIG_SOURCE.read_text(encoding="utf-8")
+        computed = source.replace(
+            '_env("CI_MERGE_REQUEST_TITLE")',
+            '_env("CI_MERGE_REQUEST_" + suffix)')
+        assert computed != source
+        with pytest.raises(pair_corpus.ForgeEnvUndetermined):
+            pair_corpus._forge_env_names(computed)
+
+
+class TestTheChildIsGivenItsConfigurationNotTheShell:
+    """The freeze recorded `Config.from_env()`, and `review` overrode the mode,
+    the comment and the output directory on the command line — so the manifest
+    said `mode='auto'` while every review ran `diff`. A frozen description of
+    an instrument that is not the one running is the defect this product hunts
+    elsewhere. Codex named it on the second design round, 2026-09-07.
+
+    `effective_config` is built once and used twice: written into the manifest
+    and handed to the child. The two cannot disagree because they are the same
+    object.
+    """
+
+    def test_the_overrides_are_in_the_configuration_not_the_argv(self,
+                                                                  tmp_path):
+        import pair_corpus
+        cfg = pair_corpus.effective_config(tmp_path / "run")
+        assert cfg.mode == "diff"
+        assert cfg.post_comment is False
+        assert cfg.output_dir == tmp_path / "run"
+
+    def test_the_forge_context_is_constructed(self, tmp_path, monkeypatch):
+        """Not emptied field by field: `briefing` puts the title, description
+        and branches into the model's input, so a field nobody remembered to
+        clear is text the model reads."""
+        from security_agent.config import ForgeContext
+        import pair_corpus
+        monkeypatch.setenv("CI_MERGE_REQUEST_TITLE", "look at app/views.py")
+        monkeypatch.setenv("CI_MERGE_REQUEST_IID", "42")
+        monkeypatch.setenv("SECURITY_SCAN_GITLAB_TOKEN", "glpat-secret")
+        cfg = pair_corpus.effective_config(tmp_path / "run")
+        import dataclasses
+        assert dataclasses.asdict(cfg.gitlab) == dataclasses.asdict(
+            ForgeContext())
+
+    def test_the_command_carries_no_flag_that_changes_a_setting(self,
+                                                                 tmp_path,
+                                                                 monkeypatch):
+        """What is left on the command line names the material, not the method.
+        A flag here would be a second place the child is configured from, and
+        `--config-json` refuses those — so a stray one is a crash rather than a
+        silent second opinion."""
+        import pair_corpus
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            raise SystemExit(0)
+
+        monkeypatch.setattr(pair_corpus.spend_gate, "authorise",
+                            lambda *_a, **_k: type("A", (), {
+                                "require": lambda self: None})())
+        monkeypatch.setattr(pair_corpus.subprocess, "run", fake_run)
+        out = tmp_path / "run"
+        try:
+            pair_corpus.review(tmp_path, "aaa", "bbb", out,
+                               spend_class="test")
+        except SystemExit:
+            pass
+        cmd = seen["cmd"]
+        for banned in ("--mode", "--no-comment", "--output-dir", "--provider",
+                       "--profile", "--fail-on", "--verify-votes"):
+            assert banned not in cmd, (banned, cmd)
+        assert "--config-json" in cmd
+
+    def test_the_file_it_points_at_round_trips(self, tmp_path, monkeypatch):
+        """The child reads it with the strict decoder, so a file this writer
+        produces has to survive that decoder — otherwise every review fails at
+        the door."""
+        import json
+
+        import pair_corpus
+        from security_agent.config import config_from_dict
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            raise SystemExit(0)
+
+        monkeypatch.setattr(pair_corpus.spend_gate, "authorise",
+                            lambda *_a, **_k: type("A", (), {
+                                "require": lambda self: None})())
+        monkeypatch.setattr(pair_corpus.subprocess, "run", fake_run)
+        try:
+            pair_corpus.review(tmp_path, "aaa", "bbb", tmp_path / "run",
+                               spend_class="test")
+        except SystemExit:
+            pass
+        path = Path(seen["cmd"][seen["cmd"].index("--config-json") + 1])
+        cfg = config_from_dict(json.loads(path.read_text(encoding="utf-8")))
+        assert cfg.mode == "diff"
+        assert cfg.post_comment is False

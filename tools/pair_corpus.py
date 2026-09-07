@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import shutil
@@ -243,6 +244,12 @@ def load_cases(root: Path, language: str = "", family: str = "") -> list:
     return cases
 
 
+# The instant every corpus commit is stamped with. Arbitrary, fixed, and in
+# the past — what matters is only that it never varies, so one case builds to
+# one pair of SHAs however many times it is built.
+CORPUS_COMMIT_DATE = "2020-01-01T00:00:00+00:00"
+
+
 def build_repo(case: Path, member: str, work: Path) -> tuple:
     """Materialise one member as a git repository with a reviewable change.
 
@@ -260,6 +267,23 @@ def build_repo(case: Path, member: str, work: Path) -> tuple:
         "HOME": str(work),
         "GIT_AUTHOR_NAME": "Corpus", "GIT_AUTHOR_EMAIL": "corpus@example.invalid",
         "GIT_COMMITTER_NAME": "Corpus", "GIT_COMMITTER_EMAIL": "corpus@example.invalid",
+        # **The dates, or the same case is a different commit every run.**
+        # The names were pinned and these were not, so two builds seconds apart
+        # produced different SHAs and different timestamps — and `briefing`
+        # hands the model the diff range those SHAs name. Two arms of a trial
+        # would have reviewed literally different objects for one case, and the
+        # difference would have been recorded as a difference between the two
+        # models. Codex named it on the third design round, 2026-09-07.
+        #
+        # Measured carefully, because the first measurement looked like a
+        # refutation: two builds inside one second agree by luck, two builds
+        # two seconds apart do not.
+        #
+        # A fixed instant rather than the case's own date: the value is
+        # arbitrary and only has to be the same everywhere. It is in the past
+        # and obviously synthetic, so nothing reads it as a real history.
+        "GIT_AUTHOR_DATE": CORPUS_COMMIT_DATE,
+        "GIT_COMMITTER_DATE": CORPUS_COMMIT_DATE,
     }
 
     def git(*args):
@@ -307,6 +331,168 @@ def build_repo(case: Path, member: str, work: Path) -> tuple:
     return repo, base, rev_parse()
 
 
+CONFIG_SOURCE = (Path(__file__).resolve().parents[1]
+                 / "src" / "security_agent" / "config.py")
+
+
+class ForgeEnvUndetermined(RuntimeError):
+    """The forge variables could not be read off `config.py`.
+
+    Distinct from "there are none". A corpus run that cannot establish what to
+    strip must stop rather than hand the child whatever the shell holds — the
+    whole point of the strip is that nothing ambient reaches the model, and
+    "could not check" is not "clean".
+    """
+
+
+def _forge_env_names(source: Optional[str] = None) -> frozenset:
+    """Every environment variable that feeds `ForgeContext`, read off `config.py`.
+
+    Derived rather than transcribed. A hand-written list is the same class of
+    defect as the one this repairs: `config.py` grows a variable, the list does
+    not, and the corpus child is back to reading the developer's shell — silently,
+    because nothing compares the two. So the names are taken from the source
+    itself, starting at `ForgeContext.from_env` and following every call it makes
+    inside the module, collecting the literal handed to each `_env*` helper.
+
+    Reading the source and not importing it: `tools/` is development tooling and
+    `src/` is the product, and an AST walk costs nothing and cannot execute
+    anything. It also sees `GITHUB_EVENT_PATH`, which is read in a module-level
+    helper two calls away from the entry point and would be the first name a
+    transcribed list forgot.
+
+    A non-literal argument to `_env` raises. It would mean a variable whose name
+    is computed, which this cannot enumerate — and a silently short list is
+    exactly the failure being repaired.
+    """
+    text = source if source is not None else CONFIG_SOURCE.read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    functions = {node.name: node for node in tree.body
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    classes = {node.name: node for node in tree.body
+               if isinstance(node, ast.ClassDef)}
+    if "ForgeContext" not in classes:
+        raise ForgeEnvUndetermined(
+            "{} defines no ForgeContext, so the variables that build one cannot "
+            "be enumerated".format(CONFIG_SOURCE))
+    methods = {node.name: node for node in classes["ForgeContext"].body
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    if "from_env" not in methods:
+        raise ForgeEnvUndetermined(
+            "ForgeContext has no from_env, so there is no entry point to walk")
+
+    names: set = set()
+    seen: set = set()
+
+    def walk(node, key) -> None:
+        if key in seen:
+            return
+        seen.add(key)
+        for sub in ast.walk(node):
+            if not isinstance(sub, ast.Call):
+                continue
+            called = getattr(sub.func, "id", None) or getattr(sub.func, "attr", None)
+            if not called:
+                continue
+            if called.startswith("_env"):
+                literal = sub.args[0] if sub.args else None
+                if not (isinstance(literal, ast.Constant)
+                        and isinstance(literal.value, str)):
+                    raise ForgeEnvUndetermined(
+                        "{} line {}: {}() is called with a name this cannot read "
+                        "as a literal, so the list of forge variables would be "
+                        "short by an unknown amount".format(
+                            CONFIG_SOURCE, getattr(sub, "lineno", "?"), called))
+                names.add(literal.value)
+            if called in methods:
+                walk(methods[called], ("method", called))
+            elif called in functions:
+                walk(functions[called], ("function", called))
+
+    walk(methods["from_env"], ("method", "from_env"))
+    if not names:
+        raise ForgeEnvUndetermined(
+            "walking ForgeContext.from_env found no environment variables at "
+            "all, which cannot be right and would strip nothing")
+    return frozenset(names)
+
+
+def corpus_env() -> dict:
+    """The environment a corpus child is given: this shell, minus the forge.
+
+    A corpus case has no merge request. `review` handed the child
+    `dict(os.environ)`, so `CI_MERGE_REQUEST_TITLE`, the branch names and the
+    description that happened to sit in the shell — a developer who had exported
+    them, a CI job running the corpus, a `.env` sourced weeks ago — were read by
+    `ForgeContext.from_env` in the child and put straight into the model's brief
+    by `briefing.py`. Demonstrated on 2026-09-07: a planted title, description,
+    both branch names, the labels and the token all arrived in the child's
+    `Config`, and `resolve_mode()` came back `diff` because a stray
+    `CI_MERGE_REQUEST_IID` made the child believe it was reviewing a merge
+    request.
+
+    Two consequences, and the second is worse than a nudge. A hint in the title —
+    "fix the SQL injection in the login handler" — is read by one arm of a
+    two-model comparison and not the other if the shells differ, and the
+    difference lands in the table as a difference between the models. And
+    `CI_MERGE_REQUEST_LABELS` carrying `skip-ai-security` makes the child skip the
+    review altogether and exit 0, which the runner records as a completed review
+    that found nothing.
+
+    So the child's context is **built from nothing**, not edited down: every
+    variable that `ForgeContext` reads is removed, so every field of the child's
+    context is the dataclass default and no field of the real one survives. Codex,
+    2026-09-07 — a synthetic context, constructed rather than emptied field by
+    field, with an empty token.
+
+    One thing it does not achieve: the child's `kind` comes out `"gitlab"`, not
+    `"none"`. `ForgeContext.from_env` has no branch that yields `"none"` — it
+    picks GitHub or GitLab and never neither, whatever its docstring says — and
+    that is a change to `config.py`, not to the corpus runner. The context is inert
+    either way: no token, no project, no iid, so `can_comment` and
+    `is_merge_request` are both false and `blob_url` returns "".
+    """
+    env = dict(os.environ)
+    for name in _forge_env_names():
+        env.pop(name, None)
+    return env
+
+
+def effective_config(out: Path, provider: str = "", profile: str = ""):
+    """The configuration this review will actually run under.
+
+    **Built once and used twice** — written into the frozen manifest and handed
+    to the child — so the recorded instrument and the running one are the same
+    object rather than two descriptions that have to agree.
+
+    The freeze used to record `Config.from_env()`, which is not this: `review`
+    overrides the mode, the comment and the output directory on the command
+    line, so the manifest said `mode='auto'` while every review ran `diff`. A
+    frozen description of an instrument that is not the one running is the
+    defect this product hunts elsewhere. Codex, 2026-09-07.
+
+    The forge context is *constructed*, not emptied field by field. A corpus
+    case has no merge request, and `briefing` puts the title, the description
+    and the branch names into the model's input — so whatever the shell held
+    would otherwise be part of what the model reads. `corpus_env` strips the
+    variables as well; this is the second half, for the fields that have
+    defaults rather than variables behind them.
+    """
+    from security_agent.config import Config, ForgeContext
+
+    cfg = Config.from_env()
+    cfg.mode = "diff"
+    cfg.post_comment = False
+    cfg.output_dir = out
+    cfg.gitlab = ForgeContext()
+    if provider:
+        cfg.provider = provider
+    if profile:
+        cfg.profile = profile
+    cfg.validate()
+    return cfg
+
+
 def review(repo: Path, base: str, head: str, out: Path,
            provider: str = "", profile: str = "", *, spend_class: str) -> dict:
     """One review of one member.
@@ -325,22 +511,30 @@ def review(repo: Path, base: str, head: str, out: Path,
     with the caller. Codex, 2026-09-05.
     """
     spend_gate.authorise(spend_class).require()
+    # **The whole configuration, in a file, instead of six flags and a shell.**
+    # `--config-json` refuses every flag that would change a setting, so the
+    # child cannot be configured from two places, and no field falls back to
+    # the environment. What is left on the command line names the material —
+    # which repository, which revisions — and not the method.
+    from security_agent.config import config_to_dict
+
+    cfg = effective_config(out, provider, profile)
+    config_path = out.parent / "{}-config.json".format(out.name)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(config_to_dict(cfg), indent=2,
+                                      sort_keys=True), encoding="utf-8")
     cmd = [
         sys.executable, "-m", "security_agent",
-        "--repo", str(repo), "--mode", "diff", "--base", base, "--head", head,
-        "--no-comment", "--output-dir", str(out),
+        "--repo", str(repo), "--base", base, "--head", head,
+        "--config-json", str(config_path),
     ]
-    if provider:
-        cmd += ["--provider", provider]
-    if profile:
-        cmd += ["--profile", profile]
     started = time.monotonic()
     # The package lives in `src/` and is not installed, so the child needs it on
     # the path. Left to the caller's shell before, which worked whenever the
     # corpus was run from a prepared environment and failed with "No module
     # named security_agent" whenever it was not — a run that measures nothing
     # and says so in a truncated line.
-    env = dict(os.environ)
+    env = corpus_env()
     src = str(Path(__file__).resolve().parents[1] / "src")
     env["PYTHONPATH"] = src + os.pathsep + env["PYTHONPATH"] if env.get(
         "PYTHONPATH") else src

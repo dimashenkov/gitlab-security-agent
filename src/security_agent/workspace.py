@@ -15,8 +15,10 @@ in each tool:
 
 from __future__ import annotations
 
+import codecs
 import fnmatch
 import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -113,45 +115,273 @@ def _decoded(chunk: bytes, rel: str) -> str:
             "{} is not UTF-8 text (binary file)".format(rel)) from None
 
 
-def _grep_records(stream):
-    """`git grep -z` output, one record at a time.
+# How much of one `git grep` record's text is kept. The rest is drained without
+# being stored, so a minified line of several megabytes costs this much memory
+# and not its own length. Bytes, because that is what git counts and what comes
+# off the pipe.
+MAX_RECORD_BYTES = 8_000
+# What is rendered from it once the window around the match is cut. The same
+# number as `evidence.MAX_EXCERPT_LINE_CHARS`, for the same reason: past this a
+# line is minified or generated and nobody reads the rest of it.
+MAX_RECORD_CHARS = 2_000
+# Fixed-size reads. Iterating a binary pipe yields *lines*, so one record with
+# no newline in it is accumulated whole before the loop body ever runs, and a
+# ceiling below that would bound what is stored rather than what is read.
+GREP_CHUNK_BYTES = 65_536
+# A path is bounded by the filesystem and a line number is short, so the two
+# framing fields arrive within this. Reading past it without finding them means
+# the stream is not what this parser is for, and guessing is worse than stopping.
+MAX_FRAMING_BYTES = 65_536
+# The column field is digits then NUL. Looking this far past the second NUL
+# decides match-versus-context without scanning to the newline, which on a
+# minified line is megabytes away.
+MAX_COLUMN_DIGITS = 20
 
-    A record is `path NUL number NUL text` terminated by a newline, except the
-    bare `--` git writes between hunks. The newline inside a *path* belongs to
-    the record, so the split is on the second NUL rather than on every newline.
+# The bare `--` git writes between context blocks. An object rather than a
+# string so it cannot be confused with a record whose text happens to be `--`.
+HUNK_SEPARATOR = object()
+
+
+class GrepRecord:
+    """One line git matched or gave as context, fields still in bytes.
+
+    Bytes, because the decisions taken on it are taken in git's units. The
+    column is a **byte** offset into the line — measured on 2026-09-07, a match
+    at character 22 of a Cyrillic line is reported at byte 35 — so a window cut
+    around it is cut in bytes and decoded afterwards. Decoding first and
+    slicing by that number lands in a different word, which is this project's
+    recurring defect arriving inside the fix for another one.
     """
-    buffer = ""
-    for chunk in stream:
+
+    __slots__ = ("path", "line", "column", "text", "offset", "dropped_after")
+
+    def __init__(self, path, line, column, text, offset, dropped_after):
+        self.path = path        # bytes, still carrying any `REV:` prefix
+        self.line = line        # bytes, ASCII digits
+        self.column = column    # bytes or None — a context line has no match
+        self.text = text        # bytes, at most MAX_RECORD_BYTES of them
+        # Where `text` starts within the line. Non-zero when the retained
+        # window was taken around a match far along a minified line, and the
+        # reason the retained slice is not simply the head: keeping the first
+        # 8,000 bytes of a line whose match is at byte 72,000 discards the
+        # match before anything downstream can see it.
+        self.offset = offset
+        self.dropped_after = dropped_after  # was there more after `text`
+
+
+def _trimmed_decode(chunk: bytes, cut_before: bool = False,
+                    cut_after: bool = False) -> str:
+    """Decode a byte window, forgiving only the edges that were actually cut.
+
+    A window cut in bytes can begin or end inside a multi-byte character; those
+    two are artefacts of the cut. Anything else — including a bad byte at the
+    start or end of a *whole* line — is what the file holds, and it raises, so
+    a search never presents a repaired line as the line.
+
+    **Written three times, and each version excused a different thing.**
+
+    The first dropped up to four trailing bytes and retried, guarded by "the
+    error is within four of the end". Measured exhaustively: `b"abc\xffdef"`
+    decoded to `"abc"`, silently — once enough trailing bytes are dropped every
+    interior error is within four of the new end, so the guard excused all of
+    them.
+
+    The second used an incremental decoder with `final=False`, which fixed the
+    interior and left both edges unconditionally forgiving: `b"\x80abc"` gave
+    `"abc"` and `b"abc\xe2\x82"` gave `"abc"` on a *complete* record, where
+    neither edge had been cut and both are corruption. Codex, 2026-09-07, on
+    the gate for the second version.
+
+    So the caller says which edges it cut. That is knowable — the parser
+    records it — and inferring it from the bytes is what produced both of the
+    earlier defects.
+    """
+    lead = 0
+    if cut_before:
+        # A UTF-8 character is at most four bytes, so at most three
+        # continuation bytes can precede the first whole one.
+        while lead < len(chunk) and lead < 3 and (chunk[lead] & 0xC0) == 0x80:
+            lead += 1
+    body = chunk[lead:]
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    try:
+        # `final=False` keeps an incomplete trailing sequence in the decoder's
+        # own buffer rather than reporting it, and it is never flushed — that
+        # is the cut tail being dropped. With `final=True` the same incomplete
+        # tail is the error it is.
+        return decoder.decode(body, not cut_after)
+    except UnicodeDecodeError:
+        raise WorkspaceError("a matched line is not UTF-8 text") from None
+
+
+def _window_around(record, decode) -> str:
+    """The part of a line worth showing, rendered from the retained window.
+
+    **The window has to contain what was searched for.** A prefix clip does
+    not: on a minified line whose match is at character 200,000, the first two
+    thousand characters are a record that no longer demonstrates why it
+    matched — worse than a truncated line, which is at least honestly the start
+    of one. Codex refused the prefix design on exactly that, 2026-09-07.
+
+    The cut itself happens in the parser, which knows the column before it
+    reads the text and so can drain what it will not show. This renders what
+    survived and says which side was left out.
+
+    `--column` gives the *start* of git's first match on the line, in bytes,
+    1-based. Only the start: an ERE's matched extent is not bounded by the
+    length of its source (`x.*y`), so what is guaranteed is that the window
+    holds the match start and a bounded run of what follows — not the whole
+    match, and not any later match on the same line. Saying otherwise would be
+    a claim nothing checks, which is the thing this tool hunts.
+    """
+    if not record.text:
+        return ""
+    dropped_before = record.offset > 0
+    dropped_after = record.dropped_after
+    # Which edges the *parser* cut, which is the only thing the decoder may
+    # forgive. A complete record has neither, and a bad byte at either end of
+    # one is corruption in the file rather than an artefact of a window.
+    shown = decode(record.text, dropped_before, dropped_after)
+    if len(shown) > MAX_RECORD_CHARS:
+        # **Centred on the match, not taken from the head.** The parser keeps a
+        # byte window around the column; cutting that window's *first* two
+        # thousand characters throws the match away again, one layer down,
+        # because the match sits a quarter of the way into the window by
+        # design. The same defect as the prefix clip, in the renderer.
+        at = 0
+        if record.column is not None and record.column.isdigit():
+            into = max(0, int(record.column) - 1 - record.offset)
+            # **Not a cut edge.** The prefix ends at git's match start, which
+            # is a character boundary in the file — nothing cut it, so an
+            # incomplete sequence immediately before the match is corruption
+            # and must raise rather than be trimmed away. Only the leading edge
+            # is one the parser made. Codex, second gate round, 2026-09-07.
+            at = len(decode(record.text[:into], dropped_before, False)) \
+                if into else 0
+        begin = max(0, at - MAX_RECORD_CHARS // 4)
+        finish = begin + MAX_RECORD_CHARS
+        dropped_before = dropped_before or begin > 0
+        dropped_after = dropped_after or finish < len(shown)
+        shown = shown[begin:finish]
+    prefix = "… " if dropped_before else ""
+    suffix = " …" if dropped_after else ""
+    return prefix + shown + suffix
+
+
+def _grep_records(stream, should_stop=None):
+    """`git grep -z --column` output, one bounded record at a time.
+
+    A record is `path NUL line NUL [column NUL] text`, ending at a newline. The
+    column is there on a matched line and absent on a context line, so the
+    shape *varies* and the framer cannot count to two. It is still decidable:
+    text can never contain a NUL, and the column is a short run of digits, so a
+    NUL within `MAX_COLUMN_DIGITS` of the second one marks a match record.
+    Checked against real output for four awkward paths — one holding a newline,
+    one holding a colon and digits, one ending in digits — rather than reasoned
+    about.
+
+    Bounded three ways, and each one is something that went wrong:
+
+    * **fixed-size reads**, because iterating a binary pipe yields lines and a
+      record with no newline would arrive whole before the ceiling was ever
+      consulted;
+    * **at most `MAX_RECORD_BYTES` of text retained**, the remainder drained;
+    * **`should_stop()` consulted while draining**, so a deadline is checked
+      during a long record and not only between records.
+
+    The framing state lives in the fields already captured, not in the buffer,
+    so dropping the buffer mid-drain cannot lose the record being drained.
+    """
+    read = getattr(stream, "read1", None) or stream.read
+    buffer = b""
+    ended = False
+
+    def more():
+        """Pull one chunk. False at the end of the stream."""
+        nonlocal buffer, ended
+        if ended:
+            return False
+        chunk = read(GREP_CHUNK_BYTES)
+        if not chunk:
+            ended = True
+            return False
         buffer += chunk
+        return True
+
+    def fill_to(size):
+        while len(buffer) < size and more():
+            pass
+
+    while True:
+        if should_stop is not None and should_stop():
+            return
+
+        fill_to(3)
+        if buffer.startswith(b"--\n"):
+            buffer = buffer[3:]
+            yield HUNK_SEPARATOR
+            continue
+
+        first = buffer.find(b"\0")
+        while first < 0 and len(buffer) <= MAX_FRAMING_BYTES and more():
+            first = buffer.find(b"\0")
+        if first < 0:
+            break
+        second = buffer.find(b"\0", first + 1)
+        while second < 0 and len(buffer) <= MAX_FRAMING_BYTES and more():
+            second = buffer.find(b"\0", first + 1)
+        if second < 0:
+            break
+
+        path = buffer[:first]
+        line = buffer[first + 1:second]
+
+        fill_to(second + 2 + MAX_COLUMN_DIGITS)
+        ahead = buffer[second + 1:second + 2 + MAX_COLUMN_DIGITS]
+        cut = ahead.find(b"\0")
+        if cut > 0 and ahead[:cut].isdigit():
+            column = ahead[:cut]
+            start = second + 1 + cut + 1
+        else:
+            column = None
+            start = second + 1
+
+        # Everything before `start` has been captured into `path`, `line` and
+        # `column`, so the buffer may now be consumed freely.
+        #
+        # **The retained window is taken around the match, not from the head.**
+        # `--column` is known before the text is read, which is what makes this
+        # possible: on a minified line whose match is at byte 72,000, keeping
+        # the first 8,000 bytes throws the match away before any renderer can
+        # look at it, and the answer becomes a record that does not show why it
+        # matched. Measured with a Cyrillic bundle, not reasoned about.
+        buffer = buffer[start:]
+        want_from = 0
+        if column is not None:
+            want_from = max(0, int(column) - 1 - MAX_RECORD_BYTES // 4)
+        want_to = want_from + MAX_RECORD_BYTES
+        text = b""
+        seen = 0
+        dropped_after = False
         while True:
-            if buffer.startswith("--\n"):
-                yield "--"
-                buffer = buffer[3:]
-                continue
-            first = buffer.find("\0")
-            if first < 0:
+            newline = buffer.find(b"\n")
+            available = buffer if newline < 0 else buffer[:newline]
+            begin = max(0, want_from - seen)
+            finish = max(0, want_to - seen)
+            if begin < len(available):
+                text += available[begin:finish]
+            seen += len(available)
+            if seen > want_to:
+                dropped_after = True
+            if newline >= 0:
+                buffer = buffer[newline + 1:]
                 break
-            second = buffer.find("\0", first + 1)
-            if second < 0:
+            buffer = b""
+            if should_stop is not None and should_stop():
+                return
+            if not more():
                 break
-            end = buffer.find("\n", second + 1)
-            if end < 0:
-                break
-            yield buffer[:end]
-            buffer = buffer[end + 1:]
-    # **What is left when the stream ends mid-record.** Codex enumerated every
-    # assumption this function makes about git's output on 2026-09-07; eleven
-    # are documented behaviour or measured here, and this is the one that is
-    # merely assumed — that a successful run ends with a complete record.
-    #
-    # Yielded rather than dropped: a partial tail is a line the search did
-    # produce, and discarding it silently would make a truncated stream look
-    # like a shorter answer. It is framed like any other record downstream, so
-    # a fragment with no NUL becomes a path that matches nothing and is
-    # excluded — which is the safe direction.
-    tail = buffer.strip("\n")
-    if tail:
-        yield tail
+        yield GrepRecord(path, line, column, text, want_from, dropped_after)
 
 
 class Workspace:
@@ -174,6 +404,9 @@ class Workspace:
         self.scope = tuple(s for s in scope if s and s.strip())
         self.diff_base = diff_base
         self.diff_head = diff_head
+        # Asked of git once per workspace, not once per process: see
+        # `_empty_tree` for why the object id is not a constant.
+        self.__empty_tree: Optional[str] = None
         # How much context a diff carries when the model does not ask for a
         # number. It used to be a constant in `tools.py`, so
         # `SECURITY_SCAN_CONTEXT_LINES` was read from the environment, stored on
@@ -200,6 +433,9 @@ class Workspace:
         # an earlier single-file diff turned on. That confusion would have
         # reported a genuinely complete diff as never delivered.
         self.last_diff_truncated = False
+        # Set by `search`: whether the scan that produced the last count
+        # stopped early, so the count is a floor rather than an answer.
+        self.last_search_truncated = False
         # Zero means "use the class default". Held rather than defaulted at the
         # call site so `diff_ceiling` has one answer.
         self._diff_ceiling = max(0, int(diff_ceiling))
@@ -308,6 +544,100 @@ class Workspace:
 
     # ------------------------------------------------------------------ git
 
+    def _argv(self, *args: str) -> tuple:
+        """The command line every git invocation in this class is built from.
+
+        **One builder, because three of them were built by hand and only one
+        carried the pin.** `--attr-source` was added to `git()` and
+        `_bounded` and `_grep_stream` construct their own `Popen` — so the
+        primary diff the model reads and every `search` still let an in-tree
+        `.gitattributes` decide what git would show. The attribution map was
+        protected and the material was not. Codex, on the gate for that repair,
+        2026-09-07.
+
+        `hash-object`, `cat-file`, `show` and `rev-parse` do not consult
+        attributes, so they are not built here — pinning them would be
+        decoration, and a builder used for everything hides which calls the pin
+        is load-bearing for.
+        """
+        return ("git", "--no-pager", "-C", str(self.root),
+                "--no-optional-locks", "--attr-source", self._empty_tree(),
+                *args)
+
+    def _empty_tree(self) -> str:
+        """The object id of the empty tree, asked of git rather than written out.
+
+        **The reviewed material must not describe itself to the tools that read
+        it.** One line of `.gitattributes` saying `*.py -diff` makes
+        `git diff --numstat` print `-` for both counts; the file is then
+        classified binary and drops out of the changed-line map, while the map
+        stays non-empty because `.gitattributes` is in it. `tools.py` reads the
+        empty attribution as "this line was already there", the finding is
+        filed pre-existing, and the gate skips it. Measured end to end on
+        2026-09-07: exit 1 becomes exit 0, with the verdict line saying "none
+        at or above the high threshold" about a `critical`, and the finding is
+        never verified because `_worth_verifying` skips pre-existing ones.
+
+        `--no-ext-diff` and the pinned `GIT_CONFIG_*` already stop the
+        neighbouring route: an external diff driver has to be *defined* in
+        configuration, and no configuration is trusted. `-diff` is built in and
+        needs no configuration at all, which is how it walked through a guard
+        written against the same idea.
+
+        Measured rather than assumed, because three plausible switches do not
+        work: `--text` is applied after the attribute, and the global
+        `core.attributesFile` does not override an in-tree one. `--attr-source`
+        does, and git has had it since 2.40 for exactly this purpose. Its cost
+        was measured too — content detection is untouched, an ordinary change
+        is byte-identical, and what is lost is a project's own `binary`
+        markings, which are about diff readability rather than about safety.
+
+        Asked of git instead of hardcoding `4b825dc...`: that constant is the
+        SHA-1 empty tree, and a SHA-256 repository has a different one.
+        """
+        # **Per instance, keyed on this repository.** The first version cached
+        # it on the class, which is the same object id everywhere right up
+        # until it is not: a SHA-256 repository's empty tree is
+        # `6ef19b41...` where SHA-1's is `4b825dc6...`, so a process holding
+        # both would hand one the other's. Measured: git answers
+        # `fatal: bad --attr-source` and exits 128, so it is a loud failure
+        # rather than a silent one — but a cache keyed on nothing is a defect
+        # waiting for the day the failure stops being loud.
+        if self.__empty_tree is None:
+            # **Every failure here becomes a `WorkspaceError`.** This runs on
+            # the first git call of a workspace's life, and it runs inside
+            # `_argv` — so a raw `OSError` or `TimeoutExpired` would escape
+            # from `_bounded` and `_grep_stream`, which give a `WorkspaceError`
+            # for every other way git can fail. A caller that handles one and
+            # not the other is a caller that crashes on the day git is missing
+            # rather than reporting that it could not check. Codex, on the
+            # second gate round for this change, 2026-09-07.
+            try:
+                done = subprocess.run(
+                    ("git", "-C", str(self.root), "hash-object", "-t", "tree",
+                     os.devnull),
+                    capture_output=True, check=False,
+                    timeout=GIT_TIMEOUT_SECONDS, env=_git_env())
+            except subprocess.TimeoutExpired:
+                raise WorkspaceError(
+                    "git timed out naming its own empty tree, so the attribute "
+                    "source cannot be pinned and the review would run with the "
+                    "reviewed repository deciding what is readable") from None
+            except OSError as exc:
+                raise WorkspaceError(
+                    "git could not be run to name its own empty tree ({}), so "
+                    "the attribute source cannot be pinned and the review would "
+                    "run with the reviewed repository deciding what is "
+                    "readable".format(exc)) from None
+            if done.returncode != 0:
+                raise WorkspaceError(
+                    "git cannot name its own empty tree, so the attribute "
+                    "source cannot be pinned and the review would run with "
+                    "the reviewed repository deciding what is readable: "
+                    + done.stderr.decode("utf-8", "replace").strip())
+            self.__empty_tree = done.stdout.decode("ascii").strip()
+        return self.__empty_tree
+
     def git(self, *args: str, check: bool = True) -> str:
         """Run git and return its output, with the two streams decoded differently.
 
@@ -330,7 +660,7 @@ class Workspace:
         """
         try:
             proc = subprocess.run(
-                ("git", "--no-pager", "-C", str(self.root), "--no-optional-locks", *args),
+                self._argv(*args),
                 capture_output=True,
                 check=False,
                 timeout=GIT_TIMEOUT_SECONDS,
@@ -702,11 +1032,17 @@ class Workspace:
         complete coverage. A non-zero status is raised, except after a
         deliberate kill, where a non-zero status is what killing produced.
         """
+        # **The command line before the clock.** `_argv` resolves the pinned
+        # attribute source, which runs git on the first call of a workspace's
+        # life — so building it after the deadline was set spent part of this
+        # read's budget on work the budget was not meant to cover. Instant in
+        # practice and wrong in shape, which is the kind that stops being
+        # instant on somebody else's filesystem.
+        argv = self._argv(*args)
         deadline = time.monotonic() + GIT_TIMEOUT_SECONDS
         try:
             proc = subprocess.Popen(
-                ("git", "--no-pager", "-C", str(self.root),
-                 "--no-optional-locks", *args),
+                argv,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 env=_git_env(),
             )
@@ -973,6 +1309,11 @@ class Workspace:
                 rel, _abbrev(rev), stderr.decode("utf-8", "replace").strip()))
         return kept, (number if complete else None), complete
 
+    @staticmethod
+    def _decode_record(chunk: bytes, cut_before: bool = False,
+                       cut_after: bool = False) -> str:
+        return _trimmed_decode(chunk, cut_before, cut_after)
+
     def _blob_size(self, rev: str, rel: str) -> Optional[int]:
         """Size of the blob at that revision, or None when the path is not one.
 
@@ -1237,6 +1578,19 @@ class Workspace:
         than a shell pipeline so the pattern is passed as an argv element and is
         never interpreted by a shell.
         """
+        # **Cleared on the way in, not only on the way out, and before the
+        # argument checks.** `search` returns early for "no matches", and a
+        # flag written only at the successful exit keeps the previous search's
+        # answer — so a clean no-match search following a stopped one reported
+        # "at least 0 match(es)". A stale qualifier is the same defect as a
+        # missing one: the line says something about a search that did not
+        # happen.
+        #
+        # Placing it after the argument checks left an empty pattern — which
+        # raises before any search occurs — carrying the previous one's
+        # qualifier: the same defect, two lines lower. Found by writing the
+        # test for the fix rather than by reading it.
+        self.last_search_truncated = False
         if not pattern.strip():
             raise WorkspaceError("pattern must not be empty")
         max_results = max(1, min(max_results, 300))
@@ -1246,7 +1600,14 @@ class Workspace:
         # read as `app/case-12-data`, so an excluded file with a
         # line-number-shaped name came back. Codex, 2026-09-07 — and measured
         # against real `git grep` output rather than assumed.
-        args = ["grep", "--no-color", "-n", "-E", "-I", "-z"]
+        # `--column` gives the byte offset of the first match on each matched
+        # line, which is what lets the parser keep the region *around* the match
+        # instead of the head of the line. Without it, a minified line whose
+        # match sits at byte 72,000 comes back as its first 8,000 bytes — a
+        # record that no longer shows why it matched. It adds a field to match
+        # lines and none to context lines, so the record shape varies; see
+        # `_grep_records`.
+        args = ["grep", "--no-color", "-n", "--column", "-E", "-I", "-z"]
         if not case_sensitive:
             args.append("-i")
         if context_lines > 0:
@@ -1276,8 +1637,15 @@ class Workspace:
         # SIGKILL, and a killed process cannot write "the review did not
         # complete": it is the one failure that defeats the exit-2 contract,
         # because `except Exception` never runs.
-        hits, truncated = self._grep_stream(args, rev)
-        total = len(hits)
+        records, truncated = self._grep_stream(args, rev, context_lines > 0)
+        # **Matched lines, not rendered lines.** With `-C` git returns the lines
+        # around a match as well, and counting them made one hit with two lines
+        # of context on each side into "5 match(es) for 'NEEDLE'" — a number the
+        # model plans with, over a file containing one. Codex, third gate round,
+        # 2026-09-07, and measured on a built repository rather than reasoned
+        # about. The defect is older than this change: `total = len(hits)` has
+        # counted context since context was added.
+        total = sum(1 for _, matched in records if matched)
         if total == 0:
             # `truncated` before the count. A search that ran out of time
             # before keeping a single line kept zero lines, and the zero branch
@@ -1287,8 +1655,15 @@ class Workspace:
             # when something was found, which is the case where it matters
             # least.
             #
-            # With no kept lines the cause can only be the deadline: `size` and
-            # `len(hits)` grow together, so neither ceiling can trip at zero.
+            # Zero *matches* rather than zero records, and the two differ only
+            # under `-C`. Without context every record is a match by
+            # construction, so this is the same branch it always was; with
+            # context, git emits no context line except around a match, and the
+            # exclude check drops a whole file at a time, so a surviving record
+            # implies a surviving match. What is not claimed is that the
+            # deadline is the only way to reach this — it is the only one
+            # reachable today, and the message names it, which is a narrower
+            # statement than the code can prove.
             if truncated:
                 # The phrase this refusal replaces must not appear in it. A
                 # model skimming a tool error for a summary can take the words
@@ -1302,22 +1677,106 @@ class Workspace:
                     .format(pattern, GIT_TIMEOUT_SECONDS))
             return "no matches for {!r}".format(pattern), 0
 
-        shown = hits[:max_results]
-        body = "\n".join(shown)
-        if len(body) > MAX_OUTPUT_CHARS:
-            body = body[:MAX_OUTPUT_CHARS].rsplit("\n", 1)[0] + "\n… output trimmed"
-        note = ""
+        # **`max_results` limits matches, and the cut lands before a match, not
+        # inside a block.** Slicing the rendered lines let the leading context
+        # of the first hit fill the whole allowance: `max_results=1` over a file
+        # with two lines of context returned `f.py:1:aaa` under the heading
+        # "5 match(es)" — every line shown was one that did not match, and the
+        # line that did was the one dropped. Cutting at the record *after* the
+        # last match allowed keeps every shown match together with the context
+        # git gave it. What it does *not* claim is that no unmatched line
+        # survives its match: the leading context of the first withheld match
+        # is still shown, and that is a real line at a real number which the
+        # caller asked for by passing `context_lines`. The claim being made is
+        # narrower and is the one that was false — the matches shown, the
+        # heading and the note account for each other exactly.
+        #
+        # **Both ceilings are applied here, at record boundaries.** The
+        # character ceiling used to be a `body[:60_000]` cut taken *after* this
+        # selection, and a cut in the joined string lands wherever it lands: on
+        # two blocks of `context_lines=10` it could end inside the second one,
+        # before its matching line — leaving context on screen for a match that
+        # was never shown, while the heading counted that match and no note
+        # mentioned it, because `kept` had been settled before the string was
+        # cut. Codex, fourth gate round, 2026-09-07. A ceiling enforced in a
+        # different unit from the thing it is protecting is the same shape as
+        # the byte-offset-into-a-decoded-string defect above.
+        end = len(records)
+        kept = 0
+        used = 0
+        for position, (line, matched) in enumerate(records):
+            if used + len(line) + 1 > MAX_OUTPUT_CHARS or (
+                    matched and kept == max_results):
+                end = position
+                break
+            used += len(line) + 1
+            if matched:
+                kept += 1
+        shown = records[:end]
+        # `kept` is now, by construction, the number of matches in `shown` —
+        # which is what the note below subtracts from. The two used to be
+        # computed at different times over different things, and that is the
+        # whole of the defect.
+        body = "\n".join(line for line, _ in shown)
+        # **Three different facts, and a search can be all three at once.**
+        # These were mutually exclusive branches, with `truncated` first, and
+        # that hid the one the reader most needs: measured on this repository,
+        # `search(".", max_results=5)` answered "at least 1471 match(es)",
+        # printed five lines, and said only "the scan stopped here" — nothing
+        # accounted for the 1,466 matches it had actually reached and was
+        # withholding. "The scan stopped" is about what was *not read*; "N more
+        # not shown" is about what was read and not printed. One does not imply
+        # the other and neither substitutes for it. Codex, sixth gate round,
+        # 2026-09-07.
+        notes = []
+        if total > kept:
+            # `total - kept`, not `total - len(shown)`: `shown` holds context
+            # lines too, so subtracting its length reported fewer withheld
+            # matches than there are and could reach zero while matches were
+            # being withheld — the note then vanished entirely.
+            notes.append(
+                "… {} more match(es) not shown; narrow the pattern or set "
+                "path_glob".format(total - kept))
+        elif end < len(records):
+            # **Every match counted is shown, and lines are still missing.**
+            # The ceiling can land on a context record that follows the last
+            # match — every match accounted for, `total == kept`, and neither
+            # note above fires, while lines the caller asked for by passing
+            # `context_lines` were dropped in silence. Codex, fifth gate round,
+            # 2026-09-07: an answer that claims an exact result must not also
+            # be quietly short of what was requested. It says what was left out
+            # rather than pretending nothing was.
+            notes.append(
+                "… the size limit was reached; every match is shown but some "
+                "of the surrounding context is not. Ask for fewer "
+                "context_lines to see it.")
         if truncated:
             # "At least", never a total. Counting the rest means reading the
             # rest, which is the thing being avoided — and a fabricated total
             # is worse than an honest floor.
-            note = ("\n… stopped after {} match(es); there are more. Narrow the "
-                    "pattern or set path_glob.".format(total))
-        elif total > len(shown):
-            note = "\n… {} more match(es) not shown; narrow the pattern or set path_glob".format(
-                total - len(shown)
-            )
+            # **"Stopped" is what is known; "there are more" is not.** The
+            # ceiling is crossed by the record that crosses it, and that record
+            # may be the last one git had — the scan then ends complete while
+            # the note claims another match exists. Codex, 2026-09-07, on the
+            # gate for the record-bounding change. A one-record lookahead would
+            # settle it and costs a read; saying only what was established
+            # costs nothing and is the answer the rest of this file gives.
+            notes.append(
+                "… the scan stopped here, so this is what was reached and not "
+                "necessarily all there is. Narrow the pattern or set path_glob "
+                "to see the rest.")
+        note = ("\n" + "\n".join(notes)) if notes else ""
+        # A floor, for the same reason: the scan stopped, so the count is what
+        # it reached. It is not "at least N and there is an N+1" — it is "N,
+        # and nothing establishes whether there are more".
         head = "at least {}".format(total) if truncated else str(total)
+        # **The count leaves through a channel that cannot qualify it.** The
+        # body says "at least N" and the tool summary printed "N match(es)"
+        # from the same search — two statements about one result, disagreeing,
+        # and the artifact keeps the second. Recorded the way
+        # `last_diff_truncated` records the same fact for `diff`, because
+        # widening the return type would touch every caller to carry one bit.
+        self.last_search_truncated = truncated
         return "{} match(es) for {!r}:\n{}{}".format(head, pattern, body, note), total
 
     @staticmethod
@@ -1342,20 +1801,47 @@ class Workspace:
         prefix = rev + ":"
         return line[len(prefix):] if line.startswith(prefix) else line
 
-    def _grep_stream(self, args, rev=""):
+    def _grep_stream(self, args, rev="", with_context=False):
         """Run `git grep` and stop reading at the ceiling.
 
-        Returns (kept lines, whether more were left unread). Excluded paths are
+        Returns (kept records, whether more were left unread). A record is
+        `(rendered line, whether that line matched)`. Excluded paths are
         filtered as the lines arrive, so an excluded directory cannot fill the
         budget with output that would have been discarded anyway.
+
+        **The second field is why this returns pairs.** With `-C` git emits the
+        lines *around* a match as well, and they arrived here indistinguishable
+        from the match — so the caller counted them, and one hit with two lines
+        of context on each side was reported as five matches. `--column` is
+        present on a matched line and absent on a context line, which is the
+        same fact the framer already reads, so the distinction costs nothing.
+
+        `with_context` is false for the default search, where git emits no
+        context at all and every record is a match by construction. That is not
+        a shortcut: a record whose column was cut off by the end of the stream
+        is deliberately given no column, and without this it would be demoted to
+        context and lost from the count on the one path where nothing is
+        ambiguous.
         """
+        # Built before the clock starts, for the reason given in `_bounded`.
+        argv = self._argv(*args)
         deadline = time.monotonic() + GIT_TIMEOUT_SECONDS
         proc = subprocess.Popen(
-            ("git", "--no-pager", "-C", str(self.root), *args),
+            argv,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, errors="replace", env=_git_env(),
+            # **Binary.** The column git reports is a byte offset into the
+            # line, so the window around it is cut in bytes and decoded after —
+            # a text stream would have decoded first and made that number point
+            # into a different word. Decoding is `_grep_stream`'s job now, per
+            # field, because a path and a matched line want opposite treatment:
+            # the path reversibly, the text strictly.
+            env=_git_env(),
         )
         hits, size, truncated = [], 0, False
+        # Set only when the record loop reaches the end of the generator. Every
+        # other way out — a ceiling, the deadline, an exception from the strict
+        # decoder — leaves it false, and each of those leaves git writing.
+        drained = False
         try:
             # **Records, not lines.** With `-z` the path is a NUL-terminated
             # field, and a path may legally contain a newline — measured on
@@ -1365,52 +1851,91 @@ class Workspace:
             # A record is `REV:path NUL number NUL text` and ends at the first
             # newline *after* the second NUL. Codex named it on the gate pass
             # for `-z` itself, which fixed the delimiter and left the framing.
-            for raw in _grep_records(proc.stdout):
+            # **A generator that stops is indistinguishable from a stream that
+            # ended.** `_grep_records` returns when the deadline passes, and a
+            # `for` loop reads that as the end of the output — so a search
+            # killed by its own timeout came back as a search that found
+            # nothing, which is the defect `test_search_stopped_at_the_deadline`
+            # was written for and which this rewrite reintroduced. The callback
+            # records that it fired rather than only answering.
+            def past_deadline():
+                nonlocal truncated
                 if time.monotonic() > deadline:
                     truncated = True
+                return truncated
+
+            for record in _grep_records(proc.stdout, should_stop=past_deadline):
+                if past_deadline():
                     break
-                line = raw
                 # The hunk separator git writes between context blocks. It
                 # carries no path, so it cannot be excluded and it must not be
                 # counted: a search whose every real line was excluded would
                 # otherwise report a nonzero result made of nothing but these.
-                if line == "--":
+                if record is HUNK_SEPARATOR:
                     continue
+
                 # **The revision prefix comes off before anything reads the
-                # path.** `git grep REV` returns `REV:path:line:text`, and
-                # three things downstream take the first colon-separated field
-                # as the path: this exclude check, `_paths_in_search` recording
-                # exposures, and the model, which is shown the path and can
-                # only open it through `read_file` — which takes repository
-                # paths. Codex named all three on the adjudication, 2026-09-07.
-                line = self._without_revision(line, rev)
-                # **The path, however this line spells its separator.** A match
-                # is `path:line:text` and a context line is `path-line-text`,
-                # and this check read up to the first colon — so on a context
-                # line it tested the whole `path-1-def run(...)` against the
-                # excludes, matched nothing, and let excluded content through.
-                # Measured on 2026-09-07: searching an excluded file with
-                # `context_lines=2` returned one line of it. Older than the
-                # revision repair; the revision prefix only made it visible.
-                # `REV:path\0line\0text`, measured. The revision comes off
-                # first, then the path is everything up to the first NUL —
-                # a delimiter no path can contain, which is the whole reason
-                # for `-z`.
-                path, _, rest = line.partition("\0")
-                path = self._without_revision(path, rev)
+                # path.** `git grep REV` prefixes every record with `REV:`, and
+                # three things downstream take that field as the path: this
+                # exclude check, `_paths_in_search` recording exposures, and the
+                # model, which is shown the path and can only open it through
+                # `read_file` — which takes repository paths.
+                #
+                # Decoded here and not in the parser. A path is whatever bytes
+                # the filesystem holds, so `surrogateescape` keeps it reversible
+                # rather than replacing what it cannot read; the text is decoded
+                # strictly, because a replacement character in a quoted line is
+                # a character the file does not contain.
+                path = self._without_revision(
+                    record.path.decode("utf-8", "surrogateescape"), rev)
                 if not path or self.is_excluded(path):
                     continue
-                number, _, text = rest.partition("\0")
-                hits.append("{}:{}:{}".format(path, number, text))
-                size += len(line) + 1
+                if not record.line.isdigit():
+                    continue
+                number = record.line.decode("ascii")
+                text = _window_around(record, self._decode_record)
+                hits.append(("{}:{}:{}".format(path, number, text),
+                             record.column is not None or not with_context))
+                size += len(path) + len(number) + len(text) + 3
                 # Twice the rendered ceiling: enough that `max_results` and the
                 # character trim still have something to choose from, bounded
                 # enough that the process cannot be killed for holding it.
+                #
+                # Reachable only by *many* records now. One 320,000-character
+                # minified line used to trip it on its own, after the only match
+                # in the repository — so `truncated` was set while the count was
+                # exact, and both its consumers then lied: the head became
+                # `at least 1` and the note said "there are more" when there
+                # were none, while the summary line printed `1 match(es)` from
+                # the same search. Codex, on the gate for this, 2026-09-07.
                 if size > MAX_OUTPUT_CHARS * 2 or len(hits) > MAX_SEARCH_HITS:
                     truncated = True
                     break
+            else:
+                # The `for` ran to the end of the generator. Only here is it
+                # established that nobody is still waiting to write into a pipe
+                # this loop has stopped reading.
+                drained = True
         finally:
-            if truncated:
+            # **Terminate whenever this loop stopped early, not only when a
+            # ceiling stopped it.** `_window_around` decodes strictly and
+            # *raises* — that is deliberate, a quoted line must be the line —
+            # and the raise leaves this function through `finally` with
+            # `truncated` false. git was then still writing: it blocked on a
+            # full stdout pipe nobody would drain again, `proc.stderr.read`
+            # blocked waiting for a process that could not exit, and the search
+            # never returned at all. Measured on 2026-09-07, not argued: a file
+            # with one bad byte on its first matched line and 6,000 matches
+            # after it hung with no output past "searching…". A security gate
+            # that never returns is worse than one that answers wrongly, and
+            # the deadline does not help — nothing consults it from in here.
+            # Codex, fifth gate round.
+            #
+            # `truncated or not drained`, because the two are not the same
+            # thing in either direction: the deadline fires *inside* the
+            # generator, which then returns, and the loop ends normally with
+            # `truncated` already true and git still running.
+            if truncated or not drained:
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
@@ -1419,7 +1944,8 @@ class Workspace:
                     proc.wait()
             # stderr is read after stdout is done with, and capped for the same
             # reason: an error message is not a channel worth trusting either.
-            stderr = (proc.stderr.read(4_000) if proc.stderr else "") or ""
+            raw_stderr = (proc.stderr.read(4_000) if proc.stderr else b"") or b""
+            stderr = raw_stderr.decode("utf-8", "replace")
             proc.stdout.close()
             if proc.stderr:
                 proc.stderr.close()

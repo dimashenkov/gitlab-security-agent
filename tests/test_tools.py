@@ -792,3 +792,68 @@ class TestAnEmptyFileReadsAsEmptyAndNotAsAFailure:
                            "end_line": 10})
         assert not result.is_error
         assert "0 lines" in result.content
+
+
+class TestAnUnattributableLineIsNotAnOldOne:
+    """The second layer of the `.gitattributes` repair, and the one that closes
+    the class rather than one route into it.
+
+    `bool(attributed)` answered False for two different facts: the map holds
+    lines for this file and not this one — genuinely pre-existing — and the map
+    holds nothing about this file at all, where nothing could attribute it. One
+    line of `.gitattributes` produced the second while the map stayed
+    non-empty, because `.gitattributes` itself was in it, and the finding was
+    filed pre-existing where `gate.blocking_findings` skips it.
+
+    `--attr-source` closes that route. This closes the reading that made it
+    work, so the next way of emptying one file's entry fails towards blocking.
+    Codex asked for both layers, 2026-09-07.
+
+    Tested at the function rather than through git, because the point is what
+    the reading does with a map in that shape — and a map in that shape can no
+    longer be produced through git, which is the first layer working.
+    """
+
+    def test_a_file_absent_from_a_non_empty_map_is_not_attributable(self):
+        from security_agent.evidence import ChangedLines
+        from security_agent.tools import _file_is_attributable
+        changed = ChangedLines(added={".gitattributes": {1}}, removed_at={})
+        assert _file_is_attributable(".gitattributes", changed) is True
+        assert _file_is_attributable("app.py", changed) is False
+
+    def test_a_file_the_map_knows_only_deletions_for_is_attributable(self):
+        """A file the change only removed lines from is one the map can speak
+        about, and a finding on it really can be pre-existing."""
+        from security_agent.evidence import ChangedLines
+        from security_agent.tools import _file_is_attributable
+        changed = ChangedLines(added={}, removed_at={"app.py": {7}})
+        assert _file_is_attributable("app.py", changed) is True
+
+    def test_an_empty_map_is_not_attributable_either(self):
+        """A whole-repository review has no changed lines at all, and every
+        finding in it is neither in nor out of the change — the caller's
+        `else True` covers that, and this only has to agree."""
+        from security_agent.evidence import ChangedLines
+        from security_agent.tools import _file_is_attributable
+        assert _file_is_attributable("app.py", ChangedLines()) is False
+
+    def test_a_finding_in_an_unmapped_file_still_blocks(self, git_repo,
+                                                        session, monkeypatch):
+        """The whole point, through the real handler: a critical finding in a
+        file the map cannot place must not be filed as code the change did not
+        touch.
+
+        The map is emptied of that file directly, because the git route that
+        used to empty it is closed — which is the first layer working and the
+        reason this layer needs its own test.
+        """
+        from security_agent.evidence import ChangedLines
+        ws = Workspace(root=git_repo, excludes=())
+        monkeypatch.setattr(
+            ws, "changed_line_map",
+            lambda: ChangedLines(added={".gitattributes": {1}}, removed_at={}))
+        result = report(ws, session, evidence=REAL_EVIDENCE, line=3)
+        assert not result.is_error, result.content
+        assert session.candidates
+        assert session.candidates[0].in_changed_lines is True, (
+            "a finding the map could not place was filed as pre-existing")

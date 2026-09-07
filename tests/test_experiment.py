@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -813,3 +814,380 @@ def experiment_first_case(root: Path) -> str:
                        / "manifest.json").read_text())
     return body["protocol"]["order"][0]
 
+
+
+class TestTheModelIsChosenAndNotInherited:
+    """Asked for by the owner on 2026-09-07: the change of model must be
+    configurable.
+
+    It was a variable typed in front of one command in one shell, unobserved.
+    `freeze` takes `--model` and `--verify-model` now; the environment is the
+    fallback, and `run` keeps its guard — it compares the recorded values
+    against the shell before spending and exits 2 when they disagree, so what
+    stopped an accidental purchase is untouched.
+    """
+
+    def clear(self, monkeypatch):
+        monkeypatch.delenv("SECURITY_SCAN_MODEL", raising=False)
+        monkeypatch.delenv("SECURITY_SCAN_VERIFY_MODEL", raising=False)
+
+    def test_nothing_given_is_todays_behaviour(self, monkeypatch):
+        self.clear(monkeypatch)
+        got = experiment.requested_now()
+        assert got["model_requested"] == "claude-opus-5"
+        assert got["verifier_requested"] == "claude-opus-5"
+
+    def test_the_verifier_follows_the_selected_model_not_the_shell(
+            self, monkeypatch):
+        """The trap in this change, named by Codex on the adjudication.
+
+        `Config.from_env` has already resolved the verifier against whatever
+        `SECURITY_SCAN_MODEL` the shell held. Replacing only the model
+        afterwards records the *ambient* model as the verifier — so
+        `--model claude-sonnet-5` in an Opus shell would have frozen an arm
+        that reviews with Sonnet and verifies with Opus while claiming to be
+        the plain Sonnet arm.
+        """
+        self.clear(monkeypatch)
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-opus-5")
+        got = experiment.requested_now(model="claude-sonnet-5")
+        assert got["model_requested"] == "claude-sonnet-5"
+        assert got["verifier_requested"] == "claude-sonnet-5", (
+            "the verifier fell back to the shell's model, not the chosen one")
+
+    def test_an_explicit_verifier_wins_over_both(self, monkeypatch):
+        self.clear(monkeypatch)
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-opus-5")
+        got = experiment.requested_now(model="claude-sonnet-5",
+                                       verify_model="claude-opus-5")
+        assert got["model_requested"] == "claude-sonnet-5"
+        assert got["verifier_requested"] == "claude-opus-5"
+
+    def test_an_explicit_verifier_alone_leaves_the_model_alone(
+            self, monkeypatch):
+        self.clear(monkeypatch)
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        got = experiment.requested_now(verify_model="claude-opus-5")
+        assert got["model_requested"] == "claude-sonnet-5"
+        assert got["verifier_requested"] == "claude-opus-5"
+
+    def test_the_environment_still_works_when_no_flag_is_given(
+            self, monkeypatch):
+        """The control: the flags add a way in, they do not close the old one.
+        A `run` invocation still reads its own environment, and that is what
+        the manifest is checked against."""
+        self.clear(monkeypatch)
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        got = experiment.requested_now()
+        assert got["model_requested"] == "claude-sonnet-5"
+        assert got["verifier_requested"] == "claude-sonnet-5"
+
+    def test_where_the_value_came_from_is_recorded_beside_the_environment(
+            self, world, monkeypatch):
+        """**Beside**, never inside.
+
+        The environment block is compared field by field between two arms and
+        against the tree at run time. A provenance field inside it would make
+        two arms differ in something that is not the model, and the trial would
+        refuse a pair whose models are exactly as intended. Codex, 2026-09-07.
+        """
+        self.clear(monkeypatch)
+        body = experiment.build("probe", model="claude-sonnet-5")
+        assert body["configuration_source"] == {
+            "model": "argument", "verifier": "environment"}
+        assert "configuration_source" not in body["environment"]
+        assert not any(k.startswith("configuration")
+                       for k in body["environment"])
+
+
+def manifest(root: Path, name: str = "e") -> Path:
+    return root / "measurements" / "experiment-{}".format(name) / "manifest.json"
+
+
+def edit_manifest(root: Path, change, name: str = "e") -> None:
+    """Rewrite a frozen manifest, the way an older version of the tool left it.
+
+    A manifest is not rewritten in ordinary use; this exists to reach the one
+    state no fresh freeze can produce — the manifest written before a key
+    existed, which is what `drift` walking only the keys it *has* turns into
+    "nothing has moved".
+    """
+    path = manifest(root, name)
+    body = json.loads(path.read_text(encoding="utf-8"))
+    change(body)
+    path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+
+
+def write_ignore(root: Path, case_id: str, body: str,
+                 member: str = "safe") -> None:
+    (root / "corpus-real" / case_id / member
+     / ".security-agent-ignore.yml").write_text(body, encoding="utf-8")
+
+
+def fake_binary(directory: Path, name: str, says: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text("#!/bin/sh\necho '{}'\n".format(says), encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+EXPIRING = ("ignore:\n"
+            "  - path: 'src/**'\n"
+            "    reason: accepted until the release\n"
+            "    expires: 2026-09-10\n")
+
+PERMANENT = ("ignore:\n"
+             "  - path: 'src/**'\n"
+             "    reason: accepted, and not on a clock\n")
+
+
+class TestTheEvaluationDateIsPartOfTheFreeze:
+    """The defect: identical bytes did not mean identical behaviour.
+
+    `suppress.load` compares each rule's `expires` against
+    `datetime.now(timezone.utc).date()`, and `cli._run` never passes it one. So
+    a case whose ignore file has not changed by a byte suppresses a finding on
+    the ninth and does not on the eleventh — while `case_digest`,
+    `answer_key_digest` and every digest in the environment block match exactly
+    and `drift` reports that nothing has moved. Measured on 2026-09-07: one
+    frozen experiment, one rule expiring on the tenth, `active=1 expired=0` on
+    the ninth and `active=0 expired=1` on the eleventh, `drift()` empty on both
+    days.
+
+    **What is frozen is not the freeze date.** Recording today's date and
+    refusing when today differs would expire every experiment after one day,
+    and this project's two passes routinely wait overnight for a subscription
+    window — the refusal would fire for the calendar and never for the rules.
+    What is frozen is the state the expiry dates put the rules in.
+    """
+
+    def test_crossing_an_expiry_refuses(self, world, monkeypatch, capsys):
+        write_ignore(world, "go-a", EXPIRING)
+        monkeypatch.setattr(experiment, "_today", lambda: date(2026, 9, 9))
+        experiment.freeze("e", dry_run=False)
+
+        monkeypatch.setattr(experiment, "_today", lambda: date(2026, 9, 11))
+
+        assert experiment.verify("e") == 2
+        out = capsys.readouterr().out
+        assert "go-a: the accepted-risk rules in force have changed" in out
+        assert "identical byte for byte" in out
+
+    def test_the_day_before_the_expiry_is_still_the_same_experiment(
+            self, world, monkeypatch):
+        """The boundary, from the other side. A refusal that fired a day early
+        would be the freeze date in disguise."""
+        write_ignore(world, "go-a", EXPIRING)
+        monkeypatch.setattr(experiment, "_today", lambda: date(2026, 9, 9))
+        experiment.freeze("e", dry_run=False)
+
+        monkeypatch.setattr(experiment, "_today", lambda: date(2026, 9, 10))
+
+        assert experiment.verify("e") == 0
+
+    def test_a_rule_with_no_expiry_does_not_expire_with_the_calendar(
+            self, world, monkeypatch):
+        """The control, and the reason the freeze date was rejected.
+
+        This one passes against the tool as it stood, because the tool checked
+        nothing here at all. It is written for the *other* wrong answer: freeze
+        `created_at` and refuse when today differs, and this goes red while
+        every experiment in the project becomes unrunnable the morning after it
+        is frozen. Verified by inverting the fix on 2026-09-07.
+        """
+        write_ignore(world, "go-a", PERMANENT)
+        monkeypatch.setattr(experiment, "_today", lambda: date(2026, 9, 9))
+        experiment.freeze("e", dry_run=False)
+
+        monkeypatch.setattr(experiment, "_today", lambda: date(2031, 1, 1))
+
+        assert experiment.verify("e") == 0
+
+    def test_a_case_with_no_ignore_file_never_expires(self, world, monkeypatch):
+        """Most of the corpus. Nothing about these cases depends on the day
+        they are run, and a rule that made them expire would be charging the
+        experiment for a mechanism it is not using."""
+        monkeypatch.setattr(experiment, "_today", lambda: date(2026, 9, 9))
+        experiment.freeze("e", dry_run=False)
+        body = json.loads(manifest(world).read_text(encoding="utf-8"))
+        assert all(row["suppression_expiry"] == "no ignore file"
+                   for row in body["cases"])
+
+        monkeypatch.setattr(experiment, "_today", lambda: date(2099, 1, 1))
+
+        assert experiment.drift(body) == []
+
+    def test_the_state_the_dates_put_the_rules_in_is_what_is_recorded(
+            self, world, monkeypatch):
+        """Not the date, and not the file. The value names how many rules have
+        lapsed and when the next one will, which is exactly the thing that
+        changes at a boundary and nowhere else."""
+        write_ignore(world, "go-a", EXPIRING)
+        monkeypatch.setattr(experiment, "_today", lambda: date(2026, 9, 9))
+        body = experiment.build("probe")
+
+        row = next(r for r in body["cases"] if r["case_id"] == "go-a")
+        assert row["suppression_expiry"] == "safe: 0 expired, next 2026-09-10"
+
+    def test_a_malformed_ignore_file_is_unreadable_and_not_an_exception(
+            self, world):
+        """The reviewer fails such a case too. Raising out of `drift` in the
+        middle of a paid pass would blame the clock for a file that was already
+        broken at the freeze, and `drift` is called before every case."""
+        write_ignore(world, "go-a", "ignore: [\n")
+
+        row = next(r for r in experiment.build("probe")["cases"]
+                   if r["case_id"] == "go-a")
+        assert row["suppression_expiry"] == "safe: unreadable"
+
+    def test_a_manifest_frozen_before_this_was_recorded_is_refused(
+            self, world, capsys):
+        """`drift` walks the keys the manifest *has*. A case row written before
+        this key existed would be checked against nothing and read as
+        agreement, which is this repository's own recurring defect in the one
+        function whose exit code authorises money. It is told apart from a
+        change and named as what it is."""
+        experiment.freeze("e", dry_run=False)
+        edit_manifest(world, lambda body: [row.pop("suppression_expiry")
+                                           for row in body["cases"]])
+
+        assert experiment.verify("e") == 2
+        assert "frozen before the suppression rules' expiry state" in (
+            capsys.readouterr().out)
+
+
+class TestTheBinariesArePartOfTheFreeze:
+    """The defect: the environment digested every file that decides what is
+    *read* and named none of the three programs that decide what *runs*.
+
+    Measured on 2026-09-07, on one machine, inside one experiment: the corpus
+    is built with `/opt/homebrew/bin/git` 2.55.0, because
+    `pair_corpus.build_repo` passes the ambient `PATH` through, and it is
+    reviewed with `/usr/bin/git` 2.50.1, because `workspace._git_env` pins
+    `PATH` to the system directories. Two different programs, one of which
+    decides what the diff is and the other what the reviewer is shown, and the
+    manifest named neither. Nor the `claude` CLI — which is the one part of the
+    instrument that upgrades itself in the background, and which has already
+    changed what a paid run does in this project.
+    """
+
+    def test_the_corpus_git_and_the_reviewers_git_are_recorded_separately(
+            self, world, monkeypatch):
+        """They are not the same lookup and they can resolve to different
+        binaries. Recording one of them would freeze half the instrument."""
+        pinned = world / "reviewer-bin"
+        fake_binary(pinned, "git", "git version 1.1.1")
+        monkeypatch.setattr(experiment.workspace, "_git_env",
+                            lambda: {"PATH": str(pinned)})
+
+        environment = experiment.build("probe")["environment"]
+
+        assert environment["reviewer_git"] == "{} · git version 1.1.1".format(
+            pinned / "git")
+        assert environment["corpus_git"] != environment["reviewer_git"]
+
+    def test_an_upgraded_git_refuses_and_says_to_freeze_a_new_one(
+            self, world, monkeypatch, capsys):
+        """And the refusal does not say "or put it back". A reader who took
+        that literally would downgrade the machine to rescue an experiment,
+        which is a worse outcome than freezing another one."""
+        experiment.freeze("e", dry_run=False)
+        newer = world / "upgraded-bin"
+        fake_binary(newer, "git", "git version 99.0")
+        monkeypatch.setenv("PATH", "{}{}{}".format(
+            newer, os.pathsep, os.environ["PATH"]))
+
+        assert experiment.verify("e") == 2
+        out = capsys.readouterr().out
+        assert "corpus_git" in out
+        assert "a new experiment has to be frozen" in out
+
+    def test_an_upgraded_cli_refuses(self, world, monkeypatch, capsys):
+        """The CLI is the instrument. The upgrade that split one review into
+        two processes changed what a paid run does, and nothing in the prompts,
+        the reviewer's source or the model name moves when that happens."""
+        from security_agent import runner_claude_code
+
+        experiment.freeze("e", dry_run=False)
+        newer = world / "cli" / "claude"
+        newer.parent.mkdir()
+        newer.write_text("a different build\n", encoding="utf-8")
+        monkeypatch.setattr(runner_claude_code, "cli_available",
+                            lambda *a, **k: str(newer))
+
+        assert experiment.verify("e") == 2
+        assert "review_cli" in capsys.readouterr().out
+
+    def test_a_version_that_could_not_be_had_does_not_look_like_one(
+            self, world, monkeypatch):
+        """The CLI is not executed to ask it, so on most installations the
+        version is simply not available. "I could not check" and "2.1.236" are
+        different answers and the value says which one it is — that string
+        travels into the manifest and into any report quoting it."""
+        from security_agent import runner_claude_code
+
+        cli = world / "cli" / "claude"
+        cli.parent.mkdir()
+        cli.write_text("no manifest beside me\n", encoding="utf-8")
+        monkeypatch.setattr(runner_claude_code, "cli_available",
+                            lambda *a, **k: str(cli))
+
+        environment = experiment.environment_now()
+
+        assert environment["review_cli_version"].startswith("unestablished:")
+        assert str(cli) in environment["review_cli"]
+
+    def test_a_version_file_beside_the_binary_is_read(self, world, monkeypatch):
+        """The npm-shaped installation, where the version can be had without
+        running anything."""
+        from security_agent import runner_claude_code
+
+        package = world / "node_modules" / "@anthropic-ai" / "claude-code"
+        package.mkdir(parents=True)
+        (package / "cli.js").write_text("#!/usr/bin/env node\n", encoding="utf-8")
+        (package / "package.json").write_text(json.dumps(
+            {"name": "@anthropic-ai/claude-code", "version": "9.9.9"}),
+            encoding="utf-8")
+        monkeypatch.setattr(runner_claude_code, "cli_available",
+                            lambda *a, **k: str(package / "cli.js"))
+
+        assert experiment.environment_now()["review_cli_version"] == (
+            "@anthropic-ai/claude-code 9.9.9")
+
+    def test_a_package_json_belonging_to_something_else_is_not_the_version(
+            self, world, monkeypatch):
+        """A `package.json` two directories up can belong to anything. Reading
+        its version would record a number that is wrong, and a wrong version is
+        worse than none: it compares equal across the upgrade it was meant to
+        catch."""
+        from security_agent import runner_claude_code
+
+        package = world / "somewhere"
+        package.mkdir()
+        (package / "cli.js").write_text("#!/usr/bin/env node\n", encoding="utf-8")
+        (package / "package.json").write_text(json.dumps(
+            {"name": "left-pad", "version": "1.0.0"}), encoding="utf-8")
+        monkeypatch.setattr(runner_claude_code, "cli_available",
+                            lambda *a, **k: str(package / "cli.js"))
+
+        assert experiment.environment_now()["review_cli_version"].startswith(
+            "unestablished:")
+
+    def test_a_manifest_frozen_before_the_binaries_will_not_spend(
+            self, world, monkeypatch, capsys):
+        """`drift` walks the keys the manifest has, so an older manifest is
+        checked against nothing here — which reads as agreement. Required
+        before spending rather than merely compared, the same guard
+        `model_requested` already has."""
+        import pair_corpus
+
+        experiment.freeze("e", dry_run=False)
+        edit_manifest(world, lambda body: body["environment"].pop("review_cli"))
+        bought = []
+        monkeypatch.setattr(pair_corpus, "run_case",
+                            lambda case, **kw: bought.append(case) or {})
+
+        assert experiment.run("e", "a", None) == 2
+        assert bought == []
+        assert "Freeze a new experiment." in capsys.readouterr().out

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import quote
@@ -50,6 +50,165 @@ PROVIDERS: Sequence[str] = (PROVIDER_API, PROVIDER_CLI)
 class ConfigError(Exception):
     """Configuration is unusable; exit before calling the API."""
 
+
+
+# ---------------------------------------------------------- what the tool is
+
+# **Which settings are the instrument, and which are where it runs.**
+#
+# An experiment freezes an environment and refuses to run when it moves, and
+# the freeze recorded three fields of forty. The other thirty-seven —
+# `verify_votes`, `fail_on`, `excludes`, the context ceilings, the gate
+# switches — were read from the shell at review time, so two runs under one
+# manifest could be two different instruments while `drift` reported that
+# nothing had moved. Demonstrated on 2026-09-07 by setting
+# `SECURITY_SCAN_VERIFY_VOTES=5` and getting no drift, one gate before 104
+# reviews were to be bought to attribute a difference to a model.
+#
+# **Two lists, both written out.** Deriving one as "everything minus the
+# other" makes the coverage test tautological: it cannot fail, so it cannot
+# catch the field nobody classified — which is the failure being repaired.
+# Codex refused that shape on 2026-09-07. A field added to `Config` and left
+# out of both lists fails `test_every_config_field_is_classified`.
+#
+# The line is Codex's: freeze effects, not addresses. A setting that changes
+# what the review does is the instrument; a setting that says where output
+# goes, where a comment is posted, or which checkout this is, is not.
+
+BEHAVIOURAL = frozenset({
+    # what the models are and how hard they think
+    "model", "effort", "max_tokens", "cache_ttl", "max_retries",
+    "request_timeout", "use_refusal_fallback", "provider", "profile",
+    # what the run is allowed to spend on itself
+    "use_task_budget", "task_budget_tokens", "max_turns",
+    "max_runtime_seconds", "max_output_tokens_total",
+    # what code and how much of it reaches the model
+    "mode", "diff_context_lines", "diff_ceiling_bytes", "max_context_tokens",
+    "max_context_soft_tokens", "max_context_mode", "excludes", "scope",
+    # verification
+    "verify", "verify_votes", "verify_model", "verify_effort",
+    "verify_max_findings", "verifier_context_chars", "verify_concurrency",
+    # what blocks
+    "fail_on", "min_confidence", "fail_on_incomplete", "gate_pre_existing",
+    "gate_removed_controls", "ungated_categories",
+    # the suppression rules, whose content is copied and whose evaluation date
+    # is frozen: `suppress.load` compares expiry against today, so identical
+    # bytes do not behave identically across an expiry boundary
+    "ignore_file",
+    # the forge context, because `briefing` puts the merge request's title,
+    # description and branch into the model's input — it is not merely where
+    # the run happened. Corpus children are given a synthetic one.
+    "gitlab",
+})
+
+NOT_BEHAVIOURAL = frozenset({
+    "output_dir",       # where the artifact lands; the experiment owns it
+    "post_comment",     # delivery, not review
+    "prompt_dir",       # the prompts' content is digested; the path is a place
+})
+
+
+# The one shape a serialized configuration may have. Bumped when a field is
+# added, removed or changes meaning, and checked exactly — a decoder that
+# accepts "1 or later" accepts a document written by a version that knew
+# things this one does not.
+CONFIG_SCHEMA = 1
+
+# Types a `Config` field may hold and this module can write and read back
+# without guessing. A field whose type is not here is refused rather than
+# serialized through `repr`, because `repr` round-trips right up until it does
+# not and then does so silently. Codex, 2026-09-07.
+_SERIALISABLE = (bool, int, float, str, type(None))
+
+
+def _encode(value):
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return [_encode(item) for item in value]
+    if isinstance(value, ForgeContext):
+        return {f.name: _encode(getattr(value, f.name)) for f in fields(value)}
+    if isinstance(value, _SERIALISABLE):
+        return value
+    raise ConfigError(
+        "a {} cannot be written to a frozen configuration".format(
+            type(value).__name__))
+
+
+def config_to_dict(cfg: "Config") -> Dict[str, Any]:
+    """The whole configuration, as it will be used, with nothing omitted.
+
+    **Complete, not partial.** An earlier design let omitted fields fall back
+    to the environment, and Codex refused it on 2026-09-07: a partial
+    serialization recreates the ambient configuration this exists to remove.
+    Every field is written, including the ones classified as addresses, so a
+    reader can see what the run was rather than what it inherited.
+    """
+    body = {"schema": CONFIG_SCHEMA}
+    for f in fields(cfg):
+        body[f.name] = _encode(getattr(cfg, f.name))
+    return body
+
+
+def config_from_dict(body: Dict[str, Any]) -> "Config":
+    """A configuration read back, or a refusal naming what is wrong.
+
+    Strict on all three counts Codex named: the schema version is exact, an
+    unknown field is refused rather than ignored, and a missing one is refused
+    rather than defaulted. A document that is *nearly* this version is the
+    dangerous one — it runs, and the field it disagrees about is the field
+    nobody looks at.
+    """
+    if not isinstance(body, dict):
+        raise ConfigError("a frozen configuration is an object")
+    if body.get("schema") != CONFIG_SCHEMA:
+        raise ConfigError(
+            "this configuration is schema {!r} and this build reads only {}. "
+            "Freeze a new experiment rather than running an old one under new "
+            "code.".format(body.get("schema"), CONFIG_SCHEMA))
+
+    names = {f.name for f in fields(Config)}
+    given = set(body) - {"schema"}
+    unknown = sorted(given - names)
+    if unknown:
+        raise ConfigError(
+            "the frozen configuration names {} which this build does not "
+            "have".format(", ".join(unknown)))
+    missing = sorted(names - given)
+    if missing:
+        raise ConfigError(
+            "the frozen configuration is missing {}. A default here would be "
+            "the ambient configuration coming back through the gap".format(
+                ", ".join(missing)))
+
+    values: Dict[str, Any] = {}
+    for f in fields(Config):
+        raw = body[f.name]
+        if f.name == "gitlab":
+            if not isinstance(raw, dict):
+                raise ConfigError("`gitlab` is an object")
+            forge_names = {g.name for g in fields(ForgeContext)}
+            if set(raw) != forge_names:
+                raise ConfigError(
+                    "the frozen forge context does not match this build's "
+                    "fields: {}".format(
+                        sorted(set(raw) ^ forge_names)))
+            values[f.name] = ForgeContext(**{
+                g.name: (list(raw[g.name])
+                         if isinstance(raw[g.name], list) else raw[g.name])
+                for g in fields(ForgeContext)})
+        elif f.name in ("output_dir", "ignore_file"):
+            values[f.name] = Path(raw)
+        elif f.name == "prompt_dir":
+            values[f.name] = Path(raw) if raw else None
+        elif f.name in ("excludes", "scope", "ungated_categories"):
+            values[f.name] = tuple(raw)
+        else:
+            values[f.name] = raw
+
+    cfg = Config(**values)
+    cfg.validate()
+    return cfg
 
 def _env(name: str, default: str = "") -> str:
     value = os.environ.get(name)

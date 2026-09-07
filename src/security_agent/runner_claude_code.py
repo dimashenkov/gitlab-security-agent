@@ -328,6 +328,26 @@ def build_command(
         "--permission-mode", "manual",
         "--system-prompt", system_prompt,
         "--no-session-persistence",
+        # **The developer's own settings are not part of the instrument.**
+        # `_child_env` passes almost the whole environment so the CLI can log
+        # in as the developer, and that carried user-level hooks, plugins,
+        # `CLAUDE.md` auto-discovery and global instructions into every review
+        # — so "nothing changed between the two passes" was a claim about the
+        # code and not about the machine. Every measurement this project has
+        # made ran that way.
+        #
+        # An empty source list rather than `--bare`: `--bare` isolates the same
+        # state and reads neither OAuth nor the keychain, leaving only
+        # `ANTHROPIC_API_KEY` — and an API key is not used in this project, by
+        # a decision from 2026-08-30 that was costed and is not reopened. This
+        # flag drops the settings and leaves the login alone.
+        #
+        # Codex refused to let this stand as a limitation on 2026-09-07: an
+        # experiment that cannot separate authentication from behavioural user
+        # state must not be called a controlled trial. Checked live before
+        # being written — `claude --setting-sources "" --version` answers
+        # 2.1.236.
+        "--setting-sources", "",
     ]
     if model:
         command += ["--model", model]

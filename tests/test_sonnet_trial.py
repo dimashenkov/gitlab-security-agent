@@ -49,10 +49,19 @@ def trees(tmp_path, monkeypatch):
             "environment": dict(ENVIRONMENT, model_requested=model,
                                 verifier_requested="claude-opus-5"),
             "protocol": {"order": list(CASES), "passes": ["a", "b"]},
+            # The suite block, because a real freeze writes one and the trial
+            # compares it. Leaving it out made this fixture a shape production
+            # cannot emit — the defect this file has already been caught by
+            # once, where a green test stood over an impossible artifact.
+            "suite": {"file": "suites/sentinel.yml", "digest": "f" * 16,
+                      "count": len(CASES)},
             # `load` refuses a manifest with no cases, so the fixture carries
             # the block a real freeze writes rather than the minimum this file
-            # happens to read.
-            "cases": [{"case_id": case_id, "case_digest": "d" * 16}
+            # happens to read — including the answer-key digest, which the
+            # trial compares so that two arms cannot carry equal case ids over
+            # different content.
+            "cases": [{"case_id": case_id, "case_digest": "d" * 16,
+                       "answer_key_digest": "k" * 16}
                       for case_id in CASES],
         }), encoding="utf-8")
     return tmp_path
@@ -1284,3 +1293,111 @@ class TestRunningOneNamedCase:
     def test_a_case_outside_the_frozen_order_is_refused(self, trees, capsys):
         assert experiment.run("opus-arm", "a", None, only="nosuch") == 2
         assert "not in the frozen order" in capsys.readouterr().err
+
+
+class TestTwoArmsAreOneSuiteNotOneSequence:
+    """The gate refused every input the tools can produce, and had since it
+    was written.
+
+    It compared `protocol.order` element by element. `experiment.build`
+    shuffles with `random.Random(name)`, and the two arms must be two
+    experiments, so two names, so two orders — matching only by accidental
+    shuffle collision. Found 2026-09-07 while trying to run the trial the owner
+    had made the priority.
+
+    The sequence is also not what makes two arms comparable: `_buy` calls
+    `experiment.run(..., only=unit["case_id"])`, so the arm's own order is
+    checked for membership and filtered to one case, while the ledger, the
+    reference and the comparator follow the trial's own `units`.
+    """
+
+    def manifest(self, tmp_path, arm, model, **overrides):
+        directory = experiment.home(arm)
+        directory.mkdir(parents=True, exist_ok=True)
+        body = {
+            "environment": dict(ENVIRONMENT, model_requested=model,
+                                verifier_requested="claude-opus-5"),
+            "protocol": {"order": list(CASES), "passes": ["a", "b"]},
+            "suite": {"file": "suites/sentinel.yml", "digest": "f" * 16,
+                      "count": len(CASES)},
+            "cases": [{"case_id": c, "case_digest": "d" * 16,
+                       "answer_key_digest": "k" * 16} for c in CASES],
+        }
+        body.update(overrides)
+        (directory / "manifest.json").write_text(json.dumps(body),
+                                                 encoding="utf-8")
+
+    def test_different_sequences_over_the_same_cases_are_accepted(self, trees):
+        """The defect, stated as the thing it blocked."""
+        self.manifest(trees, "opus-arm", "claude-opus-5",
+                      protocol={"order": list(CASES), "passes": ["a", "b"]})
+        self.manifest(trees, "sonnet-arm", "claude-sonnet-5",
+                      protocol={"order": list(reversed(CASES)),
+                                "passes": ["a", "b"]})
+        built = trial.build("t", "opus-arm", "sonnet-arm")
+        assert sorted(built["cases"]) == sorted(CASES)
+
+    def test_the_schedule_does_not_depend_on_which_arm_is_named_first(
+            self, trees):
+        """`units` shuffles the list it is given, and the list used to be
+        whichever arm was passed first — so the same two arms produced two
+        different schedules depending on the command line."""
+        self.manifest(trees, "opus-arm", "claude-opus-5",
+                      protocol={"order": list(CASES), "passes": ["a", "b"]})
+        self.manifest(trees, "sonnet-arm", "claude-sonnet-5",
+                      protocol={"order": list(reversed(CASES)),
+                                "passes": ["a", "b"]})
+        one = trial.build("t", "opus-arm", "sonnet-arm")
+        assert one["cases"] == sorted(CASES)
+        assert [u["case_id"] for u in one["units"]] == [
+            u["case_id"] for u in trial.units(sorted(CASES), "t")]
+
+    def test_different_suites_are_refused(self, trees):
+        self.manifest(trees, "opus-arm", "claude-opus-5")
+        self.manifest(trees, "sonnet-arm", "claude-sonnet-5",
+                      suite={"file": "suites/other.yml", "digest": "e" * 16,
+                             "count": len(CASES)})
+        with pytest.raises(trial.TrialError, match="different suites"):
+            trial.build("t", "opus-arm", "sonnet-arm")
+
+    def test_equal_ids_over_different_content_are_refused(self, trees):
+        """The strengthening Codex required over my own proposal: comparing
+        the id sets alone would accept two arms whose cases have drifted."""
+        self.manifest(trees, "opus-arm", "claude-opus-5")
+        self.manifest(trees, "sonnet-arm", "claude-sonnet-5",
+                      cases=[{"case_id": c, "case_digest": "z" * 16,
+                              "answer_key_digest": "k" * 16} for c in CASES])
+        with pytest.raises(trial.TrialError, match="different cases"):
+            trial.build("t", "opus-arm", "sonnet-arm")
+
+    def test_a_different_answer_key_is_refused(self, trees):
+        self.manifest(trees, "opus-arm", "claude-opus-5")
+        self.manifest(trees, "sonnet-arm", "claude-sonnet-5",
+                      cases=[{"case_id": c, "case_digest": "d" * 16,
+                              "answer_key_digest": "z" * 16} for c in CASES])
+        with pytest.raises(trial.TrialError, match="different cases"):
+            trial.build("t", "opus-arm", "sonnet-arm")
+
+    def test_a_duplicate_case_is_refused_rather_than_collapsed(self, trees):
+        """A set would have swallowed it, and the counts would then disagree
+        with the schedule without anything saying so."""
+        self.manifest(trees, "opus-arm", "claude-opus-5",
+                      cases=[{"case_id": c, "case_digest": "d" * 16,
+                              "answer_key_digest": "k" * 16}
+                             for c in CASES + CASES[:1]])
+        self.manifest(trees, "sonnet-arm", "claude-sonnet-5")
+        with pytest.raises(trial.TrialError, match="twice"):
+            trial.build("t", "opus-arm", "sonnet-arm")
+
+    def test_a_manifest_with_no_suite_is_refused_not_crashed(self, trees):
+        """"I could not check" is not "they match", and a `KeyError` raised
+        from inside the comparison reports the failure far from its cause."""
+        self.manifest(trees, "opus-arm", "claude-opus-5")
+        directory = experiment.home("sonnet-arm")
+        body = json.loads(
+            (directory / "manifest.json").read_text(encoding="utf-8"))
+        del body["suite"]
+        (directory / "manifest.json").write_text(json.dumps(body),
+                                                 encoding="utf-8")
+        with pytest.raises(trial.TrialError, match="records no suite"):
+            trial.build("t", "opus-arm", "sonnet-arm")

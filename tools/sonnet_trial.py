@@ -193,13 +193,77 @@ def build(name: str, opus: str, sonnet: str) -> Dict[str, Any]:
                 "SECURITY_SCAN_MODEL set".format(arm, experiment_name))
         bodies[arm] = body
 
-    order_a = list(bodies["opus"]["protocol"]["order"])
-    order_b = list(bodies["sonnet"]["protocol"]["order"])
-    if order_a != order_b:
+    # **The two arms have to be the same suite, not the same sequence.**
+    #
+    # This compared `protocol.order` element by element, and no pair the tools
+    # can produce ever satisfied it: `experiment.build` shuffles with
+    # `random.Random(name)` and the two arms must have two names, so two
+    # orders. The trial refused every input it could be given, and had done
+    # since it was written. Found 2026-09-07 while trying to run it.
+    #
+    # The sequence is also not what makes two arms comparable. `_buy` calls
+    # `experiment.run(..., only=unit["case_id"])`, so the arm's own order is
+    # checked for membership and then filtered to that one case; the run
+    # ledger, the reference and the comparator all follow the trial's own
+    # `units`. What has to match is the suite and the frozen cases, and both
+    # are recorded.
+    #
+    # Codex, adjudicating on 2026-09-07, required this to be *stronger* than
+    # the set comparison I proposed: same suite file, digest and count; the
+    # same case ids **with** their `case_digest` and `answer_key_digest`, so
+    # two arms carrying equal ids over different content are refused; and
+    # duplicates rejected rather than collapsed by a set.
+    missing = [arm for arm in ARMS if not bodies[arm].get("suite")]
+    if missing:
+        # Not "they match": a manifest with no suite block cannot establish
+        # that the two arms measure one thing, and a `KeyError` raised from
+        # here is a failure reported far from its cause.
         raise TrialError(
-            "the two arms were frozen with different case orders, so they are "
-            "not two measurements of one suite. Freeze both from the same "
-            "suite file")
+            "the {} arm records no suite, so there is nothing to compare the "
+            "other against. Freeze it with a current `experiment.py freeze`"
+            .format(" and ".join(missing)))
+    suite_a = bodies["opus"]["suite"]
+    suite_b = bodies["sonnet"]["suite"]
+    if suite_a != suite_b:
+        raise TrialError(
+            "the two arms were frozen over different suites, so they are not "
+            "two measurements of one thing:\n  opus:   {}\n  sonnet: {}"
+            .format(json.dumps(suite_a, sort_keys=True),
+                    json.dumps(suite_b, sort_keys=True)))
+
+    def case_map(arm: str) -> Dict[str, Dict[str, Any]]:
+        rows = bodies[arm]["cases"]
+        seen: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            case_id = row.get("case_id")
+            if case_id in seen:
+                raise TrialError(
+                    "the {} arm names {} twice. A duplicate is not two cases, "
+                    "and collapsing it silently makes the counts disagree with "
+                    "the schedule".format(arm, case_id))
+            seen[case_id] = row
+        return seen
+
+    cases_a = case_map("opus")
+    cases_b = case_map("sonnet")
+    if cases_a != cases_b:
+        only_a = sorted(set(cases_a) - set(cases_b))
+        only_b = sorted(set(cases_b) - set(cases_a))
+        moved = sorted(k for k in set(cases_a) & set(cases_b)
+                       if cases_a[k] != cases_b[k])
+        raise TrialError(
+            "the two arms were frozen over different cases, so a difference "
+            "between them is not attributable to the model:\n"
+            "  only in opus:   {}\n  only in sonnet: {}\n  changed:        {}"
+            .format(only_a or "none", only_b or "none", moved or "none"))
+
+    # **Canonical, so the schedule depends on the cases and the trial seed and
+    # on nothing else.** `units` shuffles a list it is given, so the incoming
+    # sequence changes the result — and the incoming sequence used to be
+    # whichever arm was named first on the command line. Sorted ids remove
+    # that: the same two arms produce the same schedule whichever order they
+    # are passed in.
+    order_a = sorted(cases_a)
 
     mismatch = _environment_mismatch(bodies["opus"]["environment"],
                                      bodies["sonnet"]["environment"])

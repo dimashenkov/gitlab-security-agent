@@ -223,7 +223,37 @@ def _partial(outcome: ScanOutcome) -> bool:
     """
     return (not outcome.complete
             or outcome.coverage.diff_truncated
-            or outcome.coverage.context_refusals > 0)
+            or outcome.coverage.context_refusals > 0
+            or _nothing_was_readable(outcome))
+
+
+def _nothing_was_readable(outcome: ScanOutcome) -> bool:
+    """A change with something in it, and nothing in it a reviewer could read.
+
+    `_readable_change` was written to *exempt* this from the "reviewed nothing"
+    refusal, on the reasoning that a run which opened nothing because there was
+    nothing openable did everything available to it. That reasoning is about
+    the reviewer's conduct and it is fair; the exit code is about the change,
+    and it was answering a different question. Nothing inspectable is not
+    evidence of no findings, and the run was exiting 0 with "No security
+    findings." over material nobody could look at.
+
+    Reached on 2026-09-07 from an attack rather than from an asset commit: one
+    line of `.gitattributes` saying `* -diff` made every file read as binary,
+    and the unconditional green was the second of the two ways that line
+    disarmed the gate. `--attr-source` closes the attack; this closes the
+    unconditional green, because the next way of making a change unreadable
+    should not find it waiting. Codex was stricter here than the proposal put
+    to it, 2026-09-07.
+
+    Partial rather than never-forgiven: a repository whose merge requests are
+    genuinely assets has a real move, which is
+    `SECURITY_SCAN_FAIL_ON_INCOMPLETE=false` or a scope that excludes them. A
+    gate that cannot be satisfied gets deleted rather than obeyed.
+    """
+    if not outcome.coverage.changed:
+        return False
+    return not _readable_change(outcome)
 
 
 def _why_partial(outcome: ScanOutcome) -> str:
@@ -250,6 +280,18 @@ def _why_partial(outcome: ScanOutcome) -> str:
             "complete reading".format(refusals, also))
     if not outcome.complete:
         return STOP_EXPLANATIONS.get(outcome.stop_reason, "the review did not complete")
+    # Before the truncation sentence, because a change with nothing readable in
+    # it was never truncated — the fall-through would send the author to split
+    # a change that is not too large. The audit that found this one also found
+    # this function being skipped in the forgiven branch, which is the same
+    # mistake in the other direction: a cause named that did not happen.
+    if _nothing_was_readable(outcome):
+        return (
+            "every file in this change is binary or otherwise unreadable, so "
+            "there was no code for the reviewer to read and the result says "
+            "nothing about it. If this repository's changes are genuinely "
+            "assets, exclude them from the review or set "
+            "SECURITY_SCAN_FAIL_ON_INCOMPLETE=false")
     return (
         "the diff was larger than the reviewer can be shown, so it read the "
         "first part of the diff and no more. Split the change, narrow the "
@@ -293,8 +335,16 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
     # Every test that passed `exposures=[]` also passed a stop reason that made
     # the run partial, so the combination that matters — finished, and nothing
     # opened — was never asked about.
-    if _reviewed_nothing(outcome) and (_partial(outcome)
-                                       or _readable_change(outcome)):
+    # `_nothing_was_readable` is excluded here on purpose. It makes `_partial`
+    # true, and this branch is the unforgivable one — so without the exclusion
+    # a change made only of assets would be refused with "no setting makes it
+    # a pass", which is stricter than the adjudication asked for and would make
+    # the gate unsatisfiable for a repository of images. Opening nothing is the
+    # *expected* conduct when there is nothing to open; what is not acceptable
+    # is calling the result a pass, and the forgivable branch below does that.
+    if (_reviewed_nothing(outcome)
+            and not _nothing_was_readable(outcome)
+            and (_partial(outcome) or _readable_change(outcome))):
         detail = " ({})".format(outcome.stop_detail) if outcome.stop_detail else ""
         if _partial(outcome):
             reason = (
@@ -364,9 +414,17 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
         # Named even when it is forgiven. "Coverage is partial" is the whole
         # difference between this exit 0 and a clean one, and the sentence
         # carries which of the two produced it.
-        why = "the change was too large to be shown in full"
-        if not outcome.complete:
-            why = outcome.stop_detail or outcome.stop_reason
+        # **The cause, from the function that knows all of them.** This branch
+        # had its own two-case guess — "too large", or the stop reason — while
+        # `_why_partial` sits above it naming every cause and ordering them by
+        # which remedy the reader needs. So a review partial only because of
+        # context refusals was told the change was too large, sending the
+        # operator to the diff ceiling for a context-limit problem; and a
+        # change with nothing readable in it would have been told the same.
+        # A category omitted from a message is the same defect as a category
+        # omitted from a count. Found by the audit of 2026-09-07.
+        why = outcome.stop_detail if not outcome.complete and outcome.stop_detail \
+            else _why_partial(outcome)
         return Decision(
             exit_code=EXIT_OK,
             reason=(

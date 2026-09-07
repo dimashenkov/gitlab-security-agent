@@ -115,11 +115,171 @@ everything before the first colon, so on a context line it tested
 with `context_lines=2` returned a line of it. That predates all of this; the
 revision prefix only made it visible.
 
+**And a fourth round, on 2026-09-07, replaced the parser again.** A single
+minified line broke two claims the search made about itself. The trim was
+`body[:60_000].rsplit("\n", 1)[0]`, and on a slice holding no newline that
+returns the slice — so what sat under `bundle.js:1:` was a fragment ending
+mid-token and reading as the code at that line. Worse, the scan's own ceiling
+was reached by that one 320,000-character record, so `truncated` was set after
+the *only* match in the repository: the head printed `at least 1` for an exact
+count, the note said "there are more" when there were none, and the summary
+line printed `1 match(es)` from the same search.
+
+The fix is not a clip. Codex refused a prefix clip outright — on a line whose
+match is at character 200,000, the first two thousand characters are a record
+that no longer demonstrates why it matched, which is worse than a truncated
+line. `git grep --column` gives the byte offset of the first match, so the
+parser keeps a bounded window *around* it and drains the rest, and the renderer
+centres its own cut on the same point. Both halves had to be fixed: keeping the
+first 8,000 bytes threw the match away in the parser, and cutting the first
+2,000 characters threw it away again in the renderer — the same defect, one
+layer down.
+
+Three things were measured rather than assumed, and each changed the design:
+the record shape **varies** (a matched line carries a column, a context line
+does not, so the framer cannot count NULs to two); the column is a **byte**
+offset, 1-based, so a match at character 22 of a Cyrillic line is reported at
+35 and slicing a decoded string by that number lands in a different word; and
+iterating a binary pipe yields *lines*, so a record with no newline arrived
+whole before any ceiling was consulted.
+
+What is guaranteed is narrower than it looks and is stated rather than implied:
+the window holds the *start* of git's first match on the line and a bounded run
+of what follows. An ERE's matched extent is not bounded by the length of its
+source, and `--column` reports no later match on the same line.
+
 What is not established, named because it is the one thing here that is merely
-assumed: that a successful `git grep` ends with a complete record. Eleven other
-assumptions the parser makes are documented git behaviour or measured in the
-tests; a partial tail is yielded rather than dropped, because discarding it
-would make a truncated stream look like a shorter answer.
+assumed: that a successful `git grep` ends with a complete record.
+
+**And the same round found that a line of context was being counted as a
+match.** With `context_lines=2`, one occurrence came back as `5 match(es)`, and
+with `max_results=1` the single line shown was the first line of *context* —
+text that does not contain the pattern — under a heading claiming five. Two
+things from one confusion: `total = len(hits)` counted every rendered line, and
+the allowance was spent on rendered lines too, so leading context displaced the
+line the search was for. Both are fixed: the count and the allowance are taken
+over records that carry a `--column`, and the cut lands on a record boundary
+before a match rather than inside one. The defect is older than the parser
+rewrite that surfaced it and no test had asked.
+
+The 60,000-character ceiling moved into that same selection, because it had the
+same fault one level along: it was a cut on the joined string, taken *after* the
+matches had been counted, so on two blocks of context it could end inside the
+second one — the matching line gone, its context still on screen, the heading
+still counting it and no note saying anything had been withheld. Measured, not
+argued: with the ceiling at 170 characters the old code answered "2 match(es)",
+showed one, and said nothing.
+
+What is guaranteed is only this, and it is worth stating exactly because two
+wider claims have already turned out false: the matches counted in the heading
+equal the matches shown plus the matches the note says are withheld, and an
+answer that is short of the context that was asked for says so. Nothing more.
+The leading context of the *first withheld match* is still shown — a real line
+at a real number, which is what `context_lines` asked for — and the ceiling can
+land on a context line *after* the last match, in which case every match is
+shown, `total` equals what was kept, neither of the other two notes applies, and
+a third one names the size limit. That branch existed and said nothing until it
+was found on the fifth gate round.
+
+The three notes are cumulative, and were not. "The scan stopped" is a statement
+about what was never read; "N more match(es) not shown" is a statement about
+what *was* read and is being withheld. As mutually exclusive branches with the
+stopped one first, the second could never appear alongside it: measured on this
+repository, `search(".", max_results=5)` answered "at least 1471 match(es)",
+printed five lines, and accounted for none of the 1,466 it had in hand. Neither
+sentence substitutes for the other and both are printed when both are true.
+
+**And decoding strictly could hang the search outright — fixed.** A quoted line
+has to be the line, so the decoder raises rather than repairing; the raise left
+`_grep_stream` through its `finally` with `truncated` false, and nothing
+terminated the child. git was still writing: it blocked on a stdout pipe this
+loop would never read again, the cleanup blocked reading a stderr that could not
+reach EOF, and the search never returned. The deadline does not help — nothing
+consults it from in there. Measured on 2026-09-07: a file with one invalid byte
+on its first matched line and 6,000 matches after it printed "searching…" and
+nothing more. A gate that never returns is worse than one that answers wrongly,
+and no test that drove the decoder directly could see it. The child is now
+terminated on every exit where the record loop stopped before the end of the
+stream, which is a strictly wider condition than "a ceiling was hit".
+
+## The reviewed tree could describe itself to the tools that read it — fixed
+
+One line of `.gitattributes` in the same merge request as the weakness:
+
+```
+*.py -diff
+```
+
+`git diff --numstat` then prints `-` for both counts, the file is classified
+binary, and it drops out of the changed-line map — while the map stays
+non-empty, because `.gitattributes` is in it. The empty attribution reads as
+"this line was already there", the finding is filed pre-existing, and the gate
+skips it.
+
+| | without the line | with it |
+|---|---|---|
+| the changed-line map | holds `app.py` | does not |
+| a critical finding | blocks, exit 1 | **filed pre-existing, exit 0** |
+| the verdict line | names the finding | "none at or above the high threshold" |
+| verification | runs | never runs — pre-existing findings are skipped |
+
+**It was worse than the attribution.** With the repair inverted: the diff the
+model reads shows `Binary files a/app.py and b/app.py differ` instead of the
+code, and `search("os.system")` returns **zero**. So the line hid the weakness
+from the reviewer and blinded the verifier; the attribution effect, which was
+found first, was its third.
+
+`--no-ext-diff` and the pinned `GIT_CONFIG_*` close the neighbouring route,
+because an external diff driver has to be *defined* in configuration. `-diff`
+is built into git and needs none, which is how it walked through a guard
+written against the same idea.
+
+**Three switches were measured, one works.** `--text` is applied after the
+attribute; `core.attributesFile` does not override an in-tree file;
+`--attr-source` does. Its cost was measured too: content detection is
+untouched, an ordinary change is byte-identical, and what is lost is a
+project's own `binary` markings, which are about diff readability rather than
+about safety.
+
+Three layers, because Codex ruled that one was not enough:
+
+* **the pin, on every attribute-sensitive command.** It was added to `git()`
+  alone at first, and `_bounded` and `_grep_stream` build their own `Popen` —
+  so the accounting was protected while the diff and every search were not.
+* **attribution fails closed.** "The map places no line in this file" and "the
+  map places no line at *this* line" were the same boolean and are different
+  facts. This closes the class rather than the route.
+* **an all-binary change exits 2.** Nothing inspectable is not evidence of no
+  findings. Forgivable by `SECURITY_SCAN_FAIL_ON_INCOMPLETE`, unlike a review
+  that opened nothing it could have opened — the first version of this made an
+  asset-only repository permanently unmergeable, and a gate that cannot be
+  satisfied gets deleted rather than obeyed.
+
+**What is not closed.** `$GIT_DIR/info/attributes` outranks the tree and is not
+affected by pinning the source. It is not reachable through a merge request,
+but it is part of the runner's trust: the job wants a fresh git directory, or a
+check that the file is absent. Named by Codex, not built.
+
+## A search that matched nothing still recorded a file as read — open
+
+`search_code` records which files a result quoted by regex-scanning the rendered
+answer for `path:digits:`, and the answer begins with the pattern echoed back.
+Measured on 2026-09-07: `search_code(pattern="zzzznotpresent:1:")` matches no
+file anywhere and still records an exposure for a "file" named
+`no matches for 'zzzznotpresent`.
+
+That matters beyond a wrong list. `exposures` is the record of what actually
+reached the reviewer, and the gate's `_reviewed_nothing` check is exactly
+`not outcome.exposures` — so a run whose only tool call was a no-match search
+with a colon-and-digits pattern would look like a run that read something. It is
+the shape this repository hunts: a claim about what was inspected, derived from
+prose rather than from the thing inspected.
+
+The fix is to build the exposures from the parsed records instead of from the
+rendered text, and a no-match answer must record none. It is not done here: it
+lives in `tools.py::_paths_in_search`, outside the files this change was scoped
+to, and it is not a defect of the parser rewrite — it predates it. Named here
+rather than carried in somebody's head.
 
 ## A reused artifact with no verdict was reused as a pass — fixed
 

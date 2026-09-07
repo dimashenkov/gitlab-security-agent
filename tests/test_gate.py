@@ -5,6 +5,8 @@ stopped early must never produce a green pipeline, because a green pipeline is
 indistinguishable from "we checked and it's fine".
 """
 
+from dataclasses import replace
+
 import pytest
 
 from conftest import make_candidate
@@ -443,12 +445,26 @@ def test_a_review_that_opened_nothing_because_nothing_changed_still_passes(
 
 
 def test_a_change_made_only_of_binary_files_is_not_refused(config):
-    """A binary diff carries no text to open.
+    """A binary diff carries no text to open, and that is not a pass.
 
     `git diff` emits `Binary files a/x and b/x differ` with no `+++` line, so
-    `_paths_in_diff` records no exposure and none could be recorded. The first
-    version of the branch above asked only whether anything changed, and would
-    have failed a review that did everything available to it.
+    `_paths_in_diff` records no exposure and none could be recorded. This test
+    asserted `EXIT_OK` for exactly that reason — a run which opened nothing
+    because there was nothing openable did everything available to it.
+
+    **The reasoning was about the reviewer's conduct and the exit code is
+    about the change.** Nothing inspectable is not evidence of no findings, and
+    the run was exiting 0 with "No security findings." over material nobody
+    could look at. Reached on 2026-09-07 from an attack rather than from an
+    asset commit: one line of `.gitattributes` saying `* -diff` made every file
+    read as binary, and this unconditional green was the second of the two ways
+    that line disarmed the gate. Codex adjudicated it stricter than the
+    proposal put to it.
+
+    So the verdict is now exit 2 — but *forgivable*, unlike the branch that
+    refuses a review which opened nothing it could have opened. A repository
+    whose merge requests are genuinely assets has a real move, and a gate that
+    cannot be satisfied gets deleted rather than obeyed.
     """
     outcome = ScanOutcome(mode="diff", summary="Only assets changed.",
                           stop_reason=STOP_COMPLETED, finished_explicitly=True)
@@ -459,7 +475,14 @@ def test_a_change_made_only_of_binary_files_is_not_refused(config):
         unreadable=[("assets/logo.png", "binary")],
         whole_diff_delivered=True)
 
-    assert decide(config, outcome).exit_code == EXIT_OK
+    decision = decide(config, outcome)
+    assert decision.exit_code == EXIT_ERROR
+    assert "binary or otherwise unreadable" in decision.reason
+
+    # And forgivable, which is what separates it from a review that opened
+    # nothing it could have opened.
+    forgiving = replace(config, fail_on_incomplete=False)
+    assert decide(forgiving, outcome).exit_code == EXIT_OK
 
 
 def test_a_readable_file_beside_a_binary_one_is_still_refused(config):

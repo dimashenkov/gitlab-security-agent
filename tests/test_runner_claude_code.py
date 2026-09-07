@@ -1130,3 +1130,38 @@ class TestTheCoverageAccountingCrossesTheBoundary:
         runner._apply_session(outcome, session)
 
         assert outcome.coverage.diff_truncated is True
+
+
+class TestTheDevelopersSettingsAreNotTheInstrument:
+    """`_child_env` passes almost the whole environment so the CLI can log in
+    as the developer — and that carried user-level hooks, plugins, `CLAUDE.md`
+    auto-discovery and global instructions into every review. So "nothing
+    changed between the two passes" was a claim about the code and not about
+    the machine, and every measurement this project has made ran that way.
+
+    Codex refused to let it stand as a limitation on 2026-09-07: an experiment
+    that cannot separate authentication from behavioural user state must not be
+    called a controlled trial.
+
+    `--bare` isolates the same state and reads neither OAuth nor the keychain,
+    leaving only `ANTHROPIC_API_KEY` — which this project does not use, by a
+    costed decision from 2026-08-30. `--setting-sources ""` drops the settings
+    and leaves the login alone; checked live before it was written.
+    """
+
+    def command(self, tmp_path):
+        from security_agent.runner_claude_code import build_command
+        return build_command(executable="claude",
+                             system_prompt="review this",
+                             mcp_config=tmp_path / "mcp.json")
+
+    def test_the_settings_sources_are_emptied(self, tmp_path):
+        command = self.command(tmp_path)
+        assert "--setting-sources" in command
+        assert command[command.index("--setting-sources") + 1] == ""
+
+    def test_the_login_is_not_touched(self, tmp_path):
+        """The other half. `--bare` would isolate more and take the login with
+        it, which the API-key decision forbids — so its absence is the test."""
+        command = self.command(tmp_path)
+        assert "--bare" not in command

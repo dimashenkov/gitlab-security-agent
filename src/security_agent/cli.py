@@ -8,11 +8,19 @@ import os
 import sys
 import time
 from contextlib import contextmanager
+import json
 from pathlib import Path
 from typing import List, Optional, Sequence
 
 from . import __version__
-from .config import PROVIDER_API, PROVIDER_CLI, PROVIDERS, Config, ConfigError
+from .config import (
+    PROVIDER_API,
+    PROVIDER_CLI,
+    PROVIDERS,
+    Config,
+    ConfigError,
+    config_from_dict,
+)
 from .gate import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, decide
 from .models import VERDICT_REFUTED
 from .workspace import Workspace, WorkspaceError
@@ -1001,7 +1009,47 @@ def _has_credentials() -> bool:
 
 
 
+# Every flag that changes what the review does. `--config-json` refuses all of
+# them, because a serialized configuration that some flags may still override
+# is a third layer of precedence and a place where the recorded instrument and
+# the running one disagree. Codex, 2026-09-07, and it names run controls as
+# well as `Config` assignments: `--changed-only` and `--reuse` change what is
+# reviewed and whether it is reviewed at all.
+#
+# Only `--repo`, `--base` and `--head` remain usable — they say which code,
+# not how it is examined.
+_SKIP_LABEL_DEFAULT = "skip-ai-security"
+
+CONFIG_FLAGS = (
+    "mode", "model", "effort", "fail_on", "min_confidence", "max_turns",
+    "path", "provider", "profile", "output_dir", "prompt_dir", "no_verify",
+    "verify_votes", "no_comment", "changed_only", "reuse", "skip_label",
+)
+
+
 def _build_config(args: argparse.Namespace) -> Config:
+    frozen = getattr(args, "config_json", None)
+    if frozen:
+        # **The whole configuration, or none of it.** Read before any
+        # environment lookup and instead of one — an earlier design let
+        # omitted fields fall back to the shell, which recreates exactly the
+        # ambient configuration this exists to remove.
+        parser = argparse.ArgumentParser()
+        defaults = {name: parser.get_default(name) for name in CONFIG_FLAGS}
+        given = [name for name in CONFIG_FLAGS
+                 if getattr(args, name, None) not in (None, "", False, [],
+                                                      defaults.get(name))
+                 and getattr(args, name, None) != _SKIP_LABEL_DEFAULT]
+        if given:
+            raise ConfigError(
+                "--config-json supplies the whole configuration, so {} would "
+                "have nowhere to apply. Put the value in the frozen file, or "
+                "drop --config-json.".format(
+                    ", ".join("--" + name.replace("_", "-")
+                              for name in sorted(given))))
+        body = json.loads(Path(frozen).read_text(encoding="utf-8"))
+        return config_from_dict(body)
+
     cfg = Config.from_env()
     if args.model:
         cfg.model = args.model
@@ -1122,7 +1170,18 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("--prompt-dir", metavar="PATH",
                         help="The agent's prompt directory. Never point this inside "
                              "the repository under review.")
-    parser.add_argument("--skip-label", default="skip-ai-security",
+    # It grants no authority a contributor did not already have. Someone who
+    # can edit `.gitlab-ci.yml` in their own merge request can already pass
+    # `--fail-on none`, so pointing this at a file of their own is the same
+    # power by a longer route — the pipeline configuration being the
+    # contributor's is a separate problem, and the prompt guard is what
+    # addresses it. Checked rather than assumed: the shipped templates invoke
+    # the agent with fixed flags and never with this one.
+    parser.add_argument(
+        "--config-json", metavar="PATH",
+        help="A frozen configuration to run under, written by an experiment. "
+             "Supplies every setting; refuses any flag that would change one.")
+    parser.add_argument("--skip-label", default=_SKIP_LABEL_DEFAULT,
                         help="Merge request label that skips the review.")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("-q", "--quiet", action="store_true")

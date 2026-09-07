@@ -733,9 +733,14 @@ def _handle_search_code(ws: Workspace, session: Session, args: Dict[str, Any]) -
         case_sensitive=bool(args.get("case_sensitive", False)),
         context_lines=_as_int(args.get("context_lines"), 0),
     )
+    # The summary must not assert what the body qualifies. A search whose scan
+    # stopped early counted what it reached, and printing that as an exact
+    # total put two disagreeing statements about one result into one artifact.
+    counted = ("at least {} match(es)".format(count)
+               if ws.last_search_truncated else "{} match(es)".format(count))
     return ToolResult(
         body,
-        "search {!r}: {} match(es)".format(pattern, count),
+        "search {!r}: {}".format(pattern, counted),
         # The files the matches came from. Nobody asked for these by name, and
         # their lines are now in the conversation.
         exposures=tuple((touched, "search_code")
@@ -827,6 +832,22 @@ def _handle_submit_verdict(ws: Workspace, session: Session, args: Dict[str, Any]
     return ToolResult(
         "Verdict recorded. Stop now — no further tool calls are needed.",
         "submit_verdict: {}".format(verdict))
+
+
+def _file_is_attributable(path: str, changed) -> bool:
+    """Can the changed-line map say anything about this file at all?
+
+    Distinct from "is the map non-empty". A map that knows about other files
+    and nothing about this one cannot place a line in it, and reading that
+    silence as "the line was already there" is what let one line of
+    `.gitattributes` file a critical finding as pre-existing — where the gate
+    skips it. Measured end to end on 2026-09-07.
+
+    Absent means unknown, and unknown fails towards the finding counting.
+    """
+    if not changed:
+        return False
+    return bool(changed.added.get(path)) or bool(changed.removed_at.get(path))
 
 
 def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
@@ -1030,8 +1051,28 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
         line_corrected_from=corrected_from,
         # A deletion is a change to this merge request whatever the line map
         # can say about it: the file is gone *because of this change*.
+        #
+        # **"The map places no line in this file" is not "this line is old".**
+        # The second layer of the `.gitattributes` repair, and the one that
+        # closes the class rather than one route into it. `bool(attributed)`
+        # answered False for both of these, and they are different facts:
+        #
+        #   the map holds lines for this file, and not this one
+        #       -> the line really is pre-existing
+        #   the map holds no lines for this file at all
+        #       -> nothing could attribute it, and a finding filed as
+        #          pre-existing is a finding the gate skips
+        #
+        # One line of `.gitattributes` saying `*.py -diff` produced the second
+        # while the map stayed non-empty, because `.gitattributes` was in it.
+        # `--attr-source` stops that route; this stops the reading that made it
+        # work, so the next way of emptying one file's entry — a diff git
+        # cannot parse, a rename it resolves differently, a form nobody has
+        # thought of — fails towards blocking instead of towards silence.
+        # Codex asked for both layers, 2026-09-07.
         in_changed_lines=(True if from_a_deleted_file
-                          else bool(attributed) if changed else True),
+                          else bool(attributed) if _file_is_attributable(
+                              rel_path, changed) else True),
         attributed_by=attributed if (changed or from_a_deleted_file)
         else "added",
         path_verified=True,

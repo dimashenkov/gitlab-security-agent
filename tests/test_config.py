@@ -251,3 +251,186 @@ class TestTheTemplateAndTheCodeAgreeOnDefaults:
             monkeypatch.setenv(variable, str(default))
 
         assert Config.from_env() == baseline
+
+
+class TestEveryConfigFieldIsClassified:
+    """Two explicit lists, and the test that makes them mean something.
+
+    The freeze recorded three `Config` fields of forty; the rest came from the
+    shell at review time, so two runs under one manifest could be two different
+    instruments while `drift` reported nothing had moved. Demonstrated on
+    2026-09-07 with `SECURITY_SCAN_VERIFY_VOTES=5`, one gate before 104 reviews
+    were to be bought.
+
+    **Both lists are written out by hand on purpose.** Deriving one as
+    "everything minus the other" makes the coverage assertion tautological — it
+    cannot fail, so it cannot catch the field nobody classified, which is the
+    failure being repaired. Codex refused that shape the same day.
+    """
+
+    def names(self):
+        from dataclasses import fields
+
+        from security_agent.config import Config
+        return {f.name for f in fields(Config)}
+
+    def test_the_two_lists_do_not_overlap(self):
+        from security_agent.config import BEHAVIOURAL, NOT_BEHAVIOURAL
+        assert not (BEHAVIOURAL & NOT_BEHAVIOURAL)
+
+    def test_every_field_is_in_exactly_one(self):
+        """A field added to `Config` fails here until somebody decides whether
+        it changes what the review does."""
+        from security_agent.config import BEHAVIOURAL, NOT_BEHAVIOURAL
+        names = self.names()
+        unclassified = names - BEHAVIOURAL - NOT_BEHAVIOURAL
+        assert not unclassified, (
+            "these Config fields are in neither list, so a change to them "
+            "would not be frozen and `drift` would report nothing: {}"
+            .format(sorted(unclassified)))
+
+    def test_neither_list_names_a_field_that_does_not_exist(self):
+        """A renamed field leaves its old name behind, and a name in the list
+        that matches nothing is a setting silently unfrozen."""
+        from security_agent.config import BEHAVIOURAL, NOT_BEHAVIOURAL
+        invented = (BEHAVIOURAL | NOT_BEHAVIOURAL) - self.names()
+        assert not invented, sorted(invented)
+
+    def test_the_settings_that_decide_findings_are_behavioural(self):
+        """Named one by one rather than counted.
+
+        A count passes while the wrong thirty-seven are listed. These are the
+        ones whose value changes which findings exist and which of them block,
+        and each was read from the shell before this.
+        """
+        from security_agent.config import BEHAVIOURAL
+        for name in ("verify_votes", "verify_model", "verify_effort",
+                     "fail_on", "min_confidence", "gate_pre_existing",
+                     "gate_removed_controls", "ungated_categories",
+                     "excludes", "scope", "mode", "max_context_tokens",
+                     "verifier_context_chars", "effort", "ignore_file",
+                     "gitlab"):
+            assert name in BEHAVIOURAL, name
+
+    def test_the_addresses_are_not_behavioural(self):
+        from security_agent.config import NOT_BEHAVIOURAL
+        for name in ("output_dir", "post_comment", "prompt_dir"):
+            assert name in NOT_BEHAVIOURAL, name
+
+
+class TestAFrozenConfigurationSuppliesTheWholeInstrument:
+    """An experiment froze three `Config` fields of forty and the rest came
+    from the shell, so two runs under one manifest could be two different
+    instruments while `drift` reported nothing had moved. Demonstrated on
+    2026-09-07 with `SECURITY_SCAN_VERIFY_VOTES=5`, one gate before 104 reviews
+    were to be bought to attribute a difference to a model.
+
+    `--config-json` is how a run is given its instrument instead of inheriting
+    it. Codex set two conditions on the shape, 2026-09-07: it supplies
+    *everything*, because a partial serialization recreates the ambient
+    configuration; and it refuses every flag that would change a setting,
+    because a file some flags may override is a third layer of precedence and
+    a place where the recorded instrument and the running one disagree.
+    """
+
+    def frozen(self, tmp_path, **overrides):
+        import json
+
+        from security_agent.config import Config, config_to_dict
+        body = config_to_dict(Config.from_env())
+        body.update(overrides)
+        path = tmp_path / "cfg.json"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        return path
+
+    def test_the_file_supplies_the_settings(self, tmp_path):
+        import security_agent.cli as cli
+        path = self.frozen(tmp_path, fail_on="low", verify_votes=3)
+        cfg = cli._build_config(
+            cli._parse_args(["--config-json", str(path), "--repo", "."]))
+        assert cfg.fail_on == "low"
+        assert cfg.verify_votes == 3
+
+    def test_the_environment_does_not_leak_past_it(self, tmp_path,
+                                                    monkeypatch):
+        """The condition Codex named: no field falls back to the shell.
+
+        A partial serialization would let the ambient configuration back in
+        through the gap, which is the defect rather than the repair.
+        """
+        import security_agent.cli as cli
+        path = self.frozen(tmp_path, verify_votes=3)
+        monkeypatch.setenv("SECURITY_SCAN_VERIFY_VOTES", "5")
+        monkeypatch.setenv("SECURITY_SCAN_FAIL_ON", "critical")
+        cfg = cli._build_config(
+            cli._parse_args(["--config-json", str(path)]))
+        assert cfg.verify_votes == 3, "the shell overrode the frozen file"
+
+    def test_every_flag_that_changes_a_setting_is_refused(self, tmp_path):
+        import security_agent.cli as cli
+        from security_agent.config import ConfigError
+        path = self.frozen(tmp_path)
+        for extra in (["--fail-on", "critical"], ["--verify-votes", "5"],
+                      ["--model", "claude-sonnet-5"], ["--no-comment"],
+                      ["--no-verify"], ["--effort", "low"],
+                      ["--path", "src"], ["--profile", "probe"],
+                      ["--changed-only"], ["--reuse"],
+                      ["--skip-label", "other"]):
+            args = cli._parse_args(["--config-json", str(path)] + extra)
+            with pytest.raises(ConfigError, match="whole configuration"):
+                cli._build_config(args)
+
+    def test_the_flags_that_say_which_code_are_still_allowed(self, tmp_path):
+        """`--repo`, `--base` and `--head` name the material, not the method.
+        Refusing them would make the frozen configuration unusable."""
+        import security_agent.cli as cli
+        path = self.frozen(tmp_path)
+        cfg = cli._build_config(cli._parse_args(
+            ["--config-json", str(path), "--repo", ".",
+             "--base", "aaa", "--head", "bbb"]))
+        assert cfg is not None
+
+    def test_a_document_from_another_schema_is_refused(self, tmp_path):
+        import json
+
+        import security_agent.cli as cli
+        from security_agent.config import Config, ConfigError, config_to_dict
+        body = config_to_dict(Config.from_env())
+        body["schema"] = 2
+        path = tmp_path / "cfg.json"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        with pytest.raises(ConfigError, match="schema"):
+            cli._build_config(cli._parse_args(["--config-json", str(path)]))
+
+    def test_a_missing_field_is_refused_rather_than_defaulted(self, tmp_path):
+        """A default here is the ambient configuration coming back through the
+        gap, one field at a time."""
+        import json
+
+        import security_agent.cli as cli
+        from security_agent.config import Config, ConfigError, config_to_dict
+        body = config_to_dict(Config.from_env())
+        del body["fail_on"]
+        path = tmp_path / "cfg.json"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        with pytest.raises(ConfigError, match="missing fail_on"):
+            cli._build_config(cli._parse_args(["--config-json", str(path)]))
+
+    def test_an_unknown_field_is_refused_rather_than_ignored(self, tmp_path):
+        import json
+
+        import security_agent.cli as cli
+        from security_agent.config import Config, ConfigError, config_to_dict
+        body = config_to_dict(Config.from_env())
+        body["invented_setting"] = 1
+        path = tmp_path / "cfg.json"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        with pytest.raises(ConfigError, match="does not have"):
+            cli._build_config(cli._parse_args(["--config-json", str(path)]))
+
+    def test_every_field_survives_the_round_trip(self):
+        """Forty fields, and the one that does not survive is the one nobody
+        notices until a measurement disagrees with its own manifest."""
+        from security_agent.config import Config, config_from_dict, config_to_dict
+        written = config_to_dict(Config.from_env())
+        assert config_to_dict(config_from_dict(written)) == written
