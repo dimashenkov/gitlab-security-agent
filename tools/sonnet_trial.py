@@ -108,6 +108,14 @@ SPEND_CLASS = "sentinel_trial"
 ARM_FIELDS = ("model_requested",)
 
 PREPARED, DONE, REFERENCE = "prepared", "done", "reference"
+# There was a fourth constant here, `REJECTED`, for a unit whose arm's bytes
+# moved while it was being reviewed. It was removed: no writer and no validator
+# implemented that state, so it was a name for something the ledger cannot say.
+# A constant without a writer is worse than no constant — a reader takes it for
+# a state the chain can carry. The open `PREPARED` row plus the quarantined
+# result and its reason are what actually represents it, and a second writer
+# inside `_buy` would put two hands on a chain this file gives to `run` alone.
+# Codex, 2026-09-07, answering the question directly.
 
 
 class TrialError(RuntimeError):
@@ -148,10 +156,45 @@ def units(cases: List[str], seed: str) -> List[Dict[str, Any]]:
     a pair review. The case is written into the unit because "the next unrun
     case in that arm's order" is a position, and a position is exactly what a
     tampered or missing result file moves.
+
+    **Pass `a` before pass `b`, for each arm and case.** A plain shuffle put 13
+    of the 26 arm/case combinations the other way round, and the arms'
+    manifests state the endpoint as *"whether pass b's `pair_success` equals
+    pass a's"* over the question *"do any cases give a different verdict in the
+    second pass than in the first"*. Half the comparisons would have been the
+    first pass against the second while claiming the reverse.
+
+    Rewriting the endpoint to say "two unordered replicates" was the other way
+    out and is the wrong one: that is a preregistration, and changing what was
+    written down to match what the code did is the failure this project records
+    against itself elsewhere. The code obeys the document. Codex found it on
+    the gate before the first purchase, 2026-09-07.
+
+    The ordering is a *partial* one — 26 pairs, each internally ordered, and
+    everything else still shuffled — so the interleaving keeps its purpose,
+    which is that neither arm meets the subscription's windows systematically
+    better than the other.
     """
     out = [{"index": None, "case_id": case_id, "arm": arm, "pass": label}
            for case_id in cases for arm in ARMS for label in PASSES]
     random.Random(seed).shuffle(out)
+    # **Swapped in place, not gathered.** The first version gave a pair the
+    # position of its earliest member and put the two adjacent — which threw
+    # away the second shuffled position, clustered every pair, and landed both
+    # passes of a case in nearly the same subscription window. The comment said
+    # exactly what the code did; the description was the wrong decision. Codex,
+    # on the gate before the first purchase, 2026-09-07.
+    #
+    # Both positions survive here: a pair occupies the two slots the shuffle
+    # gave it, and only their contents are exchanged when `b` came out first.
+    # So the schedule is the shuffle, with one constraint applied to it.
+    where = {}
+    for position, unit in enumerate(out):
+        where.setdefault((unit["arm"], unit["case_id"]), []).append(position)
+    for slots in where.values():
+        first, second = slots
+        if PASSES.index(out[first]["pass"]) > PASSES.index(out[second]["pass"]):
+            out[first], out[second] = out[second], out[first]
     for index, unit in enumerate(out):
         unit["index"] = index
     return out
@@ -179,6 +222,79 @@ def _already_run(name: str) -> List[str]:
         found += ["{} pass {}: {}".format(name, label, case_id)
                   for case_id in sorted(experiment.accepted(name, label))]
     return found
+
+
+def arm_digests(experiment_name: str) -> Dict[str, Any]:
+    """What the arm is, byte for byte: its manifest and its frozen prompts.
+
+    `experiment.run` reads the copies under `<experiment>/prompts`, not the
+    live `prompts/` — that is deliberate, so a pass bought today and a pass
+    bought next week meet the same instructions. It also means the copies are
+    part of the instrument and nothing was checking them between the freeze and
+    the spend.
+
+    Files are named individually rather than folded into one digest of the
+    directory: a directory digest says something moved, and a reader who has to
+    act on it needs to know whether it was the schema or the verifier's brief.
+    """
+    home = experiment.home(experiment_name)
+    body: Dict[str, Any] = {
+        "manifest_digest": _digest_bytes((home / "manifest.json").read_bytes()),
+    }
+    prompts = home / "prompts"
+    body["prompt_digests"] = {
+        entry.name: _digest_bytes(entry.read_bytes())
+        for entry in sorted(prompts.iterdir()) if entry.is_file()
+    } if prompts.is_dir() else {}
+    if not body["prompt_digests"]:
+        raise TrialError(
+            "{} has no frozen prompt copies, so what the reviews would be "
+            "bought against cannot be established. Freeze the experiment with "
+            "a current `experiment.py freeze`".format(experiment_name))
+    return body
+
+
+def arm_drift(schedule: Dict[str, Any]) -> List[str]:
+    """Which of the frozen bytes have moved since the schedule was written.
+
+    Checked before every spend rather than at freeze time only: the whole point
+    is the window between the two, and a check that runs only at the start of
+    that window is a check about the wrong moment.
+    """
+    moved = []
+    for arm, recorded in sorted(schedule.get("arms", {}).items()):
+        name = recorded.get("experiment", "")
+        if "manifest_digest" not in recorded:
+            moved.append(
+                "the {} arm was scheduled before the manifest's bytes were "
+                "recorded, so nothing can say whether it has changed since"
+                .format(arm))
+            continue
+        try:
+            now = arm_digests(name)
+        except (OSError, TrialError) as exc:
+            moved.append("the {} arm ({}) cannot be read: {}".format(
+                arm, name, exc))
+            continue
+        if now["manifest_digest"] != recorded["manifest_digest"]:
+            moved.append(
+                "the {} arm's manifest has changed since the schedule was "
+                "frozen ({} -> {})".format(
+                    arm, recorded["manifest_digest"], now["manifest_digest"]))
+        was = recorded.get("prompt_digests") or {}
+        for filename in sorted(set(was) | set(now["prompt_digests"])):
+            before, after = was.get(filename), now["prompt_digests"].get(filename)
+            if before is None:
+                moved.append("the {} arm has gained a frozen prompt, {}".format(
+                    arm, filename))
+            elif after is None:
+                moved.append("the {} arm has lost its frozen {}".format(
+                    arm, filename))
+            elif before != after:
+                moved.append(
+                    "the {} arm's frozen {} has changed since the schedule was "
+                    "frozen ({} -> {})".format(arm, filename, before, after))
+    return moved
 
 
 def build(name: str, opus: str, sonnet: str) -> Dict[str, Any]:
@@ -298,7 +414,17 @@ def build(name: str, opus: str, sonnet: str) -> Dict[str, Any]:
                        # the verifier follows the reviewer. It does not: this
                        # trial is Sonnet reviewing and Opus verifying.
                        "verifier": bodies[arm]["environment"].get(
-                           "verifier_requested")}
+                           "verifier_requested"),
+                       # **The bytes, not only the name.** Without these the
+                       # schedule bound an arm by the string
+                       # `sonnet-trial-opus`, and the manifest behind that name
+                       # — or the prompt copies `experiment.run` actually reads
+                       # — could be edited afterwards with nothing to notice.
+                       # The schedule's own digest covers the schedule; the
+                       # environment digests cover the *live* tree, not these
+                       # frozen copies. Codex, on the gate before the first
+                       # purchase, 2026-09-07.
+                       **arm_digests(experiment_name)}
                  for arm, experiment_name in (("opus", opus),
                                               ("sonnet", sonnet))},
         "cases": order_a,
@@ -673,6 +799,14 @@ def verify(name: str) -> Tuple[Dict[str, Any], str,
         # trial's history, and its findings would be about nothing.
         return schedule, schedule_digest, entries, problems
 
+    # **The arms' bytes, checked here and so before every spend.** `run` and
+    # `reference` both come through this function, which is the point: the
+    # window that matters is between the freeze and the purchase, and a check
+    # that runs only when the schedule is written is a check about the wrong
+    # moment. The schedule bound arm *names* until 2026-09-07, so a manifest or
+    # a frozen prompt copy could be edited in that window with nothing to
+    # notice. Codex, on the gate before the first purchase.
+    problems += arm_drift(schedule)
     problems += _units_recorded(schedule, entries)
     problems += _strays(schedule, entries)
     problems += _reference_still_there(entries)
@@ -820,6 +954,25 @@ def _buy(schedule: Dict[str, Any], unit: Dict[str, Any]) -> int:
     they disagree — which is the check that makes the arm real rather than a
     label in a schedule.
     """
+    # **The arm's bytes, immediately before the money and again after it.**
+    # `verify` checks them once per invocation, before the loop — so a manifest
+    # or a frozen prompt could change after that check and be consumed by a
+    # later unit unnoticed. `experiment.run` compares the *live* prompt digests,
+    # not the frozen copies it supplies through `SECURITY_SCAN_PROMPT_DIR`, so
+    # it does not close the gap either. Even a single-unit invocation kept a
+    # check-then-use race. Codex, on the gate before the first purchase,
+    # 2026-09-07.
+    #
+    # Here rather than at the two call sites, because a check one caller can
+    # forget is a check that will be forgotten.
+    moved = arm_drift(schedule)
+    if moved:
+        print("refusing to buy unit {}: {} thing(s) moved since the schedule "
+              "was frozen".format(unit["index"], len(moved)), file=sys.stderr)
+        for line in moved:
+            print("  - {}".format(line), file=sys.stderr)
+        return 2
+
     arm = schedule["arms"][unit["arm"]]
     os.environ["SECURITY_SCAN_MODEL"] = arm["model"]
     # From the schedule, not from `arm["model"]`. Setting the verifier to the
@@ -827,8 +980,56 @@ def _buy(schedule: Dict[str, Any], unit: Dict[str, Any]) -> int:
     # a different instrument from the one D-015 approved, and one the
     # comparator refuses after the money is gone rather than before.
     os.environ["SECURITY_SCAN_VERIFY_MODEL"] = arm["verifier"]
-    return experiment.run(arm["experiment"], unit["pass"], limit=1,
+    code = experiment.run(arm["experiment"], unit["pass"], limit=1,
                           only=unit["case_id"], spend_class=SPEND_CLASS)
+    # **And again afterwards**, before the caller records `DONE`. The review is
+    # bought by then and cannot be unbought — what this establishes is whether
+    # the result may be recorded as this trial's. A row written under bytes
+    # that moved during the purchase is a row about a different instrument, and
+    # the ledger would carry it as though it were not.
+    moved = arm_drift(schedule)
+    if moved:
+        # **Moved out of the accepted directory, not left in it.** A rejected
+        # result sitting where a good one lives is a result any later path can
+        # pick up — `--recover` did exactly that. It goes to `rejected/` with
+        # the reason beside it, and the unit is re-bought rather than rescued.
+        path = _result_path(schedule, unit)
+        quarantined = ""
+        if path.exists():
+            # **A name no second attempt can take.** The first version used one
+            # deterministic name per unit, and the unit stays open — so a second
+            # failed retry replaced the first quarantined file and its reason.
+            # Two paid reviews, one surviving record, and nothing saying the
+            # other had existed. The digest of the result names it: two
+            # identical results collide harmlessly, and two different ones
+            # cannot. Codex, on the gate before the first purchase, 2026-09-07.
+            # **The reason is part of the identity, not a file beside it.**
+            # Naming by the result's digest alone kept two different results
+            # apart and let a retry that produced the *same* bytes under a
+            # different drift reason overwrite the first reason — losing half
+            # the audit history while the result looked untouched. Codex, fifth
+            # gate round, 2026-09-07: preserve every distinct
+            # (result, reason) pair.
+            spoiled = path.parent.parent / "rejected" / "{}-{}-{}-{}-{}".format(
+                unit["index"], unit["pass"], unit["case_id"],
+                experiment.digest_file(path), digest("\n".join(moved)))
+            spoiled.parent.mkdir(parents=True, exist_ok=True)
+            path.replace(spoiled.with_suffix(".json"))
+            (spoiled.with_suffix(".why.txt")).write_text(
+                "\n".join(moved) + "\n", encoding="utf-8")
+            quarantined = str(
+                spoiled.with_suffix(".json").relative_to(ROOT))
+        print("unit {} was bought, and {} thing(s) moved while it ran. The "
+              "review was performed under an instrument that is not the frozen "
+              "one, so the result cannot be recorded and cannot be recovered:"
+              .format(unit["index"], len(moved)), file=sys.stderr)
+        for line in moved:
+            print("  - {}".format(line), file=sys.stderr)
+        if quarantined:
+            print("  the result is kept at {} and its reason beside it"
+                  .format(quarantined), file=sys.stderr)
+        return 2
+    return code
 
 
 def run(name: str, steps: Optional[int], recover: bool) -> int:
@@ -952,8 +1153,16 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
             # --recover` walking past it.
             code = _buy(schedule, unit)
             if code != 0 or not path.exists():
+            # One sentence again, and correctly this time. An earlier
+            # version split it and pointed the second case at `--recover` —
+            # which would have admitted the very result the after-check
+            # rejected. `_buy` moves a rejected result out of the accepted
+            # directory now, so by the time this line is reached there is
+            # nothing there to recover and the unit is simply open. Codex,
+            # 2026-09-07, on the gate for that split.
                 print("\nunit {} did not conclude. It stays open; run this "
-                      "again.".format(open_index))
+                      "again once whatever stopped it is dealt with."
+                      .format(open_index))
                 return code or 2
             append(name, {"kind": DONE, "index": open_index,
                           "result_digest": experiment.digest_file(path),
@@ -979,6 +1188,8 @@ def run(name: str, steps: Optional[int], recover: bool) -> int:
         code = _buy(schedule, unit)
         path = _result_path(schedule, unit)
         if code != 0 or not path.exists():
+            # The same two states as on the resume path above; see the note
+            # there for why one sentence cannot serve both.
             print("\nunit {} did not conclude. It stays open; run this again "
                   "once whatever stopped it is dealt with.".format(done))
             return code or 2
@@ -1302,9 +1513,17 @@ def status(name: str) -> int:
     if open_index is not None:
         unit = schedule["units"][open_index]
         path = _result_path(schedule, unit)
+        # **`--recover` is required, and this said a plain resume would do
+        # it.** An operator reading that runs `run` and gets the branch that
+        # buys the review again, because the recovery path is behind the flag.
+        # Codex, on the gate before the first purchase, 2026-09-07 — the same
+        # round that found the advice in `run` pointing at `--recover` for a
+        # result that must never be recovered. The two lines were wrong in
+        # opposite directions.
         print("  unit {} ({}/{}/{}) was opened and never closed — {}".format(
             open_index, unit["arm"], unit["pass"], unit["case_id"],
-            "its result is on disk and a resume will record it"
+            "its result is on disk; `run --recover` takes it, and a plain "
+            "resume buys the review again"
             if path.exists() else "no result was written; a resume re-runs it"))
     if frozen:
         print("  reference frozen after {} unit(s) · {}".format(

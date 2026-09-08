@@ -873,9 +873,12 @@ def test_a_frozen_key_the_environment_no_longer_has_is_reported_as_moved(
     """
     gone = set(data.draw(st.lists(st.sampled_from(sorted(frozen)),
                                   unique=True, max_size=len(frozen))))
+    # `*_` because `environment_now` takes the two model overrides now, added
+    # so a trial arm can be checked on the terms the schedule supplies rather
+    # than on this shell's.
     monkeypatch.setattr(experiment, "environment_now",
-                        lambda: {k: v for k, v in frozen.items()
-                                 if k not in gone})
+                        lambda *_: {k: v for k, v in frozen.items()
+                                    if k not in gone})
     monkeypatch.setattr(experiment, "digest_file", lambda _path: "unchanged")
 
     moved = experiment.drift({"environment": frozen,
@@ -889,7 +892,8 @@ def test_a_frozen_key_the_environment_no_longer_has_is_reported_as_moved(
 def test_an_unchanged_environment_reports_nothing_moved(monkeypatch, frozen):
     """The other direction, so the property above cannot be satisfied by a
     function that reports everything."""
-    monkeypatch.setattr(experiment, "environment_now", lambda: dict(frozen))
+    monkeypatch.setattr(experiment, "environment_now",
+                        lambda *_: dict(frozen))
     monkeypatch.setattr(experiment, "digest_file", lambda _path: "unchanged")
 
     assert experiment.drift({"environment": frozen,
@@ -1102,7 +1106,8 @@ class TestFoundByHypothesis:
         turned red the moment it passed, which is the whole reason it was
         written as `strict`.
         """
-        monkeypatch.setattr(experiment, "environment_now", dict)
+        monkeypatch.setattr(experiment, "environment_now",
+                            lambda *_: {})
         monkeypatch.setattr(experiment, "digest_file", lambda _path: "unchanged")
 
         moved = experiment.drift({"environment": {"scorer": None},

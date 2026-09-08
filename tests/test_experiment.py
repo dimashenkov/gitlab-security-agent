@@ -1191,3 +1191,77 @@ class TestTheBinariesArePartOfTheFreeze:
         assert experiment.run("e", "a", None) == 2
         assert bought == []
         assert "Freeze a new experiment." in capsys.readouterr().out
+
+
+class TestAnArmIsCheckedOnTheTermsItRunsUnder:
+    """`verify` compared the manifest against `Config.from_env()` — the shell it
+    happens to be run from. Right for a standalone experiment, which is bought
+    from a shell; wrong for a trial arm, because `sonnet_trial._buy` sets both
+    model variables per unit from the schedule so the ambient shell cannot
+    decide what is bought.
+
+    So the challenger arm always reported that the model had moved, and reading
+    that as "expected, ignore it" is a failure being called acceptable
+    verification. Codex, on the gate before the first purchase, 2026-09-07.
+    """
+
+
+    def manifest(self, environment):
+        """A whole manifest, because `drift` reads the suite and the cases too.
+
+        Passing it only an `environment` would test a shape `freeze` never
+        writes — the defect this file was already caught by once.
+        """
+        body = experiment.build("probe")
+        body["environment"] = environment
+        return body
+
+    def test_the_shell_is_still_the_default(self, monkeypatch):
+        """A standalone experiment is bought from a shell, and nothing about
+        this may change what it checks."""
+        monkeypatch.delenv("SECURITY_SCAN_MODEL", raising=False)
+        monkeypatch.delenv("SECURITY_SCAN_VERIFY_MODEL", raising=False)
+        frozen = experiment.environment_now()
+        assert not experiment.drift(self.manifest(frozen))
+
+    def test_a_shell_that_disagrees_is_still_refused(self, monkeypatch):
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-opus-5")
+        frozen = experiment.environment_now()
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        moved = experiment.drift(self.manifest(frozen))
+        assert any("model_requested" in line for line in moved), moved
+
+    def test_the_schedules_values_make_it_a_real_check_again(self,
+                                                              monkeypatch):
+        """The arm's own terms: the manifest says Sonnet, the shell says Opus,
+        and given what the schedule will supply the answer is that nothing has
+        moved."""
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("SECURITY_SCAN_VERIFY_MODEL", "claude-opus-5")
+        frozen = experiment.environment_now()
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-opus-5")
+        monkeypatch.delenv("SECURITY_SCAN_VERIFY_MODEL", raising=False)
+        assert not experiment.drift(self.manifest(frozen),
+                                    model="claude-sonnet-5",
+                                    verify_model="claude-opus-5")
+
+    def test_it_does_not_forgive_anything_else(self, monkeypatch):
+        """Supplying the models must not turn the check off. Everything the
+        environment carries besides them is still compared, or the argument
+        would be a way past the gate rather than a way to ask it properly."""
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        frozen = dict(experiment.environment_now(), system_prompt="something else")
+        moved = experiment.drift(self.manifest(frozen),
+                                 model="claude-sonnet-5",
+                                 verify_model="claude-opus-5")
+        assert any("system_prompt" in line for line in moved), moved
+
+    def test_a_wrong_model_given_is_still_caught(self, monkeypatch):
+        """The argument says what the arm will run under, not what it should
+        have run under: naming a model the manifest does not have is a
+        refusal, not a pass."""
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        frozen = experiment.environment_now()
+        moved = experiment.drift(self.manifest(frozen),
+                                 model="claude-haiku-4-5")
+        assert any("model_requested" in line for line in moved), moved

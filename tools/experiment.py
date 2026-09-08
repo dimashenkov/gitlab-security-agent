@@ -613,10 +613,23 @@ def publish(target: Path, text: str) -> bool:
         return False
 
 
-def drift(body: Dict[str, Any]) -> List[str]:
-    """What has moved since the freeze, in words a reader can act on."""
+def drift(body: Dict[str, Any], model: Optional[str] = None,
+          verify_model: Optional[str] = None) -> List[str]:
+    """What has moved since the freeze, in words a reader can act on.
+
+    The two model arguments exist because an arm of a trial is not bought from
+    a shell. `sonnet_trial._buy` sets both variables per unit from the
+    schedule, so comparing the manifest against `Config.from_env()` asks what
+    *this* shell would do — a question nobody is going to act on, and whose
+    answer for the challenger arm is always "the model moved".
+
+    Reading that as "expected, ignore it" is a failure being called acceptable
+    verification, which is the shape this project exists to catch. Given the
+    values the schedule will supply, the check is a real one again. Codex, on
+    the gate before the first purchase, 2026-09-07.
+    """
     moved = []
-    now = environment_now()
+    now = environment_now(model, verify_model)
     absent = object()
     for key, was in body["environment"].items():
         # A sentinel, not `now.get(key)`. `get` answers `None` for a key that
@@ -695,17 +708,21 @@ def load(name: str) -> Optional[Dict[str, Any]]:
     return body
 
 
-def verify(name: str) -> int:
+def verify(name: str, model: Optional[str] = None,
+           verify_model: Optional[str] = None) -> int:
     """Fail closed, and say what moved.
 
     Checking after the fact proves nothing: a change made and reverted between
     the passes leaves the files looking untouched. This is what runs immediately
     before spending, and its exit code is the permission to spend.
+
+    The two model arguments let an arm of a trial be checked on the terms it
+    will actually run under rather than on this shell's — see `drift`.
     """
     body = load(name)
     if body is None:
         return 2
-    moved = drift(body)
+    moved = drift(body, model, verify_model)
     if moved:
         print("Refusing: {} thing(s) moved since the freeze.".format(len(moved)))
         for line in moved:
@@ -1035,6 +1052,15 @@ def main() -> int:
 
     check = sub.add_parser("verify")
     check.add_argument("name")
+    # An arm of a trial is not bought from a shell: the runner sets both
+    # variables per unit from the schedule. Without these, checking the
+    # challenger arm always reports that the model moved, and reading that as
+    # "expected" is a failure called acceptable.
+    check.add_argument("--model", default=None,
+                       help="the reviewing model this arm will run under; "
+                            "without it, this shell's is assumed")
+    check.add_argument("--verify-model", default=None,
+                       help="the verifying model this arm will run under")
 
     go = sub.add_parser("run")
     go.add_argument("name")
@@ -1060,7 +1086,7 @@ def main() -> int:
             return freeze(args.name, args.dry_run,
                           args.model, args.verify_model)
         if args.command == "verify":
-            return verify(args.name)
+            return verify(args.name, args.model, args.verify_model)
         if args.command == "run":
             return run(args.name, args.pass_label, args.cases)
         return compare(args.name)

@@ -13,6 +13,7 @@ leaves behind.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -64,6 +65,17 @@ def trees(tmp_path, monkeypatch):
                        "answer_key_digest": "k" * 16}
                       for case_id in CASES],
         }), encoding="utf-8")
+        # The frozen prompt copies a real `experiment.py freeze` writes and
+        # `experiment.run` reads. Omitting them made this fixture a shape
+        # production cannot emit — the defect this file has been caught by
+        # twice now, the second time when the schedule began binding their
+        # bytes and every test here refused.
+        prompts = directory / "prompts"
+        prompts.mkdir(parents=True, exist_ok=True)
+        for name, body in (("system.md", "the reviewer's brief"),
+                           ("verifier.md", "the verifier's brief"),
+                           ("findings.schema.json", "{}")):
+            (prompts / name).write_text(body, encoding="utf-8")
     return tmp_path
 
 
@@ -1401,3 +1413,520 @@ class TestTwoArmsAreOneSuiteNotOneSequence:
                                                  encoding="utf-8")
         with pytest.raises(trial.TrialError, match="records no suite"):
             trial.build("t", "opus-arm", "sonnet-arm")
+
+
+class TestTheSecondPassIsSecond:
+    """The arms' manifests state the endpoint as "whether pass b's
+    `pair_success` equals pass a's", over the question "do any cases give a
+    different verdict in the second pass than in the first".
+
+    A plain shuffle put 13 of the 26 arm/case combinations the other way round,
+    so half the comparisons would have been the first pass against the second
+    while claiming the reverse. Found by Codex on the gate before the first
+    purchase, 2026-09-07 — one command before 104 member reviews.
+
+    Rewriting the endpoint to say "two unordered replicates" was the other way
+    out and is the wrong one: that is a preregistration, and changing what was
+    written down to match what the code did is the failure this project records
+    against itself.
+    """
+
+    def test_a_comes_before_b_for_every_arm_and_case(self):
+        made = trial.units(["c{}".format(n) for n in range(13)], "seed")
+        first = {}
+        for unit in made:
+            first.setdefault((unit["arm"], unit["case_id"]), unit["pass"])
+        wrong = sorted(k for k, label in first.items() if label != "a")
+        assert not wrong, (
+            "{} of {} arm/case pairs run their second pass first: {}"
+            .format(len(wrong), len(first), wrong[:5]))
+
+    def test_it_holds_for_every_seed_that_was_tried(self):
+        """One seed passing is a shuffle that happened to be in order. The
+        constraint has to hold whatever the seed, or it is a coincidence."""
+        for seed in ("a", "b", "sonnet-trial", "zzz", "2026-09-07"):
+            made = trial.units(["c{}".format(n) for n in range(13)], seed)
+            first = {}
+            for unit in made:
+                first.setdefault((unit["arm"], unit["case_id"]), unit["pass"])
+            assert all(label == "a" for label in first.values()), seed
+
+    def test_the_constraint_costs_the_shuffle_nothing(self):
+        """**Swapped in place, not gathered**, and this is what tells them
+        apart.
+
+        The first version gave each pair the position of its earliest member
+        and put the two adjacent. That threw away the second shuffled position
+        and landed both passes of a case in nearly the same subscription
+        window — measured, every pass gap became 1. Codex refused it on the
+        gate before the first purchase.
+
+        Swapping leaves both positions where the shuffle put them and only
+        exchanges their contents, so every property of the plain shuffle
+        survives. Measured over 200 seeds, the two agree on arm position, arm
+        switches, and pass gap; they differ only in that 2583 pairs ran `b`
+        first and now none do.
+        """
+        import random
+        cases = ["c{}".format(n) for n in range(13)]
+
+        def plain(seed):
+            out = [{"case_id": c, "arm": a, "pass": p}
+                   for c in cases for a in trial.ARMS for p in trial.PASSES]
+            random.Random(seed).shuffle(out)
+            return out
+
+        def shape(made):
+            arms = [u["arm"] for u in made]
+            seen = {}
+            for index, unit in enumerate(made):
+                seen.setdefault((unit["arm"], unit["case_id"]), []).append(index)
+            return (sum(1 for a, b in zip(arms, arms[1:]) if a != b),
+                    sorted(abs(a - b) for a, b in seen.values()))
+
+        for seed in ("a", "seed", "sonnet-trial", "2026-09-07"):
+            assert shape(trial.units(cases, seed)) == shape(plain(seed)), seed
+
+    def test_the_arms_still_interleave(self):
+        """Named separately from the equality above, because a shuffle that
+        happened to cluster would satisfy "same as the shuffle" and still be a
+        bad schedule."""
+        made = trial.units(["c{}".format(n) for n in range(13)], "seed")
+        arms = [unit["arm"] for unit in made]
+        switches = sum(1 for a, b in zip(arms, arms[1:]) if a != b)
+        assert switches >= 8, (switches, arms[:12])
+
+    def test_the_two_passes_of_a_case_are_not_forced_together(self):
+        """The gather's own signature: every pair adjacent. If this comes back
+        true, the schedule has stopped being a shuffle with a constraint and
+        become a list of pairs."""
+        made = trial.units(["c{}".format(n) for n in range(13)], "seed")
+        seen = {}
+        for index, unit in enumerate(made):
+            seen.setdefault((unit["arm"], unit["case_id"]), []).append(index)
+        gaps = [abs(a - b) for a, b in seen.values()]
+        assert max(gaps) > 1, gaps
+
+    def test_every_unit_is_still_there_exactly_once(self):
+        """The reorder must not drop or duplicate one. 13 cases x 2 arms x 2
+        passes, and a missing unit is a case measured in one arm only."""
+        made = trial.units(["c{}".format(n) for n in range(13)], "seed")
+        keys = [(u["arm"], u["case_id"], u["pass"]) for u in made]
+        assert len(keys) == 52
+        assert len(set(keys)) == 52
+        assert [u["index"] for u in made] == list(range(52))
+
+
+class TestTheScheduleBindsBytesNotNames:
+    """The schedule recorded `experiment`, `model` and `verifier` per arm — the
+    arm's *name*. A manifest, or a frozen prompt copy that `experiment.run`
+    actually reads, could be edited after the schedule was frozen and nothing
+    would notice: the schedule's own digest covers the schedule, and the
+    environment digests cover the live tree rather than these copies.
+
+    Codex found it on the gate before the first purchase, 2026-09-07.
+
+    Checked in `verify`, so it runs before every spend — `run` and `reference`
+    both come through there. The window that matters is between the freeze and
+    the purchase, and a check that fires only when the schedule is written is a
+    check about the wrong moment.
+    """
+
+    def frozen(self, trees):
+        return trial.build("t", "opus-arm", "sonnet-arm")
+
+    def prompts(self, arm, **files):
+        directory = experiment.home(arm) / "prompts"
+        directory.mkdir(parents=True, exist_ok=True)
+        for name, body in files.items():
+            (directory / name.replace("_", ".")).write_text(body,
+                                                            encoding="utf-8")
+
+    def test_the_bytes_are_recorded(self, trees):
+        built = self.frozen(trees)
+        for arm in ("opus", "sonnet"):
+            assert built["arms"][arm]["manifest_digest"]
+            # The three the fixture writes, which are the three a real freeze
+            # copies. Asserted by name rather than by count: a count passes
+            # while the wrong three are there.
+            assert set(built["arms"][arm]["prompt_digests"]) == {
+                "system.md", "verifier.md", "findings.schema.json"}
+
+    def test_an_edited_manifest_is_caught(self, trees):
+        self.prompts("opus-arm", system_md="a")
+        self.prompts("sonnet-arm", system_md="a")
+        built = self.frozen(trees)
+        path = experiment.home("opus-arm") / "manifest.json"
+        path.write_text(path.read_text(encoding="utf-8") + " ",
+                        encoding="utf-8")
+        moved = trial.arm_drift(built)
+        assert any("manifest has changed" in m for m in moved), moved
+
+    def test_an_edited_frozen_prompt_is_caught_and_named(self, trees):
+        """Named, not counted. A reader told "something moved" cannot act; one
+        told it was the verifier's brief can."""
+        self.prompts("opus-arm", system_md="a", verifier_md="b")
+        self.prompts("sonnet-arm", system_md="a", verifier_md="b")
+        built = self.frozen(trees)
+        path = experiment.home("opus-arm") / "prompts" / "verifier.md"
+        path.write_text("b changed", encoding="utf-8")
+        moved = trial.arm_drift(built)
+        assert any("verifier.md" in m for m in moved), moved
+
+    def test_a_lost_prompt_is_caught(self, trees):
+        self.prompts("opus-arm", system_md="a", verifier_md="b")
+        self.prompts("sonnet-arm", system_md="a", verifier_md="b")
+        built = self.frozen(trees)
+        (experiment.home("opus-arm") / "prompts" / "verifier.md").unlink()
+        moved = trial.arm_drift(built)
+        assert any("lost its frozen" in m for m in moved), moved
+
+    def test_an_arm_with_no_frozen_prompts_is_refused_at_freeze(self, trees):
+        """Not "nothing to compare": an arm whose instructions were never
+        copied cannot say what its reviews would be bought against.
+
+        The fixture writes them, so they are removed here — an arm frozen by
+        an older `experiment.py`, which is exactly the case that must not pass
+        quietly.
+        """
+        for entry in (experiment.home("opus-arm") / "prompts").iterdir():
+            entry.unlink()
+        (experiment.home("opus-arm") / "prompts").rmdir()
+        with pytest.raises(trial.TrialError, match="no frozen prompt"):
+            trial.build("t", "opus-arm", "sonnet-arm")
+
+    def test_a_schedule_frozen_before_this_says_so(self, trees):
+        """`arm_drift` walks what the schedule has. An older schedule carries
+        no digests, and "there is nothing recorded to compare" must not read
+        as "nothing has moved"."""
+        self.prompts("opus-arm", system_md="a")
+        self.prompts("sonnet-arm", system_md="a")
+        built = self.frozen(trees)
+        for arm in built["arms"].values():
+            arm.pop("manifest_digest", None)
+            arm.pop("prompt_digests", None)
+        moved = trial.arm_drift(built)
+        assert len(moved) == 2, moved
+        assert all("before the manifest's bytes were recorded" in m
+                   for m in moved), moved
+
+
+class TestTheBytesAreCheckedAroundEveryPurchase:
+    """`verify` checks the arms' bytes once per invocation, before the loop. A
+    manifest or a frozen prompt could then change after that check and be
+    consumed by a later unit unnoticed — and `experiment.run` compares the
+    *live* prompt digests, not the frozen copies it supplies through
+    `SECURITY_SCAN_PROMPT_DIR`, so it does not close the gap either.
+
+    Even a single-unit invocation kept a check-then-use race. Codex, on the
+    gate before the first purchase, 2026-09-07.
+
+    The checks sit inside `_buy` rather than at its two call sites, because a
+    check one caller can forget is a check that will be forgotten.
+    """
+
+    def ready(self, trees, monkeypatch):
+        trial.freeze("t", "opus-arm", "sonnet-arm")
+        schedule, _digest = trial.load_schedule("t")
+        return schedule
+
+    def test_a_manifest_that_moved_stops_the_purchase(self, trees,
+                                                       monkeypatch):
+        """Nothing is bought: `experiment.run` is replaced by something that
+        fails the test if it is reached at all."""
+        schedule = self.ready(trees, monkeypatch)
+        path = experiment.home("opus-arm") / "manifest.json"
+        path.write_text(path.read_text(encoding="utf-8") + " ",
+                        encoding="utf-8")
+        monkeypatch.setattr(
+            experiment, "run",
+            lambda *a, **k: pytest.fail("a review was bought after the "
+                                        "manifest had moved"))
+        unit = next(u for u in schedule["units"] if u["arm"] == "opus")
+        assert trial._buy(schedule, unit) == 2
+
+    def test_a_prompt_that_moves_during_the_purchase_stops_the_record(
+            self, trees, monkeypatch):
+        """The review is bought by then and cannot be unbought. What this
+        establishes is whether the result may be recorded as this trial's — a
+        row written under bytes that moved is a row about another instrument.
+        """
+        schedule = self.ready(trees, monkeypatch)
+        path = experiment.home("opus-arm") / "prompts" / "system.md"
+
+        def buy_and_move(*_a, **_k):
+            path.write_text("something else", encoding="utf-8")
+            return 0
+
+        monkeypatch.setattr(experiment, "run", buy_and_move)
+        unit = next(u for u in schedule["units"] if u["arm"] == "opus")
+        assert trial._buy(schedule, unit) == 2
+
+    def test_an_untouched_arm_buys_and_returns_what_run_said(self, trees,
+                                                             monkeypatch):
+        """The control. A check that refuses everything is not a check."""
+        schedule = self.ready(trees, monkeypatch)
+        monkeypatch.setattr(experiment, "run", lambda *a, **k: 0)
+        unit = next(u for u in schedule["units"] if u["arm"] == "opus")
+        assert trial._buy(schedule, unit) == 0
+
+    def test_the_models_still_reach_the_environment(self, trees, monkeypatch):
+        """The check must not have displaced what `_buy` was for: the arm's
+        two models go into the environment before the review runs, so the
+        ambient shell cannot decide which model is bought."""
+        schedule = self.ready(trees, monkeypatch)
+        seen = {}
+
+        def record(*_a, **_k):
+            seen["model"] = os.environ.get("SECURITY_SCAN_MODEL")
+            seen["verifier"] = os.environ.get("SECURITY_SCAN_VERIFY_MODEL")
+            return 0
+
+        monkeypatch.setattr(experiment, "run", record)
+        unit = next(u for u in schedule["units"] if u["arm"] == "sonnet")
+        trial._buy(schedule, unit)
+        assert seen["model"] == "claude-sonnet-5"
+        assert seen["verifier"] == "claude-opus-5"
+
+
+class TestARejectedResultIsMovedOutOfTheWay:
+    """A unit whose arm's bytes moved *while it was being reviewed* is bought
+    and unusable: the review was performed under an instrument that is not the
+    frozen one, and putting the prompt back afterwards cannot make it valid.
+
+    The after-check refused to record it and left it in the accepted `pass-*`
+    directory, where the ledger held only `PREPARED` — indistinguishable from a
+    crash after a good result. `--recover` would then admit the very result the
+    check rejected, and an earlier version of the advice here *recommended*
+    that. Codex, on the gate before the first purchase, 2026-09-07.
+
+    So the result moves to `rejected/` with its reason beside it, and the unit
+    is re-bought rather than rescued.
+    """
+
+    def ready(self, trees):
+        trial.freeze("t", "opus-arm", "sonnet-arm")
+        return trial.load_schedule("t")[0]
+
+    def bought_then_moved(self, schedule, unit):
+        def go(*_a, **_k):
+            path = trial._result_path(schedule, unit)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"ok": true}', encoding="utf-8")
+            manifest = experiment.home(
+                schedule["arms"][unit["arm"]]["experiment"]) / "manifest.json"
+            manifest.write_text(manifest.read_text(encoding="utf-8") + " ",
+                                encoding="utf-8")
+            return 0
+        return go
+
+    def test_the_result_leaves_the_accepted_directory(self, trees,
+                                                      monkeypatch):
+        schedule = self.ready(trees)
+        unit = schedule["units"][0]
+        monkeypatch.setattr(experiment, "run",
+                            self.bought_then_moved(schedule, unit))
+        assert trial._buy(schedule, unit) == 2
+        assert not trial._result_path(schedule, unit).exists()
+
+    def test_it_is_kept_with_the_reason_beside_it(self, trees, monkeypatch):
+        """Kept, not deleted: it was paid for, and a reader asking what
+        happened needs the thing itself as well as the sentence."""
+        schedule = self.ready(trees)
+        unit = schedule["units"][0]
+        monkeypatch.setattr(experiment, "run",
+                            self.bought_then_moved(schedule, unit))
+        trial._buy(schedule, unit)
+        arm = experiment.home(schedule["arms"][unit["arm"]]["experiment"])
+        kept = sorted((arm / "rejected").iterdir())
+        assert len(kept) == 2, kept
+        why = next(p for p in kept if p.name.endswith(".why.txt"))
+        assert "manifest has changed" in why.read_text(encoding="utf-8")
+
+    def test_the_advice_does_not_point_at_recover(self, trees, monkeypatch,
+                                                  capsys):
+        """The defect this class replaced. An earlier version told the
+        operator to take the rejected result with `--recover`, which is the one
+        thing that must not happen to it."""
+        schedule = self.ready(trees)
+        unit = schedule["units"][0]
+        monkeypatch.setattr(experiment, "run",
+                            self.bought_then_moved(schedule, unit))
+        trial.run("t", steps=1, recover=False)
+        said = capsys.readouterr()
+        assert "--recover" not in (said.out + said.err), said.err[-400:]
+
+    def test_a_second_failed_attempt_does_not_erase_the_first(self, trees,
+                                                              monkeypatch):
+        """The unit stays open, so a retry is expected — and the first version
+        used one deterministic name per unit, so the retry's quarantine
+        replaced the first one. Two paid reviews, one surviving record, and
+        nothing saying the other had existed.
+
+        Codex, on the gate before the first purchase, 2026-09-07.
+        """
+        schedule = self.ready(trees)
+        unit = schedule["units"][0]
+        arm_home = experiment.home(
+            schedule["arms"][unit["arm"]]["experiment"])
+
+        # The manifest is put back between the attempts, which is what an
+        # operator does: something moved, they restore it, they run again. The
+        # before-check then passes and the second review is bought — and if it
+        # fails the after-check too, its quarantine must not overwrite the
+        # first one.
+        manifest = arm_home / "manifest.json"
+
+        def buy(body):
+            def go(*_a, **_k):
+                path = trial._result_path(schedule, unit)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(body, encoding="utf-8")
+                manifest.write_text(
+                    manifest.read_text(encoding="utf-8") + " ",
+                    encoding="utf-8")
+                return 0
+            return go
+
+        good = manifest.read_text(encoding="utf-8")
+        monkeypatch.setattr(experiment, "run", buy('{"attempt": 1}'))
+        trial._buy(schedule, unit)
+        manifest.write_text(good, encoding="utf-8")
+        monkeypatch.setattr(experiment, "run", buy('{"attempt": 2}'))
+        trial._buy(schedule, unit)
+
+        kept = sorted(p for p in (arm_home / "rejected").iterdir()
+                      if p.suffix == ".json")
+        assert len(kept) == 2, [p.name for p in kept]
+        bodies = sorted(p.read_text(encoding="utf-8") for p in kept)
+        assert bodies == ['{"attempt": 1}', '{"attempt": 2}'], bodies
+
+    def test_two_identical_results_do_not_multiply(self, trees, monkeypatch):
+        """The name is the digest, so a retry that produced the same bytes is
+        the same file — kept once, which is the truth about it."""
+        schedule = self.ready(trees)
+        unit = schedule["units"][0]
+        arm_home = experiment.home(
+            schedule["arms"][unit["arm"]]["experiment"])
+
+        manifest = arm_home / "manifest.json"
+
+        def go(*_a, **_k):
+            path = trial._result_path(schedule, unit)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"same": true}', encoding="utf-8")
+            manifest.write_text(manifest.read_text(encoding="utf-8") + " ",
+                                encoding="utf-8")
+            return 0
+
+        good = manifest.read_text(encoding="utf-8")
+        monkeypatch.setattr(experiment, "run", go)
+        trial._buy(schedule, unit)
+        manifest.write_text(good, encoding="utf-8")
+        trial._buy(schedule, unit)
+        kept = [p for p in (arm_home / "rejected").iterdir()
+                if p.suffix == ".json"]
+        assert len(kept) == 1, [p.name for p in kept]
+
+    def test_one_result_under_two_reasons_keeps_both(self, trees,
+                                                     monkeypatch):
+        """The digest names the result, and the reason was written beside it —
+        so a retry that produced the same bytes under a *different* drift
+        replaced the first reason. The result looked untouched and half the
+        audit history was gone. Codex, fifth gate round, 2026-09-07.
+
+        The two attempts move different things: the manifest first, then a
+        frozen prompt. Same result, two reasons, and both have to survive.
+        """
+        schedule = self.ready(trees)
+        unit = schedule["units"][0]
+        arm_home = experiment.home(
+            schedule["arms"][unit["arm"]]["experiment"])
+        manifest = arm_home / "manifest.json"
+        prompt = arm_home / "prompts" / "system.md"
+
+        def buy(move):
+            def go(*_a, **_k):
+                path = trial._result_path(schedule, unit)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('{"identical": true}', encoding="utf-8")
+                move()
+                return 0
+            return go
+
+        good_manifest = manifest.read_text(encoding="utf-8")
+        good_prompt = prompt.read_text(encoding="utf-8")
+
+        monkeypatch.setattr(experiment, "run", buy(
+            lambda: manifest.write_text(good_manifest + " ", encoding="utf-8")))
+        trial._buy(schedule, unit)
+        manifest.write_text(good_manifest, encoding="utf-8")
+
+        monkeypatch.setattr(experiment, "run", buy(
+            lambda: prompt.write_text(good_prompt + "x", encoding="utf-8")))
+        trial._buy(schedule, unit)
+
+        reasons = sorted((arm_home / "rejected").glob("*.why.txt"))
+        assert len(reasons) == 2, [p.name for p in reasons]
+        said = " ".join(p.read_text(encoding="utf-8") for p in reasons)
+        assert "manifest has changed" in said, said
+        assert "system.md has changed" in said, said
+
+    def test_the_ledger_has_no_kind_it_cannot_write(self):
+        """A constant without a writer is a name for a state the chain cannot
+        carry, and a reader takes it for one it can. `REJECTED` was defined and
+        never appended; the open `PREPARED` row and the quarantined files are
+        what the design actually says."""
+        assert not hasattr(trial, "REJECTED")
+
+    def test_a_review_that_never_ran_leaves_nothing_behind(self, trees,
+                                                           monkeypatch):
+        """The control: no result, so nothing to quarantine, and the unit is
+        simply open."""
+        schedule = self.ready(trees)
+        unit = schedule["units"][0]
+        monkeypatch.setattr(experiment, "run", lambda *a, **k: 2)
+        assert trial._buy(schedule, unit) == 2
+        arm = experiment.home(schedule["arms"][unit["arm"]]["experiment"])
+        assert not (arm / "rejected").exists()
+
+
+class TestStatusSaysWhichCommandTakesTheResult:
+    """`status` said an open unit with a result on disk would be recorded by
+    "a resume". The recovery path is behind `--recover`, so an operator
+    reading that runs `run` and gets the branch that buys the review again.
+
+    Codex, on the gate before the first purchase, 2026-09-07 — the same round
+    that found the advice inside `run` pointing at `--recover` for a result
+    that must never be recovered. The two lines were wrong in opposite
+    directions, and money sits under both.
+    """
+
+    def opened(self, trees, with_result):
+        trial.freeze("t", "opus-arm", "sonnet-arm")
+        schedule, digest = trial.load_schedule("t")
+        unit = schedule["units"][0]
+        trial.append("t", {"kind": trial.PREPARED, "index": 0,
+                           "schedule_digest": digest},
+                     after=trial.ledger_state("t"))
+        if with_result:
+            path = trial._result_path(schedule, unit)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}", encoding="utf-8")
+        return schedule
+
+    def test_a_result_on_disk_names_the_flag(self, trees, capsys):
+        self.opened(trees, with_result=True)
+        trial.status("t")
+        said = capsys.readouterr().out
+        assert "--recover" in said, said
+        assert "buys the review again" in said, said
+
+    def test_no_result_says_a_resume_re_runs_it(self, trees, capsys):
+        """The control: without a result there is nothing to recover, and a
+        plain resume is the right advice."""
+        self.opened(trees, with_result=False)
+        trial.status("t")
+        said = capsys.readouterr().out
+        assert "a resume re-runs it" in said, said
+        assert "--recover" not in said, said
