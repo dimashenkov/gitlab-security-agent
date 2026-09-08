@@ -1,0 +1,218 @@
+{
+  "case_id": "rb-g65v-27r3-5p6m",
+  "language": "ruby",
+  "family": "path-traversal",
+  "case_digest": "9e82ba8e60ddf4a7",
+  "ran_at": "2026-09-08T21:59:34.741331+00:00",
+  "run_id": "1bc1c53a2ab0411987c241a9600e963e",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": {
+        "fingerprint": "e03bf34532af5b5e",
+        "severity": "low",
+        "confidence": "medium",
+        "verdict": "confirmed",
+        "blocking": false,
+        "matched": 1
+      },
+      "blocking": [],
+      "reported": 1,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false,
+        "models_served": [
+          "claude-sonnet-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.3041354
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 124.08406404099969,
+      "cost": 0.504629,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 22,
+        "output_tokens": 11659,
+        "cache_read_tokens": 146648,
+        "cache_write_tokens": 13972
+      },
+      "coverage": {
+        "changed": [
+          "lib/guard/livereload/websocket.rb"
+        ],
+        "examined": [
+          "lib/guard/livereload/websocket.rb"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": false,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 1,
+      "blocked": true,
+      "target": {
+        "fingerprint": "c0f82f29bd7a46f8",
+        "severity": "high",
+        "confidence": "high",
+        "verdict": "confirmed",
+        "blocking": true,
+        "matched": 1
+      },
+      "blocking": [
+        [
+          "path-traversal",
+          "lib/guard/livereload/websocket.rb",
+          0
+        ]
+      ],
+      "reported": 1,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": true,
+        "models_served": [
+          "claude-sonnet-5",
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.25508959999999997
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 160.68969058399944,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 32,
+        "output_tokens": 7956,
+        "cache_read_tokens": 203992,
+        "cache_write_tokens": 12183
+      },
+      "coverage": {
+        "changed": [
+          "lib/guard/livereload/websocket.rb"
+        ],
+        "examined": [
+          "lib/guard/livereload/reactor.rb",
+          "lib/guard/livereload/websocket.rb"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": true,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": true,
+  "unsafe_recall": true,
+  "pair_success": false,
+  "safe_exit": 0,
+  "unsafe_exit": 1,
+  "size_delta": 0.08967054743621501,
+  "safe_findings": [
+    {
+      "category": "path-traversal",
+      "file": "lib/guard/livereload/websocket.rb",
+      "severity": "low",
+      "title": "Unauthenticated path-traversal file-existence oracle via WebSocket HTTP request",
+      "fingerprint": "e03bf34532af5b5e",
+      "evidence": "        return _serve_file(_livereload_js_path) if path == './livereload.js'\n        data = _readable_file(path) ? HTTP_DATA_FORBIDDEN : HTTP_DATA_NOT_FOUND\n        send_data(data)",
+      "blocking": false
+    }
+  ],
+  "unsafe_findings": [
+    {
+      "category": "path-traversal",
+      "file": "lib/guard/livereload/websocket.rb",
+      "severity": "high",
+      "title": "Path traversal now serves arbitrary readable files over LiveReload HTTP port",
+      "fingerprint": "c0f82f29bd7a46f8",
+      "evidence": "def _serve(path)\n        return _serve_file(_livereload_js_path) if path == './livereload.js'\n        return _serve_file(path) if _readable_file(path)\n        send_data(\"HTTP/1.1 404 Not Found\\r\\nContent-Type: text/plain\\r\\nContent-Length: 13\\r\\n\\r\\n404 Not Found\")\n        close_connection_after_writing\n      end",
+      "blocking": true
+    }
+  ],
+  "cost": null,
+  "seconds": 160.68969058399944
+}

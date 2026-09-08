@@ -1,0 +1,202 @@
+{
+  "case_id": "rb-mx5j-mp4f-g8jg",
+  "language": "ruby",
+  "family": "injection",
+  "case_digest": "aae86416c7fc9015",
+  "ran_at": "2026-09-08T22:28:42.731924+00:00",
+  "run_id": "9088f51e0fac4cb080aed60b6f257e5b",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false,
+        "models_served": [
+          "claude-sonnet-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.0628129
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 24.57075099999929,
+      "cost": 0.1024165,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 12,
+        "output_tokens": 1435,
+        "cache_read_tokens": 53583,
+        "cache_write_tokens": 3969
+      },
+      "coverage": {
+        "changed": [
+          "lib/savon/model.rb"
+        ],
+        "examined": [
+          "lib/savon/model.rb"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": false,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 1,
+      "blocked": true,
+      "target": {
+        "fingerprint": "538f693ba671f26f",
+        "severity": "critical",
+        "confidence": "high",
+        "verdict": "confirmed",
+        "blocking": true,
+        "matched": 1
+      },
+      "blocking": [
+        [
+          "injection",
+          "lib/savon/model.rb",
+          0
+        ]
+      ],
+      "reported": 1,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": true,
+        "models_served": [
+          "claude-sonnet-5",
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.31073319999999993
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 192.25496366700008,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 30,
+        "output_tokens": 10663,
+        "cache_read_tokens": 194904,
+        "cache_write_tokens": 15145
+      },
+      "coverage": {
+        "changed": [
+          "lib/savon/model.rb"
+        ],
+        "examined": [
+          "lib/savon/client.rb",
+          "lib/savon/model.rb",
+          "lib/savon/string_utils.rb"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": false,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 1,
+  "size_delta": 0.01647875108412836,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "injection",
+      "file": "lib/savon/model.rb",
+      "severity": "critical",
+      "title": "Code injection via unsanitized WSDL operation names in module_eval",
+      "fingerprint": "538f693ba671f26f",
+      "evidence": "    def define_class_operation(operation)\n      class_operation_module.module_eval %{\n        def #{StringUtils.snakecase(operation.to_s)}(locals = {})\n          client.call #{operation.inspect}, locals\n        end\n      }, __FILE__, __LINE__ - 4\n    end",
+      "blocking": true
+    }
+  ],
+  "cost": null,
+  "seconds": 192.25496366700008
+}

@@ -1,0 +1,250 @@
+{
+  "case_id": "go-m6jg-wr9m-cg2f",
+  "language": "go",
+  "family": "path-traversal",
+  "case_digest": "8460f79ee6e91abe",
+  "ran_at": "2026-09-08T21:15:09.757228+00:00",
+  "run_id": "2e5d0b9b30af4e5a91951d792aaa7b9e",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false,
+        "models_served": [
+          "claude-sonnet-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.39990329999999996
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 156.205924417,
+      "cost": 0.6642405,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 14,
+        "output_tokens": 12869,
+        "cache_read_tokens": 121831,
+        "cache_write_tokens": 28153
+      },
+      "coverage": {
+        "changed": [
+          "cmd/uniget/hooks.go"
+        ],
+        "examined": [
+          "cmd/uniget/hooks.go"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": false,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": {
+        "fingerprint": "55c3cf5140b7193d",
+        "severity": "critical",
+        "confidence": "low",
+        "verdict": "confirmed",
+        "blocking": false,
+        "matched": 1
+      },
+      "blocking": [],
+      "reported": 1,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": true,
+        "models_served": [
+          "claude-sonnet-5",
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.7665082999999999
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 325.94914462500014,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 40,
+        "output_tokens": 22702,
+        "cache_read_tokens": 607391,
+        "cache_write_tokens": 40378
+      },
+      "coverage": {
+        "changed": [
+          "cmd/uniget/hooks.go"
+        ],
+        "examined": [
+          "cmd/uniget/common.go",
+          "cmd/uniget/hooks.go"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": false,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [
+        {
+          "fingerprint": "fd76407a2d8a6d39",
+          "title": "Removed directory-containment check in hooks remove/edit commands",
+          "severity": "medium",
+          "confidence": "medium",
+          "category": "path-traversal",
+          "file": "cmd/uniget/hooks.go",
+          "line": 171,
+          "impact": "state_change",
+          "reachable_without_authentication": "no",
+          "requires_user_interaction": "no",
+          "severity_derivation": "state_change → high; authentication required → medium",
+          "evidence": "\t\terr = os.Remove(hookFile)",
+          "description": "Both removeHooksCmd and editHooksCmd build hookFile by directly concatenating the unvalidated positional argument (hookFileName := args[0]) onto the target hooks directory. Previously, the code called filepath.Abs(hookFile) and verified the result had hooksDir as a prefix, rejecting traversal out of the intended hooks directory. That check was deleted for both commands and nothing replaces it. hookFileName is now used unchecked: in remove it is passed straight to os.Remove, and in edit it is opened in the configured editor and then os.Chmod(hookFile, 0700) is applied. A value such as ../../some/other/file walks outside prefix/uniget/hooks/type.d to any path the process can reach.",
+          "exploit_scenario": "Invoking uniget hooks remove --type pre-install with a hook name of ../../../../home/user/.ssh/id_rsa deletes that arbitrary file instead of being rejected with the previous is outside of hookDir error. The equivalent uniget hooks edit --type pre-install ../../../../some/config opens and then chmods an arbitrary file to 0700, changing its permissions. Anywhere hookFileName is derived from less-trusted input, such as a wrapper script or automation that forwards a name it received elsewhere, rather than being typed directly by a fully trusted operator, this becomes a path-traversal deletion/permission-change primitive outside the hooks sandbox the removed check existed to enforce.",
+          "recommendation": "Restore containment validation before acting on hookFile in both commands: resolve filepath.Abs(hookFile) and confirm it still has filepath.Clean(hooksDir) as a path prefix (comparing cleaned path segments, not a raw string prefix, to avoid a sibling-directory bypass), and reject the request otherwise.",
+          "verification": {
+            "verdict": "refuted",
+            "reason": "3/3 verifier(s) agreed — The diff does delete the `filepath.Abs` + `strings.HasPrefix(hookFileAbs, hooksDir)` containment check in both `removeHooksCmd` (cmd/uniget/hooks.go:144-177) and `editHooksCmd` (:189-243), so the reviewer reads the diff correctly — but there is no trust boundary being crossed. The only source of `hookFileName` is `args[0]` of a cobra positional argument on a purely local CLI (repo contains only cmd/uniget/*.go, no daemon, server, or IPC entry point — see list_directory), so the \"attacker\" is the same local user whose UID the `os.Remove`/`os.Chmod` executes under; they could already run `rm`/`chmod` on those same paths. The neighbouring `hooks add` command (:118-126) has never had such a check and writes to the same concatenated path, confirming this was ad-hoc hardening rather than an enforced sandbox, and the other checks removed in the same hunk (`os.Lstat(hookFile) == nil` → \"is a symlink\") were outright broken, rejecting every existing regular file. Deleting/chmod-ing a file you already own with your own privileges is not a security impact, so the claim fails on source and impact. Searched: I looked for (a) any remaining containment/normalisation of hookFileName — searched cmd/uniget/hooks.go in full for filepath.Abs/Clean/HasPrefix/Rel: none remain after the change, so the reviewer is right that no replacement exists; (b) any non-interactive caller that could feed these commands untrusted data — grepped for prefix/configDirectory uses across cmd/uniget and listed the whole tracked tree (only cmd/uniget/*.go, no HTTP handler, daemon, or self-exec wrapper), so the sole entry point is the operator's own shell invocation; (c) whether the binary crosses a privilege boundary (setuid/sudo drop-privs logic) — main.go only reads viper defaults (\"prefix\" default \"\", user/root config paths at main.go:111-143) and there is no privilege separation, so os.Remove/os.Chmod run with the invoking user's own rights.",
+            "votes": [
+              {
+                "verdict": "refuted",
+                "reasoning": "The diff does delete the `filepath.Abs` + `strings.HasPrefix(hookFileAbs, hooksDir)` containment check in both `removeHooksCmd` (cmd/uniget/hooks.go:144-177) and `editHooksCmd` (:189-243), so the reviewer reads the diff correctly — but there is no trust boundary being crossed. The only source of `hookFileName` is `args[0]` of a cobra positional argument on a purely local CLI (repo contains only cmd/uniget/*.go, no daemon, server, or IPC entry point — see list_directory), so the \"attacker\" is the same local user whose UID the `os.Remove`/`os.Chmod` executes under; they could already run `rm`/`chmod` on those same paths. The neighbouring `hooks add` command (:118-126) has never had such a check and writes to the same concatenated path, confirming this was ad-hoc hardening rather than an enforced sandbox, and the other checks removed in the same hunk (`os.Lstat(hookFile) == nil` → \"is a symlink\") were outright broken, rejecting every existing regular file. Deleting/chmod-ing a file you already own with your own privileges is not a security impact, so the claim fails on source and impact.",
+                "corrected_impact": "",
+                "corrected_confidence": "low",
+                "error": ""
+              },
+              {
+                "verdict": "refuted",
+                "reasoning": "The diff does remove the `filepath.Abs` + `strings.HasPrefix(hookFileAbs, hooksDir)` containment check in both `removeHooksCmd` (cmd/uniget/hooks.go:167-174) and `editHooksCmd` (cmd/uniget/hooks.go:226-239), so the code reads as described. But working backwards from the sinks, the only path into `os.Remove`/`os.Chmod` is `args[0]` of a Cobra subcommand registered at hooks.go:41 and :48, reached solely through `rootCmd.Execute()` in cmd/uniget/main.go:486 — i.e. the local operator's own shell invocation. The value is not attacker-controlled across any trust boundary: the deletion/chmod happens with exactly the privileges of the person who typed the command, who can already run `rm`/`chmod` on the same files. I searched the whole repository for any wrapper, service, or script that forwards externally-supplied names into `uniget hooks remove/edit` (`hooks (remove|edit|rm)`, `uniget hook`, and any HTTP listener) and found none, so the \"wrapper script forwards untrusted input\" scenario the finding leans on exists only outside this repo.",
+                "corrected_impact": "state_change",
+                "corrected_confidence": "low",
+                "error": ""
+              },
+              {
+                "verdict": "refuted",
+                "reasoning": "Working backwards from the sink: `os.Remove(hookFile)` at cmd/uniget/hooks.go:171 and `os.Chmod(hookFile, 0700)` at :236 are reachable only through cobra commands `removeHooksCmd`/`editHooksCmd`, which are registered solely in `initHooksCmd` (hooks.go:41,48) and driven by `args[0]` of an interactive CLI invocation — a repo-wide search for other callers or for any script/automation invoking `hooks remove|edit` found none. The \"source\" is therefore the operator's own command line, executed with the operator's own privileges (no setuid, no daemon, no network/queue input anywhere in cmd/uniget), so a user asking uniget to delete or chmod a path they name is exactly what `rm`/`chmod` would already let them do — no trust boundary is crossed. The removal is also not a coherent sandbox regression: sibling commands `addHooksCmd` (:103-115) and `testHookCmd` (:346-352, which *execs* the resulting path) build paths by the same raw concatenation and never had a containment check, and the same commit removed `os.Lstat(...); if err == nil { return \"is a symlink\" }` blocks (hooks.go edit and processHooks) that were inverted and rejected every existing regular file — i.e. broken code being reverted. Additionally `--prefix`/`--user` (main.go:93-147, 393) already let the same operator repoint hooksDir arbitrarily, so the prefix check never bounded what a caller could target.",
+                "corrected_impact": "",
+                "corrected_confidence": "low",
+                "error": ""
+              }
+            ],
+            "claimed_severity": "medium",
+            "claimed_confidence": "medium",
+            "claimed_line": 171,
+            "evidence_located_line": 171,
+            "line_corrected": false,
+            "introduced_by_this_change": true,
+            "attributed_by": "deleted",
+            "removes_existing_control": false,
+            "path_verified": true
+          },
+          "suppressed_by": ""
+        }
+      ],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 0,
+  "size_delta": 0.06648926202166336,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "path-traversal",
+      "file": "cmd/uniget/hooks.go",
+      "severity": "critical",
+      "title": "Symlink check removed from hook file processing before execution",
+      "fingerprint": "55c3cf5140b7193d",
+      "evidence": "\t\thookFile := path + \"/\" + file.Name()\n\t\terr := callback(hookFile)",
+      "blocking": false
+    }
+  ],
+  "cost": null,
+  "seconds": 325.94914462500014
+}

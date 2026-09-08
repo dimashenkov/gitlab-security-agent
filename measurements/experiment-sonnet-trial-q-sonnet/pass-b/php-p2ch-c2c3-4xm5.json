@@ -1,0 +1,198 @@
+{
+  "case_id": "php-p2ch-c2c3-4xm5",
+  "language": "php",
+  "family": "csrf",
+  "case_digest": "9ccba6cf3855c0ea",
+  "ran_at": "2026-09-08T20:50:29.653933+00:00",
+  "run_id": "b346deb5ff394cab9ab6892e2fae6987",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false,
+        "models_served": [
+          "claude-sonnet-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.1830238
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 63.039528208,
+      "cost": 0.302748,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 22,
+        "output_tokens": 4997,
+        "cache_read_tokens": 131406,
+        "cache_write_tokens": 11201
+      },
+      "coverage": {
+        "changed": [
+          "modules/backend/classes/BackendController.php",
+          "modules/backend/classes/Controller.php"
+        ],
+        "examined": [
+          "modules/backend/classes/BackendController.php",
+          "modules/backend/classes/Controller.php"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": {
+        "fingerprint": "018e6ab6d5d15eac",
+        "severity": "low",
+        "confidence": "high",
+        "verdict": "confirmed",
+        "blocking": false,
+        "matched": 1
+      },
+      "blocking": [],
+      "reported": 1,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": true,
+        "models_served": [
+          "claude-sonnet-5",
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.6263116999999999
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 289.407766916,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 42,
+        "output_tokens": 17385,
+        "cache_read_tokens": 521009,
+        "cache_write_tokens": 34623
+      },
+      "coverage": {
+        "changed": [
+          "modules/backend/classes/BackendController.php",
+          "modules/backend/classes/Controller.php"
+        ],
+        "examined": [
+          "modules/backend/classes/BackendController.php",
+          "modules/backend/classes/Controller.php"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 0,
+  "size_delta": 0.009370329981017004,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "csrf",
+      "file": "modules/backend/classes/Controller.php",
+      "severity": "low",
+      "title": "Removed case checks let AJAX handler methods run as CSRF-free GET page actions",
+      "fingerprint": "018e6ab6d5d15eac",
+      "evidence": "            $methodInfo = new \\ReflectionMethod($this, $name);\n            $public = $methodInfo->isPublic();\n            if ($public) {\n                return true;\n            }",
+      "blocking": false
+    }
+  ],
+  "cost": null,
+  "seconds": 289.407766916
+}
