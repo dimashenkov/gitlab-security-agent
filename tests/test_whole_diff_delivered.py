@@ -549,7 +549,7 @@ class TestTheReportSaysIt:
         body = self._render(Coverage(whole_diff_delivered=False,
                                      diff_truncated=True))
 
-        assert "too large to show in full" in body
+        assert "The reviewer was not shown the whole change" in body
         assert "never shown to the reviewer as a whole" not in body
 
     def test_an_unrelated_refusal_does_not_silence_it(self):

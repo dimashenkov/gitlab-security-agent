@@ -33,6 +33,7 @@ from .evidence import (
 )
 from .models import Candidate, Finding, RejectedClaim, StageMetrics, ToolCallRecord
 from .workspace import (
+    CUT_BY_DEADLINE,
     MAX_OUTPUT_CHARS,
     FileNotAtRevision,
     FileTooLarge,
@@ -580,7 +581,30 @@ def _handle_list_changed_files(ws: Workspace, session: Session, args: Dict[str, 
     )
 
 
-def _trim_diff(body: str) -> Tuple[str, bool]:
+@dataclass(frozen=True)
+class DiffCut:
+    """Where an oversized diff was cut, and not merely that it was.
+
+    The two cuts below are different facts for the reader, so they are two
+    fields and not one boolean. A boundary cut leaves whole files and drops
+    later ones; a mid-file cut leaves one file stopping part-way through, and
+    the remedy for it is a different tool call. Returning `True` for both is
+    what let the note say "the files above are whole" over half a file.
+    """
+
+    body: str
+    trimmed: bool
+    # True only when the surviving text stops inside a file's hunks.
+    mid_file: bool = False
+    # The file the cut landed inside, when it could be named from the headers
+    # that survived. `None` with `mid_file` set means the cut came before those
+    # headers were reached — still a mid-file cut, just an unnamed one. Reading
+    # "no name" as "not mid-file" is the same absence-as-agreement mistake this
+    # whole function exists to undo.
+    inside_file: Optional[str] = None
+
+
+def _trim_diff(body: str) -> DiffCut:
     """Cut an oversized diff where a file ends, never mid-line.
 
     The first version sliced at exactly 120,000 characters. That can land in
@@ -595,15 +619,89 @@ def _trim_diff(body: str) -> Tuple[str, bool]:
     a state the model can act on and the accounting can see. A single file
     larger than the whole ceiling has no boundary to cut at, and falls back to
     the last complete line rather than to nothing.
+
+    That fallback is the case this return value exists for. Measured on a
+    304,070-character diff whose first file is a 9,000-line rewrite: none of
+    the 9,000 added lines were delivered, the second changed file was absent,
+    and the note the model reads announced the delivered files as whole. The
+    caller could not have said otherwise — it was handed one boolean for two
+    cuts. So the shape of the cut travels with the body.
     """
     if len(body) <= MAX_DIFF_CHARS:
-        return body, False
+        return DiffCut(body, False)
     head = body[:MAX_DIFF_CHARS]
     boundary = head.rfind("\ndiff --git ")
     if boundary > 0:
-        return head[:boundary], True
+        return DiffCut(head[:boundary], True)
     line_end = head.rfind("\n")
-    return (head[:line_end] if line_end > 0 else head), True
+    kept = head[:line_end] if line_end > 0 else head
+    # A ceiling that falls exactly where the next file's header begins cut at a
+    # boundary after all — there was no boundary *inside* the ceiling to find,
+    # which is a fact about the search and not about the diff. Calling it
+    # mid-file would name a file that is in fact whole, and send the reader to
+    # re-read something it already has.
+    if body[len(kept):].startswith("\ndiff --git "):
+        return DiffCut(kept, True)
+    # The same parser the exposure records use, so a quoted or escaped path is
+    # named here the way it is named everywhere else. With no boundary inside
+    # the ceiling there is at most one file in `kept`, so the last name it
+    # carries is the file being cut.
+    carried = _paths_in_diff(kept)
+    return DiffCut(kept, True, mid_file=True,
+                   inside_file=carried[-1] if carried else None)
+
+
+def _read_cut_note(ws: Workspace) -> str:
+    """What to tell the model when the *read* was cut, not the rendering.
+
+    Two things stop `Workspace._bounded` and their remedies point in opposite
+    directions. Raising `SECURITY_SCAN_DIFF_CEILING_BYTES` repairs a byte cut;
+    for a deadline cut it lets more output accumulate before the clock kills it
+    anyway, so naming it there is worse than saying nothing. The cause is
+    carried out of `_bounded` for exactly this. Codex, tenth gate round,
+    2026-09-08.
+
+    Empty when nothing was cut, so callers can append it unconditionally.
+    """
+    if not ws.last_diff_truncated:
+        return ""
+    if ws.last_diff_cause == CUT_BY_DEADLINE:
+        return (
+            # **It says which limit stopped the read, and nothing about the
+            # size of the change.** It said "this is a slow read and not a
+            # large change", which the deadline establishes nothing about —
+            # and `_bounded`'s own marker says the opposite, correctly, one
+            # layer down. Two messages about one cut, disagreeing. Codex,
+            # eleventh gate round.
+            "\n\n[Reading this diff hit the git deadline and stopped, so its "
+            "end is missing; the change may be any size. Raising "
+            "SECURITY_SCAN_DIFF_CEILING_BYTES does not help with this cut and "
+            "lets more output pile up before the same clock stops it. {} This "
+            "review is recorded as incomplete.]".format(
+                # **Not "ask for one file at a time" when one file is what was
+                # asked for.** `_handle_get_diff` calls this for a scoped
+                # request too, and advice the reader has already taken sends
+                # it round the same timeout again. Codex, twelfth gate round.
+                #
+                # And the tool argument is not the test. A run started with
+                # `--path huge.py` sets `Workspace.scope`, so a plain
+                # `get_diff {}` is already one file — while a scope covering a
+                # directory is several, where narrowing still helps. The
+                # resolved count is the fact, and `diff()` is where it is
+                # known. Codex, thirteenth gate round, 2026-09-08.
+                "Narrowing further is not possible: this request was already "
+                "for one file. Its diff cannot be retrieved within the "
+                "deadline, so the change to it has to be split, or git here "
+                "has to be made faster." if ws.last_diff_paths == 1 else
+                "Ask for one file at a time with `path`.")
+        )
+    return (
+        "\n\n[Diff cut while it was being read, at the workspace byte "
+        "ceiling: the end of this diff is missing. Raising "
+        "SECURITY_SCAN_DIFF_CEILING_BYTES is the remedy for this cut, up to "
+        "the separate fixed limit on how much can be shown at all. This "
+        "review is recorded as incomplete.]"
+    )
 
 
 def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> ToolResult:
@@ -633,7 +731,15 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
     # reviews. Both cuts, both scopes, one flag.
     if not body.strip():
         return ToolResult(
-            "Empty diff for {}.".format(path or "this merge request"),
+            # The cut note goes here too. `_bounded` appends its own marker, so
+            # a cut body is not empty on any path found today — but "empty" and
+            # "cut so early there is nothing left" read identically to the
+            # model, and the difference is the whole subject of this module.
+            # Hardened rather than argued away: the branch is cheap and the
+            # reasoning that says it is unreachable is exactly the kind that
+            # stops being true one refactor later. Codex, tenth gate round.
+            "Empty diff for {}.".format(path or "this merge request")
+            + _read_cut_note(ws),
             "empty diff",
             diff_truncated=ws.last_diff_truncated,
             # A whole change with no diff body is a change with no text in it —
@@ -643,18 +749,91 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
             # inventory already names those files and why they cannot be read.
             whole_diff=bool(not path and not ws.last_diff_truncated),
         )
-    body, trimmed = _trim_diff(body)
+    cut = _trim_diff(body)
+    body, trimmed = cut.body, cut.trimmed
     truncated_change = bool(trimmed or ws.last_diff_truncated)
-    note = (
-        "\n\n[Diff trimmed at {} characters, at a file boundary. The files "
-        "above are whole; the ones after the cut are not here at all. Request "
-        "them individually with `path`.]".format(MAX_DIFF_CHARS)
-        if trimmed else ""
-    )
+    # The note is the only thing the model has to act on, so it says which of
+    # the two cuts happened. The boundary one has a remedy — ask for the
+    # missing files. **The mid-file one has none, and the note has to say so.**
+    #
+    # It first said "read it in windows with `read_file` instead", which Codex
+    # rejected on the gate for this change: `read_file` returns the file's text
+    # at the reviewed revision, which is the state *after* the change and not
+    # the change. It cannot show a deleted line, and it cannot tell an added
+    # line from one that was always there. Naming it as the remedy replaced a
+    # remedy that loops with one that answers a different question — and a
+    # reviewer that believes it has recovered the change stops looking, which
+    # is worse than one that knows it cannot.
+    #
+    # So this names what the tools can still establish, and then says plainly
+    # that the missing hunks are not among them. The run is already recorded
+    # incomplete (`diff_truncated` reaches `gate._partial`); the note must not
+    # imply otherwise.
+    # **The two notes are composed, not chosen between.** `trimmed` is this
+    # module's character limit; `ws.last_diff_cause` is the workspace's, and
+    # they are not alternatives — a byte cut at the default 512 KiB ceiling
+    # returns far more than `MAX_DIFF_CHARS`, so both fire on the same call.
+    # The first version used the read-cut note only when `trimmed` was false,
+    # which meant the cause was reported in exactly the configuration where it
+    # never happens and discarded in the ordinary one. Codex, eleventh gate
+    # round, 2026-09-08; the tests before it exercised only cuts that exclude
+    # each other, which is how it read as covered.
+    if not trimmed:
+        note = ""
+    elif cut.mid_file:
+        note = (
+            "\n\n[Diff trimmed at {} characters, in the middle of {}. Its "
+            "hunks stop part-way through: the rest of that file's changes are "
+            "not here.{} Those hunks cannot be retrieved: asking for that file "
+            "with `path` is cut in the same place, and `read_file` returns its "
+            "text at the reviewed revision — the state after the change, not "
+            "the change, so a removed line is not in it and an added line is "
+            "indistinguishable from one that was always there. This review is "
+            "recorded as incomplete.]".format(
+                MAX_DIFF_CHARS,
+                "`{}`".format(cut.inside_file) if cut.inside_file
+                # No header survived the cut, so the file cannot be named. The
+                # reader still needs to know the text stops mid-file; the name
+                # is one `list_changed_files` away, the false "this is whole"
+                # is not recoverable.
+                else "a file whose header did not survive the cut, so it "
+                     "cannot be named here",
+                # Only a whole-change diff has files after the cut one. Saying
+                # so for a single-file request would send the reader looking
+                # for files this call was never going to carry.
+                # And `path` is qualified, because a dropped later file can be
+                # over the ceiling on its own and comes back cut in exactly the
+                # same way. An unqualified "request them with `path`" is the
+                # same defect as the one this whole note exists to fix, one
+                # file further down.
+                " No file changed after it is here either; "
+                "`list_changed_files` names them, and each can be requested "
+                "with `path` unless its own diff is over the ceiling too, in "
+                "which case that one is cut the same way." if not path else "",
+            )
+        )
+    else:
+        note = (
+            "\n\n[Diff trimmed at {} characters, at a file boundary. The files "
+            "above are whole; the ones after the cut are not here at all. "
+            "Request them individually with `path` — except any whose own diff "
+            "is over the ceiling, which comes back cut the same way.]".format(
+                MAX_DIFF_CHARS)
+        )
     return ToolResult(
-        body + note,
+        # Both notes, whichever fired. Two cuts on one call are two facts and
+        # the reader needs both: the character trim says what is missing from
+        # the end of this result, the read cut says the body it trimmed was
+        # already short of the change.
+        body + note + _read_cut_note(ws),
+        # The summary is what the transcript and the accounting keep, and a
+        # mid-file cut recorded as plain "trimmed" is the same loss one layer
+        # up: nothing later could tell that a file was delivered in half.
         "diff for {} ({} chars{})".format(
-            path or "all files", len(body), ", trimmed" if trimmed else ""
+            path or "all files", len(body),
+            ", trimmed mid-file{}".format(
+                " in " + cut.inside_file if cut.inside_file else ""
+            ) if cut.mid_file else (", trimmed" if trimmed else "")
         ),
         examined=(ws.repo_path(path),) if path else (),
         # Every file the body actually carries. A whole-change diff names none
@@ -712,10 +891,42 @@ def _handle_read_file(ws: Workspace, session: Session, args: Dict[str, Any]) -> 
         body = ("`{}` was deleted by this change; the lines below are from the "
                 "**base revision**, before the removal.\n\n{}".format(path, body))
     if trimmed:
-        body += (
-            "\n\n[Output trimmed. Re-read with a narrower start_line/end_line "
-            "window to see the rest.]"
-        )
+        # **The remedy has to exist.** Two different cuts set `trimmed`, and
+        # the advice below fitted only one of them. When the body stopped
+        # because later *lines* did not fit, a narrower window does reach them.
+        # When it stopped inside a single line, it does not: one line is
+        # already the narrowest window, so following the advice returns the
+        # identical bytes, and a reviewer that trusts it loops. Measured: a
+        # 140,016-character line delivers `MAX_OUTPUT_CHARS` of itself and the
+        # rest is unreachable through this tool at any argument, while the
+        # message invites the reader to try again.
+        #
+        # The same defect was repaired once already, one level up: the ceiling
+        # moved from the blob to the rendered window, and the sentence pointing
+        # at the window stayed behind it. So this names the tool that does
+        # terminate. `search_code` returns a window centred on the match rather
+        # than the head of the line, which is the only way to see the inside of
+        # a line this long.
+        clip = ws.last_read_clip
+        if clip is None:
+            body += (
+                "\n\n[Output trimmed. Re-read with a narrower start_line/"
+                "end_line window to see the rest.]"
+            )
+        else:
+            body += (
+                "\n\n[Output trimmed inside line {}: that line is {} "
+                "characters and only the first {} are above. A narrower "
+                "start_line/end_line window returns these same bytes — one "
+                "line is the narrowest window there is. To see further into "
+                "it, search for a pattern with `search_code`: its result is a "
+                "window centred on the match.{}]".format(
+                    clip.number, clip.chars, MAX_OUTPUT_CHARS,
+                    " Lines after {} were selected and are not here; a window "
+                    "starting after it returns them.".format(clip.number)
+                    if clip.more_after else "",
+                )
+            )
     return ToolResult(
         body,
         "read {}".format(path),

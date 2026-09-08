@@ -225,7 +225,7 @@ post a new one on every push rather than edit in place. A token whose identity
 |---|---|
 | `SECURITY_SCAN_FAIL_ON_INCOMPLETE` | Default true. False lets a partially covered run exit 0. See the exit-code section before setting it. |
 | `SECURITY_SCAN_MAX_OUTPUT_TOKENS` | The run's output-token budget. Raise it rather than accepting an incomplete review. |
-| `SECURITY_SCAN_DIFF_CEILING_BYTES` | How much of a large change is read. Over the ceiling the change is reviewed in part and the report says so — raise it, split the change, or narrow with `--path`. |
+| `SECURITY_SCAN_DIFF_CEILING_BYTES` | How many **bytes** of a large change the workspace reads. A separate fixed limit bounds how much of it the reviewer is shown and is the smaller of the two by default, so raising this helps only when the byte ceiling is what cut the diff. Over either, the change is reviewed in part and the report says so — split the change, or narrow with `--path`. |
 | `SECURITY_SCAN_GATE_REMOVED_CONTROLS` | Default true: a change deleting a security control blocks regardless of the rating. A deleted guard is not a low-severity opinion. |
 | `SECURITY_SCAN_VERIFY_EFFORT` | Default `high`. A verifier that thinks less than the reviewer is not an independent check. |
 | `SECURITY_SCAN_VERIFIER_CONTEXT` | Below this size the verifier sees the whole file rather than a window. The control that settles a question is routinely outside a window. |

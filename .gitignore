@@ -17,6 +17,11 @@ CLAUDE.md
 # Permissions and environment for one machine, not a property of the product.
 .claude/settings.local.json
 
+# The mandate handed to an external reviewer for one round. It has to sit
+# inside the repository because the reviewer's sandbox is rooted here and
+# cannot open a path outside it; it is scratch, not a document.
+.codex-mandate.md
+
 # Hypothesis's example database — generated, machine-local, ~1 MB. The
 # counterexamples worth keeping are the named regression tests beside the
 # properties, not this cache.

@@ -146,6 +146,15 @@ EXPLAINED: Dict[str, str] = {
     "Capabilities.refusal_fallback": "read in agent.py where the call is built",
     "ChangedLines.removed_at": "read by ChangedLines' own helpers and by evidence.py",
     "Disposition.interaction": "carried through panel.py's own correction path",
+    # `_trim_diff` describes the cut it made and `_handle_get_diff` — the next
+    # function in the same module — turns that description into the note the
+    # model reads and the summary the transcript keeps. Nothing outside needs
+    # the shape of the cut: what crosses the boundary is
+    # `Session.diff_truncated`, which the gate reads. These two exist because
+    # one boolean could not say *which* cut happened, and the note that named a
+    # remedy was therefore wrong for one of them.
+    "DiffCut.mid_file": "read by _handle_get_diff, which writes the note",
+    "DiffCut.inside_file": "the same",
 }
 
 

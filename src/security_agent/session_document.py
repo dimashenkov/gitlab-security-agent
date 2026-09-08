@@ -573,6 +573,22 @@ def _decode_metrics(payload: Any, where: str) -> StageMetrics:
 
     Named per field rather than splatted, so a document naming a metric this
     version does not have is a refusal instead of a `TypeError` from far away.
+
+    **Every field is required, and that is deliberate.** Codex raised the
+    other reading on the gate of 2026-09-08: a document written before the
+    verification counters existed is now refused rather than falling back to
+    their dataclass defaults. Checked before answering — the document is
+    written into a `tempfile.mkdtemp` created by `Handoff` for one run, by the
+    child process, and read by the parent of that same process, so writer and
+    reader are always the same build and the older-document case has no path
+    to here.
+
+    Given that, defaulting a missing counter to zero would buy nothing and
+    cost the thing this repository exists to catch: a run that completed three
+    verifications would render "0 completed" and nothing would say the number
+    was absent rather than zero. Absence is not agreement. If a document ever
+    does have to survive a version change, the answer is a version field that
+    says which fields to expect, not a decoder that fills silence with counts.
     """
     payload = _object(payload, where)
     names = tuple(f.name for f in dataclass_fields(StageMetrics))

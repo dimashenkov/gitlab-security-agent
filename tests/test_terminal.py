@@ -452,3 +452,169 @@ class TestAnOpenQuestionIsVisibleBesideTheVerdict:
         text = self.rendered([])
         assert "exit 0 — nothing blocking" in text
         assert "unresolved" not in text
+
+
+class TestTheVerificationRowCannotOnlySayNOfN:
+    """The footer's `Verified` row, on runs where nothing was verified.
+
+    The denominator was `verified + verification_skipped` and the numerator was
+    `verified`, so the ratio was built out of its own numerator and could not
+    print anything but "N of N". Two populations sat outside both counters, and
+    they are exactly the ones a reader needs: findings dropped past
+    SECURITY_SCAN_VERIFY_MAX, and panels where every verifier call failed.
+
+    Measured on 2026-09-07 through `verify.verify_candidates`, with a client
+    that raises if a paid call is attempted: three unverified criticals
+    rendered `Verified  0 of 0 findings`, and four dead panels rendered
+    `Verified  4 of 4 findings` while `report.py` said "4 could not run" about
+    the same run. The terminal is the one people read in the CI log.
+    """
+
+    def row(self, **counters):
+        outcome = make_outcome()
+        for name, value in counters.items():
+            setattr(outcome.metrics, name, value)
+        text = terminal.render(outcome, Decision(exit_code=0, reason="ok"))
+        return next(line for line in text.splitlines() if "Verified" in line)
+
+    def test_findings_past_the_limit_are_in_the_denominator(self):
+        # The run that printed "0 of 0": nothing was panelled, so `verified` is
+        # zero, and three criticals were stamped unverified and counted nowhere.
+        row = self.row(verification_over_limit=3)
+        assert "0 of 3 findings completed" in row
+        assert "3 over the limit" in row
+
+    def test_a_panel_where_every_call_failed_is_not_completed(self):
+        row = self.row(verified=4, verification_unavailable=4,
+                       verification_failed=4)
+        assert "0 of 4 findings completed" in row
+        assert "4 unavailable" in row
+        assert "4 of 4" not in row
+
+    def test_a_partial_panel_completes_and_says_it_was_short(self):
+        """A verdict two verifiers out of three reached is a real verdict.
+
+        Counting it as unavailable would understate the review as badly as
+        counting a dead panel as completed overstates it.
+        """
+        row = self.row(verified=1, verification_completed=1,
+                       verification_degraded=1, verification_failed=1)
+        assert "1 of 1 finding completed" in row
+        assert "1 short a vote" in row
+
+    def test_every_disposition_is_in_the_denominator(self):
+        row = self.row(verified=3, verification_completed=2,
+                       verification_unavailable=1, verification_skipped=1,
+                       verification_over_limit=1)
+        assert "2 of 5 findings completed" in row
+        assert "1 non-blocking skip" in row
+        assert "1 over the limit" in row
+        assert "1 unavailable" in row
+
+    def test_a_clean_run_does_not_list_empty_baskets(self):
+        """The control. A row naming four dispositions on every clean run
+        teaches the eye to skip the whole line."""
+        row = self.row(verified=2, verification_completed=2)
+        assert "2 of 2 findings completed" in row
+        for word in ("over the limit", "unavailable", "short a vote",
+                     "non-blocking"):
+            assert word not in row
+
+
+class TestBothRenderersReadTheSameNumbers:
+    """The terminal row and the Markdown report's line, on one run, together.
+
+    They disagreed by construction: the report has always appended "· N could
+    not run" from `verification_failed`, while the terminal's ratio counted
+    those same findings as verified. One metric, two renderers, opposite
+    claims — and it survived because nothing ever asserted the pair together.
+
+    In this file rather than beside the report's own tests because the pair is
+    the assertion; splitting it leaves each renderer checked against itself,
+    which is the state the defect lived in.
+    """
+
+    def _both(self, **counters):
+        from security_agent.config import Config, GitLabContext
+        from security_agent.report import _coverage_section
+
+        outcome = make_outcome()
+        outcome.metrics.citations_accepted = 1
+        for name, value in counters.items():
+            setattr(outcome.metrics, name, value)
+        decision = Decision(exit_code=0, reason="ok")
+        row = next(line for line in
+                   terminal.render(outcome, decision).splitlines()
+                   if "Verified" in line)
+        markdown = " ".join(_coverage_section(
+            Config(gitlab=GitLabContext()), outcome, decision))
+        return row, markdown
+
+    def test_neither_calls_a_dead_panel_verified(self):
+        row, markdown = self._both(verified=4, verification_unavailable=4,
+                                   verification_failed=4)
+        assert "0 of 4 findings completed" in row
+        assert "0 of 4 findings completed" in markdown
+        assert "4 unavailable" in row
+        assert "4 unavailable" in markdown
+
+    def test_neither_loses_the_findings_past_the_limit(self):
+        row, markdown = self._both(verification_over_limit=3)
+        assert "0 of 3 findings completed" in row
+        assert "0 of 3 findings completed" in markdown
+        assert "3 over the limit" in row
+        assert "3 past SECURITY_SCAN_VERIFY_MAX" in markdown
+
+    def test_neither_loses_the_findings_when_verification_is_off(self):
+        """`SECURITY_SCAN_VERIFY=false` returns before any disposition is
+        recorded, so both renderers said "0 of 0" — a denominator of zero
+        reading as "nothing was owed" over findings nobody checked. Codex found
+        it on the gate for the four counters that fixed the other cases."""
+        row, markdown = self._both(verification_disabled=3)
+        assert "0 of 3 findings completed" in row
+        assert "0 of 3 findings completed" in markdown
+        assert "3 with verification off" in row
+        assert "3 with SECURITY_SCAN_VERIFY=false" in markdown
+
+
+class TestTheBannerFollowsTheGateNotTheStopReason:
+    """A forgiven partial review printed a green `PASSED`.
+
+    `SECURITY_SCAN_FAIL_ON_INCOMPLETE=false` leaves `outcome.complete` true
+    while `decision.partial` is true — the gate counts a truncated diff and
+    refused context as well as the stop reason. The Markdown renderer was
+    repaired for exactly this and the terminal was left behind, so the loudest
+    line in the CI log said PASSED over a change the reviewer saw part of, and
+    the line under it said "No findings reported." in green.
+
+    Found by Codex on the gate for that repair, 2026-09-08.
+    """
+
+    def rendered(self, partial, candidates=()):
+        outcome = make_outcome(candidates)
+        return terminal.render(
+            outcome, Decision(exit_code=0, reason="ok", partial=partial))
+
+    def test_a_forgiven_partial_review_is_not_called_passed(self):
+        text = self.rendered(True)
+        assert "INCOMPLETE, FORGIVEN" in text
+        assert "PASSED" not in text
+
+    def test_the_no_findings_line_is_not_green_over_a_partial_review(self):
+        assert "the review did not complete" in self.rendered(True)
+
+    def test_a_partial_review_with_findings_is_not_called_passed_either(self):
+        """The findings branch made the same claim over the same half-read
+        change, one line higher up, so repairing only the empty case would have
+        left the defect for every run that reported something."""
+        text = self.rendered(True, [Candidate(finding=make_finding())])
+        assert "INCOMPLETE, FORGIVEN" in text
+        assert "PASSED WITH FINDINGS" not in text
+
+    def test_a_complete_review_is_still_passed_and_still_green(self):
+        """The control. A banner that warns about every run warns about
+        none."""
+        text = self.rendered(False)
+        assert "PASSED" in text
+        assert "No findings reported." in text
+        assert "INCOMPLETE" not in text

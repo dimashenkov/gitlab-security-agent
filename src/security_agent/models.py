@@ -879,13 +879,88 @@ class StageMetrics:
     lines_corrected: int = 0
 
     # Layers 2 and 3.
+    #
+    # **`verified` still means "given a panel", not "came back with a verdict".**
+    # The ruling of 2026-09-07 asked for the second meaning; keeping the first
+    # and adding `verification_completed` beside it was chosen for two reasons.
+    # One is comparability: every artifact already on disk holds this number
+    # under the old meaning, and silently re-basing it makes the old runs and
+    # the new ones look like the same measurement when they are not. The other
+    # is `ScanOutcome.verification_ran`, which reads this field to decide
+    # whether a stage ran whose token usage nobody reported — a panel where
+    # every call errored ran, and spent, and reports nothing, and that is
+    # precisely the run whose cost would disappear from `total_usage` if
+    # "verified" started to mean "succeeded".
     verified: int = 0
+    # Findings that came out of the stage with at least one usable vote. This is
+    # the numerator a reader wants: `verified` counts submissions, and a panel
+    # whose every call failed is a submission with nothing behind it.
+    verification_completed: int = 0
     verification_skipped: int = 0
+    # Findings past SECURITY_SCAN_VERIFY_MAX. They are stamped `confirmed` with
+    # a reason saying nobody checked them, and until 2026-09-07 they were
+    # counted nowhere at all — three unverified criticals rendered "0 of 0".
+    verification_over_limit: int = 0
+    # Panels where every single call errored. Counted in `verified` as well,
+    # which is what made the terminal's ratio unable to read anything but "N of
+    # N": the same finding sat in the numerator and in the denominator.
+    verification_unavailable: int = 0
+    # Completed panels that lost at least one vote. A verdict reached by two
+    # verifiers out of three is a real verdict and belongs in `completed`, but a
+    # reader deciding whether to trust it should see that the panel was short.
+    verification_degraded: int = 0
+    # Findings that reached the verification stage with `SECURITY_SCAN_VERIFY`
+    # off. Until now they were counted nowhere, so the row read "0 of 0" over
+    # any number of unverified findings — the same defect the other four
+    # counters exist to fix, in the one branch that returns before reaching
+    # them. Codex found it on the gate for that repair.
+    #
+    # Its own disposition and not folded into `verification_skipped`: that one
+    # means "this finding could not block, so a panel would have bought
+    # nothing", which is a judgement about one finding, while this is a
+    # setting. Merging them would make a run with verification off
+    # indistinguishable from one that reasoned its way to the same place.
+    #
+    # **Not "every finding in the run", which is what this comment used to
+    # claim.** An accepted-risk finding is suppressed in `cli.py` before either
+    # runner is entered and is recorded there as `verification_skipped`, so a
+    # run with verification off has both counts. That is the right record —
+    # both statements are true of that finding, and the one already made is the
+    # more specific — but the count is over findings that got as far as the
+    # stage, not over the run. Codex, second gate round, 2026-09-08.
+    verification_disabled: int = 0
+    # At least one errored vote, whether or not the panel still reached a
+    # verdict — so this is `unavailable` plus `degraded`. Kept under its old
+    # name and its old arithmetic because artifacts recorded it before the two
+    # halves were told apart; the renderers now use the precise pair.
     verification_failed: int = 0
 
     # The number that decides whether verification is worth its cost: findings
     # whose gate disposition it actually changed.
     verdicts_changed: int = 0
+
+    @property
+    def verification_presented(self) -> int:
+        """Findings that entered the verification stage, by their dispositions.
+
+        Summed rather than counted at the door, and that is the whole repair.
+        The old denominator was `verified + verification_skipped`, which cannot
+        be smaller than `verified` — so the row could only ever read "N of N",
+        and the two populations outside both counters (past the limit, and
+        panels where every call failed) were invisible in exactly the runs
+        where a reader most needed to see them.
+
+        A sum over disjoint dispositions cannot drift from the numerator: every
+        finding the stage touched leaves it as completed, unavailable, skipped
+        as non-blocking, or over the limit, and nothing here can be incremented
+        without moving the total with it. It also picks up the non-blocking
+        skips `cli.py` records for accepted-risk findings before the stage is
+        called — those were candidates for verification too, and a door counter
+        inside the runners would have missed them.
+        """
+        return (self.verification_completed + self.verification_unavailable
+                + self.verification_skipped + self.verification_over_limit
+                + self.verification_disabled)
 
     def note_citation_rejection(self, reason: str) -> None:
         if "does not appear" in reason:
@@ -909,8 +984,18 @@ class StageMetrics:
                 "lines_corrected": self.lines_corrected,
             },
             "verification": {
+                # Additive, deliberately: `verified` and `failed` keep the
+                # names and the arithmetic the artifacts on disk were written
+                # with, so a run from before 2026-09-07 and a run from after it
+                # can still be compared on the same key.
                 "verified": self.verified,
+                "presented": self.verification_presented,
+                "completed": self.verification_completed,
                 "skipped": self.verification_skipped,
+                "over_limit": self.verification_over_limit,
+                "unavailable": self.verification_unavailable,
+                "degraded": self.verification_degraded,
+                "disabled": self.verification_disabled,
                 "failed": self.verification_failed,
                 "verdicts_changed": self.verdicts_changed,
             },

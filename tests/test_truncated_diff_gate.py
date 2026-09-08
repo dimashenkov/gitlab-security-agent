@@ -11,17 +11,51 @@ a document a person may or may not open, under a green tick.
 
 Truncation is deliberately *not* in `NEVER_FORGIVEN`. A profile that cannot
 conclude is a property of the configuration, and no run of it means anything; a
-diff over the ceiling is a property of one change, and the operator has real
-moves — split it, narrow the review with `--path`, read the oversized file in
-windows, or raise the ceiling. A gate that a large legitimate change can never
-satisfy is a gate that gets deleted, so this fails loudly by default and is
-forgiven by the same documented flag as every other partial review.
+diff over the ceiling is a property of one change, and the operator has a real
+move. A gate that a large legitimate change can never satisfy is a gate that
+gets deleted, so this fails loudly by default and is forgiven by the same
+documented flag as every other partial review.
 
-The windows are third in that list and were once absent from it, which mattered
-once any cut in any scope began to count: for a *single file* bigger than the
-ceiling, splitting the change and narrowing with `--path` are both advice that
-cannot be followed, and raising a global ceiling to read one file is the wrong
-lever. A reader told to do something they cannot do stops reading.
+**Which move, though, took eight gate rounds to state truthfully**, and every
+wrong version was the same shape: a sentence naming a remedy that nothing
+checked.
+
+`--path` is a remedy for the files whose own diff fits the limit, and for no
+others. A file bigger than it comes back cut in exactly the same way when asked
+for alone — whether it is the file the cut landed inside or a later one dropped
+entirely — and only splitting the change to it helps. Splitting it by which
+*cut* happened, as this file did for a round, gets that wrong for a dropped
+oversized file.
+
+Three candidates were tried for a general third move and all three refused.
+
+"Read the oversized file in windows" is worse than useless: `read_file` returns
+the reviewed revision, so it cannot show a removed line and cannot tell an
+added one from a line that was always there. It looks like a recovery and is
+not, and a reader who believes it has recovered the change stops looking.
+
+Raising `SECURITY_SCAN_DIFF_CEILING_BYTES` does not fill it either, and that
+was measured rather than argued: it moves `Workspace.diff_ceiling`, the ceiling
+on *bytes read*, while `tools.MAX_DIFF_CHARS` independently trims what the
+model is shown and is a module constant. With the byte ceiling raised fifty
+times above it, `last_diff_truncated` is False and the result is still trimmed.
+
+Saying flatly that it does not help was then wrong in the other direction. Two
+ceilings can cut a diff and `_why_partial` sees one flag for both, because
+`_handle_get_diff` collapses `trimmed` and `ws.last_diff_truncated` into one
+`diff_truncated` before the gate looks. So the sentence is conditional — the
+setting helps when the byte ceiling is what cut — which is what the code can
+support.
+
+The same missing distinction runs through the `--path` half: `DiffCut` knows
+whether the cut was mid-file and does not pass it on either, so both messages
+describe both cases rather than choosing. Carrying the cause through
+`Coverage` would let them say the true thing for the run in hand. It is not
+built, and `LIMITATIONS.md` records that.
+
+Splitting covers the single-file case after all: the change *to that file* can
+be split. What no move does is recover the current run; `LIMITATIONS.md`
+carries the residue.
 """
 
 from __future__ import annotations
@@ -35,7 +69,13 @@ from conftest import make_candidate
 from fakes import FakeClient, FakeResponse, text, tool_use
 from security_agent.agent import SecurityAgent
 from security_agent.config import Config, GitLabContext
-from security_agent.gate import EXIT_ERROR, EXIT_FINDINGS, EXIT_OK, decide
+from security_agent.gate import (
+    EXIT_ERROR,
+    EXIT_FINDINGS,
+    EXIT_OK,
+    decide,
+    truncation_remedy,
+)
 from security_agent.models import STOP_COMPLETED, STOP_INCONCLUSIVE, ScanOutcome
 from security_agent.runner_claude_code import _apply_session
 from security_agent.tools import Session, dispatch
@@ -104,7 +144,7 @@ class TestATruncatedDiffIsNotAPass:
         decision = decide(config, outcome_for(big_change))
 
         assert decision.exit_code == EXIT_ERROR
-        assert "first part of the diff" in decision.reason
+        assert "some changed lines were never delivered" in decision.reason
 
     def test_the_reason_says_what_to_do_about_it(self, config, big_change):
         """A warning nobody can act on is a warning that gets ignored. Turn
@@ -116,14 +156,168 @@ class TestATruncatedDiffIsNotAPass:
 
     def test_the_reason_names_the_remedy_for_one_oversized_file(
             self, config, big_change):
-        """Splitting the change and narrowing with `--path` are both impossible
-        when the file itself is over the ceiling — and since any cut in any
-        scope now counts, that is a case a reader will actually meet. Naming
-        only the two moves they cannot make sends them to raise a global
-        ceiling to read one file."""
+        """A single file whose own diff is over the shown-limit has exactly one
+        move — splitting the change to that file — and the sentence has to say
+        which one, because the other two do nothing there. `--path` on that
+        file reaches the identical limit, and the ceiling setting lifts the
+        byte limit and not this one.
+
+        Two candidates were tried in this slot and refused a round apart:
+        "read the oversized file in windows" (`read_file` returns the reviewed
+        revision, so it cannot show a removed line) and the ceiling setting
+        (measured — the workspace read it whole and the result was still
+        trimmed).
+        """
         decision = decide(config, outcome_for(big_change))
 
-        assert "windows" in decision.reason
+        assert "has to have the change to it split" in decision.reason
+        assert "asking for that file alone is cut in the same place" \
+            in decision.reason
+        assert "windows" not in decision.reason
+
+    def test_the_report_and_the_gate_do_not_disagree_about_the_remedy(
+            self, config, big_change):
+        """One run, two documents a person reads, and for one round they said
+        different things: the gate had been repaired and `report.py` still
+        recommended raising the ceiling "for a complete reading". Codex found
+        it on the fourth gate round, together with the same stale claim in
+        `README.md` and in this file's own narrative.
+
+        Asserted as a pair, because each was self-consistent while they
+        disagreed — which is the state that let it survive.
+
+        The first version of this test *blessed* the difference: it asserted
+        "does not help" in one and "helps only when" in the other, which is a
+        test written to accept exactly the contradiction it was added to
+        forbid. Codex found that on the fifth round, along with the fact that
+        the gate's flat claim was unsupportable — two ceilings can cut a diff
+        and `_why_partial` cannot tell which one did, because
+        `_handle_get_diff` collapses both into one flag before it looks.
+        """
+        from security_agent.report import _truncated_diff_note
+
+        decision = decide(config, outcome_for(big_change))
+        note = " ".join(_truncated_diff_note(outcome_for(big_change)))
+
+        # **Equality, not a list of substrings.** Two earlier versions of this
+        # test asserted selected phrases in each — which is a test that cannot
+        # enforce the property it is named for, because each copy was
+        # self-consistent while the pair contradicted itself. Codex said so on
+        # the seventh round, and the repair is structural: one function builds
+        # the sentence and each channel only chooses how identifiers are
+        # wrapped.
+        #
+        # Normalised for the three differences that are presentation:
+        # backticks (markdown against a job log), leading case and the full
+        # stop (a clause inside a verdict line against a sentence of its own).
+        def normalised(text):
+            return " ".join(text.replace("`", "").split()).strip(".").casefold()
+
+        shared = normalised(truncation_remedy())
+        assert shared in normalised(decision.reason), decision.reason
+        assert shared in normalised(note), note
+
+        # And the sentence itself still carries the qualification that took six
+        # rounds: `--path` is a remedy for the files whose own diff fits, and
+        # the ceiling setting only for the byte cut.
+        assert "--path helps only for the files whose own diff fits" in shared
+        assert "security_scan_diff_ceiling_bytes helps only when" in shared
+
+    def test_the_sentence_does_not_say_which_limit_cut_the_diff(self):
+        """It cannot know. `diff_truncated` is one flag over two limits, and
+        with `SECURITY_SCAN_DIFF_CEILING_BYTES` set below `MAX_DIFF_CHARS` a
+        diff can fit what the reviewer is shown and still be cut while the
+        workspace reads it — the same for a `--path` call on a file that fits
+        the display limit.
+
+        It opened with "larger than the reviewer can be shown" for one round,
+        which names one of the two. Codex, eighth gate round, 2026-09-08.
+        """
+        said = truncation_remedy()
+
+        assert said.startswith(
+            "at least one diff was cut before all of it reached"), said
+        assert "larger than the reviewer can be shown" not in said, said
+        assert "too large" not in said, said
+
+    def test_the_ceiling_setting_is_named_as_the_lever_that_does_not_work(
+            self, config, big_change):
+        """It filled the third slot for one round as an unqualified move, and
+        for one more round as an unqualified refusal. Both were wrong, in
+        opposite directions, and the second is the interesting one: two
+        ceilings can cut a diff, `_why_partial` sees one flag for both, and
+        "this lever does not help" is a claim about which ceiling cut it.
+
+        Named rather than omitted because it is the obvious lever, and a reader
+        who reaches for it unwarned and gets the same result stops trusting the
+        message. Conditional, because that is what the code can support.
+        """
+        decision = decide(config, outcome_for(big_change))
+
+        assert "SECURITY_SCAN_DIFF_CEILING_BYTES helps only when" \
+            in decision.reason
+        assert "the smaller of the two by default" in decision.reason
+
+    def test_raising_the_ceiling_really_does_not_complete_the_reading(
+            self, tmp_path):
+        """The measurement behind the sentence, and the thing the earlier
+        version of this test was missing: it asserted the setting's name and
+        never followed the advice.
+
+        Its own repository rather than the `big_change` fixture, whose diff is
+        under `MAX_DIFF_CHARS` and is only oversized because that fixture
+        patches the *byte* ceiling down to 4 KiB. Asking this question there
+        would answer about the patched limit and not about the real pair.
+
+        One file, one diff over 120,000 characters, and the workspace ceiling
+        raised fifty times above it: the workspace reads the whole thing —
+        `last_diff_truncated` is False, so the byte ceiling is provably not
+        what binds — and the model is still shown a trimmed diff.
+        """
+        from security_agent.tools import MAX_DIFF_CHARS, Session, dispatch
+        from security_agent.workspace import Workspace
+
+        root = tmp_path / "one-big-file"
+        root.mkdir()
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(root), *args], check=True,
+                           capture_output=True)
+
+        subprocess.run(["git", "init", "-q", str(root)], check=True,
+                       capture_output=True)
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        (root / "one.py").write_text("VALUE = 0\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "base")
+        base = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                              capture_output=True, text=True,
+                              check=True).stdout.strip()
+        (root / "one.py").write_text(
+            "".join("LINE_{} = {}\n".format(n, "z" * 40)
+                    for n in range(MAX_DIFF_CHARS // 40)), encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "change")
+
+        raised = Workspace(root=root, excludes=(), diff_base=base,
+                           diff_head="HEAD",
+                           diff_ceiling=MAX_DIFF_CHARS * 50)
+        result = dispatch(raised, Session(), "get_diff", {})
+
+        assert raised.diff_ceiling == MAX_DIFF_CHARS * 50
+        assert raised.last_diff_truncated is False, \
+            "the workspace read it whole, so the byte ceiling is not what binds"
+        assert "Diff trimmed at" in result.content, result.content[-300:]
+
+    def test_the_reason_does_not_promise_the_change_can_be_recovered(
+            self, config, big_change):
+        """Every move it names is about the *next* run. A reader who believes
+        the missing hunks can still be fetched stops here, and this run's
+        blindness becomes permanent and unnoticed."""
+        decision = decide(config, outcome_for(big_change))
+
+        assert "cannot be recovered" in decision.reason
 
     def test_a_change_inside_the_ceiling_is_unaffected(self, config, tmp_path):
         """The control: an ordinary change still passes with the ordinary
@@ -231,9 +425,13 @@ class TestTheCutHasToReachTheOutcome:
         The right model is a third thing and is not built: separate *truncation
         was observed* from *a relevant part is still unread*, and gate only on
         the second, so that reading the rest afterwards clears it. Until that
-        distinction exists, strict is the only correct choice — and the remedy
-        for one oversized file is to read it in windows, not to raise a global
-        ceiling.
+        distinction exists, strict is the only correct choice.
+
+        This paragraph used to end "and the remedy for one oversized file is to
+        read it in windows". It is not: `read_file` returns the reviewed
+        revision, so a removed line is not in it. There is no remedy for that
+        case except splitting the change to that file, and `LIMITATIONS.md`
+        records why. Codex, ninth gate round, 2026-09-08.
         """
         ws = self._fresh(big_change)
         session = Session()
@@ -265,7 +463,7 @@ class TestTheCutHasToReachTheOutcome:
         decision = decide(config, outcome)
 
         assert decision.exit_code == EXIT_ERROR
-        assert "first part of the diff" in decision.reason
+        assert "some changed lines were never delivered" in decision.reason
 
     def test_the_api_runner_records_the_cut_it_made(self, tmp_path, big_change):
         """The same journey on the other runner, driven by a real agent loop.
@@ -293,4 +491,4 @@ class TestTheCutHasToReachTheOutcome:
         decision = decide(cfg, outcome)
 
         assert decision.exit_code == EXIT_ERROR
-        assert "first part of the diff" in decision.reason
+        assert "some changed lines were never delivered" in decision.reason

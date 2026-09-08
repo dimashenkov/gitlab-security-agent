@@ -141,6 +141,43 @@ MAX_COLUMN_DIGITS = 20
 # string so it cannot be confused with a record whose text happens to be `--`.
 HUNK_SEPARATOR = object()
 
+# Why a bounded read stopped. Two causes, and they take opposite remedies:
+# raising `SECURITY_SCAN_DIFF_CEILING_BYTES` repairs the first and makes the
+# second worse. They shared one boolean until 2026-09-08, so the note the model
+# reads named the setting for both.
+CUT_BY_CEILING = "byte_ceiling"
+CUT_BY_DEADLINE = "deadline"
+
+
+@dataclass(frozen=True)
+class ClippedLine:
+    """A read that was cut *inside* one line, and which line it was.
+
+    Recorded because the remedy differs and only one of the two cuts has one.
+    A read that dropped later lines is answered by asking for a narrower
+    window. A single line longer than the output ceiling is not: the reader is
+    already looking at the narrowest window that exists, and `start_line=N,
+    end_line=N` returns the identical bytes. Measured on 2026-09-07 — a
+    140,009-character line delivered 2,000 characters and advised a narrower
+    window, so a reviewer following the advice loops on the same answer for
+    ever and the rest of that line is unreachable through this tool at any
+    argument.
+
+    The shape is the one `_trim_diff` arrived at for the same class of defect:
+    a message that names a remedy has to be able to tell which situation it is
+    in, and a boolean cannot.
+    """
+
+    # The line the body stops inside, 1-based, as the reader sees it.
+    number: int
+    # How long that line actually is, so the reader knows the size of what is
+    # missing rather than only that something is.
+    chars: int
+    # Whether the window selected lines after this one. They were not
+    # delivered, and unlike the clipped line itself they *are* reachable — a
+    # window starting after it returns them.
+    more_after: bool
+
 
 class GrepRecord:
     """One line git matched or gave as context, fields still in bytes.
@@ -436,6 +473,26 @@ class Workspace:
         # Set by `search`: whether the scan that produced the last count
         # stopped early, so the count is a floor rather than an answer.
         self.last_search_truncated = False
+        # Set by `_bounded`: `""`, `CUT_BY_CEILING` or `CUT_BY_DEADLINE`. Two
+        # different things stop a read and they have opposite remedies —
+        # raising the byte ceiling repairs the first and makes the second worse,
+        # by letting more output accumulate before the clock kills it anyway.
+        # `last_diff_truncated` answered "was it cut" and the caller filled in
+        # the cause, which is how the model was told to raise a setting that
+        # could not help it. Codex, tenth gate round, 2026-09-08.
+        self.last_diff_cause = ""
+        # How many paths the last diff was restricted to; 0 is the whole
+        # change. Set in `diff()`, read where the note has to know whether
+        # narrowing is still open to the reader.
+        self.last_diff_paths = 0
+        # Set by `_render_window`: `None`, or the one line a read was cut
+        # *inside*. Two cuts share the `trimmed` flag and only one of them has
+        # the remedy the flag's message names. Dropping later lines is answered
+        # by asking for a narrower window; a single line longer than the output
+        # ceiling is not, because the line is already the narrowest window
+        # there is and returns the identical bytes. So which cut happened
+        # travels beside the flag, in the same idiom as the two above.
+        self.last_read_clip: Optional[ClippedLine] = None
         # Zero means "use the class default". Held rather than defaulted at the
         # call site so `diff_ceiling` has one answer.
         self._diff_ceiling = max(0, int(diff_ceiling))
@@ -950,6 +1007,16 @@ class Workspace:
         # call that raised is still the last one — leaving the previous answer
         # standing would make a stale True or False survive a failure.
         self.last_diff_truncated = False
+        self.last_diff_cause = ""
+        # How many paths this diff was restricted to; 0 means the whole change.
+        # **The tool argument is not the answer to that.** A run started with
+        # `--path huge.py` sets `Workspace.scope`, so a plain `get_diff {}` is
+        # already one file — and the note told it to ask for one file at a
+        # time, which is what it had done. Counting the resolved paths rather
+        # than testing the argument also keeps a scope covering a directory or
+        # several `--path` values from being read as one file, which narrowing
+        # would still help. Codex, thirteenth gate round, 2026-09-08.
+        self.last_diff_paths = 0
         args = [
             "diff", "--no-color", "--no-ext-diff", "-M",
             "--unified={}".format(max(0, min(
@@ -959,6 +1026,7 @@ class Workspace:
         ]
         if path:
             args += ["--", self.repo_path(path)]
+            self.last_diff_paths = 1
         elif self.scope:
             # The resolved file list rather than the patterns themselves. A git
             # pathspec has its own magic prefixes and its own glob rules, and a
@@ -977,8 +1045,12 @@ class Workspace:
             if not in_scope:
                 return ""
             args += ["--", *(self.repo_path(p) for p in in_scope)]
-        body, truncated = self._bounded(args)
-        self.last_diff_truncated = truncated
+            self.last_diff_paths = len(in_scope)
+        body, cause = self._bounded(args)
+        # The boolean is kept beside the cause rather than replaced by it: the
+        # gate, the session document and several tests read it under the old
+        # meaning, and "was it cut" is still the question most of them ask.
+        self.last_diff_truncated = bool(cause)
         return body
 
     # How much of a diff is read before the pipe is closed.
@@ -995,12 +1067,18 @@ class Workspace:
 
     @property
     def diff_ceiling(self) -> int:
-        """The ceiling actually in force, which an operator can raise.
+        """The byte ceiling actually in force, which an operator can raise.
 
-        The gate tells a reader of a truncated review that they may raise this;
-        that sentence was false when it was written, because the number was a
-        constant with no configuration surface. A remedy nobody can perform is
-        worse than none — it moves the blame to a reader who cannot act.
+        The gate names this to a reader of a truncated review; that sentence
+        was false when it was written, because the number was a constant with
+        no configuration surface. A remedy nobody can perform is worse than
+        none — it moves the blame to a reader who cannot act.
+
+        It is named **conditionally** now, because raising this is not enough
+        on its own: `tools.MAX_DIFF_CHARS` bounds what the model is shown,
+        independently of this and with no setting behind it, and is the smaller
+        of the two by default. A change cut by that limit stays cut at any
+        value here. Measured 2026-09-08; see `LIMITATIONS.md`.
         """
         return self._diff_ceiling or self.MAX_DIFF_BYTES
 
@@ -1052,7 +1130,12 @@ class Workspace:
 
         chunks: List[bytes] = []
         size = 0
-        truncated = False
+        # **Which of the two, not merely that one of them.** The deadline and
+        # the byte ceiling both stop this loop and their remedies point in
+        # opposite directions; a caller handed one boolean has to guess, and
+        # the one that guessed told the model to raise the ceiling after a
+        # clock cut. Codex, tenth gate round, 2026-09-08.
+        cause = ""
         try:
             # Never more than the ceiling in one read. The first version asked
             # for 64k regardless and then compared, so a 300-byte diff under a
@@ -1061,7 +1144,7 @@ class Workspace:
             # rather than about the output.
             while size < self.diff_ceiling:
                 if time.monotonic() > deadline:
-                    truncated = True
+                    cause = CUT_BY_DEADLINE
                     break
                 chunk = proc.stdout.read(min(65_536, self.diff_ceiling - size))
                 if not chunk:
@@ -1083,30 +1166,41 @@ class Workspace:
                 # of the loop before this probe existed; what bounds a git that
                 # never answers is git's own exit, not this timer.
                 if proc.stdout.read(1):
-                    truncated = True
+                    cause = CUT_BY_CEILING
         finally:
             # Killed rather than drained: draining is what an unbounded read
             # does, and the point of stopping was not to hold the rest.
-            if truncated:
+            if cause:
                 proc.kill()
             proc.stdout.close()
             status = proc.wait()
 
-        if not truncated and status != 0:
+        if not cause and status != 0:
             raise WorkspaceError(
                 "git {} exited {}; no diff was produced".format(
                     " ".join(args[:6]), status))
 
         body = b"".join(chunks).decode("utf-8", "surrogateescape")
-        if truncated:
+        if cause:
             self.diff_truncated = True
             # Said in the output the model reads, because a diff that stops
             # halfway through a file looks exactly like a file that ends there.
+            #
+            # And it names the cause it actually had. "Cut off at N bytes" over
+            # a deadline cut is a wrong number *and* a wrong story: the reader
+            # concludes the change is too big when git was simply too slow, and
+            # the remedy that follows from that reading makes things worse.
             body = body.rsplit("\n", 1)[0] + (
                 "\n… this diff was cut off at {} bytes. What follows it was not "
                 "read, and a change this large has not been fully reviewed."
-                .format(self.diff_ceiling))
-        return body, truncated
+                .format(self.diff_ceiling)
+                if cause == CUT_BY_CEILING else
+                "\n… reading this diff hit the {}-second git deadline and "
+                "stopped. What follows it was not read; the change may be any "
+                "size, and this one was not fully reviewed."
+                .format(GIT_TIMEOUT_SECONDS))
+        self.last_diff_cause = cause
+        return body, cause
 
     def changed_line_map(self):
         """Lines this change is answerable for, per file, computed once.
@@ -1450,6 +1544,13 @@ class Workspace:
         works, which the previous one deliberately did not, there having been
         none.
         """
+        # Cleared first, so the record describes *this* read. A flag left set
+        # by an earlier call is read as a statement about the current one, and
+        # the message it produces would name a line the reader never asked for.
+        # The `read_file` handler falls back to `read_removed_file` on absence,
+        # which lands here a second time — so this has to be reset on entry and
+        # not only on the paths that raise.
+        self.last_read_clip = None
         # **Existence is settled before anything is streamed, on every path.**
         # It used to be settled only for a whole-file read, and the windowed
         # one inferred it: a failing `git show` raised a bare `WorkspaceError`,
@@ -1521,6 +1622,16 @@ class Workspace:
         if len(kept_lines) == 1 and len(kept_lines[0]) > MAX_OUTPUT_CHARS:
             kept_lines[0] = kept_lines[0][:MAX_OUTPUT_CHARS]
             trimmed = True
+            # **Which cut this was.** The caller's message names a remedy, and
+            # for this cut the remedy it used to name is the same call again:
+            # one line is already the narrowest window, so `start_line=N,
+            # end_line=N` returns these identical bytes. The line's real length
+            # comes from `selected`, which holds it whole — `kept_lines` has
+            # just been clipped and the number taken from it would be the
+            # ceiling, not the size of what is missing.
+            self.last_read_clip = ClippedLine(
+                number=selected[0][0], chars=len(selected[0][1]),
+                more_after=len(selected) > 1)
         selected = selected[: len(kept_lines)]
         body = "\n".join(kept_lines)
         # "of at least N" when the scan stopped at the ceiling. The exact count

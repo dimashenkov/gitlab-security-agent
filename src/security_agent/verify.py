@@ -157,6 +157,13 @@ def verify_candidates(
         for candidate in candidates:
             candidate.verdict = VERDICT_CONFIRMED
             candidate.verdict_reason = "verification disabled (SECURITY_SCAN_VERIFY=false)"
+            # Counted here, in the branch that returns before every other
+            # disposition is recorded. Without it the row read "0 of 0" for a
+            # run that presented findings and verified none of them — a
+            # denominator of zero saying nothing was owed rather than that
+            # nothing was done.
+            if metrics is not None:
+                metrics.verification_disabled += 1
         return usage
 
     # Verification exists to keep the gate from blocking on something unreal.
@@ -194,6 +201,12 @@ def verify_candidates(
     if metrics is not None:
         metrics.verified += len(to_verify)
     if len(candidates) > len(to_verify):
+        # Counted, not merely logged. These findings are stamped `confirmed`
+        # with a reason saying nobody looked at them, and until this counter
+        # existed they appeared in no total anywhere: a run with three
+        # unverified criticals past the limit rendered "Verified 0 of 0".
+        if metrics is not None:
+            metrics.verification_over_limit += len(candidates) - len(to_verify)
         log.warning(
             "verifying only the first %d of %d findings (SECURITY_SCAN_VERIFY_MAX); "
             "the remainder are reported unverified",
@@ -272,8 +285,7 @@ def verify_candidates(
                   candidate.removes_control)
         _decide(candidate)
         if metrics is not None:
-            if any(v.error for v in candidate.votes):
-                metrics.verification_failed += 1
+            _note_disposition(metrics, candidate)
             after = (candidate.severity, candidate.confidence, candidate.verdict,
                      candidate.removes_control)
             if before != after:
@@ -654,6 +666,38 @@ def _vote_from_payload(data: Any) -> Optional[Vote]:
 
 
 # ---------------------------------------------------------------- aggregation
+
+
+def _note_disposition(metrics: Any, candidate: Candidate) -> None:
+    """Record how one panelled finding left the stage, in exactly one basket.
+
+    Shared by both runners rather than written twice. The two used to hold one
+    copy each of "count a failure", they were already the only two places that
+    could disagree about what a verification result is, and a disagreement here
+    is a disagreement about whether a merge was checked.
+
+    The split follows `_decide`: a vote carrying `error` is unusable, and a
+    finding with no usable vote is reported *unverified*. So it did not
+    complete, whatever `verified` says about it having been submitted — that
+    conflation is what let the terminal claim "4 of 4" over four panels that
+    all failed. A panel that lost some votes and still reached a verdict did
+    complete, and says separately that it was short.
+
+    `verification_failed` keeps its old arithmetic — any errored vote — because
+    stored artifacts were written with it.
+    """
+    errored = sum(1 for vote in candidate.votes if vote.error)
+    usable = len(candidate.votes) - errored
+    if errored:
+        metrics.verification_failed += 1
+    if usable:
+        metrics.verification_completed += 1
+        if errored:
+            metrics.verification_degraded += 1
+    else:
+        # No votes at all lands here too, and correctly: a panel that recorded
+        # nothing is not a panel that agreed.
+        metrics.verification_unavailable += 1
 
 
 def _decide(candidate: Candidate) -> None:

@@ -749,10 +749,15 @@ class Config:
     # Zero means the workspace's own default, which is derived from what
     # `get_diff` shows the model.
     #
-    # Configurable because the gate tells a reader of a truncated review that
-    # they may raise it, and that sentence was false while the number was a
-    # constant — a remedy nobody can perform moves the blame to somebody who
-    # cannot act on it.
+    # Configurable because the gate names it to a reader of a truncated review,
+    # and that sentence was false while the number was a constant — a remedy
+    # nobody can perform moves the blame to somebody who cannot act on it.
+    #
+    # The gate names it **conditionally** now, and the condition is this one:
+    # it lifts the byte ceiling only. `tools.MAX_DIFF_CHARS` bounds what the
+    # model is shown, has no setting behind it, and is the smaller of the two
+    # by default — so raising this changes nothing for a change cut by that
+    # limit. Measured 2026-09-08, and written into `LIMITATIONS.md`.
     diff_ceiling_bytes: int = 0
     # How many estimated tokens of *tool output* one review may accumulate
     # before results stop being returned. Zero means unbounded, which is the

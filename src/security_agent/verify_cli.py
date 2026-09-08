@@ -69,6 +69,7 @@ from .session_document import SessionDocumentError, read_session
 from .verify import (
     _brief,
     _decide,
+    _note_disposition,
     _partition,
     _system_blocks,
     _tagged,
@@ -155,6 +156,12 @@ class ClaudeCodeVerifier:
         if not self.cfg.verify:
             for candidate in candidates:
                 _skip(candidate, "verification disabled (SECURITY_SCAN_VERIFY=false)")
+                # The same count as the API path, for the same reason: this
+                # branch returns before any disposition is recorded, so the row
+                # read "0 of 0" over findings nobody verified. The two runners
+                # are only comparable while they count the same way.
+                if metrics is not None:
+                    metrics.verification_disabled += 1
             return
 
         # Which findings are worth a session, and how many votes each gets, are
@@ -169,7 +176,8 @@ class ClaudeCodeVerifier:
                 "block the merge at the current settings ({})".format(
                     _why_not_gating(self.cfg, candidate))))
         to_verify = gating[: self.cfg.verify_max_findings]
-        for candidate in gating[self.cfg.verify_max_findings:]:
+        over_limit = gating[self.cfg.verify_max_findings:]
+        for candidate in over_limit:
             log.warning(
                 "verifying only the first %d of %d findings (SECURITY_SCAN_VERIFY_MAX)",
                 len(to_verify), len(gating))
@@ -183,6 +191,10 @@ class ClaudeCodeVerifier:
             # SECURITY_SCAN_VERIFY_MAX cut as verified, while those candidates
             # carry a reason saying nobody checked them.
             metrics.verified += len(to_verify)
+            # And the remainder counted here rather than left out of every
+            # total, which is what made the terminal render three unverified
+            # criticals as "Verified 0 of 0".
+            metrics.verification_over_limit += len(over_limit)
         if not to_verify:
             return
 
@@ -241,8 +253,12 @@ class ClaudeCodeVerifier:
                       candidate.removes_control)
             _decide(candidate)
             if metrics is not None:
-                if any(v.error for v in candidate.votes):
-                    metrics.verification_failed += 1
+                # `verify._note_disposition`, not a second copy of the same
+                # counting. This runner exists to be comparable with the API
+                # one, and a metric that means something slightly different on
+                # each transport is the one thing that would make the two runs
+                # incomparable while looking identical.
+                _note_disposition(metrics, candidate)
                 after = (candidate.severity, candidate.confidence, candidate.verdict,
                          candidate.removes_control)
                 if before != after:

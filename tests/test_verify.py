@@ -1149,3 +1149,326 @@ class TestTheVerifierSeesWhatAdmittedTheFinding:
         assert "raise Denied()" in brief
         assert "was deleted by the change" in brief
         assert "base revision" in brief
+
+
+class _ForbiddenClient:
+    """Any attribute of this is a paid call, so it raises instead.
+
+    The panel then errors on every vote through the path a real outage takes —
+    `verify_candidates` catching an exception out of a worker — rather than
+    through a stub that hands back errored votes ready-made.
+    """
+
+    def __getattr__(self, name):
+        raise RuntimeError("a paid API call was attempted: client.{}".format(name))
+
+
+class _EmptyWorkspace:
+    """A workspace with no files, so `_brief` takes its documented error path."""
+
+    diff_base = ""
+
+    def raw_text(self, path):
+        from security_agent.workspace import WorkspaceError
+
+        raise WorkspaceError("this workspace holds no files")
+
+    removed_text = raw_text
+
+
+class TestEveryFindingLeavesTheStageInOneBasket:
+    """The counters the `Verified` row is built from, at the runner.
+
+    Two populations used to be counted nowhere. A finding past
+    SECURITY_SCAN_VERIFY_MAX was stamped `confirmed` with the reason "not
+    verified — beyond the limit" and appeared in no total; a finding whose every
+    verifier call errored was counted in `verification_failed` *and* in
+    `verified`. So the terminal's denominator — `verified + skipped` — could
+    never be smaller than its numerator, and the row could only read "N of N".
+
+    Measured 2026-09-07 with `_ForbiddenClient`: three unverified criticals
+    rendered "0 of 0", four dead panels rendered "4 of 4". Adjudicated the same
+    day: keep the dispositions apart instead of forcing them into one ratio.
+    """
+
+    def _patch(self, monkeypatch, vote=None):
+        import security_agent.verify as verify
+
+        if vote is not None:
+            monkeypatch.setattr(
+                verify, "_one_vote",
+                lambda cfg, ws, client, system, tools, candidate, index: (
+                    vote(candidate, index), Usage()))
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        monkeypatch.setattr(verify, "verifier_tool_definitions",
+                            lambda schema, diff_available: [])
+        return verify
+
+    def test_findings_past_the_limit_are_counted_as_over_the_limit(
+            self, config, monkeypatch):
+        verify = self._patch(monkeypatch)
+        config.verify_max_findings = 0
+        metrics = StageMetrics()
+        candidates = [make_candidate(severity="critical", title="crit {}".format(i))
+                      for i in range(3)]
+
+        verify.verify_candidates(config, _EmptyWorkspace(), _ForbiddenClient(),
+                                 candidates, metrics=metrics)
+
+        assert metrics.verification_over_limit == 3
+        # The number the row needs: three findings entered the stage, none of
+        # them completed. Before this, both sides of the ratio were zero.
+        assert metrics.verification_presented == 3
+        assert metrics.verification_completed == 0
+
+    def test_a_panel_whose_every_call_failed_did_not_complete(
+            self, config, monkeypatch):
+        self._patch(monkeypatch)
+        import security_agent.verify as verify
+
+        config.verify_votes = 1
+        metrics = StageMetrics()
+        candidates = [make_candidate(severity="high", title="finding {}".format(i))
+                      for i in range(4)]
+
+        verify.verify_candidates(config, _EmptyWorkspace(), _ForbiddenClient(),
+                                 candidates, metrics=metrics)
+
+        assert all(v.error for c in candidates for v in c.votes)
+        assert metrics.verification_unavailable == 4
+        assert metrics.verification_completed == 0
+        assert metrics.verification_presented == 4
+
+    def test_a_partial_panel_completes_and_is_recorded_as_short(
+            self, config, monkeypatch):
+        """One vote of three lost is still a verdict two verifiers reached.
+
+        The old `verification_failed` said only "at least one call errored",
+        which is the same value for this run and for a panel that died — the
+        two readings the report could not tell apart.
+        """
+        def one_bad_vote(candidate, index):
+            if index == 0:
+                return Vote(verdict=VERDICT_UNCERTAIN, reasoning="",
+                            error="verification call failed: boom")
+            return Vote(verdict=VERDICT_CONFIRMED, reasoning="r")
+
+        verify = self._patch(monkeypatch, vote=one_bad_vote)
+        metrics = StageMetrics()
+        candidates = [make_candidate(severity="high")]
+
+        verify.verify_candidates(config, _EmptyWorkspace(), object(),
+                                 candidates, metrics=metrics)
+
+        assert metrics.verification_completed == 1
+        assert metrics.verification_degraded == 1
+        assert metrics.verification_unavailable == 0
+        assert metrics.verification_failed == 1
+
+    def test_the_dispositions_account_for_every_finding_that_entered(
+            self, config, monkeypatch):
+        """The property the ratio rests on, asserted without naming a number.
+
+        Skipped, over the limit, completed, unavailable — one basket each, and
+        their sum is what a reader is told the stage was given.
+        """
+        verify = self._patch(monkeypatch)
+        config.verify_max_findings = 2
+        config.fail_on = "high"
+        metrics = StageMetrics()
+        candidates = (
+            [make_candidate(severity="high", title="gating {}".format(i))
+             for i in range(4)]
+            + [make_candidate(severity="low", title="informational")])
+
+        verify.verify_candidates(config, _EmptyWorkspace(), _ForbiddenClient(),
+                                 candidates, metrics=metrics)
+
+        assert metrics.verification_presented == len(candidates)
+        assert (metrics.verification_completed + metrics.verification_unavailable
+                == metrics.verified)
+
+
+class TestTheCostOfAPanelThatFailedStaysVisible:
+    """Why `verified` kept meaning "submitted" and `verification_completed` is
+    a new field rather than a rename.
+
+    `ScanOutcome.verification_ran` reads `metrics.verified` to decide whether a
+    stage ran whose token usage nobody reported — `verify_cli` returns no
+    `Usage` at all by design. A panel where every call errored *ran*, and spent,
+    and reported nothing. Had `verified` been redefined to mean "completed",
+    that run would answer `verification_ran = False`, the unreported-stage
+    marker would not be merged, and `total_usage` would present the review's
+    cost as the whole run's cost — the exact defect `Usage.unreported_stage`
+    exists to prevent, one level up.
+    """
+
+    def test_a_stage_where_every_call_failed_still_counts_as_having_run(
+            self, config, monkeypatch):
+        import security_agent.verify as verify
+        from security_agent.models import ScanOutcome
+
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        monkeypatch.setattr(verify, "verifier_tool_definitions",
+                            lambda schema, diff_available: [])
+        config.verify_votes = 1
+        # No turns, no tool calls, no exposures: `review_ran` is false, so the
+        # one unreported stage this can count is the verification one.
+        outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+
+        verify.verify_candidates(config, _EmptyWorkspace(), _ForbiddenClient(),
+                                 [make_candidate(severity="high")],
+                                 metrics=outcome.metrics)
+
+        assert outcome.metrics.verification_completed == 0
+        assert outcome.verification_ran, (
+            "the panel ran and spent; a total that drops it is a bill nobody sees")
+        assert outcome.total_usage().unreported_stages == 1
+
+
+class TestBothRunnersCountTheSameWay:
+    """The CLI runner's counters, beside the API runner's.
+
+    The two runners exist to be comparable — that is the whole reason this
+    project can measure anything — so a counter that means one thing on the API
+    path and another through `claude` would make two runs of the same code
+    incomparable while looking identical. They already held one copy each of
+    "count a failure"; the dispositions are shared through
+    `verify._note_disposition` instead.
+
+    Here rather than in `test_verify_cli.py` because the assertion is the
+    agreement between the two, and that file's harness is built around a real
+    child process, which this question does not need. Nothing here launches a
+    process or spends anything: the session is replaced at `_one_vote`.
+    """
+
+    def _run_cli(self, config, candidates, monkeypatch, vote):
+        from security_agent import verify_cli
+        from security_agent.budget import Profile, RunBudget
+        from security_agent.models import Revision
+
+        monkeypatch.setattr(verify_cli.runner, "cli_available",
+                            lambda executable: "/nonexistent/claude")
+        monkeypatch.setattr(
+            verify_cli.ClaudeCodeVerifier, "_one_vote",
+            lambda self, path, candidate, index, allowance, root, slot: vote(
+                candidate, index))
+        metrics = StageMetrics()
+        budget = RunBudget(Profile(
+            "test", review_turns=None, review_tool_calls=40,
+            verifier_sessions=30, verifier_tool_calls=10, runtime_seconds=600))
+        verify_cli.verify_candidates_with_cli(
+            config, _EmptyWorkspace(), candidates, budget,
+            revision=Revision(mode="diff"), metrics=metrics)
+        return metrics
+
+    def _run_api(self, config, candidates, monkeypatch, vote):
+        import security_agent.verify as verify
+
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        monkeypatch.setattr(verify, "verifier_tool_definitions",
+                            lambda schema, diff_available: [])
+        monkeypatch.setattr(
+            verify, "_one_vote",
+            lambda cfg, ws, client, system, tools, candidate, index: (
+                vote(candidate, index), Usage()))
+        metrics = StageMetrics()
+        verify.verify_candidates(config, _EmptyWorkspace(), object(),
+                                 candidates, metrics=metrics)
+        return metrics
+
+    @staticmethod
+    def _dead(candidate, index):
+        return Vote(verdict=VERDICT_UNCERTAIN, reasoning="",
+                    error="the verifier session raised RuntimeError: boom")
+
+    def test_a_dead_panel_is_unavailable_on_both_paths(self, config, monkeypatch):
+        config.verify_votes = 1
+        api = self._run_api(
+            config, [make_candidate(severity="high", title="a")],
+            monkeypatch, self._dead)
+        cli = self._run_cli(
+            config, [make_candidate(severity="high", title="a")],
+            monkeypatch, self._dead)
+
+        assert api.verification_unavailable == cli.verification_unavailable == 1
+        assert api.verification_completed == cli.verification_completed == 0
+        assert api.verification_presented == cli.verification_presented == 1
+
+    def test_findings_past_the_limit_are_counted_on_both_paths(
+            self, config, monkeypatch):
+        config.verify_max_findings = 1
+        config.verify_votes = 1
+        def made():
+            # A fresh set per runner: votes are appended to the candidates, so
+            # reusing them would let the first run decide the second's counts.
+            return [make_candidate(severity="high", title="f {}".format(i))
+                    for i in range(3)]
+
+        api = self._run_api(config, made(), monkeypatch, self._dead)
+        cli = self._run_cli(config, made(), monkeypatch, self._dead)
+
+        assert api.verification_over_limit == cli.verification_over_limit == 2
+        assert api.verification_presented == cli.verification_presented == 3
+
+    def test_verification_switched_off_is_counted_on_both_paths(
+            self, config, monkeypatch):
+        """`SECURITY_SCAN_VERIFY=false` returns from both runners before any
+        disposition is recorded, so three findings nobody checked left
+        `verification_presented` at zero and the row read "0 of 0" — a
+        denominator saying nothing was owed rather than that nothing was done.
+
+        Codex found it on the gate for the four counters that fixed the other
+        cases: the repair had reached every branch except the one that returns
+        first. Its own disposition and not folded into
+        `verification_skipped`, which means "this finding could not block" — a
+        judgement about one finding, where this is a setting true of all of
+        them.
+        """
+        config.verify = False
+
+        def made():
+            return [make_candidate(severity="high", title="f {}".format(i))
+                    for i in range(3)]
+
+        api = self._run_api(config, made(), monkeypatch, self._dead)
+        cli = self._run_cli(config, made(), monkeypatch, self._dead)
+
+        assert api.verification_disabled == cli.verification_disabled == 3
+        assert api.verification_presented == cli.verification_presented == 3
+        assert api.verification_completed == cli.verification_completed == 0
+        assert api.verification_skipped == cli.verification_skipped == 0
+
+    def test_a_suppressed_finding_and_a_retained_one_are_both_accounted(
+            self, config, monkeypatch):
+        """With verification off, the two populations land in two different
+        baskets and the sum still has to be right.
+
+        An accepted-risk finding never reaches either runner: `cli.py` marks it
+        `verification_skipped` before the stage is entered, because "this
+        finding could not block" is true of it whatever the setting says. The
+        retained ones reach the stage and are `verification_disabled`. Both
+        records are correct and the denominator is their sum — which is what
+        `verification_presented` being a sum over dispositions, rather than a
+        count taken at the door, is for.
+
+        Codex asked for this one on the second gate round, having found that
+        the field's comment claimed the setting was "true of every finding in
+        the run". It is not; the comment is now what the code does.
+        """
+        config.verify = False
+        metrics = StageMetrics()
+        # What `cli.py` records for a suppressed finding, before any runner.
+        metrics.verification_skipped += 1
+
+        retained = [make_candidate(severity="high", title="f {}".format(i))
+                    for i in range(2)]
+        import security_agent.verify as verify
+        monkeypatch.setattr(verify, "_system_blocks", lambda cfg: [])
+        verify.verify_candidates(config, _EmptyWorkspace(), object(),
+                                 retained, metrics=metrics)
+
+        assert metrics.verification_disabled == 2
+        assert metrics.verification_skipped == 1
+        assert metrics.verification_presented == 3
+        assert metrics.verification_completed == 0

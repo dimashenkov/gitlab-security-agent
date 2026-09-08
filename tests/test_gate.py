@@ -426,7 +426,10 @@ def test_a_finished_review_that_opened_nothing_is_not_a_pass(config):
     assert decision.exit_code == EXIT_ERROR
     assert "without opening any part of the change" in decision.reason
     # And it says the true thing rather than guessing at a limit never hit.
-    assert "larger than the reviewer can be shown" not in decision.reason
+    # The truncation sentence no longer names a limit at all — two can cut a
+    # diff and the gate is not told which — so the marker is the clause it
+    # opens with. Codex, eighth gate round, 2026-09-08.
+    assert "cut before all of it reached the reviewer" not in decision.reason
 
 
 def test_a_review_that_opened_nothing_because_nothing_changed_still_passes(
@@ -499,3 +502,102 @@ def test_a_readable_file_beside_a_binary_one_is_still_refused(config):
 
     assert decide(config, outcome).exit_code == EXIT_ERROR
 
+
+
+class TestTheBannerFollowsTheGate:
+    """The banner asked `outcome.complete`, which is only the stop reason,
+    while `gate._partial` counts three things. So a truncated diff and a
+    context refusal each got "## ✅ AI security review — no findings reported"
+    over a review that had not seen the change — and the function's own comment
+    says the warning further down does not undo a green tick at the top.
+
+    Found by a hostile hunt whose mandate was one class: claims the code makes
+    about what it did that nothing verifies. Codex ruled the renderer must not
+    recompute `_partial`, so the decision carries the flag.
+    """
+
+    def banner(self, config, coverage):
+        from security_agent.report import render_markdown
+        outcome = ScanOutcome(mode="diff", coverage=coverage,
+                              finished_explicitly=True)
+        outcome.exposures = [("a.py", "get_diff")]
+        decision = decide(config, outcome)
+        head = [line for line in render_markdown(config, outcome, decision)
+                .splitlines() if line.startswith("## ")]
+        return decision, head[0] if head else ""
+
+    def forgiving(self, config):
+        return replace(config, fail_on_incomplete=False)
+
+    def test_a_truncated_diff_is_not_green(self, config):
+        decision, head = self.banner(
+            self.forgiving(config),
+            Coverage(changed=["a.py"], examined=["a.py"], diff_truncated=True))
+        assert decision.exit_code == EXIT_OK
+        assert decision.partial is True
+        assert "did not complete" in head, head
+
+    def test_context_refusals_are_not_green(self, config):
+        decision, head = self.banner(
+            self.forgiving(config),
+            Coverage(changed=["a.py"], examined=["a.py"], context_refusals=3))
+        assert decision.exit_code == EXIT_OK
+        assert "did not complete" in head, head
+
+    def test_a_complete_review_is_still_green(self, config):
+        """The control. A banner that warns about everything warns about
+        nothing."""
+        decision, head = self.banner(
+            self.forgiving(config),
+            Coverage(changed=["a.py"], examined=["a.py"]))
+        assert decision.partial is False
+        assert "no findings reported" in head, head
+
+    def test_the_flag_is_adjudicated_once(self, config):
+        """Carried on the decision rather than recomputed by the renderer: two
+        places deciding what partial means is two places to drift."""
+        outcome = ScanOutcome(mode="diff", finished_explicitly=True,
+                              coverage=Coverage(changed=["a.py"],
+                                                examined=["a.py"],
+                                                diff_truncated=True))
+        outcome.exposures = [("a.py", "get_diff")]
+        assert decide(self.forgiving(config), outcome).partial is True
+
+
+class TestTheVerdictDoesNotBlameSeverity:
+    """"N finding(s) reported, none at or above the X threshold" was returned
+    whenever nothing blocked, whatever the reason — and it was printed about a
+    withheld `critical` whose finding had been filed as pre-existing by one
+    line of `.gitattributes`.
+
+    Which rule applied is in `non_blocking_reasons`, one reason per finding.
+    """
+
+    def withheld(self, config):
+        """A critical finding held back for attribution, not for severity —
+        which is the case the old sentence described wrongly."""
+        return decide(config, outcome_with(
+            make_candidate(severity="critical", in_changed_lines=False)))
+
+    def test_the_sentence_does_not_name_the_threshold(self, config):
+        decision = self.withheld(config)
+        assert "at or above" not in decision.reason, decision.reason
+        assert "none blocking" in decision.reason, decision.reason
+
+    def test_the_real_reason_is_still_carried(self, config):
+        """The sentence says less; the structure has to say the same. A
+        shorter headline that also loses the detail is not honesty."""
+        decision = self.withheld(config)
+        assert decision.non_blocking_reasons, decision
+        assert any("pre-existing" in line
+                   for line in decision.non_blocking_reasons), \
+            decision.non_blocking_reasons
+
+    def test_a_finding_below_the_threshold_still_reads_sensibly(self, config):
+        """The control: when severity *is* the reason, the sentence must not
+        have become vague to be honest."""
+        decision = decide(config, outcome_with(make_candidate(severity="low")))
+        assert "none blocking" in decision.reason, decision.reason
+        assert any("threshold" in line or "below" in line
+                   for line in decision.non_blocking_reasons), \
+            decision.non_blocking_reasons

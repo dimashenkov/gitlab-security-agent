@@ -1318,3 +1318,45 @@ Two more boundaries of the same tool:
   records the file only if the two match, which is stronger than the unit
   recovery — but it depends on the arm's rows still building the same thing,
   which is exactly what the drift check above is for.
+
+## A single file whose diff is over 120,000 characters can never be read whole
+
+Two ceilings cut the diff and they are independent. `Workspace.diff_ceiling`
+bounds how many **bytes** the workspace will read and is configurable through
+`SECURITY_SCAN_DIFF_CEILING_BYTES`. `tools.MAX_DIFF_CHARS` bounds how many
+**characters** the model is shown and is a module constant with no setting
+behind it. The second is the smaller on any default configuration, so it is the
+one that binds.
+
+The consequence is narrow and real: when one file's own diff exceeds 120,000
+characters, no value of the environment variable makes that run complete. The
+run is recorded partial, `SECURITY_SCAN_FAIL_ON_INCOMPLETE` decides whether it
+blocks, and **the operator's only move is to split the change to that file.**
+`--path` is not a second one: scoping the review to that file alone reaches the
+identical limit. That is true wherever such a file sits — the one the cut
+landed inside, or a later one dropped entirely — so `--path` is a remedy for
+the *files whose own diff fits*, and for no others. Neither move recovers what
+*this* run did not see.
+
+Measured on 2026-09-08 with the workspace ceiling raised fifty times above
+`MAX_DIFF_CHARS`: `last_diff_truncated` was False, so the byte ceiling was
+provably not what bound, and the tool result still carried "Diff trimmed at
+120000 characters". The test is
+`test_raising_the_ceiling_really_does_not_complete_the_reading`.
+
+Written down rather than repaired because deriving the model-facing ceiling
+from the configured one changes how much text a hostile change can push into
+the reviewer's context, and that is a decision with its own argument. Three
+gate rounds put a remedy in the operator's message that turned out not to work
+— reading the file in windows, then raising this setting flatly — so the
+message names the setting conditionally: it helps when the byte ceiling is
+what cut the diff, and not otherwise.
+
+**Conditionally, because the run cannot tell which ceiling cut it.**
+`_handle_get_diff` knows — `trimmed` is the character limit and
+`ws.last_diff_truncated` is the byte one — and collapses both into a single
+`diff_truncated` flag before the gate or the report sees it. So neither
+message can say which move will work, only which one might. Carrying the cause
+through `Coverage` would let both say the true thing for the run in hand; it
+is not built, and this paragraph is the record that it is missing rather than
+overlooked.

@@ -81,7 +81,22 @@ def render(outcome: ScanOutcome, decision: Decision, report_path: str = "") -> s
         # Green only when the review actually finished. An incomplete run has
         # an empty finding list because it stopped, not because it looked and
         # found nothing, and colouring that green says the opposite.
-        if outcome.complete:
+        #
+        # **`decision.partial`, not `outcome.complete`.** The second is only
+        # the stop reason; the gate counts three things, and the other two — a
+        # truncated diff and refused context — leave `complete` true. With
+        # `SECURITY_SCAN_FAIL_ON_INCOMPLETE=false` such a run therefore printed
+        # green "No findings reported." over a change the reviewer was shown
+        # half of. The markdown renderer was repaired for exactly this and the
+        # terminal was left behind; Codex found it on the gate for that repair.
+        #
+        # `exit_code` is in the condition as well, and not as belt and braces:
+        # `partial` is one adjudicated fact and every decision that reaches
+        # here in production carries it, but a decision that did not get to an
+        # answer at all must never print this line, whatever else it holds.
+        # Exit 2 means "I could not check", and that is the one thing this
+        # renderer may not render as "nothing to report".
+        if not decision.partial and decision.exit_code != EXIT_ERROR:
             lines += ["", INDENT + s("No findings reported.", "32")]
         else:
             lines += ["", INDENT + s("No findings — the review did not complete.", "33")]
@@ -102,6 +117,18 @@ def _banner(s: Style, outcome: ScanOutcome, decision: Decision) -> List[str]:
         verdict, colour = "REVIEW INCOMPLETE", "1;35"
     elif decision.blocked:
         verdict, colour = "MERGE BLOCKED", "1;31"
+    elif decision.partial:
+        # A partial review the operator chose to forgive. The exit code is 0
+        # and that is correct — `SECURITY_SCAN_FAIL_ON_INCOMPLETE=false` is a
+        # documented decision — but the loudest line on the screen said green
+        # PASSED over a change the reviewer was shown part of. Amber, and the
+        # word says what happened rather than what was permitted.
+        #
+        # Above the findings branch, not below it: "PASSED WITH FINDINGS" makes
+        # the same claim over the same half-read change, and the tally is
+        # printed beside the verdict either way, so nothing is lost by saying
+        # the truer thing first.
+        verdict, colour = "INCOMPLETE, FORGIVEN", "1;33"
     elif outcome.reported:
         verdict, colour = "PASSED WITH FINDINGS", "1;33"
     elif not outcome.exposures:
@@ -276,6 +303,43 @@ def _dropped(s: Style, outcome: ScanOutcome) -> List[str]:
     return ["", INDENT + s("Dropped   ", "1;2") + s(" · ".join(bits), "2")]
 
 
+def _verification(m) -> str:
+    """What the verification stage did, without folding it into one ratio.
+
+    The row used to read `verified of verified + skipped`, which is a
+    denominator built from the numerator: it could not print anything but "N of
+    N". Both populations it could not see were the ones a reader needs — three
+    criticals dropped past SECURITY_SCAN_VERIFY_MAX printed "0 of 0", and four
+    panels whose every call failed printed "4 of 4" while the report beside it
+    said "4 could not run". Adjudicated 2026-09-07.
+
+    So each disposition gets its own word, and the ones that are zero are left
+    out: this line is read by someone skimming a job log, and "0 over the
+    limit" on every clean run trains the eye to skip the whole row.
+    """
+    presented = m.verification_presented
+    bits = ["{} of {} finding{} completed".format(
+        m.verification_completed, presented, "" if presented == 1 else "s")]
+    if m.verification_skipped:
+        bits.append("{} non-blocking skip{}".format(
+            m.verification_skipped, "" if m.verification_skipped == 1 else "s"))
+    if m.verification_over_limit:
+        bits.append("{} over the limit".format(m.verification_over_limit))
+    if m.verification_disabled:
+        # Named as the setting it is. "Skipped" would put it beside the
+        # per-finding judgement above and read as the same kind of thing.
+        bits.append("{} with verification off".format(m.verification_disabled))
+    if m.verification_unavailable:
+        # Named "unavailable" and not "failed": the finding is still in the
+        # report and still gates, and what is missing is the verdict about it.
+        bits.append("{} unavailable".format(m.verification_unavailable))
+    if m.verification_degraded:
+        bits.append("{} short a vote".format(m.verification_degraded))
+    bits.append("{} verdict{} changed".format(
+        m.verdicts_changed, "" if m.verdicts_changed == 1 else "s"))
+    return " · ".join(bits)
+
+
 def _footer(
     s: Style, outcome: ScanOutcome, decision: Decision, report_path: str
 ) -> List[str]:
@@ -295,10 +359,7 @@ def _footer(
             len(outcome.tool_calls), "" if len(outcome.tool_calls) == 1 else "s",
             outcome.turns, "" if outcome.turns == 1 else "s")),
         ("Citations", "{} accepted, {} rejected".format(m.citations_accepted, rejected)),
-        ("Verified", "{} of {} finding{}, {} verdict{} changed".format(
-            m.verified, m.verified + m.verification_skipped,
-            "" if m.verified + m.verification_skipped == 1 else "s",
-            m.verdicts_changed, "" if m.verdicts_changed == 1 else "s")),
+        ("Verified", _verification(m)),
         ("Model", outcome.model + (
             s("  — SUBSTITUTED SERVER-SIDE", "1;35")
             if outcome.provenance.model_substituted else "")),

@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 
 from . import AUTHOR_URL, PROJECT_NAME, PROJECT_URL, __version__
 from .config import Config
-from .gate import Decision
+from .gate import Decision, truncation_remedy
 from .identity import review_identity
 from .models import (
     SEVERITY_EMOJI,
@@ -187,7 +187,7 @@ def _header(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
     # the one line a reader sees in the merge request preview — over a review
     # that never looked. The warning further down the body does not undo a
     # green tick at the top.
-    if not outcome.complete:
+    if decision.partial:
         return [
             "## ⚠️ AI security review did not complete",
             "",
@@ -349,12 +349,27 @@ def _truncated_diff_note(outcome: ScanOutcome) -> List[str]:
     return [
         "",
         "> [!WARNING]",
-        "> **The change was too large to show in full.** The reviewer was given "
-        "the first part of the diff and no more, so anything after that point "
-        "was not examined through it. Narrow the review with `--path`, split "
-        "the change, or raise `SECURITY_SCAN_DIFF_CEILING_BYTES`, for a "
-        "complete reading.",
+        # **The gate's sentence, not a copy of it.** Two hand-written copies
+        # described the same run to the same person through two channels and
+        # drifted apart twice in one afternoon: a repair landed in one and not
+        # the other, and each copy stayed self-consistent while the pair
+        # contradicted itself. Codex asked for this shape on the seventh gate
+        # round — build it once, render Markdown separately. The only thing
+        # this channel changes is how identifiers are wrapped.
+        # Capitalised and given a full stop, because the gate's copy is a
+        # clause inside a longer verdict line and this one is a sentence. That
+        # is the whole of the difference, and the agreement test compares the
+        # two with case and punctuation normalised so it stays that way.
+        # The header names no limit either: two can cut the diff and this
+        # renderer, like the gate, is not told which one did.
+        "> **The reviewer was not shown the whole change.** "
+        + _as_sentence(truncation_remedy(code_span)),
     ]
+
+
+def _as_sentence(clause: str) -> str:
+    """A clause written to sit inside a line, standing on its own."""
+    return clause[:1].upper() + clause[1:] + "."
 
 
 def _whole_diff_note(outcome: ScanOutcome) -> List[str]:
@@ -776,11 +791,25 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
                 " · {} line(s) corrected".format(m.lines_corrected)
                 if m.lines_corrected else ""),
             "",
-            "**Verification:** {} verified, {} skipped as non-blocking, "
-            "{} changed a verdict{}".format(
-                m.verified, m.verification_skipped, m.verdicts_changed,
-                " · {} could not run".format(m.verification_failed)
-                if m.verification_failed else ""),
+            # The same dispositions the terminal footer prints, in the same
+            # order and off the same counters. The two renderers used to
+            # disagree — the terminal said "4 of 4 findings" where this line
+            # said "4 could not run" about the same run — and the one people
+            # read in the CI log was the one that was wrong.
+            "**Verification:** {} of {} findings completed{}{}{}{}{}, "
+            "{} changed a verdict".format(
+                m.verification_completed, m.verification_presented,
+                ", {} skipped as non-blocking".format(m.verification_skipped)
+                if m.verification_skipped else "",
+                ", {} past SECURITY_SCAN_VERIFY_MAX".format(m.verification_over_limit)
+                if m.verification_over_limit else "",
+                ", {} with SECURITY_SCAN_VERIFY=false".format(
+                    m.verification_disabled) if m.verification_disabled else "",
+                ", {} unavailable — every verifier call failed".format(
+                    m.verification_unavailable) if m.verification_unavailable else "",
+                ", {} completed short a vote".format(m.verification_degraded)
+                if m.verification_degraded else "",
+                m.verdicts_changed),
             "",
         ]
     if outcome.duplicates_dropped:

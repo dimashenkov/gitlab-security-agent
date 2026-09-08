@@ -8,7 +8,7 @@ either hides findings it will not block on, or blocks on everything it shows.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import Callable, List
 
 from .config import Config
 from .models import (
@@ -43,6 +43,17 @@ class Decision:
     # under a green pipeline needs to say which setting let it through, next to
     # the finding, not in a footnote.
     policy_excluded: List[Candidate] = field(default_factory=list)
+    # **Whether the review's coverage was partial, adjudicated once here.**
+    # The report used to ask `outcome.complete`, which is only the stop reason,
+    # while `_partial` counts three things — so a truncated diff or a context
+    # refusal printed "✅ no findings reported" over a review that had not seen
+    # the change. The banner's own comment says a warning further down does not
+    # undo a green tick at the top.
+    #
+    # Carried rather than recomputed: a renderer reaching into `_partial` would
+    # be a second place deciding what partial means, and the two would drift.
+    # Codex, on the batched round for six unchecked claims, 2026-09-07.
+    partial: bool = False
 
     @property
     def blocked(self) -> bool:
@@ -211,15 +222,19 @@ def _partial(outcome: ScanOutcome) -> bool:
     It is deliberately *not* in `NEVER_FORGIVEN`. A profile that cannot conclude
     is a property of the configuration and no run of it means anything; a
     truncated diff is a property of one change, and the operator has real moves
-    — split the change, narrow the review with `--path`, or raise
-    `SECURITY_SCAN_DIFF_CEILING_BYTES`. That last one was named here
-    before it existed, which made the remedy a sentence rather than a
-    move; a reader told to do something they cannot do is a reader who
-    stops reading. A
-    ceiling nobody can get past would make a large legitimate change permanently
-    unmergeable, and a gate that cannot be satisfied gets deleted rather than
-    obeyed. So it fails loudly by default and stays forgivable by the same
-    documented flag as every other partial review.
+    — split the change, or narrow the review with `--path`. A ceiling nobody can
+    get past would make a large legitimate change permanently unmergeable, and a
+    gate that cannot be satisfied gets deleted rather than obeyed. So it fails
+    loudly by default and stays forgivable by the same documented flag as every
+    other partial review.
+
+    `SECURITY_SCAN_DIFF_CEILING_BYTES` stood in that list and is not a third
+    move: it raises how many bytes the workspace reads, while
+    `tools.MAX_DIFF_CHARS` independently bounds what the model is shown and has
+    no setting behind it. Measured on 2026-09-08 with the byte ceiling raised
+    fifty times above it — the workspace read the change whole and the result
+    was still trimmed. `_why_partial` therefore names the two moves that work
+    and says this one does not; `LIMITATIONS.md` carries what is left over.
     """
     return (not outcome.complete
             or outcome.coverage.diff_truncated
@@ -254,6 +269,67 @@ def _nothing_was_readable(outcome: ScanOutcome) -> bool:
     if not outcome.coverage.changed:
         return False
     return not _readable_change(outcome)
+
+
+def truncation_remedy(code: Callable[[str], str] = lambda text: text) -> str:
+    """What an author can do about a diff that was cut, written once.
+
+    **Once because it drifted.** This sentence lived in two hand-written
+    copies, one here and one in `report.py`, describing the same run to the
+    same person through two channels. Six gate rounds on 2026-09-08 found it
+    wrong in five different ways, and twice a repair landed in one copy and not
+    the other — so the two documents a reader has about one run disagreed about
+    what to do next. A test asserting selected substrings in each could not
+    catch that, because each copy was self-consistent. Codex asked for exactly
+    this shape: build the explanation once, render Markdown separately, and
+    assert normalised equality.
+
+    `code` wraps identifiers for the channel: the identity function for a job
+    log, `rendering.code_span` for a merge-request comment. Nothing else about
+    the sentence may differ between them.
+
+    Every clause is qualified because the unqualified version of it was wrong:
+
+    * Reading the files back does not recover the change — `read_file` returns
+      the reviewed revision, so a removed line is not in it.
+    * `--path` helps only for files whose own diff fits. A file bigger than the
+      limit is cut identically when asked for alone, whether it was the file
+      the cut landed inside or a later one that was dropped entirely.
+    * `SECURITY_SCAN_DIFF_CEILING_BYTES` lifts the workspace's byte ceiling
+      only. `tools.MAX_DIFF_CHARS` bounds what the model is shown, has no
+      setting behind it, and is the smaller of the two by default.
+
+    Both cuts are described rather than one being named, because neither
+    caller knows which happened: `_handle_get_diff` has `DiffCut.mid_file` and
+    `ws.last_diff_truncated` and collapses both into one flag. Carrying that
+    through is the better repair and is recorded in `LIMITATIONS.md`.
+    """
+    # **The opening clause names no limit either**, for the same reason the
+    # rest of the sentence is conditional. It said "larger than the reviewer
+    # can be shown", which is one of the two — and with
+    # `SECURITY_SCAN_DIFF_CEILING_BYTES` set below `MAX_DIFF_CHARS` the diff
+    # can fit what the reviewer is shown and still be cut while the workspace
+    # reads it. The same for a `path`-scoped call on a file that fits the
+    # display limit. Codex, eighth gate round, 2026-09-08.
+    # And it does not claim the reviewer stopped there. `diff_truncated` is
+    # sticky across every `get_diff` in the run and is set by a `path`-scoped
+    # call too, so "it saw the first part of the change and no more" describes
+    # a run that may have gone on to read several other files whole. What the
+    # flag establishes is narrower: at least one diff was cut, and the lines
+    # past that cut were never delivered. Codex, ninth gate round.
+    return (
+        "at least one diff was cut before all of it reached the reviewer, so "
+        "some changed lines were never delivered. What it did not see cannot be "
+        "recovered afterwards — reading the files back gives the state after "
+        "the change, not the change. {path} helps only for the files whose own "
+        "diff fits the limit; any file whose change is larger than that has to "
+        "have the change to it split, because asking for that file alone is "
+        "cut in the same place. Raising {ceiling} helps only when the "
+        "workspace byte ceiling is what cut the diff; it does not move the "
+        "fixed limit on how much the reviewer is shown, and that limit is the "
+        "smaller of the two by default".format(
+            path=code("--path"),
+            ceiling=code("SECURITY_SCAN_DIFF_CEILING_BYTES")))
 
 
 def _why_partial(outcome: ScanOutcome) -> str:
@@ -292,11 +368,45 @@ def _why_partial(outcome: ScanOutcome) -> str:
             "nothing about it. If this repository's changes are genuinely "
             "assets, exclude them from the review or set "
             "SECURITY_SCAN_FAIL_ON_INCOMPLETE=false")
-    return (
-        "the diff was larger than the reviewer can be shown, so it read the "
-        "first part of the diff and no more. Split the change, narrow the "
-        "review with --path, or read the oversized file in windows, for a "
-        "complete reading")
+    # **The remedy named here has to be one that works.** It said "read the
+    # oversized file in windows", which is the same wrong advice the tool note
+    # gave and Codex refused on the gate for that change — `read_file` returns
+    # the reviewed revision, so it cannot show a removed line and cannot tell
+    # an added one from a line that was always there. It answers a different
+    # question while looking like an answer, and the reader stops.
+    #
+    # **The third slot is empty on purpose, and it took three attempts.** It
+    # held "read the oversized file in windows", which cannot show a removed
+    # line. It then held `SECURITY_SCAN_DIFF_CEILING_BYTES` flatly, and Codex
+    # measured that too: the setting moves `Workspace.diff_ceiling`, which is
+    # how many *bytes* the workspace will read, while `tools.MAX_DIFF_CHARS`
+    # independently trims what the model is shown and is a module constant. A
+    # single file over 120,000 characters stays partial at any value of it.
+    #
+    # It then said the setting "does not help here", and that was too strong in
+    # the other direction: **two ceilings can cut a diff and this function
+    # cannot tell which one did.** `_handle_get_diff` knows — `trimmed` is the
+    # character limit and `ws.last_diff_truncated` is the byte limit — and
+    # collapses both into one `diff_truncated` flag before the gate sees it. So
+    # the sentence is conditional, which is what the code can support. Codex,
+    # fifth gate round, 2026-09-08; carrying the cause through `Coverage` is
+    # the better repair and is written down rather than done here.
+    #
+    # **The two remaining moves are not interchangeable either**, and listing
+    # them side by side was the last thing wrong here. `--path` narrows the
+    # review to fewer files, which is a real move when the cut dropped later
+    # *files*; it does nothing when one file's own diff is over the limit,
+    # because asking for that file alone reaches the identical limit. Only
+    # splitting the change to that file helps then. Codex, sixth gate round,
+    # 2026-09-08, having noticed that the sentence recommended `--path`
+    # immediately after naming the case it cannot serve.
+    #
+    # Both cases are described rather than one being chosen, because this
+    # function cannot tell them apart: `_handle_get_diff` knows — `DiffCut`
+    # carries `mid_file` — and does not pass it on. That, and the two ceilings
+    # below, are the same missing distinction and are recorded together in
+    # `LIMITATIONS.md`.
+    return truncation_remedy()
 
 
 def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
@@ -315,6 +425,7 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
     # profile documented as never conclusive hand out clean passes.
     if outcome.stop_reason in NEVER_FORGIVEN:
         return Decision(
+            partial=_partial(outcome),
             exit_code=EXIT_ERROR,
             reason=(
                 "{}. No setting makes this a pass: it is a property of the "
@@ -363,12 +474,13 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
                 "reviewer. A verdict over code nothing read is not a verdict, "
                 "and no setting makes it a pass.".format(
                     detail, len(outcome.coverage.changed)))
-        return Decision(exit_code=EXIT_ERROR, reason=reason)
+        return Decision(partial=_partial(outcome), exit_code=EXIT_ERROR, reason=reason)
 
     if _partial(outcome) and cfg.fail_on_incomplete:
         explanation = _why_partial(outcome)
         detail = " ({})".format(outcome.stop_detail) if outcome.stop_detail else ""
         return Decision(
+            partial=_partial(outcome),
             exit_code=EXIT_ERROR,
             reason=(
                 "Review incomplete — {}{}. The result cannot be treated as a "
@@ -403,6 +515,7 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
             )
 
         return Decision(
+            partial=_partial(outcome),
             exit_code=EXIT_FINDINGS,
             reason="; ".join(parts) + ".",
             blocking=blocking,
@@ -426,6 +539,7 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
         why = outcome.stop_detail if not outcome.complete and outcome.stop_detail \
             else _why_partial(outcome)
         return Decision(
+            partial=_partial(outcome),
             exit_code=EXIT_OK,
             reason=(
                 "No blocking findings, but the review did not complete ({}). "
@@ -437,14 +551,26 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
 
     if outcome.reported:
         return Decision(
+            partial=_partial(outcome),
             exit_code=EXIT_OK,
-            reason="{} finding(s) reported, none at or above the {} threshold.".format(
-                len(outcome.reported), cfg.fail_on),
+            # **"None blocking", not "none at or above the threshold".** The
+            # sentence asserted severity was the reason whatever the reason
+            # was — it was printed about a withheld `critical` whose finding
+            # had been filed as pre-existing. Which rule applied is in
+            # `non_blocking_reasons`, one reason per finding, and that is where
+            # a reader can act on it. Codex, 2026-09-07.
+            # `cfg.fail_on` was still being passed here after the sentence
+            # stopped naming the threshold. Harmless to `format`, and exactly
+            # the kind of leftover that makes a reader think the threshold is
+            # in the sentence somewhere.
+            reason="{} finding(s) reported, none blocking under the configured policy.".format(
+                len(outcome.reported)),
             non_blocking_reasons=notes,
             policy_excluded=excluded,
         )
 
     return Decision(
+        partial=_partial(outcome),
         exit_code=EXIT_OK,
         reason="No security findings.",
         non_blocking_reasons=notes,
