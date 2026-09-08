@@ -1,0 +1,2 @@
+{"arm": "sonnet", "case_id": "php-p2ch-c2c3-4xm5", "index": 0, "kind": "prepared", "pass": "a", "previous": null, "schedule_digest": "b17fde7133690b93", "seq": 0}
+{"index": 0, "kind": "done", "previous": "5b6fc9f2e5faf8b5", "result_digest": "3db3bb7be7a0575a", "schedule_digest": "b17fde7133690b93", "seq": 1}
