@@ -1,0 +1,212 @@
+{
+  "case_id": "php-5h77-88j3-r659",
+  "language": "php",
+  "family": "xss",
+  "case_digest": "3ffc547d64def2fe",
+  "ran_at": "2026-09-08T17:36:07.162551+00:00",
+  "run_id": "94774a800fe8461086e632671f1870ba",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false,
+        "models_served": [
+          "claude-sonnet-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.4565113999999999
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 156.95055220799986,
+      "cost": 0.758579,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 42,
+        "output_tokens": 12895,
+        "cache_read_tokens": 376888,
+        "cache_write_tokens": 24755
+      },
+      "coverage": {
+        "changed": [
+          "includes/functions-infos.php"
+        ],
+        "examined": [
+          "includes/functions-formatting.php",
+          "includes/functions-infos.php"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": false,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 1,
+      "blocked": true,
+      "target": {
+        "fingerprint": "a4584bd57afa6379",
+        "severity": "high",
+        "confidence": "medium",
+        "verdict": "confirmed",
+        "blocking": true,
+        "matched": 2
+      },
+      "blocking": [
+        [
+          "xss",
+          "includes/functions-infos.php",
+          0
+        ]
+      ],
+      "reported": 2,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": true,
+        "models_served": [
+          "claude-sonnet-5",
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 1.0474913
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 434.9622985420001,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 78,
+        "output_tokens": 29061,
+        "cache_read_tokens": 1123181,
+        "cache_write_tokens": 45502
+      },
+      "coverage": {
+        "changed": [
+          "includes/functions-infos.php"
+        ],
+        "examined": [
+          "includes/functions-formatting.php",
+          "includes/functions-infos.php",
+          "includes/functions-links.php"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": false,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 1,
+  "size_delta": 0.07113677215534615,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "xss",
+      "file": "includes/functions-infos.php",
+      "severity": "high",
+      "title": "Unescaped labels/values in Google chart data reintroduce JS injection",
+      "fingerprint": "a4584bd57afa6379",
+      "evidence": "        $str .= \"\\t['$label',\";\n        foreach( $values as $value ){\n            if( !is_numeric( $value ) && strpos( $value, '[' ) !== 0 && strpos( $value, '{' ) !== 0 ) {\n                $value = \"'$value'\";\n            }\n            $str .= \"$value\";\n        }",
+      "blocking": true
+    },
+    {
+      "category": "xss",
+      "file": "includes/functions-infos.php",
+      "severity": "medium",
+      "title": "Favicon URL built from unvalidated, unescaped host/path",
+      "fingerprint": "afbb2707cb911c46",
+      "evidence": "function yourls_get_favicon_url($url) {\n    return yourls_match_current_protocol( '//www.google.com/s2/favicons?domain=' . yourls_get_domain( $url, false ) );\n}",
+      "blocking": false
+    }
+  ],
+  "cost": null,
+  "seconds": 434.9622985420001
+}

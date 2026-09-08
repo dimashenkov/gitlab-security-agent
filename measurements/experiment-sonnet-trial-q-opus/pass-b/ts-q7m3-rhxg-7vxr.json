@@ -1,0 +1,231 @@
+{
+  "case_id": "ts-q7m3-rhxg-7vxr",
+  "language": "typescript",
+  "family": "path-traversal",
+  "case_digest": "41f9486a1e4fa269",
+  "ran_at": "2026-09-08T18:12:36.768302+00:00",
+  "run_id": "916c5985849a4d0cb3c611c0a1e952c5",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_verified": [],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false,
+        "models_served": [
+          "claude-opus-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.25291300000000005
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 76.74083216700001,
+      "cost": 0.251545,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 12,
+        "output_tokens": 4926,
+        "cache_read_tokens": 71230,
+        "cache_write_tokens": 9272
+      },
+      "coverage": {
+        "changed": [
+          "nodes/SqliteNode/v1/SqliteV1.node.ts"
+        ],
+        "examined": [
+          "nodes/SqliteNode/v1/SqliteV1.node.ts"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-opus-5",
+      "provenance": {
+        "model_requested": "claude-opus-5",
+        "models_verified": [
+          "claude-haiku-4-5-20251001",
+          "claude-opus-5"
+        ],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": true,
+        "models_served": [
+          "claude-opus-5",
+          "claude-haiku-4-5-20251001"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.267965
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 194.56536795799957,
+      "cost": null,
+      "usage": {
+        "reported": true,
+        "complete": false,
+        "unreported_stages": 1,
+        "requests": 1,
+        "input_tokens": 16,
+        "output_tokens": 4710,
+        "cache_read_tokens": 93806,
+        "cache_write_tokens": 10187
+      },
+      "coverage": {
+        "changed": [
+          "nodes/SqliteNode/v1/SqliteV1.node.ts"
+        ],
+        "examined": [
+          "nodes/SqliteNode/v1/SqliteV1.node.ts"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [
+        {
+          "fingerprint": "55e3b562c4204809",
+          "title": "db_path accepts data expressions, enabling data-driven arbitrary SQLite file access",
+          "severity": "high",
+          "confidence": "medium",
+          "category": "path-traversal",
+          "file": "nodes/SqliteNode/v1/SqliteV1.node.ts",
+          "line": 111,
+          "impact": "broad_data_access",
+          "reachable_without_authentication": "unclear",
+          "requires_user_interaction": "no",
+          "severity_derivation": "broad_data_access → high",
+          "evidence": "\t\t\t\tdisplayName: 'Database Path',\n\t\t\t\tname: 'db_path',\n\t\t\t\ttype: 'string',\n\t\t\t\tdefault: '',\n\t\t\t\tplaceholder: '/path/to/database.sqlite',\n\t\t\t\tdescription: 'The path to the SQLite database file',\n\t\t\t\trequired: true,\n\t\t\t},",
+          "description": "This change removes `noDataExpression: true` from the `db_path` parameter. With that flag present, the database file location was a fixed, design-time value chosen by the workflow author; n8n refused to evaluate an expression for it. Without it, `db_path` can be written as an expression such as `{{ $json.path }}`, so the value is taken from the incoming item at runtime.\n\nThe value flows unvalidated into filesystem operations in `execute()`: `path.dirname(dbPath)` is passed to `fs.mkdirSync(dir, { recursive: true })` (line 211) and then `new Database(dbPath, bindings)` (line 224) opens — and, if it does not exist, creates — the file. There is no normalisation, no allowlist, no confinement to a base directory, and no check that the path stays inside a workflow-owned area; the only check is that the string is non-empty (line 200). Any absolute path or `../` sequence is accepted verbatim.\n\nBecause the node then runs the configured query against whatever file was opened, an item-controlled path turns the node into an arbitrary-SQLite-file reader and writer within the n8n process's filesystem permissions. On a default n8n installation that includes `~/.n8n/database.sqlite`, which holds the workflow and credential tables.\n\nNote the same absence of expression protection applies to `use_custom_bindings` (line 178), which is passed to better-sqlite3 as `nativeBinding` (line 68) and loads a native module — that pre-existing parameter is a code-execution sink if its path can likewise be steered.",
+          "exploit_scenario": "A workflow uses a Webhook (or IMAP/HTTP poll) trigger and configures the SQLite node's Database Path as an expression over incoming data, e.g. `{{ $json.db }}`, with a query such as `SELECT * FROM credentials_entity`. Before this change n8n rejected the expression outright and the path was necessarily a constant. Now an unauthenticated caller who can POST to the webhook sends `{\"db\": \"/home/node/.n8n/database.sqlite\"}`; `new Database(dbPath, bindings)` opens n8n's own database and the query result — including stored credential rows — is returned as node output, which the workflow may echo back in the webhook response or forward downstream. Sending a path such as `{\"db\": \"/home/node/.n8n/nodes/x/y.sqlite\"}` instead causes `fs.mkdirSync(..., { recursive: true })` plus file creation at an attacker-chosen location.",
+          "recommendation": "Restore `noDataExpression: true` on `db_path` (and consider it for `use_custom_bindings`), so the file location is fixed at design time rather than taken from item data. If runtime paths are genuinely required, add confinement before use: resolve the path with `path.resolve`, require it to start with a configured base directory (e.g. `N8N_SQLITE_BASE_DIR`), reject paths that escape it after normalisation, and refuse to create directories outside that base.",
+          "verification": {
+            "verdict": "refuted",
+            "reason": "2/3 verifier(s) agreed — The diff only deletes `noDataExpression: true` from the `db_path` UI descriptor (SqliteV1.node.ts:110-118); it changes no runtime logic. In n8n the node's parameters are supplied by the workflow author, who is a trusted principal — with the flag present the author could already hard-code `db_path` to `/home/node/.n8n/database.sqlite` and run `SELECT * FROM credentials_entity`, and the sibling `query` field (line 136-144) and `use_custom_bindings` field (line 176-182, feeding `nativeBinding` at line 68) have never carried `noDataExpression`, so expression-driven SQL and expression-driven native-module loading were already possible in the unmodified file. Attacker control of `dbPath` at line 193 therefore only materialises if the author deliberately writes `{{ $json.x }}` into the path field, i.e. it is a configuration choice by a trusted editor (who in n8n can already achieve arbitrary code execution via the Code node), not a flow the change itself opens; `noDataExpression` is an editor-UX restriction, not a security boundary. Searched: I read the whole node file (267 lines, the only file in the repo/change) looking for the confinement the claim says is missing and for any other consumer of `db_path`: there is indeed no normalisation, allowlist or base-directory check around `path.dirname(dbPath)`/`fs.mkdirSync` (208-222) or `new Database(dbPath, bindings)` (224) — I confirm that part of the claim. What refutes it is elsewhere: I searched the same descriptor for which other parameters carry `noDataExpression` and found it only on `query_type` (line 124, where it exists because that field drives `displayOptions` for `spread` at line 159); `query`, `args` and `use_custom_bindings` all permit expressions today, unchanged by this MR. `git_log` on the file shows only a baseline and this commit, and the repository contains no other files (no server, no webhook handler, no workflow definitions), so there is no in-repo caller that binds `db_path` to untrusted request data — the only way to reach the sink with attacker data is a workflow an author deliberately builds that way.",
+            "votes": [
+              {
+                "verdict": "refuted",
+                "reasoning": "The diff only deletes `noDataExpression: true` from the `db_path` UI descriptor (SqliteV1.node.ts:110-118); it changes no runtime logic. In n8n the node's parameters are supplied by the workflow author, who is a trusted principal — with the flag present the author could already hard-code `db_path` to `/home/node/.n8n/database.sqlite` and run `SELECT * FROM credentials_entity`, and the sibling `query` field (line 136-144) and `use_custom_bindings` field (line 176-182, feeding `nativeBinding` at line 68) have never carried `noDataExpression`, so expression-driven SQL and expression-driven native-module loading were already possible in the unmodified file. Attacker control of `dbPath` at line 193 therefore only materialises if the author deliberately writes `{{ $json.x }}` into the path field, i.e. it is a configuration choice by a trusted editor (who in n8n can already achieve arbitrary code execution via the Code node), not a flow the change itself opens; `noDataExpression` is an editor-UX restriction, not a security boundary.",
+                "corrected_impact": "",
+                "corrected_confidence": "low",
+                "error": ""
+              },
+              {
+                "verdict": "confirmed",
+                "reasoning": "The diff's only change is the deletion of `noDataExpression: true` from the `db_path` property (nodes/SqliteNode/v1/SqliteV1.node.ts:111-118), which was the sole thing forcing that filesystem path to be a design-time constant; `query_type` keeps the flag (line 124), so this is a targeted removal. Working back from the sinks, `new Database(dbPath, bindings)` (line 224) and `fs.mkdirSync(path.dirname(dbPath), {recursive:true})` (line 211) are fed directly from `this.getNodeParameter('db_path', itemIndex, '')` (line 193) with no normalisation, base-directory confinement, or traversal check anywhere in the repository — only the non-empty test at line 200. With expressions now permitted, a per-item value such as `/data/{{ $json.name }}.sqlite` or `{{ $json.db }}` makes the opened/created file depend on runtime item data, so trigger data (webhook/IMAP/HTTP) can select an arbitrary SQLite file, including `~/.n8n/database.sqlite`, and the rows are returned as node output. I lower the reachability claim to `unclear`: the node is a library, and whether untrusted data actually reaches `db_path` depends on a workflow configuration that does not live in this repo — the pre-existing `use_custom_bindings` remark is out of scope for this change.",
+                "corrected_impact": "",
+                "corrected_confidence": "",
+                "error": ""
+              },
+              {
+                "verdict": "refuted",
+                "reasoning": "Tracing backwards from the sinks (`fs.mkdirSync` line 211, `new Database(dbPath, bindings)` line 224), the sole caller is `SqliteV1.execute()` and the sole source of `dbPath` is `this.getNodeParameter('db_path', itemIndex, '')` at line 193 — a workflow-definition value supplied by an authenticated workflow author, not by request data. `noDataExpression` is an n8n editor-UI hint that hides the expression toggle in the parameter input; it is not a runtime confinement, and the node has never had any base-directory restriction (searched the whole tracked tree for `resolve|normalize|startsWith|basename|baseDir` — no matches, and none existed before the diff either). Consequently the same author could always set `db_path` to the literal `/home/node/.n8n/database.sqlite` and read the credentials table; the diff (whose only change is deleting that one line, per get_diff) grants no capability that did not already exist, and the claimed unauthenticated path additionally requires the trusted author to deliberately wire `{{ $json.db }}` into the field — the same self-inflicted misconfiguration available via the `query` and `use_custom_bindings` fields, which the reviewer concedes never had the flag.",
+                "corrected_impact": "",
+                "corrected_confidence": "low",
+                "error": ""
+              }
+            ],
+            "claimed_severity": "high",
+            "claimed_confidence": "medium",
+            "claimed_line": 117,
+            "evidence_located_line": 111,
+            "line_corrected": true,
+            "introduced_by_this_change": true,
+            "attributed_by": "deleted",
+            "removes_existing_control": false,
+            "path_verified": true
+          },
+          "suppressed_by": ""
+        }
+      ],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": false,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [],
+  "safe_false_positive": false,
+  "unsafe_recall": false,
+  "pair_success": false,
+  "safe_exit": 0,
+  "unsafe_exit": 0,
+  "size_delta": 0.003239241092086997,
+  "safe_findings": [],
+  "unsafe_findings": [],
+  "cost": null,
+  "seconds": 194.56536795799957
+}

@@ -1,2 +1,27 @@
 {"arm": "sonnet", "case_id": "php-p2ch-c2c3-4xm5", "index": 0, "kind": "prepared", "pass": "a", "previous": null, "schedule_digest": "b17fde7133690b93", "seq": 0}
 {"index": 0, "kind": "done", "previous": "5b6fc9f2e5faf8b5", "result_digest": "3db3bb7be7a0575a", "schedule_digest": "b17fde7133690b93", "seq": 1}
+{"arm": "opus", "case_id": "php-5h77-88j3-r659", "index": 1, "kind": "prepared", "pass": "a", "previous": "7656da6433909359", "schedule_digest": "b17fde7133690b93", "seq": 2}
+{"index": 1, "kind": "done", "previous": "637a173b732434f1", "result_digest": "2fa50c0fe1ab29b3", "schedule_digest": "b17fde7133690b93", "seq": 3}
+{"arm": "sonnet", "case_id": "rs-4pj9-g833-qx53", "index": 2, "kind": "prepared", "pass": "a", "previous": "25e3c2f23ae92f36", "schedule_digest": "b17fde7133690b93", "seq": 4}
+{"index": 2, "kind": "done", "previous": "0d6b5c67649c8021", "result_digest": "e728d0aeaec13394", "schedule_digest": "b17fde7133690b93", "seq": 5}
+{"arm": "opus", "case_id": "ts-q7m3-rhxg-7vxr", "index": 3, "kind": "prepared", "pass": "a", "previous": "703e4c8eeb62551a", "schedule_digest": "b17fde7133690b93", "seq": 6}
+{"index": 3, "kind": "done", "previous": "c5c22107f59b9198", "result_digest": "b10cac5d991ebe16", "schedule_digest": "b17fde7133690b93", "seq": 7}
+{"arm": "opus", "case_id": "go-m6jg-wr9m-cg2f", "index": 4, "kind": "prepared", "pass": "a", "previous": "b4f316f588cd8405", "schedule_digest": "b17fde7133690b93", "seq": 8}
+{"index": 4, "kind": "done", "previous": "9763f27bfb51c97c", "result_digest": "83e922123d720519", "schedule_digest": "b17fde7133690b93", "seq": 9}
+{"arm": "opus", "case_id": "rb-g65v-27r3-5p6m", "index": 5, "kind": "prepared", "pass": "a", "previous": "83a096741c8112b2", "schedule_digest": "b17fde7133690b93", "seq": 10}
+{"index": 5, "kind": "done", "previous": "0c06aea8a8b258c7", "result_digest": "0e8594ae5ab8dc4d", "schedule_digest": "b17fde7133690b93", "seq": 11}
+{"arm": "sonnet", "case_id": "php-5h77-88j3-r659", "index": 6, "kind": "prepared", "pass": "a", "previous": "5d32bb1b08aa142a", "schedule_digest": "b17fde7133690b93", "seq": 12}
+{"index": 6, "kind": "done", "previous": "bb39b6161900efd8", "result_digest": "50d4e8112102dd99", "schedule_digest": "b17fde7133690b93", "seq": 13}
+{"arm": "sonnet", "case_id": "ts-34pm-923j-7wf8", "index": 7, "kind": "prepared", "pass": "a", "previous": "c0dc980c7fdfbddd", "schedule_digest": "b17fde7133690b93", "seq": 14}
+{"index": 7, "kind": "done", "previous": "e45ac7485ac8bfe4", "result_digest": "61b87e500e4f92a6", "schedule_digest": "b17fde7133690b93", "seq": 15}
+{"arm": "opus", "case_id": "go-8r62-w5wh-fc5m", "index": 8, "kind": "prepared", "pass": "a", "previous": "ca80a18c553577d9", "schedule_digest": "b17fde7133690b93", "seq": 16}
+{"index": 8, "kind": "done", "previous": "2e29f57663494022", "result_digest": "d899910d77230e5b", "schedule_digest": "b17fde7133690b93", "seq": 17}
+{"arm": "opus", "case_id": "py-p43p-whwx-q52h", "index": 9, "kind": "prepared", "pass": "a", "previous": "33aad42909574794", "schedule_digest": "b17fde7133690b93", "seq": 18}
+{"index": 9, "kind": "done", "previous": "c4dc44490bad646e", "result_digest": "eafa4278f266cfed", "schedule_digest": "b17fde7133690b93", "seq": 19}
+{"arm": "sonnet", "case_id": "ts-34pm-923j-7wf8", "index": 10, "kind": "prepared", "pass": "b", "previous": "14f5a4bbbdd7cdd5", "schedule_digest": "b17fde7133690b93", "seq": 20}
+{"index": 10, "kind": "done", "previous": "e2156938d6c33e44", "result_digest": "6534fa2ec07bf86e", "schedule_digest": "b17fde7133690b93", "seq": 21}
+{"arm": "opus", "case_id": "ts-q7m3-rhxg-7vxr", "index": 11, "kind": "prepared", "pass": "b", "previous": "ed3734929c5736a5", "schedule_digest": "b17fde7133690b93", "seq": 22}
+{"index": 11, "kind": "done", "previous": "ddf845faff55add4", "result_digest": "15dee73930d2f394", "schedule_digest": "b17fde7133690b93", "seq": 23}
+{"arm": "sonnet", "case_id": "py-p43p-whwx-q52h", "index": 12, "kind": "prepared", "pass": "a", "previous": "5d5a82e5192f4cc4", "schedule_digest": "b17fde7133690b93", "seq": 24}
+{"index": 12, "kind": "done", "previous": "61392a0ca6eb4ccd", "result_digest": "85c73742a456e200", "schedule_digest": "b17fde7133690b93", "seq": 25}
+{"arm": "sonnet", "case_id": "js-q4gh-4ffp-5cg8", "index": 13, "kind": "prepared", "pass": "a", "previous": "b5bc50d28ff70488", "schedule_digest": "b17fde7133690b93", "seq": 26}
