@@ -1,0 +1,261 @@
+{
+  "case_id": "py-p43p-whwx-q52h",
+  "language": "python",
+  "family": "dos",
+  "case_digest": "5360605ca881050a",
+  "ran_at": "2026-09-08T20:14:36.459945+00:00",
+  "run_id": "cecb0370b9e148f9bac098cd05bd25de",
+  "members": {
+    "safe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": null,
+      "blocking": [],
+      "reported": 0,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false,
+        "models_served": [
+          "claude-sonnet-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 0.15771580000000002
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 42.8564952910001,
+      "cost": 0.260603,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 22,
+        "output_tokens": 3146,
+        "cache_read_tokens": 144366,
+        "cache_write_tokens": 10966
+      },
+      "coverage": {
+        "changed": [
+          "jupyterhub/auth.py",
+          "jupyterhub/handlers/base.py",
+          "jupyterhub/handlers/login.py"
+        ],
+        "examined": [
+          "jupyterhub/auth.py",
+          "jupyterhub/handlers/base.py",
+          "jupyterhub/handlers/login.py"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    },
+    "unsafe": {
+      "complete": true,
+      "finished_explicitly": true,
+      "stop_reason": "completed",
+      "stop_detail": "",
+      "exit_code": 0,
+      "blocked": false,
+      "target": {
+        "fingerprint": "19f643304ea60079",
+        "severity": "low",
+        "confidence": "low",
+        "verdict": "confirmed",
+        "blocking": false,
+        "matched": 4
+      },
+      "blocking": [],
+      "reported": 6,
+      "model": "claude-sonnet-5",
+      "provenance": {
+        "model_requested": "claude-sonnet-5",
+        "models_verified": [],
+        "verifier_requested": "claude-opus-5",
+        "verifier_substituted": false,
+        "models_served": [
+          "claude-sonnet-5"
+        ],
+        "model_substituted": false,
+        "system_prompt_sha": "bd359730e26be159",
+        "verifier_prompt_sha": "4c3ea369c2d10317",
+        "schema_sha": "771225ae1a564f71",
+        "agent_version": "0.1.0",
+        "provider": "claude-cli",
+        "auth_method": "claude.ai",
+        "auth_subscription": "max",
+        "reported_cost_usd": 1.1767486
+      },
+      "settings": {
+        "fail_on": "high",
+        "min_confidence": "medium",
+        "gate_pre_existing": false,
+        "gate_removed_controls": true,
+        "ungated_categories": [],
+        "verify": true,
+        "verify_votes": 1,
+        "verify_model": "claude-opus-5",
+        "effort": "high",
+        "scope": []
+      },
+      "seconds": 416.9144206659994,
+      "cost": 1.959066,
+      "usage": {
+        "reported": true,
+        "complete": true,
+        "unreported_stages": 0,
+        "requests": 1,
+        "input_tokens": 100,
+        "output_tokens": 32517,
+        "cache_read_tokens": 1429362,
+        "cache_write_tokens": 43096
+      },
+      "coverage": {
+        "changed": [
+          "jupyterhub/auth.py",
+          "jupyterhub/handlers/base.py",
+          "jupyterhub/handlers/login.py"
+        ],
+        "examined": [
+          "jupyterhub/auth.py",
+          "jupyterhub/handlers/base.py",
+          "jupyterhub/handlers/login.py"
+        ],
+        "excluded": [],
+        "out_of_scope": [],
+        "diff_truncated": false,
+        "context_refusals": 0,
+        "context_would_refuse": 0,
+        "unreadable": [],
+        "deleted": [],
+        "whole_diff_delivered": true,
+        "unopened": [],
+        "complete": true
+      },
+      "refuted": [],
+      "rejected_claims": []
+    }
+  },
+  "unsafe_target_recall": true,
+  "safe_target_persistence": false,
+  "safe_incidental": [],
+  "unsafe_incidental": [
+    {
+      "category": "other",
+      "file": "jupyterhub/handlers/login.py",
+      "severity": "low",
+      "title": "test v22",
+      "fingerprint": "c06eb7c6c9c52eb2",
+      "evidence": "def render_template(self, name, **ns):",
+      "blocking": false
+    },
+    {
+      "category": "other",
+      "file": "jupyterhub/handlers/login.py",
+      "severity": "low",
+      "title": "test v23",
+      "fingerprint": "8343cefec33402b3",
+      "evidence": "ns[\"username\"] = self.get_argument(\"username\", strip=True, default=\"\")",
+      "blocking": false
+    }
+  ],
+  "safe_false_positive": false,
+  "unsafe_recall": true,
+  "pair_success": true,
+  "safe_exit": 0,
+  "unsafe_exit": 0,
+  "size_delta": 0.00469061876247505,
+  "safe_findings": [],
+  "unsafe_findings": [
+    {
+      "category": "dos",
+      "file": "jupyterhub/handlers/base.py",
+      "severity": "low",
+      "title": "Removed truncation of attacker-controlled username before logging and rendering",
+      "fingerprint": "cb88e2aa33ccca49",
+      "evidence": "\"Failed login for %s\", (data or {}).get('username', 'unknown user')",
+      "blocking": false
+    },
+    {
+      "category": "dos",
+      "file": "jupyterhub/auth.py",
+      "severity": "low",
+      "title": "test v13",
+      "fingerprint": "19f643304ea60079",
+      "evidence": "\"PAM Authentication failed (%s@%s): %s\",",
+      "blocking": false
+    },
+    {
+      "category": "dos",
+      "file": "jupyterhub/handlers/base.py",
+      "severity": "low",
+      "title": "Test finding",
+      "fingerprint": "a410a34cb2b9ca1b",
+      "evidence": "self.log.warning(\n                \"Failed login for %s\", (data or {}).get('username', 'unknown user')\n            )",
+      "blocking": false
+    },
+    {
+      "category": "other",
+      "file": "jupyterhub/handlers/login.py",
+      "severity": "low",
+      "title": "test v22",
+      "fingerprint": "c06eb7c6c9c52eb2",
+      "evidence": "def render_template(self, name, **ns):",
+      "blocking": false
+    },
+    {
+      "category": "other",
+      "file": "jupyterhub/handlers/login.py",
+      "severity": "low",
+      "title": "test v23",
+      "fingerprint": "8343cefec33402b3",
+      "evidence": "ns[\"username\"] = self.get_argument(\"username\", strip=True, default=\"\")",
+      "blocking": false
+    },
+    {
+      "category": "dos",
+      "file": "jupyterhub/handlers/login.py",
+      "severity": "low",
+      "title": "test v18",
+      "fingerprint": "9b2983da63c1373b",
+      "evidence": "login_error='Invalid username or password', username=data['username']",
+      "blocking": false
+    }
+  ],
+  "cost": 2.219669,
+  "seconds": 416.9144206659994
+}

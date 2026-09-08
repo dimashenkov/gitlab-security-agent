@@ -25,3 +25,45 @@
 {"arm": "sonnet", "case_id": "py-p43p-whwx-q52h", "index": 12, "kind": "prepared", "pass": "a", "previous": "5d5a82e5192f4cc4", "schedule_digest": "b17fde7133690b93", "seq": 24}
 {"index": 12, "kind": "done", "previous": "61392a0ca6eb4ccd", "result_digest": "85c73742a456e200", "schedule_digest": "b17fde7133690b93", "seq": 25}
 {"arm": "sonnet", "case_id": "js-q4gh-4ffp-5cg8", "index": 13, "kind": "prepared", "pass": "a", "previous": "b5bc50d28ff70488", "schedule_digest": "b17fde7133690b93", "seq": 26}
+{"index": 13, "kind": "done", "previous": "cd98ea80862a3ef6", "result_digest": "5da3b51cb52bb7c1", "schedule_digest": "b17fde7133690b93", "seq": 27}
+{"arm": "opus", "case_id": "php-p2ch-c2c3-4xm5", "index": 14, "kind": "prepared", "pass": "a", "previous": "55fe78bcaab524df", "schedule_digest": "b17fde7133690b93", "seq": 28}
+{"index": 14, "kind": "done", "previous": "cc65597d1b2bc6e0", "result_digest": "cfb30049afa6950b", "schedule_digest": "b17fde7133690b93", "seq": 29}
+{"arm": "sonnet", "case_id": "js-q4gh-4ffp-5cg8", "index": 15, "kind": "prepared", "pass": "b", "previous": "debeca76b25f1b9c", "schedule_digest": "b17fde7133690b93", "seq": 30}
+{"index": 15, "kind": "done", "previous": "58c1314dd19fc857", "result_digest": "bd674a18c9a8706b", "schedule_digest": "b17fde7133690b93", "seq": 31}
+{"arm": "opus", "case_id": "rb-g65v-27r3-5p6m", "index": 16, "kind": "prepared", "pass": "b", "previous": "403b293c26b497c7", "schedule_digest": "b17fde7133690b93", "seq": 32}
+{"index": 16, "kind": "done", "previous": "37b2058b29cd84aa", "result_digest": "487de4cc5af1a487", "schedule_digest": "b17fde7133690b93", "seq": 33}
+{"arm": "opus", "case_id": "ts-34pm-923j-7wf8", "index": 17, "kind": "prepared", "pass": "a", "previous": "6826f4ab31beb027", "schedule_digest": "b17fde7133690b93", "seq": 34}
+{"index": 17, "kind": "done", "previous": "01b902a690aa561e", "result_digest": "646b41ade2fc3f05", "schedule_digest": "b17fde7133690b93", "seq": 35}
+{"arm": "opus", "case_id": "py-2wxc-x7rj-hg8f", "index": 18, "kind": "prepared", "pass": "a", "previous": "d783b2701b96a471", "schedule_digest": "b17fde7133690b93", "seq": 36}
+{"index": 18, "kind": "done", "previous": "576871a9cb20ff5a", "result_digest": "5fbc244827900006", "schedule_digest": "b17fde7133690b93", "seq": 37}
+{"arm": "sonnet", "case_id": "ts-q7m3-rhxg-7vxr", "index": 19, "kind": "prepared", "pass": "a", "previous": "00d388cc4aaaddd8", "schedule_digest": "b17fde7133690b93", "seq": 38}
+{"index": 19, "kind": "done", "previous": "a4715e3f391da745", "result_digest": "ddb59bec926d8857", "schedule_digest": "b17fde7133690b93", "seq": 39}
+{"arm": "opus", "case_id": "js-q4gh-4ffp-5cg8", "index": 20, "kind": "prepared", "pass": "a", "previous": "ddb9017e11e03da0", "schedule_digest": "b17fde7133690b93", "seq": 40}
+{"index": 20, "kind": "done", "previous": "e186184bcdb72ecf", "result_digest": "2973c3fede45fb42", "schedule_digest": "b17fde7133690b93", "seq": 41}
+{"arm": "opus", "case_id": "jv-45ph-gxxr-gwgw", "index": 21, "kind": "prepared", "pass": "a", "previous": "38e4b713d82ce40b", "schedule_digest": "b17fde7133690b93", "seq": 42}
+{"index": 21, "kind": "done", "previous": "4d7629a6668bf017", "result_digest": "1841e353ea7769d6", "schedule_digest": "b17fde7133690b93", "seq": 43}
+{"arm": "sonnet", "case_id": "php-5h77-88j3-r659", "index": 22, "kind": "prepared", "pass": "b", "previous": "8fd1b7b7b8ae8080", "schedule_digest": "b17fde7133690b93", "seq": 44}
+{"index": 22, "kind": "done", "previous": "7e74ca4c4d50af9f", "result_digest": "2dcf371a7ffeca80", "schedule_digest": "b17fde7133690b93", "seq": 45}
+{"arm": "sonnet", "case_id": "jv-45ph-gxxr-gwgw", "index": 23, "kind": "prepared", "pass": "a", "previous": "9d1f4aa682b4a333", "schedule_digest": "b17fde7133690b93", "seq": 46}
+{"index": 23, "kind": "done", "previous": "1e953be23d10bb3d", "result_digest": "72c85ae2c0c608e5", "schedule_digest": "b17fde7133690b93", "seq": 47}
+{"arm": "sonnet", "case_id": "rb-mx5j-mp4f-g8jg", "index": 24, "kind": "prepared", "pass": "a", "previous": "7a446fd1bbfd5da7", "schedule_digest": "b17fde7133690b93", "seq": 48}
+{"index": 24, "kind": "done", "previous": "6699589bc3b4f8a3", "result_digest": "424aa38eb6ef72a3", "schedule_digest": "b17fde7133690b93", "seq": 49}
+{"arm": "opus", "case_id": "rs-4pj9-g833-qx53", "index": 25, "kind": "prepared", "pass": "a", "previous": "a6d035fdc56490b8", "schedule_digest": "b17fde7133690b93", "seq": 50}
+{"index": 25, "kind": "done", "previous": "ab68be2ba6490df0", "result_digest": "d69f159142b18f9f", "schedule_digest": "b17fde7133690b93", "seq": 51}
+{"arm": "opus", "case_id": "ts-34pm-923j-7wf8", "index": 26, "kind": "prepared", "pass": "b", "previous": "bd069712f538e4f0", "schedule_digest": "b17fde7133690b93", "seq": 52}
+{"index": 26, "kind": "done", "previous": "fa1f90f00ec2b904", "result_digest": "86881253572d661d", "schedule_digest": "b17fde7133690b93", "seq": 53}
+{"arm": "opus", "case_id": "rb-mx5j-mp4f-g8jg", "index": 27, "kind": "prepared", "pass": "a", "previous": "a9d8b39810959d78", "schedule_digest": "b17fde7133690b93", "seq": 54}
+{"index": 27, "kind": "done", "previous": "9249d5c99db80111", "result_digest": "8a783325297fb322", "schedule_digest": "b17fde7133690b93", "seq": 55}
+{"arm": "sonnet", "case_id": "go-8r62-w5wh-fc5m", "index": 28, "kind": "prepared", "pass": "a", "previous": "6dfdb5bb8915f6a1", "schedule_digest": "b17fde7133690b93", "seq": 56}
+{"index": 28, "kind": "done", "previous": "bfd122e822508a1a", "result_digest": "11c31ba1bda0fc04", "schedule_digest": "b17fde7133690b93", "seq": 57}
+{"arm": "sonnet", "case_id": "py-2wxc-x7rj-hg8f", "index": 29, "kind": "prepared", "pass": "a", "previous": "f4aef38e7b4de545", "schedule_digest": "b17fde7133690b93", "seq": 58}
+{"index": 29, "kind": "done", "previous": "fd66b204e820d707", "result_digest": "1f45fda789137904", "schedule_digest": "b17fde7133690b93", "seq": 59}
+{"arm": "opus", "case_id": "js-q4gh-4ffp-5cg8", "index": 30, "kind": "prepared", "pass": "b", "previous": "8e588791647a1b87", "schedule_digest": "b17fde7133690b93", "seq": 60}
+{"index": 30, "kind": "done", "previous": "e9cad88045e13ad6", "result_digest": "bd89321f2434c93f", "schedule_digest": "b17fde7133690b93", "seq": 61}
+{"arm": "sonnet", "case_id": "py-p43p-whwx-q52h", "index": 31, "kind": "prepared", "pass": "b", "previous": "2d8d4efdaf675002", "schedule_digest": "b17fde7133690b93", "seq": 62}
+{"index": 31, "kind": "done", "previous": "ac5fcce4acd17c94", "result_digest": "ed88ef4c52a89bfc", "schedule_digest": "b17fde7133690b93", "seq": 63}
+{"arm": "sonnet", "case_id": "rs-4pj9-g833-qx53", "index": 32, "kind": "prepared", "pass": "b", "previous": "3b701fcbc12c11a7", "schedule_digest": "b17fde7133690b93", "seq": 64}
+{"index": 32, "kind": "done", "previous": "e723050cd5fae0d8", "result_digest": "3ef2534569036441", "schedule_digest": "b17fde7133690b93", "seq": 65}
+{"arm": "opus", "case_id": "jv-45ph-gxxr-gwgw", "index": 33, "kind": "prepared", "pass": "b", "previous": "d64e723d3b3ffc09", "schedule_digest": "b17fde7133690b93", "seq": 66}
+{"index": 33, "kind": "done", "previous": "eaf5729648ad25ce", "result_digest": "8fb843ff85449171", "schedule_digest": "b17fde7133690b93", "seq": 67}
+{"arm": "sonnet", "case_id": "php-p2ch-c2c3-4xm5", "index": 34, "kind": "prepared", "pass": "b", "previous": "37ba415c9fdd80c4", "schedule_digest": "b17fde7133690b93", "seq": 68}
