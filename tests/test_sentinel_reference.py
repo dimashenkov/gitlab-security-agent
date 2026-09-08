@@ -143,6 +143,48 @@ def test_a_case_stable_in_both_senses_is_still_comparable(reference):
     assert body["comparable"] == ["steady"]
 
 
+@pytest.mark.parametrize("settings, expected", [
+    ({"verify_model": "claude-opus-5"},
+     "records no `verify` setting"),
+    ({"verify": True, "verify_model": "claude-haiku-4-5-20251001"},
+     "configured to verify with"),
+    ({"verify": True, "verify_model": "claude-opus-5"},
+     "for `models_verified`"),
+    # Codex, 2026-09-09: the paid batches of 2026-08 record `verify: true` and
+    # predate both fields. Telling their reader that "nothing says the verifier
+    # ran" denies evidence the row carries. The refusal has to name what is
+    # actually missing — which model answered — and what would fix it.
+    ({"verify": True}, "predates `verify_model`"),
+])
+def test_the_freezer_will_not_assume_a_verification_it_cannot_see(
+        reference, settings, expected):
+    """Codex, 2026-09-09: `settings.get("verify", True)` read an absent field
+    as verification having been on.
+
+    A reference states `verifier_model` unconditionally, so a row that never
+    said the verifier ran — or said it ran on another model, or cannot say who
+    answered — produces a file claiming a layer nothing in it shows. The
+    comparator then holds every challenger to that claim. The `q` reference is
+    unaffected because its rows carry all three fields; the next freeze is
+    where this lands.
+    """
+    member = {"provenance": {"model_requested": "claude-opus-5",
+                             "models_served": ["claude-opus-5"],
+                             "models_verified": ["claude-opus-5"],
+                             "model_substituted": False},
+              "settings": dict(settings)}
+    if expected == "for `models_verified`":
+        # Present and unreadable, which is a different answer from absent: an
+        # absent field predates the record and is refused as such, above.
+        member["provenance"]["models_verified"] = "claude-opus-5"
+    write_row(reference / "experiment", "pass-a", "steady", True,
+              members={"safe": member, "unsafe": dict(member)})
+
+    with pytest.raises(sentinel_reference.ReferenceError) as caught:
+        sentinel_reference.build()
+    assert expected in str(caught.value)
+
+
 def test_what_the_builder_writes_the_comparator_accepts(reference, tmp_path):
     """The chain, not the two links. The comparator gained a rule on
     2026-09-06 — the two roles must account for what served — and a rule about
@@ -153,6 +195,13 @@ def test_what_the_builder_writes_the_comparator_accepts(reference, tmp_path):
     straight off `models_served`, so it would have written a reference the
     comparator refuses as "not built from the rows" — about a file the builder
     had just built from them.
+
+    Until 2026-09-09 the row got there by configuring `verify_model` as Haiku.
+    That is the shape Codex's second finding is about: the builder never
+    checked the setting and wrote `verifier_model: claude-opus-5` regardless,
+    so the reference claimed a verifier its own rows contradicted. The row
+    keeps its purpose — Haiku verified and is absent from `models_served` —
+    with the configuration it would really have run under.
     """
     import sentinel_compare
 
@@ -171,18 +220,19 @@ def test_what_the_builder_writes_the_comparator_accepts(reference, tmp_path):
               members={"safe": {"provenance": {
                   "model_requested": "claude-opus-5",
                   "models_served": ["claude-opus-5"],
-                  "models_verified": ["claude-haiku-4-5-20251001"],
+                  "models_verified": ["claude-haiku-4-5-20251001",
+                                      "claude-opus-5"],
                   "model_substituted": False},
                   "settings": {"verify": True,
-                               "verify_model": "claude-haiku-4-5-20251001"}},
+                               "verify_model": "claude-opus-5"}},
                   "unsafe": {"provenance": {
                       "model_requested": "claude-opus-5",
                       "models_served": ["claude-opus-5"],
-                      "models_verified": ["claude-haiku-4-5-20251001"],
+                      "models_verified": ["claude-haiku-4-5-20251001",
+                                          "claude-opus-5"],
                       "model_substituted": False},
                       "settings": {"verify": True,
-                                   "verify_model":
-                                       "claude-haiku-4-5-20251001"}}})
+                                   "verify_model": "claude-opus-5"}}})
 
     body = sentinel_reference.build()
     for member in ("safe", "unsafe"):

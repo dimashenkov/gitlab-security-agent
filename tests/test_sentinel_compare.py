@@ -1189,7 +1189,14 @@ def test_a_verifier_the_provider_swapped_is_refused(tmp_path):
     with pytest.raises(sentinel_compare.ComparisonError) as caught:
         sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
                                        run(tmp_path, "b.json", rows)])
-    assert "asked for claude-opus-5" in str(caught.value)
+    # The refusal moved on 2026-09-09. The per-case form of it — everything
+    # that verified must equal the model requested — refused the reference
+    # against itself, because the provider serves part of every verification
+    # with a smaller model. What holds now is equality wherever the verifier
+    # ran, and this swap fails it: Haiku answered where the reference recorded
+    # Opus.
+    assert "the machinery has to be the same" in str(caught.value)
+    assert "claude-haiku-4-5-20251001" in str(caught.value)
 
 
 def test_the_verifier_held_where_it_was_is_accepted(tmp_path):
@@ -1553,4 +1560,239 @@ def test_the_machinery_the_reference_saw_must_serve_the_challenger_too(
         sentinel_compare.compare(ref, [run(tmp_path, "c.json", alone),
                                        run(tmp_path, "d.json", alone)])
     assert "the machinery has to be the same" in str(caught.value)
+
+
+def _flagged_safe(case_id: str) -> dict:
+    """A challenger row where the safe member drew a finding.
+
+    The verifier only runs where there is one, so this member records a
+    verifier the reference's safe member does not. That is the false alarm the
+    trial exists to count, not a changed instrument.
+    """
+    return row(case_id, False, false_alarm=True,
+               members={"safe": member(verified=["claude-opus-5"]),
+                        "unsafe": member(verified=["claude-opus-5"])})
+
+
+def test_a_verifier_on_a_safe_member_is_the_measurement_not_a_second_change(
+        tmp_path):
+    """The defect that refused the first Sonnet trial, on rows already bought.
+
+    `models_verified` is downstream of what was found: the verifier fires only
+    where there is a finding. The reference's safe members have none, so the
+    frozen expectation for that member is the empty set — and a challenger that
+    raises one false alarm anywhere shows a verifier there and was refused as a
+    changed instrument.
+
+    One row of the real fifty-two did exactly that. Held per member, the rule
+    could never pass a challenger that was worse in the one way the corpus is
+    built to detect, which turns a measurement into a machinery complaint.
+    """
+    ref = reference(tmp_path)
+    rows = [_flagged_safe("one")] + [row(c, True) for c in ("two", "three")]
+    result = sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                            run(tmp_path, "b.json", rows)])
+    # It is counted, not waved through: the safe false alarm is a regression.
+    assert result["regressed"] == ["one"]
+
+
+def test_the_reviewer_is_still_held_per_member(tmp_path):
+    """Loosening the verifier must not loosen the reviewer.
+
+    The reviewer runs on every case, so what reviewed a member says nothing
+    about what was found there, and a member reviewed by anything but the
+    challenger is a second change.
+    """
+    ref = reference(tmp_path)
+    # Not through `model_requested`: two rows asking for different models are
+    # refused earlier, as two challengers against one reference. The stray sits
+    # in what actually answered, which is where a provider substitution shows.
+    strayed_safe = member()
+    strayed_safe["provenance"] = dict(
+        strayed_safe["provenance"],
+        models_served=["claude-sonnet-5", "claude-haiku-4-5-20251001"])
+    strayed = row("one", True,
+                  members={"safe": strayed_safe,
+                           "unsafe": member(verified=["claude-opus-5"])})
+    rows = [strayed] + [row(c, True) for c in ("two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "was reviewed by" in str(caught.value)
+
+
+def test_a_model_the_reference_never_saw_verifying_is_refused(tmp_path):
+    """The failure the per-member rule was reaching for, and still catches.
+
+    A provider that quietly served the challenger's verification with a cheaper
+    model would give a flattering `net: 0` — the cheaper reviewer looking fine
+    because what judged it had been made cheaper too.
+    """
+    ref = reference(tmp_path)
+    rows = [row(c, True,
+                members={"safe": member(),
+                         "unsafe": member(verified=["claude-opus-5",
+                                                    "claude-sonnet-5"])})
+            for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "the machinery has to be the same" in str(caught.value)
+    assert "claude-sonnet-5" in str(caught.value)
+
+
+def test_a_run_that_verified_but_never_by_the_reference_s_verifier_is_refused(
+        tmp_path):
+    """Every model that answered is one the reference saw — and the one that
+    was supposed to answer never did. Subset membership alone would accept it.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    body["observed_models"]["verifying"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    body["observed_models"]["any_role"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    ref.write_text(json.dumps(body))
+
+    rows = [row(c, True,
+                members={"safe": member(),
+                         "unsafe": member(
+                             verified=["claude-haiku-4-5-20251001"])})
+            for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "the machinery has to be the same" in str(caught.value)
+
+
+def test_a_secondary_verifier_that_disappeared_is_refused(tmp_path):
+    """Codex's counterexample, 2026-09-09, executed against the purchased rows.
+
+    The first repair held the verifying role as a *pool* and tested membership.
+    With the reference observing `{Haiku, Opus}` and the challenger observing
+    `{Opus}` alone, that is a subset, so it passed — and it is a real change to
+    the machinery: the provider stopped serving the smaller model. Run against
+    the real trial artifacts the subset rule returned `net 2 · reject` where it
+    should have refused to compare at all.
+
+    Equality wherever the verifier ran is what replaced it, and this is the
+    case that separates the two rules.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    body["observed_models"]["verifying"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    body["observed_models"]["any_role"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    ref.write_text(json.dumps(body))
+
+    rows = [row(c, True,
+                members={"safe": member(),
+                         "unsafe": member(verified=["claude-opus-5"])})
+            for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "the machinery has to be the same" in str(caught.value)
+
+
+def test_two_deficient_rows_that_union_to_the_right_set_are_refused(tmp_path):
+    """Codex's second counterexample, 2026-09-09.
+
+    The repair after his first one accumulated every `models_verified` into one
+    set per member and compared *that*. With the reference expecting
+    `{Haiku, Opus}`, one case verified by Haiku alone and another by Opus alone
+    union to exactly `{Haiku, Opus}` — so neither verification used the
+    reference's arrangement and the comparison proceeded anyway.
+
+    A union answers "which models appeared at all", which is not the question.
+    Every non-empty observation is now compared on its own.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    body["observed_models"]["verifying"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    body["observed_models"]["any_role"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    ref.write_text(json.dumps(body))
+
+    rows = [
+        row("one", True, members={
+            "safe": member(),
+            "unsafe": member(verified=["claude-haiku-4-5-20251001"])}),
+        row("two", True, members={
+            "safe": member(),
+            "unsafe": member(verified=["claude-opus-5"])}),
+        row("three", True, members={"safe": member(), "unsafe": member()}),
+    ]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "the machinery has to be the same" in str(caught.value)
+    # The refusal names the case, or a reader cannot find the row.
+    assert "one:" in str(caught.value) or "two:" in str(caught.value)
+
+
+def test_the_same_verifiers_in_a_different_place_are_refused(tmp_path):
+    """A pool test also lets a verifier move between members unnoticed: the
+    union is unchanged while the arrangement is not. Here the unsafe member
+    keeps only Opus and the safe one carries both.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    body["observed_models"]["verifying"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    body["observed_models"]["any_role"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    ref.write_text(json.dumps(body))
+
+    rows = [row(c, True,
+                members={"safe": member(verified=["claude-haiku-4-5-20251001",
+                                                  "claude-opus-5"]),
+                         "unsafe": member(verified=["claude-opus-5"])})
+            for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "the unsafe member was verified by" in str(caught.value)
+
+
+def test_a_reference_whose_verifier_never_answered_holds_nobody(tmp_path):
+    """The reference names Opus and only Haiku ever verified in it. Nothing
+    about that reference says what its own verifier looks like, so it cannot
+    hold a challenger to one."""
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    # `any_role` has to carry it too, or an earlier check refuses the file for
+    # a different reason: the two roles are a partition of what served.
+    body["observed_models"]["verifying"]["unsafe"] = [
+        "claude-haiku-4-5-20251001"]
+    body["observed_models"]["any_role"]["unsafe"] = [
+        "claude-haiku-4-5-20251001", "claude-opus-5"]
+    ref.write_text(json.dumps(body))
+
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "did not run its own verifier" in str(caught.value)
+
+
+def test_a_reference_that_saw_nothing_verify_cannot_hold_a_run_that_did(
+        tmp_path):
+    """Absence is not agreement. If the reference observed no verifier
+    anywhere, there is no arrangement to hold the challenger to, and accepting
+    it would let any verifier through on the strength of a reference that
+    recorded none.
+    """
+    ref = reference(tmp_path)
+    body = json.loads(ref.read_text())
+    body["observed_models"]["verifying"] = {"safe": [], "unsafe": []}
+    ref.write_text(json.dumps(body))
+
+    rows = [row(c, True) for c in ("one", "two", "three")]
+    with pytest.raises(sentinel_compare.ComparisonError) as caught:
+        sentinel_compare.compare(ref, [run(tmp_path, "a.json", rows),
+                                       run(tmp_path, "b.json", rows)])
+    assert "no arrangement to hold a challenger to" in str(caught.value)
 

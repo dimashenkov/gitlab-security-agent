@@ -951,8 +951,6 @@ def compare(reference_path, run_paths: list) -> dict:
                         "{}: a member records {} for `settings`, where an "
                         "object is required".format(
                             case_id, type(settings).__name__))
-                wanted = settings.get("verify_model") or prov.get(
-                    "model_requested")
                 # Validated before it is defaulted, which is the whole of this
                 # class: `or []` turns `0`, `""` and `{}` into an empty list,
                 # so a malformed field arrives as "nothing was verified" — a
@@ -1018,13 +1016,24 @@ def compare(reference_path, run_paths: list) -> dict:
                         "{}: verification is off and the row still names {} as "
                         "having verified. That run did not happen.".format(
                             case_id, ", ".join(sorted(set(verified)))))
-                served = [m for m in verified if m != wanted]
-                if served:
-                    raise ComparisonError(
-                        "{}: the verification ran on {} and the run asked for "
-                        "{}. A challenger measured by a different verifier is "
-                        "not the comparison this reference describes.".format(
-                            case_id, ", ".join(sorted(set(served))), wanted))
+                # What the run *asked* for is checked above, against the
+                # reference's `verifier_model`. What actually answered is not
+                # checked here, and must not be: the provider serves part of
+                # every verification with a smaller model — 25 of the
+                # reference arm's own 52 rows record
+                # `["claude-haiku-4-5-20251001", "claude-opus-5"]` for a
+                # verifier configured as Opus. A rule reading "everything that
+                # verified equals the model requested" therefore refuses the
+                # reference against itself, which is the one comparison that
+                # must always pass. Measured 2026-09-09, after it refused the
+                # first trial the instrument was frozen to buy.
+                #
+                # The observation is held instead against what the reference
+                # observed, per member and per role, at `observed_models`
+                # below. That is the stronger rule as well as the satisfiable
+                # one: equality with the recorded arrangement catches a
+                # provider that quietly downgrades the challenger's verifier,
+                # which is the failure this check was reaching for.
 
     # And the challenger has to differ from the reference in the model *only*.
     # The comparator asked whether the two challenger passes agreed with each
@@ -1120,39 +1129,116 @@ def compare(reference_path, run_paths: list) -> dict:
         by_role = _expectations(expected_models, reference.get("model"),
                                 next(iter(asked)))
         seen_reviewing: dict = {}
-        seen_verifying: dict = {}
+        # **One observation per member per row, never a union.** Accumulating
+        # into a set per member and comparing that was the second version of
+        # this check and Codex broke it on 2026-09-09: with the reference
+        # expecting `{Haiku, Opus}`, one case verified by Haiku alone and
+        # another by Opus alone union to exactly `{Haiku, Opus}`, so neither
+        # verification used the reference's arrangement and the comparison
+        # proceeded anyway. A union answers "which models appeared at all",
+        # which is not the question.
+        #
+        # The reviewing role above stays a union, and that is not the same
+        # mistake: its expectation is a single model, so a union that equals it
+        # can only have come from every row matching it.
+        verifying_seen: list = []
         for run in runs:
-            for row in run.values():
+            for case_id, row in run.items():
                 for name, block in (row.get("members") or {}).items():
                     prov = (block or {}).get("provenance") or {}
                     seen_reviewing.setdefault(name, set()).update(
                         _reviewing(prov))
-                    seen_verifying.setdefault(name, set()).update(
-                        prov.get("models_verified") or [])
-        for role, seen, expectations in (
-                ("reviewed", seen_reviewing, by_role["reviewing"]),
-                ("verified", seen_verifying, by_role["verifying"])):
-            for name, expected in sorted(expectations.items()):
-                if seen.get(name, set()) != expected:
-                    raise ComparisonError(
-                        "the {} member was {} by {} and the reference was {} "
-                        "by {}. Beside the model under test, the machinery has "
-                        "to be the same or the comparison measures two "
-                        "changes.".format(
-                            name, role,
-                            sorted(seen.get(name, set())) or "nothing",
-                            role, sorted(expected) or "nothing"))
+                    verified = frozenset(prov.get("models_verified") or [])
+                    if verified:
+                        verifying_seen.append((case_id, name, verified))
+        # The reviewer runs on every case, so what reviewed a member does not
+        # depend on what was found there, and equality per member is the right
+        # rule: it is the one role the experiment substitutes, and a member
+        # reviewed by anything else is a second change.
+        for name, expected in sorted(by_role["reviewing"].items()):
+            if seen_reviewing.get(name, set()) != expected:
+                raise ComparisonError(
+                    "the {} member was reviewed by {} and the reference was "
+                    "reviewed by {}. Beside the model under test, the "
+                    "machinery has to be the same or the comparison measures "
+                    "two changes.".format(
+                        name, sorted(seen_reviewing.get(name, set()))
+                        or "nothing", sorted(expected) or "nothing"))
 
-    # And the verifier that actually ran has to be the one the run asked for.
-    # `model_substituted` above says the *reviewer* was answered by something
-    # else; nothing said it about the verifier, and holding the verifier still
-    # while the reviewer changes is the whole shape of this experiment. A
-    # provider swapping Opus for something smaller here would have produced a
-    # quiet `net: 0` — the cheaper reviewer looking fine because the comparison
-    # it was measured by had also been made cheaper.
+        # The verifying role is **not** held per member, and holding it there
+        # was a defect: what verified is downstream of what was found. The
+        # verifier only runs where there is a finding, so a challenger that
+        # raises one on a safe member the reference left alone shows a
+        # verifier the reference does not — and that difference is the
+        # measurement, not a confound. Held per member, the rule refused the
+        # first Sonnet trial on one row of fifty-two: the single safe member
+        # Sonnet flagged and Opus did not. Measured 2026-09-09, on rows
+        # already bought.
+        #
+        # What must still hold is the arrangement, and it is checked over the
+        # run as a whole: nothing may verify that the reference never saw
+        # verifying, and if anything verified at all then the verifier the
+        # reference names has to be among what answered. A provider quietly
+        # serving the challenger's verification with a cheaper model fails
+        # both, which is the failure this is here for.
+        wanted_verifier = reference.get("verifier_model")
+        if not wanted_verifier:
+            raise ComparisonError(
+                "the reference does not name the verifier it was produced "
+                "with, so a challenger cannot be held to it")
+        # The rule is equality **wherever the verifier ran at all**, not
+        # membership of a pool. A subset was the first repair and Codex broke
+        # it the same day: with the reference observing `{Haiku, Opus}` and the
+        # challenger observing `{Opus}` alone, a subset test accepts a run in
+        # which the provider stopped serving the smaller model — a real change
+        # to the machinery, executed against the purchased rows and returning
+        # `net 2 · reject` instead of a refusal. Pooling also let a verifier
+        # move between the safe and the unsafe member unnoticed.
+        #
+        # So: an empty `models_verified` is allowed anywhere, because a member
+        # with no finding fires no verifier and that is the outcome. A
+        # *non-empty* one has to be the same set the reference saw whenever its
+        # own verifier ran. That is outcome-independent — it says nothing about
+        # how often the verifier fired, only about who answered when it did.
+        active = {frozenset(models)
+                  for models in by_role["verifying"].values() if models}
+        if not active:
+            raise ComparisonError(
+                "the reference records nothing verifying anywhere, so there "
+                "is no arrangement to hold a challenger to. Re-freeze from a "
+                "run whose rows carry `models_verified`.")
+        if len(active) > 1:
+            raise ComparisonError(
+                "the reference saw {} verifying different members, so it does "
+                "not describe one arrangement.".format(
+                    " and ".join(sorted(str(sorted(a)) for a in active))))
+        expected_active = set(next(iter(active)))
+        if wanted_verifier not in expected_active:
+            raise ComparisonError(
+                "the reference names {} as its verifier and records {} as "
+                "having verified. A reference that did not run its own "
+                "verifier cannot hold a challenger to it.".format(
+                    wanted_verifier, sorted(expected_active)))
+        for case_id, name, models in sorted(verifying_seen):
+            if models != expected_active:
+                raise ComparisonError(
+                    "{}: the {} member was verified by {} and the reference "
+                    "was verified by {} wherever its verifier ran. Beside the "
+                    "model under test, the machinery has to be the same or "
+                    "the comparison measures two changes.".format(
+                        case_id, name, sorted(models),
+                        sorted(expected_active)))
+
+    # The role check above is where the verifier is held still. A provider
+    # swapping Opus for something smaller there would produce a quiet
+    # `net: 0` — the cheaper reviewer looking fine because the comparison it
+    # was measured by had also been made cheaper — and the set the challenger
+    # observed would no longer equal the set the reference observed.
     #
-    # An empty `models_verified` stays allowed: the verifier only runs where
-    # there is a finding, and a case with none verified nothing.
+    # An empty `models_verified` stays allowed where the reference is also
+    # empty: the verifier only runs where there is a finding, and a case with
+    # none verified nothing. It is *not* allowed where the reference observed
+    # a verifier, and that asymmetry is the check, not an oversight.
 
     identities = {_system_identity(row) for run in runs for row in run.values()}
     if "" in identities:

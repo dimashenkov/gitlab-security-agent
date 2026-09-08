@@ -114,11 +114,50 @@ def _row_of(path: Path, case_id: str) -> dict:
             raise ReferenceError(
                 "{}: the {} member records no served model".format(
                     path.name, name))
-        if settings.get("verify", True) is not True:
+        # **Required, not defaulted.** `settings.get("verify", True)` read an
+        # absent field as verification having been on, so a row that never
+        # recorded the setting was frozen into a reference that then states
+        # `verifier_model` unconditionally — the comparator holding challengers
+        # to a contract the reference itself never showed it met. Codex,
+        # 2026-09-09. The `q` reference is unaffected; its rows carry the
+        # field. The next freeze was where this would have landed.
+        if "verify" not in settings:
+            raise ReferenceError(
+                "{}: the {} member records no `verify` setting, so nothing "
+                "says the verifier ran. A reference cannot claim a layer its "
+                "own rows are silent about".format(path.name, name))
+        if settings.get("verify") is not True:
             raise ReferenceError(
                 "{}: verification is {!r} in the {} member, and a reference "
                 "with a layer missing cannot hold a challenger to it".format(
                     path.name, settings.get("verify"), name))
+        # Two different absences, and they are not the same refusal. Codex,
+        # 2026-09-09: the paid batches of 2026-08 record `verify: true` and
+        # predate both fields below, so telling their reader that "nothing
+        # says the verifier ran" is false — something does. What they cannot
+        # say is *which model* answered, and a reference names one. So the
+        # refusal says that, and says what would make them usable, rather than
+        # denying evidence they carry.
+        if "verify_model" not in settings or "models_verified" not in prov:
+            raise ReferenceError(
+                "{}: the {} member records verification as on and does not "
+                "say which model performed it — it predates `verify_model` "
+                "and `models_verified`. A reference names its verifier, and "
+                "one built from these rows would be naming a model they "
+                "never recorded. Re-measure them, or freeze from rows that "
+                "carry both".format(path.name, name))
+        if settings.get("verify_model") != VERIFIER:
+            raise ReferenceError(
+                "{}: the {} member was configured to verify with {!r} and "
+                "this reference is about {}".format(
+                    path.name, name, settings.get("verify_model"), VERIFIER))
+        verified = prov.get("models_verified")
+        if not isinstance(verified, list):
+            raise ReferenceError(
+                "{}: the {} member records {} for `models_verified`, where a "
+                "list is required. A reference built from rows that cannot "
+                "say who verified cannot hold a challenger to a verifier"
+                .format(path.name, name, type(verified).__name__))
 
     if row.get("case_id") != case_id:
         raise ReferenceError("{}: the row inside is about {!r}".format(
