@@ -49,7 +49,14 @@ def trees(tmp_path, monkeypatch):
             # the comparator requires.
             "environment": dict(ENVIRONMENT, model_requested=model,
                                 verifier_requested="claude-opus-5"),
-            "protocol": {"order": list(CASES), "passes": ["a", "b"]},
+            # `primary_endpoint` and `not_answerable` because a real freeze
+            # writes them and `compare` reads them by subscript. A
+            # fixture without them is a shape production cannot emit —
+            # the defect this file has been caught by three times, and
+            # the fourth was the loader learning to require them.
+            "protocol": {"order": list(CASES), "passes": ["a", "b"],
+                         "primary_endpoint": "whether b equals a",
+                         "not_answerable": "how often a case flips"},
             # The suite block, because a real freeze writes one and the trial
             # compares it. Leaving it out made this fixture a shape production
             # cannot emit — the defect this file has already been caught by
@@ -1329,13 +1336,29 @@ class TestTwoArmsAreOneSuiteNotOneSequence:
         body = {
             "environment": dict(ENVIRONMENT, model_requested=model,
                                 verifier_requested="claude-opus-5"),
-            "protocol": {"order": list(CASES), "passes": ["a", "b"]},
+            # `primary_endpoint` and `not_answerable` because a real freeze
+            # writes them and `compare` reads them by subscript. A
+            # fixture without them is a shape production cannot emit —
+            # the defect this file has been caught by three times, and
+            # the fourth was the loader learning to require them.
+            "protocol": {"order": list(CASES), "passes": ["a", "b"],
+                         "primary_endpoint": "whether b equals a",
+                         "not_answerable": "how often a case flips"},
             "suite": {"file": "suites/sentinel.yml", "digest": "f" * 16,
                       "count": len(CASES)},
             "cases": [{"case_id": c, "case_digest": "d" * 16,
                        "answer_key_digest": "k" * 16} for c in CASES],
         }
         body.update(overrides)
+        # A caller overriding `protocol` is saying something about the order,
+        # not about the endpoint prose — so the fields a real freeze always
+        # writes are filled back in rather than made every caller's problem.
+        # Leaving that to each call site is how a fixture drifts into a shape
+        # production cannot emit, one override at a time.
+        if isinstance(body.get("protocol"), dict):
+            for field, value in (("primary_endpoint", "whether b equals a"),
+                                 ("not_answerable", "how often a case flips")):
+                body["protocol"].setdefault(field, value)
         (directory / "manifest.json").write_text(json.dumps(body),
                                                  encoding="utf-8")
 
@@ -1390,18 +1413,79 @@ class TestTwoArmsAreOneSuiteNotOneSequence:
         with pytest.raises(trial.TrialError, match="different cases"):
             trial.build("t", "opus-arm", "sonnet-arm")
 
-    def test_a_duplicate_case_is_refused_rather_than_collapsed(self, trees):
+    def test_a_duplicate_case_is_refused_rather_than_collapsed(
+            self, trees, capsys):
         """A set would have swallowed it, and the counts would then disagree
-        with the schedule without anything saying so."""
+        with the schedule without anything saying so.
+
+        The wording moved twice as the rule did — first out of `build` into
+        the trial's shared validator, then out to `experiment.load`, which is
+        the boundary every reader comes through. Asserting the caller's
+        sentence would tie this test to whichever layer happened to notice;
+        the reason is what matters, and it is reported wherever it is found.
+        """
         self.manifest(trees, "opus-arm", "claude-opus-5",
                       cases=[{"case_id": c, "case_digest": "d" * 16,
                               "answer_key_digest": "k" * 16}
                              for c in CASES + CASES[:1]])
         self.manifest(trees, "sonnet-arm", "claude-sonnet-5")
-        with pytest.raises(trial.TrialError, match="twice"):
+        with pytest.raises(trial.TrialError):
             trial.build("t", "opus-arm", "sonnet-arm")
 
-    def test_a_manifest_with_no_suite_is_refused_not_crashed(self, trees):
+        assert "more than once" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("cases,marker", [
+        (None, "records None for its cases"),
+        ([], "no cases"),
+        ("one", "records 'one' for its cases"),
+        (["one"], "has str at case 0"),
+        ([{"case_id": None}], "names None at case 0"),
+        ([{"case_id": ""}], "names '' at case 0"),
+        ([{"nope": 1}], "names None at case 0"),
+    ])
+    def test_build_refuses_a_malformed_cases_block_rather_than_crashing(
+            self, trees, capsys, cases, marker):
+        """**The neighbour of the loader, with the same hole.** The shape
+        checks were added where a schedule is read and `build` went on with its
+        own reading of the same block — `bodies[arm]["cases"]` and
+        `row.get(...)` — so `freeze` still crashed on the identical mutations.
+        A class closed in one caller and not its neighbour is not closed.
+
+        Codex, sixteenth gate round, 2026-09-08. Both callers go through
+        `_validated_cases` now.
+        """
+        self.manifest(trees, "opus-arm", "claude-opus-5", cases=cases)
+        self.manifest(trees, "sonnet-arm", "claude-sonnet-5")
+
+        with pytest.raises(trial.TrialError):
+            trial.build("t", "opus-arm", "sonnet-arm")
+
+        # **The reason, wherever it is reported.** `experiment.load` is the
+        # boundary now and it prints why; the trial's own sentence points at
+        # that rather than guessing. Asserting the caller's wording would tie
+        # this test to which layer happened to notice. Codex, eighteenth gate
+        # round, 2026-09-08.
+        assert marker in capsys.readouterr().err, marker
+
+    @pytest.mark.parametrize("block", ["suite", "environment"])
+    @pytest.mark.parametrize("value", [None, [], "text", 7])
+    def test_build_refuses_a_malformed_block_rather_than_crashing(
+            self, trees, capsys, block, value):
+        """`_validated_cases` closed the cases block and left `suite` and
+        `environment` read the way they always were, so a manifest with either
+        of them the wrong shape crashed rather than being refused."""
+        path = experiment.home("opus-arm") / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        body[block] = value
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        with pytest.raises(trial.TrialError):
+            trial.build("t", "opus-arm", "sonnet-arm")
+
+        assert block in capsys.readouterr().err, block
+
+    def test_a_manifest_with_no_suite_is_refused_not_crashed(
+            self, trees, capsys):
         """"I could not check" is not "they match", and a `KeyError` raised
         from inside the comparison reports the failure far from its cause."""
         self.manifest(trees, "opus-arm", "claude-opus-5")
@@ -1411,8 +1495,10 @@ class TestTwoArmsAreOneSuiteNotOneSequence:
         del body["suite"]
         (directory / "manifest.json").write_text(json.dumps(body),
                                                  encoding="utf-8")
-        with pytest.raises(trial.TrialError, match="records no suite"):
+        with pytest.raises(trial.TrialError):
             trial.build("t", "opus-arm", "sonnet-arm")
+
+        assert "for its suite" in capsys.readouterr().err
 
 
 class TestTheSecondPassIsSecond:
@@ -1462,10 +1548,23 @@ class TestTheSecondPassIsSecond:
         gate before the first purchase.
 
         Swapping leaves both positions where the shuffle put them and only
-        exchanges their contents, so every property of the plain shuffle
-        survives. Measured over 200 seeds, the two agree on arm position, arm
-        switches, and pass gap; they differ only in that 2583 pairs ran `b`
+        exchanges their contents, so the pair constraint costs the shuffle
+        nothing. Measured over 200 seeds, the two agreed on arm position, arm
+        switches, and pass gap; they differed only in that 2583 pairs ran `b`
         first and now none do.
+
+        **What this test no longer asserts, and why.** It compared the arm
+        sequence against a plain shuffle's, and that equality is deliberately
+        gone: `_balanced` bounds how many consecutive units one arm may take,
+        which raises the number of arm switches — measured, 24 to 51 on one
+        seed. Codex ruled an eleven-unit block unacceptable on 2026-09-08 and
+        the bound is the answer to it.
+
+        The *pair* property is what this test was written for and it still
+        holds, so that is what it checks. Rewriting it to assert the new arm
+        sequence would be a test written to whatever the code now does; the
+        bound has its own tests, under
+        `TestNeitherArmHoldsTheRunTooLong`.
         """
         import random
         cases = ["c{}".format(n) for n in range(13)]
@@ -1476,16 +1575,24 @@ class TestTheSecondPassIsSecond:
             random.Random(seed).shuffle(out)
             return out
 
-        def shape(made):
-            arms = [u["arm"] for u in made]
+        def gaps(made):
             seen = {}
             for index, unit in enumerate(made):
                 seen.setdefault((unit["arm"], unit["case_id"]), []).append(index)
-            return (sum(1 for a, b in zip(arms, arms[1:]) if a != b),
-                    sorted(abs(a - b) for a, b in seen.values()))
+            return sorted(abs(a - b) for a, b in seen.values())
 
         for seed in ("a", "seed", "sonnet-trial", "2026-09-07"):
-            assert shape(trial.units(cases, seed)) == shape(plain(seed)), seed
+            mine, theirs = gaps(trial.units(cases, seed)), gaps(plain(seed))
+            # **Not "no gap is 1".** A plain shuffle produces the occasional
+            # adjacent pair too, and asserting otherwise would be a claim about
+            # the code stronger than the code makes — the shape this file
+            # records against itself. What the gathering defect did was make
+            # *every* gap 1; that is what must not come back.
+            assert sum(1 for g in mine if g == 1) < len(mine) / 2, (seed, mine)
+            # And the pairs are still spread across the run about as widely as
+            # a plain shuffle spreads them.
+            assert (sum(mine) / len(mine)
+                    > sum(theirs) / len(theirs) * 0.5), (seed, mine, theirs)
 
     def test_the_arms_still_interleave(self):
         """Named separately from the equality above, because a shuffle that
@@ -1687,6 +1794,33 @@ class TestTheBytesAreCheckedAroundEveryPurchase:
         trial._buy(schedule, unit)
         assert seen["model"] == "claude-sonnet-5"
         assert seen["verifier"] == "claude-opus-5"
+
+    @pytest.mark.parametrize("code", [0, 2])
+    def test_the_environment_is_put_back_afterwards(self, trees, monkeypatch,
+                                                    code):
+        """**A global left set is a global some later reader believes.**
+
+        `_buy` set both variables and left them set. Within one run of the
+        trial the next unit overwrites them, so nothing was bought wrongly —
+        but the process goes on to build the reference and print the status
+        with one arm's model still in its environment, and each of those reads
+        `Config.from_env()` somewhere.
+
+        Measured as a test leak first, which is the same thing from outside:
+        `test_experiment.py` failed only when this file ran before it, because
+        `SECURITY_SCAN_VERIFY_MODEL` was still set. Both exit codes, because a
+        refusal leaves the environment behind just as surely as a purchase.
+        """
+        schedule = self.ready(trees, monkeypatch)
+        monkeypatch.delenv("SECURITY_SCAN_MODEL", raising=False)
+        monkeypatch.setenv("SECURITY_SCAN_VERIFY_MODEL", "left-alone")
+        monkeypatch.setattr(experiment, "run", lambda *a, **k: code)
+        unit = next(u for u in schedule["units"] if u["arm"] == "sonnet")
+
+        trial._buy(schedule, unit)
+
+        assert os.environ.get("SECURITY_SCAN_MODEL") is None
+        assert os.environ.get("SECURITY_SCAN_VERIFY_MODEL") == "left-alone"
 
 
 class TestARejectedResultIsMovedOutOfTheWay:
@@ -1930,3 +2064,210 @@ class TestStatusSaysWhichCommandTakesTheResult:
         said = capsys.readouterr().out
         assert "a resume re-runs it" in said, said
         assert "--recover" not in said, said
+
+
+class TestNeitherArmHoldsTheRunTooLong:
+    """The interleave had no balance invariant: an unconstrained shuffle, then
+    only `a` before `b`.
+
+    Four schedules were frozen on 2026-09-08 and their longest single-arm
+    blocks were 5, 7, 8 and 11 of 52. Eleven is 21% of the trial spent on one
+    arm in one window — the interleave exists so that drift over wall-clock
+    time does not load onto one arm, and a block that size defeats part of it.
+
+    Codex ruled eleven not acceptable, and ruled out the other repair by name:
+    *"do not keep trying seeds until one looks pleasing"*. The seed is the
+    trial's name, so re-freezing under a new name until the order looked good
+    would have been exactly that. The bound is chosen before generating and
+    holds for every seed.
+    """
+
+    def cases(self, how_many=13):
+        return ["c{}".format(n) for n in range(how_many)]
+
+    def test_no_arm_takes_more_than_the_bound_in_a_row(self):
+        made = trial.units(self.cases(), "seed")
+
+        assert trial.longest_same_arm_run(made) <= trial.MAX_SAME_ARM_RUN
+
+    def test_it_holds_for_every_seed_that_was_tried(self):
+        """One seed passing is a shuffle that happened to come out balanced.
+        The bound has to be a property of the generator."""
+        worst = {}
+        for seed in ["s{}".format(n) for n in range(40)]:
+            worst[seed] = trial.longest_same_arm_run(
+                trial.units(self.cases(), seed))
+        over = {s: w for s, w in worst.items() if w > trial.MAX_SAME_ARM_RUN}
+
+        assert not over, over
+
+    def test_the_bound_does_not_undo_a_before_b(self):
+        """The balancing merges two queues, and each keeps the order the
+        shuffle gave it — which is what carries the pass constraint. A repair
+        that reordered within an arm would trade one defect for the one this
+        file already records."""
+        made = trial.units(self.cases(), "seed")
+        first = {}
+        for unit in made:
+            first.setdefault((unit["arm"], unit["case_id"]), unit["pass"])
+
+        assert all(label == "a" for label in first.values()), first
+
+    def test_the_units_are_still_all_there_and_balanced(self):
+        """The control. A merge that dropped or duplicated a unit would
+        satisfy the bound and buy a different experiment."""
+        made = trial.units(self.cases(), "seed")
+        cells = {}
+        for unit in made:
+            cells[(unit["arm"], unit["pass"])] = cells.get(
+                (unit["arm"], unit["pass"]), 0) + 1
+
+        assert len(made) == 52
+        assert set(cells.values()) == {13}, cells
+        assert [u["index"] for u in made] == list(range(52))
+
+    def written(self, trees, change=lambda units: units, cases=None):
+        """A schedule on disk beside two real arm manifests.
+
+        `trees` rather than a hand-built directory: `load_schedule` reads both
+        manifests now, and a fixture that omitted them would be a shape
+        production cannot emit — the defect this file has already been caught
+        by twice.
+        """
+        home = trial.home("t")
+        home.mkdir(parents=True, exist_ok=True)
+        named = list(CASES) if cases is None else cases
+        made = change([dict(u) for u in trial.units(list(CASES), "seed")])
+        for index, unit in enumerate(made):
+            unit["index"] = index
+        (home / "schedule.json").write_text(json.dumps({
+            "trial": "t", "units": made, "cases": named,
+            "arms": {"opus": {"experiment": "opus-arm"},
+                     "sonnet": {"experiment": "sonnet-arm"}},
+        }), encoding="utf-8")
+        return home
+
+    @pytest.mark.parametrize("change,marker", [
+        (lambda u: u[:-1], "missing"),
+        (lambda u: [*u, dict(u[0])], "repeated"),
+        (lambda u: [], "missing"),
+        (lambda u: [dict(x, case_id="ghost") if i == 0 else x
+                    for i, x in enumerate(u)], "missing"),
+    ])
+    def test_a_schedule_that_is_not_the_experiment_is_refused(
+            self, trees, change, marker):
+        """**The set of units, not each unit.** Every check before this asked
+        what a unit *is*; none asked whether the units together are the
+        experiment the schedule names. A file with one dropped, one repeated,
+        one renamed — or an empty list — passed, and the runner would have
+        finished a shorter or a different trial and reported it as the
+        committed 52.
+
+        The generation test proves `units()` builds all of them, and says
+        nothing about the file that is actually bought from. Codex, thirteenth
+        gate round, 2026-09-08.
+        """
+        self.written(trees, change)
+
+        with pytest.raises(trial.TrialError) as caught:
+            trial.load_schedule("t")
+
+        assert marker in str(caught.value), str(caught.value)
+
+    def test_the_schedule_this_tool_writes_is_accepted(self, trees):
+        """The control. A completeness check that refuses the real thing is a
+        check somebody deletes."""
+        self.written(trees)
+
+        body, _digest = trial.load_schedule("t")
+
+        assert len(body["units"]) == len(CASES) * len(trial.ARMS) * 2
+
+    def test_a_case_dropped_with_its_units_is_refused(self, trees):
+        """**The completeness check derived `wanted` from the schedule's own
+        list**, so removing a case *together with* its four units left a
+        shorter trial that looked complete: every remaining purchase valid in
+        both manifests, and the run reporting itself finished against the
+        shortened order.
+
+        Codex, fourteenth gate round, 2026-09-08 — the answer to the question
+        the thirteenth left open.
+        """
+        gone = CASES[0]
+        self.written(trees,
+                     change=lambda u: [x for x in u if x["case_id"] != gone],
+                     cases=[c for c in CASES if c != gone])
+
+        with pytest.raises(trial.TrialError) as caught:
+            trial.load_schedule("t")
+
+        assert "the {} arm freezes".format("opus") in str(caught.value) or \
+            "arm freezes" in str(caught.value), str(caught.value)
+
+    @pytest.mark.parametrize("manifest,marker", [
+        (None, "is NoneType"),
+        ([], "is list"),
+        ("a manifest", "is str"),
+        ({"cases": None}, "records None"),
+        ({"cases": []}, "records []"),
+        ({"cases": "one"}, "records 'one'"),
+        ({"cases": ["one"]}, "has str at case 0"),
+        ({"cases": [{"case_id": None}]}, "names None at case 0"),
+        ({"cases": [{"case_id": ""}]}, "names '' at case 0"),
+        ({"cases": [{"case_id": 7}]}, "names 7 at case 0"),
+        ({"cases": [{"nope": "one"}]}, "names None at case 0"),
+        ({"cases": [{"case_id": "one"}, {"case_id": "one"}]},
+         "more than once"),
+    ])
+    def test_a_manifest_of_the_wrong_shape_is_refused_not_raised(
+            self, trees, manifest, marker):
+        """**The class, not one instance.** `json.loads` establishes that a
+        file is JSON. The code that read the arms' case ids assumed at every
+        step that the rest of the shape was what a real freeze writes, so a
+        manifest that is `null`, or whose `cases` is `null`, or whose rows are
+        bare strings, produced an `AttributeError` or a `TypeError` out of the
+        function whose whole job is to refuse — and comparing `None` against
+        strings can raise inside `sorted` rather than answer.
+
+        Codex named it as a class on the fifteenth gate round, 2026-09-08,
+        after four rounds of the same shape one level apart: a validator that
+        assumes a shape the spending path cannot safely consume.
+        """
+        self.written(trees)
+        (experiment.home("opus-arm") / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8")
+
+        with pytest.raises(trial.TrialError) as caught:
+            trial.load_schedule("t")
+
+        assert marker in str(caught.value), str(caught.value)
+
+    def test_a_case_named_twice_in_the_list_is_refused(self, trees):
+        """A duplicate makes the schedule's own list disagree with itself about
+        how long the trial is, while every unit still checks out."""
+        self.written(trees, cases=[*CASES, CASES[0]])
+
+        with pytest.raises(trial.TrialError) as caught:
+            trial.load_schedule("t")
+
+        assert "more than once" in str(caught.value), str(caught.value)
+
+    def test_a_schedule_over_the_bound_is_refused_when_it_is_read(
+            self, trees):
+        """Applying the bound only in `units()` would hold for a schedule this
+        tool generated and for no other. A schedule is a file on disk.
+
+        Reordered rather than mutilated: every unit is still there exactly
+        once, so the completeness check above passes and this one is what
+        refuses. A test that trips two guards proves neither.
+        """
+        def clumped(units):
+            # Every unit of one arm at the front: the shape the bound forbids.
+            return sorted(units, key=lambda u: (u["arm"] != "opus",))
+
+        self.written(trees, clumped)
+
+        with pytest.raises(trial.TrialError) as caught:
+            trial.load_schedule("t")
+
+        assert "consecutive units" in str(caught.value)

@@ -6,6 +6,21 @@
     tools/sonnet_trial.py reference NAME --write PATH
     tools/sonnet_trial.py status NAME
 
+**`run` is not one command.** The first invocation buys **at most** one unit
+and stops, because until a ledger line is committed the history has no head
+outside the working tree and the anchor reads "unknown" — see the cap below. A
+cap, not an assignment: `--steps 0` still buys nothing, which is the contract
+the cap was written beside. So the sequence is:
+
+    run NAME              # buys one unit
+    git add measurements/sonnet-trial-NAME/ledger.jsonl && git commit
+    run NAME              # buys the rest, resuming against the committed head
+
+and the ledger is committed as the trial proceeds, not at the end. Written here
+because the tool says it at the moment it happens and nothing said it in
+advance — an operator who read only this block would have planned one command
+and a two-hour wait. Codex, on the round before the first purchase, 2026-09-08.
+
 D-015 requires that the four passes — two models, two passes each — be
 interleaved in an order committed before any result is seen. `experiment.py`
 freezes one model per experiment and refuses to run when that model moves, so
@@ -67,6 +82,7 @@ which is not built and is not claimed.
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import json
 import os
@@ -195,9 +211,99 @@ def units(cases: List[str], seed: str) -> List[Dict[str, Any]]:
         first, second = slots
         if PASSES.index(out[first]["pass"]) > PASSES.index(out[second]["pass"]):
             out[first], out[second] = out[second], out[first]
+    out = _balanced(out, random.Random(seed + ":balance"))
     for index, unit in enumerate(out):
         unit["index"] = index
     return out
+
+
+# The most consecutive units one arm may take. Chosen **before** looking at any
+# schedule, which is the whole point: a maximum picked after seeing an order is
+# a seed searched until it looked pleasing, and Codex forbade that by name.
+#
+# Three, because the interleave exists so that neither arm meets the
+# subscription's windows systematically better than the other, and with a cap
+# of three every window of six units contains both. Measured against what the
+# unconstrained shuffle produced: 5, 7, 8 and finally 11 of 52 — that last one
+# is 21% of the trial on one arm in a single block, and Codex ruled it not
+# acceptable on 2026-09-08.
+MAX_SAME_ARM_RUN = 3
+
+
+def _balanced(units: List[Dict[str, Any]],
+              rng: random.Random) -> List[Dict[str, Any]]:
+    """The shuffled order, with no arm taking more than `MAX_SAME_ARM_RUN` in a
+    row.
+
+    **Built with the bound rather than repaired afterwards.** Each arm keeps
+    the relative order the shuffle gave it — which is what carries the
+    `a`-before-`b` constraint applied above — and the two are then merged,
+    taking from whichever arm has more left except where that would exceed the
+    run. Preserving each arm's internal order is what makes this safe: nothing
+    here can reorder a pair, so the constraint just established cannot be
+    undone.
+
+    Deterministic and seed-independent: the same shuffle always yields the same
+    balanced order, and the bound holds for every seed rather than for the ones
+    somebody liked.
+    """
+    queues = {arm: [u for u in units if u["arm"] == arm] for arm in ARMS}
+    order, run, last = [], 0, None
+    while any(queues.values()):
+        available = [a for a in ARMS if queues[a]]
+        if last is not None and run >= MAX_SAME_ARM_RUN and len(available) > 1:
+            available = [a for a in available if a != last]
+        # **Chosen at random, weighted by what is left — not "the arm with the
+        # most left".** That was the first version and it produced *perfect*
+        # alternation, because the two queues are the same size: the arm at
+        # every position became a function of its parity. One arm would then
+        # take every odd slot and the other every even one, so any systematic
+        # effect of position lands entirely on one of them — the same confound
+        # this bound exists against, arriving as an order too regular instead
+        # of one too clumped. Found by reading the number the first
+        # implementation produced: a longest run of 1.
+        #
+        # Weighting by what remains keeps the tail from becoming a block of
+        # whatever was not spent earlier.
+        # **And a choice that leaves the rest impossible is not available
+        # either.** Weighting alone let one queue empty early and the tail
+        # became a block of whatever was left — measured, a run of 4 on two
+        # seeds out of forty, which is the bound broken by the arrangement
+        # rather than by the step.
+        #
+        # A sequence of `a` of one symbol and `b` of the other, `a >= b`, can
+        # be laid out with no run over `M` exactly when `a <= M * (b + 1)`.
+        # Applied to what would remain after each candidate, so the bound is a
+        # property of the whole order and not of one position.
+        def leaves_it_possible(candidate):
+            left = {a: len(queues[a]) for a in ARMS}
+            left[candidate] -= 1
+            most, fewest = max(left.values()), min(left.values())
+            return most <= MAX_SAME_ARM_RUN * (fewest + 1)
+
+        possible = [a for a in available if leaves_it_possible(a)] or available
+        arm = rng.choices(possible,
+                          weights=[len(queues[a]) for a in possible])[0]
+        order.append(queues[arm].pop(0))
+        run = run + 1 if arm == last else 1
+        last = arm
+    return order
+
+
+def longest_same_arm_run(units: List[Dict[str, Any]]) -> int:
+    """How many consecutive units the schedule gives one arm at its worst.
+
+    A function because the bound is checked in two places: where the order is
+    generated, and where a schedule is read back. A bound applied only at
+    generation is a bound a hand-edited schedule walks past.
+    """
+    best = run = 0
+    last = None
+    for unit in units:
+        run = run + 1 if unit["arm"] == last else 1
+        last = unit["arm"]
+        best = max(best, run)
+    return best
 
 
 def _environment_mismatch(a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:
@@ -303,10 +409,16 @@ def build(name: str, opus: str, sonnet: str) -> Dict[str, Any]:
     for arm, experiment_name in (("opus", opus), ("sonnet", sonnet)):
         body = experiment.load(experiment_name)
         if body is None:
+            # **Two states, and this used to name only one of them.** `load`
+            # returns nothing when the file is absent *and* when it is present
+            # and refused, and this said "there is no frozen manifest for it"
+            # for both — sending a reader to freeze an experiment that is
+            # already frozen and wrong. The reason `load` printed is the useful
+            # half, so the sentence points at it instead of guessing.
             raise TrialError(
-                "the {} arm names the experiment {!r}, and there is no frozen "
-                "manifest for it. Freeze it first, with that arm's "
-                "SECURITY_SCAN_MODEL set".format(arm, experiment_name))
+                "the {} arm's experiment {!r} could not be loaded — either it "
+                "has not been frozen, or its manifest was refused for the "
+                "reason printed above".format(arm, experiment_name))
         bodies[arm] = body
 
     # **The two arms have to be the same suite, not the same sequence.**
@@ -338,6 +450,13 @@ def build(name: str, opus: str, sonnet: str) -> Dict[str, Any]:
             "the {} arm records no suite, so there is nothing to compare the "
             "other against. Freeze it with a current `experiment.py freeze`"
             .format(" and ".join(missing)))
+    # **The whole manifest, before any block of it is consumed.** `suite` and
+    # `environment` were read the same way `cases` was, so the shape checks
+    # reached one block and not its neighbours: a manifest with no `suite`, or
+    # whose `environment` is a list, crashed here rather than being refused.
+    # Codex, sixteenth gate round, 2026-09-08 — one validator, every caller.
+    for arm in ARMS:
+        _whole_manifest(bodies[arm], arm)
     suite_a = bodies["opus"]["suite"]
     suite_b = bodies["sonnet"]["suite"]
     if suite_a != suite_b:
@@ -348,17 +467,21 @@ def build(name: str, opus: str, sonnet: str) -> Dict[str, Any]:
                     json.dumps(suite_b, sort_keys=True)))
 
     def case_map(arm: str) -> Dict[str, Dict[str, Any]]:
-        rows = bodies[arm]["cases"]
-        seen: Dict[str, Dict[str, Any]] = {}
-        for row in rows:
-            case_id = row.get("case_id")
-            if case_id in seen:
-                raise TrialError(
-                    "the {} arm names {} twice. A duplicate is not two cases, "
-                    "and collapsing it silently makes the counts disagree with "
-                    "the schedule".format(arm, case_id))
-            seen[case_id] = row
-        return seen
+        # **Through the same validator `load_schedule` uses.** This path had
+        # its own reading of the same block — `bodies[arm]["cases"]` and
+        # `row.get(...)` — so the shape checks added for the loader left it
+        # crashing on the identical mutations: a missing or `null` `cases`, a
+        # row that is not an object, an id that is not a string. A class closed
+        # in one caller and not its neighbour is not closed. Codex, sixteenth
+        # gate round, 2026-09-08.
+        #
+        # The duplicate check that used to live here is gone with it: the
+        # validator refuses a repeated id by name, and a second copy of the
+        # rule would be a second thing to drift. What it protected — that a
+        # duplicate is not two cases, and collapsing it silently makes the
+        # counts disagree with the schedule — is what the validator says.
+        return {row["case_id"]: row
+                for row in _validated_cases(bodies[arm], arm)}
 
     cases_a = case_map("opus")
     cases_b = case_map("sonnet")
@@ -463,6 +586,72 @@ def freeze(name: str, opus: str, sonnet: str) -> int:
     return 0
 
 
+def _whole_manifest(manifest: Any, arm: str) -> None:
+    """Every block a caller consumes, checked before any of them is.
+
+    `_validated_cases` closed the `cases` block and left `suite` and
+    `environment` read the same way they always were — so a manifest with no
+    `suite`, or whose `environment` is a list, still crashed the function whose
+    job is to refuse. A class closed in one block and not its neighbours is not
+    closed. Codex, sixteenth gate round, 2026-09-08.
+    """
+    _validated_cases(manifest, arm)
+    for block in ("suite", "environment"):
+        if not isinstance(manifest.get(block), dict):
+            raise TrialError(
+                "the {} arm's manifest records {!r} for its {}, where an "
+                "object is required — nothing here can compare the two arms "
+                "on it".format(arm, manifest.get(block), block))
+
+
+def _validated_cases(manifest: Any, arm: str) -> List[Dict[str, Any]]:
+    """The case ids an arm froze, with the whole shape checked first.
+
+    **The class, not one instance of it.** `json.loads` establishes that a file
+    is JSON and nothing else, and the code that read the ids assumed at every
+    step that the shape was the one a real freeze writes: a top-level object, a
+    list of cases, an object per row, a string id. A manifest that is `null`,
+    or whose `cases` is `null`, or whose rows are bare strings, produced an
+    `AttributeError` or a `TypeError` out of the function whose whole job is to
+    refuse — and a comparison of `None` against strings can raise inside
+    `sorted` rather than answer.
+
+    Codex named this as a class on the fifteenth gate round, 2026-09-08, after
+    four rounds of the same shape one level apart: *a validator that assumes a
+    shape the spending path cannot safely consume*. So this checks the shape
+    through, and every failure is a `TrialError` with the arm named.
+    """
+    where = "the {} arm's manifest".format(arm)
+    if not isinstance(manifest, dict):
+        raise TrialError(
+            "{} is {}, where an object describing a frozen experiment is "
+            "required".format(where, type(manifest).__name__))
+    rows = manifest.get("cases")
+    if not isinstance(rows, list) or not rows:
+        raise TrialError(
+            "{} records {!r} for its cases, so it names no experiment for a "
+            "schedule to be held to".format(where, rows))
+    found = []
+    for position, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise TrialError(
+                "{} has {} at case {}, where an object naming one case is "
+                "required".format(where, type(row).__name__, position))
+        case_id = row.get("case_id")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise TrialError(
+                "{} names {!r} at case {}, which is not a case id".format(
+                    where, case_id, position))
+        found.append(case_id)
+    if len(set(found)) != len(found):
+        raise TrialError(
+            "{} names a case more than once, so how many cases it froze has "
+            "no answer — a duplicate is not two cases, and collapsing it "
+            "silently makes the counts disagree with the schedule".format(
+                where))
+    return rows
+
+
 def load_schedule(name: str) -> Tuple[Dict[str, Any], str]:
     path = home(name) / "schedule.json"
     try:
@@ -511,6 +700,77 @@ def load_schedule(name: str) -> Tuple[Dict[str, Any], str]:
             "the schedule for {} does not name an experiment for each of {}, "
             "so there is nowhere to look for a result".format(
                 name, " and ".join(ARMS)))
+    # **The balance bound, checked where the schedule is read.** Applying it
+    # only in `units()` would hold for a schedule this tool generated and for
+    # no other — and a schedule is a file on disk that a person can edit. The
+    # interleave exists so that drift over wall-clock time does not load onto
+    # one arm; a block of eleven, which is what the unconstrained shuffle
+    # produced before this bound, is 21% of the trial in one window. Codex,
+    # twelfth gate round, 2026-09-08.
+    # **Every combination, exactly once.** The checks above ask what each unit
+    # is; none asked whether the set of them is the experiment. A hand-edited
+    # schedule could drop units, repeat one, or hold an empty list, and the
+    # runner would finish a shortened or duplicated trial while calling it the
+    # committed 52. The generation test proves `units()` builds all of them and
+    # says nothing about the file that is actually bought from. Codex,
+    # thirteenth gate round, 2026-09-08.
+    cases = body.get("cases")
+    if not isinstance(cases, list) or not cases or not all(
+            isinstance(c, str) and c.strip() for c in cases):
+        raise TrialError(
+            "the schedule for {} names no list of cases, so there is nothing "
+            "to hold its units to".format(name))
+    wanted = {(c, arm, label)
+              for c in cases for arm in ARMS for label in PASSES}
+    got = [(u["case_id"], u["arm"], u["pass"]) for u in body["units"]]
+    missing = sorted(wanted - set(got))
+    extra = sorted(set(got) - wanted)
+    repeated = sorted(k for k, n in collections.Counter(got).items() if n > 1)
+    if missing or extra or repeated:
+        raise TrialError(
+            "the schedule for {} is not the experiment it names: {} unit(s) "
+            "missing, {} not in it, {} repeated. A run over this would finish "
+            "a shorter or a different trial and report it as the committed "
+            "one{}".format(name, len(missing), len(extra), len(repeated),
+                           "" if not missing else
+                           " — first missing: {}".format(missing[0])))
+    # **And the cases have to be the arms' cases.** `wanted` above is built
+    # from the schedule's own list, so a case removed *together with* its four
+    # units left a complete-looking 48-unit trial, and a duplicate in `cases`
+    # passed as well. Every remaining purchase would be valid in the manifests
+    # and the shortened run would report itself finished. Codex, fourteenth
+    # gate round, 2026-09-08 — the answer to the question the thirteenth left
+    # open.
+    if len(set(cases)) != len(cases):
+        raise TrialError(
+            "the schedule for {} names a case more than once, so its own list "
+            "does not say how long the trial is".format(name))
+    for arm in ARMS:
+        manifest = (experiment.home(arms[arm]["experiment"])
+                    / "manifest.json")
+        try:
+            frozen = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise TrialError(
+                "the {} arm's manifest cannot be read ({}), so nothing here "
+                "establishes that this schedule is that experiment".format(
+                    arm, exc)) from exc
+        theirs = [row["case_id"]
+                  for row in _validated_cases(frozen, arm)]
+        if sorted(theirs) != sorted(cases):
+            raise TrialError(
+                "the schedule for {} names {} case(s) and the {} arm freezes "
+                "{}. A run over this buys a different experiment from the one "
+                "the arm was frozen for, and reports it finished".format(
+                    name, len(cases), arm, len(theirs)))
+    worst = longest_same_arm_run(body["units"])
+    if worst > MAX_SAME_ARM_RUN:
+        raise TrialError(
+            "the schedule for {} gives one arm {} consecutive units and the "
+            "bound is {}. An arm that holds the run that long meets the "
+            "subscription's windows differently from the other, and a "
+            "difference between them would carry that as if it were the "
+            "model".format(name, worst, MAX_SAME_ARM_RUN))
     return body, digest(text)
 
 
@@ -974,14 +1234,33 @@ def _buy(schedule: Dict[str, Any], unit: Dict[str, Any]) -> int:
         return 2
 
     arm = schedule["arms"][unit["arm"]]
+    # **Restored afterwards**, the way the reference builder below already
+    # does it. These were set and left set: in one run of the trial the next
+    # unit overwrites them, so nothing was bought wrongly — but the process
+    # goes on to build the reference and print the status with one arm's model
+    # still in its environment, and every one of those reads
+    # `Config.from_env()` somewhere. Measured as a test leak first: the
+    # experiment's own tests failed only when the trial's ran before them,
+    # because `SECURITY_SCAN_VERIFY_MODEL` was still set. A global left set is
+    # a global some later reader believes.
+    before = (os.environ.get("SECURITY_SCAN_MODEL"),
+              os.environ.get("SECURITY_SCAN_VERIFY_MODEL"))
     os.environ["SECURITY_SCAN_MODEL"] = arm["model"]
     # From the schedule, not from `arm["model"]`. Setting the verifier to the
     # reviewer's model would have bought Sonnet-reviews/**Sonnet**-verifies —
     # a different instrument from the one D-015 approved, and one the
     # comparator refuses after the money is gone rather than before.
     os.environ["SECURITY_SCAN_VERIFY_MODEL"] = arm["verifier"]
-    code = experiment.run(arm["experiment"], unit["pass"], limit=1,
-                          only=unit["case_id"], spend_class=SPEND_CLASS)
+    try:
+        code = experiment.run(arm["experiment"], unit["pass"], limit=1,
+                              only=unit["case_id"], spend_class=SPEND_CLASS)
+    finally:
+        for key, value in zip(("SECURITY_SCAN_MODEL",
+                               "SECURITY_SCAN_VERIFY_MODEL"), before):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
     # **And again afterwards**, before the caller records `DONE`. The review is
     # bought by then and cannot be unbought — what this establishes is whether
     # the result may be recorded as this trial's. A row written under bytes

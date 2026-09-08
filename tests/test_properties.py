@@ -883,7 +883,7 @@ def test_a_frozen_key_the_environment_no_longer_has_is_reported_as_moved(
 
     moved = experiment.drift({"environment": frozen,
                               "suite": {"digest": "unchanged"},
-                              "cases": []})
+                              "protocol": {}, "cases": []})
     for key in gone:
         assert any(line.startswith(key + ":") for line in moved), key
 
@@ -891,12 +891,37 @@ def test_a_frozen_key_the_environment_no_longer_has_is_reported_as_moved(
 @given(frozen=st.dictionaries(ENV_KEYS, ENV_VALUES, min_size=1, max_size=5))
 def test_an_unchanged_environment_reports_nothing_moved(monkeypatch, frozen):
     """The other direction, so the property above cannot be satisfied by a
-    function that reports everything."""
+    function that reports everything.
+
+    `behaviour` and `driver` are added to whatever is generated, because a
+    manifest without them is not an unchanged environment — it is one that
+    froze nothing about the settings, or nothing about the code that runs an
+    experiment, and `drift` refuses each by name. Every manifest `freeze`
+    writes has both; a generated dictionary that omits one describes a document
+    that can no longer be produced, and asserting silence over it would be
+    asserting the defect.
+
+    Two fields have been added to that list on one day, and this test caught
+    each of them. It is worth saying that the catching is the property working
+    rather than the property being brittle: a new thing the freeze must record
+    is exactly a new way for this generated manifest to be a document nobody
+    can produce.
+    """
+    frozen = dict(frozen, behaviour="unchanged", driver="unchanged")
     monkeypatch.setattr(experiment, "environment_now",
                         lambda *_: dict(frozen))
     monkeypatch.setattr(experiment, "digest_file", lambda _path: "unchanged")
 
+    # A protocol block with an order, because a manifest without one is refused
+    # outright — `run` reads the case order from it, so such a document cannot
+    # be bought under anything and "unchanged" is not the answer to give about
+    # it. No provider or profile keys: that is the older shape, and they fall
+    # back to the constants. The order names a case and `cases` is empty: the
+    # comparison between the two is skipped when the manifest freezes none,
+    # which is the shape a synthetic document like this one has. A real
+    # manifest cannot have it — `freeze` refuses an empty suite.
     assert experiment.drift({"environment": frozen,
+                             "protocol": {"order": ["only"]},
                              "suite": {"digest": "unchanged"},
                              "cases": []}) == []
 

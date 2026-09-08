@@ -436,8 +436,251 @@ def requested_now(model: Optional[str] = None,
     }
 
 
+# The three behavioural settings this block already records by name. Digesting
+# them again would say the same fact twice, and a change would then move two
+# fields — which is also how the two arms of a trial, whose whole point is to
+# differ in `model`, would be refused as differing in something else.
+NAMED_BEHAVIOUR = frozenset({"model", "verify_model", "verify"})
+
+# How every case in every experiment here is bought. Written into the frozen
+# `protocol` block and read back by `run`, which hands them to `run_case`.
+#
+# Named rather than repeated, because the behaviour digest has to be taken
+# under the *same* two values. It was taken with neither, so it described
+# `anthropic-api/normal` — the default — while every review ran
+# `claude-cli/normal`. A frozen description of an instrument that is not the
+# one running is the defect this product hunts elsewhere; Codex measured it
+# here on the round before the purchase, 2026-09-08.
+PROTOCOL_PROVIDER = "claude-cli"
+PROTOCOL_PROFILE = "normal"
+
+
+def behaviour_now(provider: Optional[str] = None,
+                  profile: Optional[str] = None) -> str:
+    """Every behavioural setting except the three recorded by name, digested.
+
+    **The freeze bound the models and nothing else about how the run behaves.**
+    Measured on 2026-09-08, on the manifest of an arm about to be bought:
+    `SECURITY_SCAN_VERIFY_VOTES=5` changes how many verifiers vote on every
+    finding, and `drift` returned `[]`. A panel of five and a panel of one are
+    different instruments; the artifact said the instrument had not moved.
+
+    `BEHAVIOURAL` is the list `config.py` maintains of the settings that change
+    what a run does, and it is written by hand there precisely so this cannot
+    be derived from what happens to exist.
+
+    **What that does and does not buy.** A field added to `Config` and left out
+    of `BEHAVIOURAL` is filtered out here and does not reach the digest — this
+    function is not the check for that. `config.py`'s own classification tests
+    are: they require every field to be in `BEHAVIOURAL` or in
+    `NOT_BEHAVIOURAL`, so an unclassified one fails there rather than passing
+    quietly here. The earlier version of this paragraph claimed the digest
+    itself caught it, which Codex refused on the gate — a comment asserting a
+    protection the code does not provide is the same defect as a message
+    naming a remedy that does not work.
+
+    Named by Codex on the round before the first purchase, 2026-09-08, which
+    also ruled that a manifest without this field must be refused rather than
+    read as agreeing — see `drift`.
+    """
+    from pair_corpus import effective_config
+
+    from security_agent.config import BEHAVIOURAL, config_to_dict
+
+    # **The configuration the review runs under, not the shell's.** The first
+    # version called `Config.from_env()`, and `pair_corpus.effective_config`
+    # exists precisely because that is not what a corpus review runs: it pins
+    # the mode to `diff`, empties the forge context, turns the comment off and
+    # sets the output directory. Measured by Codex on the round before the
+    # purchase — `SECURITY_SCAN_MODE=diff` in the shell moved this digest while
+    # changing nothing about the review, which would refuse a valid resume as
+    # drift.
+    #
+    # That function's own docstring records the identical defect being fixed
+    # once already, for the manifest `pair_corpus` writes. Calling it rather
+    # than copying its four assignments is the whole point: a second copy is a
+    # second thing to go stale.
+    #
+    # The path is a placeholder. `output_dir` is in `NOT_BEHAVIOURAL`, so it
+    # is filtered out below and never reaches the digest.
+    # **`None` is "not supplied"; `""` is a value.** They were one thing, and
+    # the fallback then replaced an *empty* protocol value with the constant —
+    # while `run` passes that same empty string to `run_case`, where
+    # `effective_config` leaves the provider alone and the ambient default
+    # applies. The digest described `claude-cli` and the purchase would have
+    # been `anthropic-api`, with `drift` reporting nothing. Codex reproduced it
+    # on the staged manifest, 2026-09-08.
+    body = config_to_dict(effective_config(
+        Path("/frozen"),
+        PROTOCOL_PROVIDER if provider is None else provider,
+        PROTOCOL_PROFILE if profile is None else profile))
+    kept = {name: body[name] for name in sorted(BEHAVIOURAL)
+            if name not in NAMED_BEHAVIOUR}
+    return hashlib.sha256(
+        json.dumps(kept, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def protocol_settings(body: Dict[str, Any]) -> tuple:
+    """What this manifest will be bought under, and what is wrong with it.
+
+    **One reader, because two disagreed.** `drift` grew a rule — an absent key
+    falls back to the constants, a present one must be a usable string — and
+    `run` went on indexing `body["protocol"]["provider"]` directly. So `verify`
+    could exit 0 on a manifest whose accepted shape then raised `KeyError`
+    instead of buying anything: a compatibility claim that was false in the
+    only place it mattered. Codex, sixth cut of this one wire, 2026-09-08.
+
+    Returns `(provider, profile, problems)`. The values are always usable, so a
+    caller can buy with them; `problems` is empty only when the manifest said
+    what it will be bought under, and a caller that spends must refuse on it.
+    """
+    protocol = body.get("protocol", {})
+    values, problems = {}, []
+    malformed = "protocol" in body and not isinstance(protocol, dict)
+    if malformed:
+        # **The block itself can be the wrong shape.** Every check below calls
+        # `.get`, so a `protocol` that is `null`, a list, a string or a number
+        # raised `TypeError` or `AttributeError` — a crash out of `verify` and
+        # out of `run`, where the contract says exit 2 with a reason. The
+        # previous repair covered a missing block and malformed fields *inside*
+        # a well-formed one, and not the one between them. Codex, ninth cut of
+        # this wire, 2026-09-08.
+        #
+        # Emptied rather than returned on, so the loops below still produce
+        # usable fallback values: a caller that ignores `problems` must not
+        # also be handed nothing to run with. It is refused either way.
+        problems.append(
+            "protocol: frozen as {!r}, which is not a block of settings — "
+            "this manifest names no order and no provider".format(protocol))
+        protocol = {}
+    elif "protocol" not in body:
+        # **No block at all is not a runnable manifest**, whatever is done
+        # about the provider: `run` reads the case order from this same block,
+        # so such a document cannot be bought under anything. Saying the
+        # constants apply would be a compatibility claim that is false the
+        # moment anybody acts on it — which is the defect one level up that
+        # this function was written to close. Measured rather than argued: the
+        # end-to-end test for the shape raised `KeyError: 'protocol'` on the
+        # order, not on the provider.
+        problems.append(
+            "protocol: the manifest has no protocol block, so it names no "
+            "order and no provider — it cannot be run and nothing here can "
+            "say what it would have been bought under")
+    for key, constant in (("provider", PROTOCOL_PROVIDER),
+                          ("profile", PROTOCOL_PROFILE)):
+        if key not in protocol:
+            # Frozen before this block existed. The constants are what such a
+            # run was bought under, so they are what it is checked against.
+            values[key] = constant
+            continue
+        value = protocol[key]
+        if isinstance(value, str) and value.strip():
+            values[key] = value
+            continue
+        # A present key that cannot be used: `null`, a number, whitespace. The
+        # value is replaced so the caller has something to run with, and the
+        # problem is returned so no caller runs with it.
+        values[key] = constant
+        problems.append(
+            "protocol.{}: frozen as {!r}, which is not a usable value — this "
+            "manifest does not say what it will be bought under".format(
+                key, value))
+    # **And the order, because `run` indexes that too.** Validating the two
+    # names and calling the manifest runnable was the same defect one field
+    # over: `drift` returned `[]`, `protocol_settings` returned no problems,
+    # and `run` raised `KeyError` on `protocol["order"]`. Codex, eighth cut of
+    # this one wire, 2026-09-08.
+    #
+    # Checked against the frozen cases, not merely for being a list: an order
+    # naming a case the manifest does not carry would buy a review the freeze
+    # says nothing about, and one missing a case would quietly shorten the
+    # experiment. Duplicates would buy the same case twice under one name.
+    # Not `and protocol`: an *empty* block is a block, and it names no order, so
+    # it has to reach the check below and be refused there. Only a block whose
+    # shape was already reported is skipped, and skipping it is about not
+    # saying the same thing twice.
+    if "protocol" in body and not malformed:
+        order = protocol.get("order")
+        frozen = [row.get("case_id") for row in body.get("cases", [])]
+        if not isinstance(order, list) or not order:
+            problems.append(
+                "protocol.order: frozen as {!r}, so this manifest names no "
+                "sequence of cases to run".format(order))
+        elif any(not isinstance(c, str) or not c.strip() for c in order):
+            problems.append(
+                "protocol.order: holds an entry that is not a case id")
+        elif len(set(order)) != len(order):
+            problems.append(
+                "protocol.order: names a case more than once, so one case "
+                "would be bought twice under one experiment")
+        elif frozen and set(order) != set(frozen):
+            problems.append(
+                "protocol.order: names {} case(s) and the manifest freezes "
+                "{}, so the two do not describe the same experiment".format(
+                    len(set(order)), len(set(frozen))))
+    return values["provider"], values["profile"], problems
+
+
+# The files that decide what is bought and what is accepted. Digested as one
+# value, so a change to any of them is one line in `drift` rather than three.
+#
+# `sentinel_reference.py` is here because `sonnet_trial._build_reference` calls
+# it to construct the baseline the purchased rows are compared against — and
+# the change that added it to this list also changed the reference's identity
+# and whether it carries an equivalence claim, which is the proof that the file
+# has consequential semantics. Editing it after the arms were frozen moved no
+# recorded field. Codex, eleventh round, 2026-09-08.
+#
+# `sentinel_compare.py` computes the verdict, and I argued for leaving it out:
+# it runs *after* the rows are bought, so freezing it lets an edit between the
+# purchase and the comparison refuse a comparison of reviews already paid for.
+# Codex answered that on the twelfth round and the answer is better than the
+# objection — **a refusal there does not lose the rows, it postpones their
+# adjudication.** The alternative is the same paid rows receiving different
+# verdicts under a rule nobody recorded. Adopting a new comparator has to be an
+# explicit migration, not whatever code happens to be present.
+#
+# `sentinel.py` reads the suite. The suite *file* is digested already, and the
+# code that decides which of its lines count as cases was not — a reader that
+# selects differently buys a different experiment from the same file. Added by
+# the same argument rather than after a round found it.
+DRIVER_FILES = ("experiment.py", "sonnet_trial.py",
+                "sentinel_reference.py", "sentinel_compare.py",
+                "sentinel.py")
+
+
+def driver_digest() -> str:
+    """The code that runs the experiment, which was outside the freeze.
+
+    `scorer_digest` covers what turns findings into `pair_success`, and
+    `reviewer_digest` covers the product being measured. Neither covers *this
+    file* — and `run` is what selects the protocol settings, calls `run_case`,
+    applies the adjudications, decides whether a result is acceptable and
+    publishes it. `sonnet_trial` delegates every paid unit to it.
+
+    So both arms of a trial could verify clean while the code deciding what
+    they buy and what counts had changed underneath them. Measured rather than
+    argued: nine repairs to this file in one session, and every one of them
+    left `verify` saying nothing had moved.
+
+    Raised here and confirmed by Codex on the tenth round, 2026-09-08, which
+    named it larger than the defect it had been asked about.
+
+    The cost is deliberate: an edit to either file now invalidates every frozen
+    experiment. "Freeze last" stops being a rule somebody remembers.
+    """
+    parts = []
+    for name in DRIVER_FILES:
+        path = ROOT / "tools" / name
+        parts.append("{}:{}".format(
+            name, digest_file(path) if path.is_file() else "absent"))
+    return hashlib.sha256(" ".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
 def environment_now(model: Optional[str] = None,
-                    verify_model: Optional[str] = None) -> Dict[str, Any]:
+                    verify_model: Optional[str] = None,
+                    provider: Optional[str] = None,
+                    profile: Optional[str] = None) -> Dict[str, Any]:
     """What the freeze records and what every check re-computes — one
     definition, because two is how the scorer digest ended up in the manifest
     and not in the check.
@@ -449,8 +692,9 @@ def environment_now(model: Optional[str] = None,
     audit metadata and lives beside the block, not in it. Codex, 2026-09-07.
     """
     return dict(round_tool.environment(), scorer=scorer_digest(),
-                reviewer=reviewer_digest(), **toolchain(),
-                **requested_now(model, verify_model))
+                reviewer=reviewer_digest(), driver=driver_digest(),
+                behaviour=behaviour_now(provider, profile),
+                **toolchain(), **requested_now(model, verify_model))
 
 
 def build(name: str, model: Optional[str] = None,
@@ -489,8 +733,8 @@ def build(name: str, model: Optional[str] = None,
             "passes": list(PASSES),
             "order": order,
             "order_seed": name,
-            "provider": "claude-cli",
-            "profile": "normal",
+            "provider": PROTOCOL_PROVIDER,
+            "profile": PROTOCOL_PROFILE,
             "primary_endpoint": (
                 "per case, whether pass b's pair_success equals pass a's. "
                 "Reported as agreed / flipped, with each flip named and its "
@@ -629,8 +873,38 @@ def drift(body: Dict[str, Any], model: Optional[str] = None,
     the gate before the first purchase, 2026-09-07.
     """
     moved = []
-    now = environment_now(model, verify_model)
+    # **Under the manifest's protocol, not this module's constants.** `run`
+    # buys each case with `body["protocol"]["provider"]` and `["profile"]`, so
+    # a manifest whose protocol was edited after the freeze would be bought
+    # under the new values while its `behaviour` digest still described the
+    # old ones — and `drift` compared that digest against one computed from the
+    # constants and found them equal. Codex changed a staged manifest to
+    # `anthropic-api/deep` and `drift` returned `[]` before and after.
+    #
+    # Recomputing under what the manifest says makes the edit show up as the
+    # `behaviour` moving, which is what it is.
+    # Through the one reader `run` also uses, so the digest is computed under
+    # exactly the values the purchase will be made with.
+    provider, profile, problems = protocol_settings(body)
+    moved.extend(problems)
+    now = environment_now(model, verify_model, provider, profile)
     absent = object()
+    # **A manifest that froze no behaviour cannot report that none has moved.**
+    # The loop below walks the *manifest's* keys, so a field it never had is
+    # simply not looked at — and "nothing moved" would then be an answer about
+    # the models alone, printed in front of the decision to spend. Refused
+    # here rather than at the call sites, because `verify`, `_buy` and the
+    # trial's before-and-after checks all come through this one function.
+    # Codex, on the round before the first purchase, 2026-09-08.
+    for name, why in (
+            ("behaviour", "the behavioural settings were recorded"),
+            ("driver", "the code that runs an experiment was recorded")):
+        if name in body["environment"]:
+            continue
+        moved.append(
+            "{}: this manifest was frozen before {}, so nothing here can say "
+            "whether it has changed — re-freeze rather than read the silence "
+            "as agreement".format(name, why))
     for key, was in body["environment"].items():
         # A sentinel, not `now.get(key)`. `get` answers `None` for a key that
         # has left the environment, so a manifest freezing `None` and an
@@ -690,12 +964,94 @@ def drift(body: Dict[str, Any], model: Optional[str] = None,
     return moved
 
 
+def _manifest_problem(body: Dict[str, Any]) -> str:
+    """What is wrong with this manifest's shape, or the empty string.
+
+    Every block a reader downstream consumes, checked in one place at the
+    boundary they all come through. `verify` reads `environment` as a mapping,
+    `drift` reads `suite` and `protocol` and walks `cases`, `run` indexes the
+    order — and each of those was a crash waiting on a file somebody can edit.
+
+    A message rather than an exception, because `load` reports and returns
+    `None` and every caller already handles that; raising here would make one
+    reader of a bad file behave differently from the rest.
+    """
+    for block in ("environment", "suite", "protocol"):
+        if not isinstance(body.get(block), dict):
+            return "records {!r} for its {}, where an object is required".format(
+                body.get(block), block)
+    # **The fields inside them, not only the containers.** Checking that
+    # `suite` is an object left `body["suite"]["digest"]` crashing `drift`, and
+    # `protocol.not_answerable` crashing `compare`. Every name here is one this
+    # module reads by subscript somewhere downstream — required because it is
+    # read, not because a schema was imagined. Codex, nineteenth gate round,
+    # 2026-09-08.
+    for block, field in (("suite", "digest"),
+                         ("protocol", "order"),
+                         ("protocol", "primary_endpoint"),
+                         ("protocol", "not_answerable")):
+        if field not in body[block]:
+            return "records no {} for its {}, which {} is read from".format(
+                field, block, block)
+    rows = body.get("cases")
+    if not isinstance(rows, list):
+        return "records {!r} for its cases, where a list is required".format(rows)
+    found = []
+    for position, row in enumerate(rows):
+        if not isinstance(row, dict):
+            return "has {} at case {}, where an object is required".format(
+                type(row).__name__, position)
+        case_id = row.get("case_id")
+        if not isinstance(case_id, str) or not case_id.strip():
+            return "names {!r} at case {}, which is not a case id".format(
+                case_id, position)
+        # `drift` compares both of these by subscript, so a row without them
+        # is a row that crashes the check rather than failing it.
+        for field in ("case_digest", "answer_key_digest"):
+            if field not in row:
+                return "records no {} for case {!r}".format(field, case_id)
+        found.append(case_id)
+    if len(set(found)) != len(found):
+        return ("names a case more than once, so how many cases it froze has "
+                "no answer")
+    return ""
+
+
 def load(name: str) -> Optional[Dict[str, Any]]:
     path = home(name) / "manifest.json"
     if not path.is_file():
         print("no experiment {} — freeze it first".format(name), file=sys.stderr)
         return None
-    body = json.loads(path.read_text(encoding="utf-8"))
+    # **The shape, at the boundary where the file becomes an object.**
+    # `json.loads` establishes that a file is JSON and nothing else, and the
+    # line below went straight to `.get` — so a manifest that is `null`, a
+    # list, a string or a number raised `AttributeError` out of the loader
+    # every other reader goes through, instead of the refusal this contract
+    # promises. Validating in the callers could not close it: they call this
+    # first. Codex, seventeenth gate round, 2026-09-08.
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print("experiment {}'s manifest cannot be read ({}), so nothing here "
+              "says what was frozen".format(name, exc), file=sys.stderr)
+        return None
+    if not isinstance(body, dict):
+        print("experiment {}'s manifest is {}, where an object describing a "
+              "frozen experiment is required".format(
+                  name, type(body).__name__), file=sys.stderr)
+        return None
+    # **Every block a reader consumes, not only the top level.** The first
+    # repair here checked that the manifest is an object and that `cases` is
+    # truthy, and left `"environment": []` crashing `verify` at `.items()` and
+    # `"cases": [null]` crashing `protocol_settings` at `.get`. `run`,
+    # `compare` and the trial builder all come through this function, so a
+    # shape that escapes here escapes everywhere. Codex, eighteenth gate round,
+    # 2026-09-08, answering as a class rather than as the next instance.
+    wrong = _manifest_problem(body)
+    if wrong:
+        print("experiment {}'s manifest {} — nothing here can be run or "
+              "compared from it".format(name, wrong), file=sys.stderr)
+        return None
     if not body.get("cases"):
         # `freeze` refuses to write one now; a manifest frozen before it did is
         # still on disk, and every command reading it would succeed over
@@ -771,6 +1127,16 @@ def run(name: str, label: str, limit: Optional[int],
         return 2
     if label not in PASSES:
         print("a pass is one of {}".format(", ".join(PASSES)), file=sys.stderr)
+        return 2
+    # **Before anything indexes the protocol block.** A manifest without one
+    # raised `KeyError` here — a traceback where the contract says exit 2, and
+    # "I could not check" rendered as a crash. `drift` names the problem and
+    # this refuses on it, which is the same answer the check gives, given in
+    # the place that spends. Codex, seventh cut of this one wire, 2026-09-08.
+    _provider, _profile, problems = protocol_settings(body)
+    if problems:
+        print("refusing to run: {}".format("\n  ".join(problems)),
+              file=sys.stderr)
         return 2
     if only is not None and only not in body["protocol"]["order"]:
         print("{} is not in the frozen order of experiment {}, so running it "
@@ -860,24 +1226,38 @@ def run(name: str, label: str, limit: Optional[int],
             return 2
 
         print("\n  {} ...".format(case_id), flush=True)
-        # The frozen copy, for the duration of this case. `run_case` starts a
-        # child process that reads the prompt directory this names.
+        # The frozen copy, **for the duration of this case and no longer.**
+        # `run_case` starts a child process that reads the prompt directory
+        # this names, so it has to be set; it was then left set, and everything
+        # the process did afterwards — building a reference, printing a status,
+        # the next experiment in the same run — read one arm's frozen prompts
+        # as though they were the tree's. Restored here rather than in the
+        # trial that noticed it: this is the function that sets it, and a
+        # caller putting back what somebody else changed is a caller that has
+        # to know. Codex, twentieth gate round, 2026-09-08.
+        was_prompt_dir = os.environ.get("SECURITY_SCAN_PROMPT_DIR")
         os.environ["SECURITY_SCAN_PROMPT_DIR"] = str(home(name) / "prompts")
-        result = run_case(case, provider=body["protocol"]["provider"],
-                          profile=body["protocol"]["profile"],
-                          adjudications=rulings,
-                          # Its own class: an experiment against a frozen
-                          # protocol can be ordered differently from a direct
-                          # corpus run, even though both end at the same
-                          # `review`. Codex, 2026-09-05.
-                          #
-                          # And it travels from the caller when there is one:
-                          # the same two passes bought as part of the Sonnet
-                          # trial are authorised by D-015, not by whatever
-                          # orders a bare experiment. A class says *why* the
-                          # spending is authorised, and the reason belongs to
-                          # whoever had it.
-                          spend_class=spend_class)
+        provider, profile, _problems = protocol_settings(body)
+        try:
+            result = run_case(case, provider=provider, profile=profile,
+                              adjudications=rulings,
+                              # Its own class: an experiment against a
+                              # frozen protocol can be ordered differently
+                              # from a direct corpus run, even though both
+                              # end at the same `review`. Codex, 2026-09-05.
+                              #
+                              # And it travels from the caller when there is
+                              # one: the same two passes bought as part of
+                              # the Sonnet trial are authorised by D-015, not
+                              # by whatever orders a bare experiment. A class
+                              # says *why* the spending is authorised, and the
+                              # reason belongs to whoever had it.
+                              spend_class=spend_class)
+        finally:
+            if was_prompt_dir is None:
+                os.environ.pop("SECURITY_SCAN_PROMPT_DIR", None)
+            else:
+                os.environ["SECURITY_SCAN_PROMPT_DIR"] = was_prompt_dir
 
         # After, before it is written anywhere. The check before the case
         # leaves the case itself unprotected — the reviewer loads its prompts

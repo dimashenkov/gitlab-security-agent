@@ -343,3 +343,50 @@ def test_a_reference_about_a_case_that_has_since_changed_refuses(reference):
         sentinel_reference.build()
     assert "no longer on disk" in str(caught.value)
 
+
+class TestTheReferenceSaysWhereItCameFrom:
+    """The builder announced every reference it built as one particular
+    experiment.
+
+    `"reference": "experiment-noise-floor-2"` was a literal, while `EXPERIMENT`
+    is rebound — by `--from` and by `sonnet_trial._build_reference`. A
+    reference frozen from a fresh Opus arm therefore carried the old
+    baseline's name, and with it an `environment_equivalence` block naming that
+    baseline's digest, its commit range and its twenty-six rescored rows.
+
+    None of those are facts about a fresh arm. A reference frozen from the tree
+    it will be compared against needs no equivalence claim at all; attaching
+    one borrowed from elsewhere is provenance nobody checked.
+
+    Found by Codex on the round before the first purchase, 2026-09-08.
+    """
+
+    def test_the_name_comes_from_the_directory_it_was_built_from(
+            self, reference):
+        body = sentinel_reference.build()
+
+        assert body["reference"] == "experiment", body["reference"]
+        assert body["reference"] != sentinel_reference.GRANDFATHERED
+
+    def test_a_fresh_reference_carries_no_borrowed_equivalence_claim(
+            self, reference):
+        body = sentinel_reference.build()
+
+        assert "environment_equivalence" not in body, sorted(body)
+
+    def test_the_grandfathered_baseline_keeps_its_claim(
+            self, reference, monkeypatch):
+        """The control, and the reason for keeping the block at all: those
+        claims are true of that one experiment, were argued and measured, and
+        dropping them would lose the record of how the old comparison was
+        justified."""
+        renamed = reference / sentinel_reference.GRANDFATHERED
+        (reference / "experiment").rename(renamed)
+        monkeypatch.setattr(sentinel_reference, "EXPERIMENT", renamed)
+
+        body = sentinel_reference.build()
+
+        assert body["reference"] == sentinel_reference.GRANDFATHERED
+        assert "environment_equivalence" in body
+        assert body["environment_equivalence"]["reviewer"]["commit_range"]
+

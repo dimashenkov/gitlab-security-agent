@@ -1265,3 +1265,673 @@ class TestAnArmIsCheckedOnTheTermsItRunsUnder:
         moved = experiment.drift(self.manifest(frozen),
                                  model="claude-haiku-4-5")
         assert any("model_requested" in line for line in moved), moved
+
+
+class TestTheLoaderRefusesAManifestOfTheWrongShape:
+    """`load` is the boundary where a file becomes an object, and it went
+    straight to `.get`.
+
+    `json.loads` establishes that a file is JSON and nothing else. A manifest
+    that is `null`, a list, a string or a number therefore raised
+    `AttributeError` out of the loader every other reader goes through —
+    `verify`, `run`, `compare`, and `sonnet_trial` through both of its paths.
+    Validating in the callers could not have closed it: they call this first.
+
+    Codex, seventeenth gate round, 2026-09-08, after the same class had been
+    closed one level in at a time.
+    """
+
+    @pytest.mark.parametrize("body,marker", [
+        (None, "is NoneType"),
+        ([], "is list"),
+        ("a manifest", "is str"),
+        (7, "is int"),
+        (True, "is bool"),
+    ])
+    def test_a_manifest_that_is_not_an_object_is_refused(
+            self, world, capsys, body, marker):
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        assert experiment.load("e") is None
+        assert marker in capsys.readouterr().err
+
+    def test_a_manifest_that_is_not_json_is_refused(self, world, capsys):
+        """The other half of the boundary: unreadable bytes were an uncaught
+        `ValueError` before, out of the same function."""
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        path.write_text("{not json", encoding="utf-8")
+
+        assert experiment.load("e") is None
+        assert "cannot be read" in capsys.readouterr().err
+
+    def test_a_real_manifest_still_loads(self, world):
+        """The control. A loader that refuses everything is a loader somebody
+        deletes."""
+        experiment.freeze("e", dry_run=False)
+
+        assert experiment.load("e") is not None
+
+
+class TestRunPutsTheEnvironmentBack:
+    """`run` set `SECURITY_SCAN_PROMPT_DIR` to the frozen copy and left it set.
+
+    It has to be set: `run_case` starts a child process that reads the prompt
+    directory it names. Leaving it set is the defect — everything the process
+    does afterwards, in the trial or in the next experiment of the same run,
+    then reads one arm's frozen prompts as though they were the tree's.
+
+    Codex, twentieth gate round, 2026-09-08, and its sharper half was about the
+    test: the leak it found one round earlier was covered by a test that
+    replaced `experiment.run` outright, so a mutation *inside* that function
+    was invisible to it. This drives the real `run` and replaces `run_case`,
+    which is the boundary that would spend.
+    """
+
+    def ran(self, world, monkeypatch, result):
+        import pair_corpus
+
+        experiment.freeze("e", dry_run=False)
+        seen = {}
+
+        def record(case, **kwargs):
+            seen["inside"] = os.environ.get("SECURITY_SCAN_PROMPT_DIR")
+            return result(world, case)
+
+        monkeypatch.setattr(pair_corpus, "run_case", record)
+        experiment.run("e", "a", None)
+        return seen
+
+    def test_the_frozen_prompts_are_in_place_while_a_case_runs(
+            self, world, monkeypatch):
+        """The control, and the reason the variable is set at all."""
+        seen = self.ran(world, monkeypatch, lambda w, case: {
+            "case_id": case["case_id"], "pair_success": True,
+            "case_digest": frozen_digest(w, case["case_id"])})
+
+        assert seen["inside"].endswith("experiment-e/prompts")
+
+    def test_it_is_put_back_when_the_pass_is_over(self, world, monkeypatch):
+        monkeypatch.setenv("SECURITY_SCAN_PROMPT_DIR", "left-alone")
+
+        self.ran(world, monkeypatch, lambda w, case: {
+            "case_id": case["case_id"], "pair_success": True,
+            "case_digest": frozen_digest(w, case["case_id"])})
+
+        assert os.environ["SECURITY_SCAN_PROMPT_DIR"] == "left-alone"
+
+    def test_it_is_put_back_when_a_case_raises(self, world, monkeypatch):
+        """A refusal leaves the environment behind as surely as a purchase, and
+        the `finally` is what makes the two the same."""
+        monkeypatch.delenv("SECURITY_SCAN_PROMPT_DIR", raising=False)
+
+        def explode(w, case):
+            raise RuntimeError("the review died")
+
+        with pytest.raises(RuntimeError):
+            self.ran(world, monkeypatch, explode)
+
+        assert "SECURITY_SCAN_PROMPT_DIR" not in os.environ
+
+
+class TestTheBehaviourIsPartOfTheFreeze:
+    """The freeze bound the models and nothing else about how the run behaves.
+
+    Measured on 2026-09-08, on the manifest of an arm that was minutes from
+    being bought: with `SECURITY_SCAN_VERIFY_VOTES=5` in the environment,
+    `experiment.drift` returned `[]`. A panel of five verifiers and a panel of
+    one are different instruments, and the artifact said the instrument had
+    not moved — in the one function whose exit code authorises spending.
+
+    The manifest recorded `verify = on`, which is *whether* verification runs.
+    How it runs was in none of the fourteen fields it froze.
+
+    Found by Codex on the round before the first purchase, which also ruled
+    that a manifest frozen without the field must be refused rather than read
+    as agreeing.
+    """
+
+    def manifest(self, environment):
+        """A whole manifest, because `drift` reads the suite and the cases."""
+        body = experiment.build("probe")
+        body["environment"] = environment
+        return body
+
+    def test_a_changed_vote_count_is_drift(self, monkeypatch):
+        frozen = experiment.environment_now()
+        monkeypatch.setenv("SECURITY_SCAN_VERIFY_VOTES", "5")
+
+        moved = experiment.drift(self.manifest(frozen))
+
+        assert any("behaviour" in line for line in moved), moved
+
+    def test_a_changed_gate_threshold_is_drift(self, monkeypatch):
+        """Not only the verifier. `fail_on` decides what blocks, which is what
+        `pair_success` is computed from — a second setting, so the test is
+        about the class and not about one name."""
+        frozen = experiment.environment_now()
+        monkeypatch.setenv("SECURITY_SCAN_FAIL_ON", "low")
+
+        moved = experiment.drift(self.manifest(frozen))
+
+        assert any("behaviour" in line for line in moved), moved
+
+    def test_an_unchanged_environment_is_not_drift(self, monkeypatch):
+        """The control. A digest that moves on its own refuses every run, and
+        a check that refuses everything gets deleted rather than obeyed."""
+        monkeypatch.delenv("SECURITY_SCAN_VERIFY_VOTES", raising=False)
+        frozen = experiment.environment_now()
+
+        assert experiment.drift(self.manifest(frozen)) == []
+
+    def test_the_two_arms_of_a_trial_still_differ_only_in_the_model(
+            self, monkeypatch):
+        """`model`, `verify_model` and `verify` are recorded by name, so they
+        are left out of the digest. Including `model` would make the digest
+        differ between the arms — refusing the pair for the one difference it
+        exists to have."""
+        monkeypatch.delenv("SECURITY_SCAN_MODEL", raising=False)
+        opus = experiment.behaviour_now()
+        monkeypatch.setenv("SECURITY_SCAN_MODEL", "claude-sonnet-5")
+        sonnet = experiment.behaviour_now()
+
+        assert opus == sonnet
+
+    def test_the_code_that_runs_the_experiment_is_part_of_the_freeze(
+            self, world, monkeypatch):
+        """**The driver was outside every digest.**
+
+        `scorer_digest` covers what turns findings into `pair_success`;
+        `reviewer_digest` covers the product being measured. Neither covered
+        `tools/experiment.py`, and `run` is what selects the protocol
+        settings, calls `run_case`, applies the adjudications, decides whether
+        a result is acceptable and publishes it — with `sonnet_trial`
+        delegating every paid unit to it.
+
+        Measured rather than argued: nine repairs to that file in one session,
+        every one of them materially changing what a run does, and `verify`
+        said nothing had moved after each. Raised on the tenth round and
+        confirmed by Codex as larger than the defect it had been asked about,
+        2026-09-08.
+        """
+        frozen = experiment.environment_now()
+        assert frozen["driver"], frozen
+
+        edited = world / "tools" / "experiment.py"
+        edited.parent.mkdir(exist_ok=True)
+        edited.write_text("# a change to what a run does\n", encoding="utf-8")
+
+        assert experiment.driver_digest() != frozen["driver"]
+
+    @pytest.mark.parametrize("field", ["behaviour", "driver"])
+    def test_a_manifest_frozen_without_a_recorded_field_is_refused(
+            self, field):
+        """Absence is not agreement, for either digest: `drift` walks the
+        manifest's own keys, so a field it never had is never looked at."""
+        frozen = experiment.environment_now()
+        del frozen[field]
+
+        moved = experiment.drift(self.manifest(frozen))
+
+        assert any(field in line for line in moved), moved
+        assert any("re-freeze" in line for line in moved), moved
+
+    def test_a_manifest_frozen_without_it_is_refused(self):
+        """**Absence is not agreement.** `drift` walks the manifest's own keys,
+        so a field it never had is never looked at, and "nothing has moved"
+        would be an answer about the models alone printed in front of the
+        decision to spend."""
+        frozen = experiment.environment_now()
+        del frozen["behaviour"]
+
+        moved = experiment.drift(self.manifest(frozen))
+
+        assert any("behaviour" in line for line in moved), moved
+        assert any("re-freeze" in line for line in moved), moved
+
+    # One environment variable per behavioural setting this parametrises, with
+    # a value that differs from the default. Not the whole of `BEHAVIOURAL` —
+    # the point is a handful drawn from different groups of it, so the test is
+    # about the class and not about whichever name was fixed first.
+    @pytest.mark.parametrize("variable,value", [
+        ("SECURITY_SCAN_VERIFY_VOTES", "5"),        # verification
+        ("SECURITY_SCAN_FAIL_ON", "low"),           # what blocks
+        ("SECURITY_SCAN_MAX_TURNS", "7"),           # what the run may spend
+        # `SECURITY_SCAN_CONTEXT_LINES`, not `..._DIFF_CONTEXT_LINES`: the
+        # field is `diff_context_lines` and the variable is not. Written the
+        # other way first, and this test caught it — which the set-comparison
+        # it replaced could not have done.
+        ("SECURITY_SCAN_CONTEXT_LINES", "9"),       # what reaches the model
+        ("SECURITY_SCAN_EFFORT", "low"),            # how hard it thinks
+    ])
+    def test_the_digest_moves_when_a_behavioural_setting_moves(
+            self, monkeypatch, variable, value):
+        """**The digest is exercised, not merely described.**
+
+        The first version of this test compared two sets — that
+        `NAMED_BEHAVIOUR` is inside `BEHAVIOURAL` and does not exhaust it — and
+        Codex refused it on the gate: it would pass unchanged if
+        `behaviour_now()` returned a constant, which is the one failure it is
+        supposed to catch. A test about a digest has to change the input.
+        """
+        monkeypatch.delenv(variable, raising=False)
+        before = experiment.behaviour_now()
+        monkeypatch.setenv(variable, value)
+
+        assert experiment.behaviour_now() != before, variable
+
+    # The four `pair_corpus.effective_config` overrides, by the variable that
+    # would otherwise set them. A review runs with the mode pinned to `diff`,
+    # the comment off, its own output directory and an empty forge context, so
+    # none of these is part of the instrument being frozen.
+    @pytest.mark.parametrize("variable,value", [
+        ("SECURITY_SCAN_MODE", "diff"),
+        ("CI_MERGE_REQUEST_TITLE", "something a contributor wrote"),
+        ("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", "feature/x"),
+    ])
+    def test_a_setting_the_review_overrides_does_not_move_the_digest(
+            self, monkeypatch, variable, value):
+        """**The shell is not the instrument.**
+
+        The digest was taken from `Config.from_env()`, and a corpus review does
+        not run under that: `pair_corpus.effective_config` pins the mode,
+        empties the forge context, turns the comment off and sets the output
+        directory. So `SECURITY_SCAN_MODE=diff` in the shell moved the digest
+        while changing nothing about the review — which refuses a valid resume
+        as drift, in the function whose answer authorises spending.
+
+        The forge variables are two of the four because `briefing` puts a merge
+        request's title and branch into the model's input: they would be part
+        of the instrument if they reached it, and `effective_config` is what
+        stops them.
+
+        Codex measured this on the round before the purchase, 2026-09-08. Its
+        own docstring records the same defect being fixed once already, for the
+        manifest `pair_corpus` writes.
+        """
+        monkeypatch.delenv(variable, raising=False)
+        before = experiment.behaviour_now()
+        monkeypatch.setenv(variable, value)
+
+        assert experiment.behaviour_now() == before, variable
+
+    def test_the_comment_is_off_in_the_configuration_the_review_runs_under(
+            self):
+        """`post_comment` was a fourth parameter of the test above, and Codex
+        refused it twice over: its default is already `True`, so setting the
+        variable to `"true"` changed nothing, and it is in `NOT_BEHAVIOURAL`,
+        so digest equality could not have proved the override either way. A
+        test that cannot fail is not a test.
+
+        What can be checked is the thing that matters: the raw configuration
+        says one thing and the one handed to the review says another.
+        """
+        from pair_corpus import effective_config
+
+        from security_agent.config import Config
+
+        assert Config.from_env().post_comment is True
+        assert effective_config(Path("/frozen")).post_comment is False
+
+    @pytest.mark.parametrize("constant,field,other", [
+        ("PROTOCOL_PROVIDER", "provider", "anthropic-api"),
+        ("PROTOCOL_PROFILE", "profile", "deep"),
+    ])
+    def test_the_protocol_and_the_digest_both_follow_one_definition(
+            self, monkeypatch, world, constant, field, other):
+        """The digest was taken with no provider and no profile, so it
+        described `anthropic-api/normal` — the default — while `run` hands
+        `run_case` the frozen protocol's `claude-cli/normal`. The freeze
+        described one instrument and the money bought another.
+
+        **Both readers, and one constant at a time.** The first version of this
+        test asserted `protocol["provider"] == PROTOCOL_PROVIDER` and, in a
+        separate test, that the digest moved when the constant did. Codex broke
+        both in memory and they still passed: a literal left in the protocol
+        block compares equal to a constant of the same value, and a literal
+        `"normal"` in the digest is not reached by moving the provider. So each
+        constant is moved on its own here, and the protocol *and* the digest
+        must both follow it.
+
+        Codex, two rounds before the purchase and again on the repair,
+        2026-09-08.
+        """
+        before_digest = experiment.behaviour_now()
+        monkeypatch.setattr(experiment, constant, other)
+
+        assert experiment.build("probe")["protocol"][field] == other
+        assert experiment.behaviour_now() != before_digest
+
+    def test_the_review_is_bought_under_the_protocol_that_was_frozen(
+            self, world, monkeypatch):
+        """**The third reader, and the only one that spends.**
+
+        `run` hands `run_case` a provider and a profile, and the two tests
+        above cover the protocol block and the digest — not this. Codex cut
+        this wire in memory, calling `run_case` with literal
+        `anthropic-api`/`normal`, and both of them still passed: a freeze
+        saying one thing and a purchase made under another, with nothing
+        objecting.
+
+        So the arguments are captured. Nothing is bought — `run_case` is
+        replaced — and the assertion is that what it was handed came from the
+        manifest and not from a literal beside the call.
+
+        Codex, three rounds running on this one wire, 2026-09-08.
+        """
+        import pair_corpus
+
+        # A *consistently* frozen alternative: the constants are moved before
+        # the freeze, so the protocol block, the behaviour digest and the
+        # purchase all describe the same thing. The first version of this test
+        # edited the manifest afterwards instead, and Codex was right that it
+        # then rested on an inconsistency passing validation — which, after the
+        # repair below it, no longer does.
+        monkeypatch.setattr(experiment, "PROTOCOL_PROVIDER", "anthropic-api")
+        monkeypatch.setattr(experiment, "PROTOCOL_PROFILE", "deep")
+        experiment.freeze("e", dry_run=False)
+
+        seen = []
+
+        def fake(case, **kwargs):
+            seen.append((kwargs.get("provider"), kwargs.get("profile")))
+            return {"case_id": case["case_id"], "pair_success": True,
+                    "case_digest": frozen_digest(world, case["case_id"])}
+
+        monkeypatch.setattr(pair_corpus, "run_case", fake)
+
+        assert experiment.run("e", "a", None) == 0
+        assert sorted(experiment.accepted("e", "a")) == ["go-a", "py-a"], (
+            "a pass that did not complete cannot say what it was bought under")
+        assert set(seen) == {("anthropic-api", "deep")}, seen
+
+    def test_a_manifest_whose_protocol_was_edited_is_refused(
+            self, world, monkeypatch):
+        """**The digest has to describe the purchase, not the module.**
+
+        `run` buys each case under `body["protocol"]`, while the digest was
+        computed from this module's constants — so an edited protocol would be
+        bought under the new values with the old digest still beside it, and
+        `drift` compared that digest against one built from the constants and
+        found them equal. Codex changed a staged manifest to
+        `anthropic-api/deep` and `drift` returned `[]` before and after.
+
+        Recomputed under what the manifest says, the edit shows up as the
+        behaviour moving, which is what it is.
+        """
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+
+        assert experiment.drift(body) == [], "the premise: it starts clean"
+
+        body["protocol"]["provider"] = "anthropic-api"
+        body["protocol"]["profile"] = "deep"
+
+        moved = experiment.drift(body)
+
+        assert any("behaviour" in line for line in moved), moved
+
+    @pytest.mark.parametrize("value", ["", "   ", None, 0, 7, [], {}])
+    @pytest.mark.parametrize("key", ["provider", "profile"])
+    def test_a_protocol_value_that_is_not_a_usable_string_is_refused(
+            self, world, key, value):
+        """**Not-a-string is the same defect as empty, and the first repair
+        missed it.**
+
+        `str(value).strip()` was the emptiness test, and `str(None)` is
+        `"None"` — so a manifest holding JSON `null` passed, `verify` exited 0,
+        and `run` reached `run_case(provider=None)`, where `effective_config`
+        leaves the provider alone and the ambient `anthropic-api` buys every
+        review. A numeric `0` escaped the same way.
+
+        The only shape `run` can buy under is a non-empty string, so that is
+        what a present key has to be. Codex, fifth cut of this one wire,
+        2026-09-08.
+        """
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+
+        assert experiment.drift(body) == [], "the premise: it starts clean"
+
+        body["protocol"][key] = value
+        moved = experiment.drift(body)
+
+        assert any("protocol.{}".format(key) in line for line in moved), moved
+
+    @pytest.mark.parametrize("key", ["provider", "profile"])
+    def test_a_protocol_frozen_empty_is_refused(self, world, key):
+        """**An empty value is a value, and the fallback was swallowing it.**
+
+        `behaviour_now` replaced an empty provider with the constant, so the
+        digest said `claude-cli`. `run` passes that same empty string to
+        `run_case`, `effective_config` leaves the provider alone, and the
+        ambient default — `anthropic-api` — is what buys the review. The
+        manifest described one instrument, the money would have bought
+        another, and `drift` returned `[]`.
+
+        Codex reproduced it on the staged manifest, 2026-09-08. It is the
+        fourth cut of this one wire and the first that needed no edit to the
+        code to work.
+        """
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+
+        assert experiment.drift(body) == [], "the premise: it starts clean"
+
+        body["protocol"][key] = ""
+        moved = experiment.drift(body)
+
+        assert any("protocol.{}".format(key) in line for line in moved), moved
+
+    def test_a_manifest_that_froze_no_protocol_keys_can_actually_be_run(
+            self, world, monkeypatch):
+        """**The fallback has to exist where the money is, not only in the
+        check.**
+
+        `drift` grew the rule — an absent key falls back to the constants — and
+        `run` went on indexing `body["protocol"]["provider"]` directly. So
+        `verify` exited 0 on a manifest whose accepted shape then raised
+        `KeyError` instead of buying anything: a compatibility claim that was
+        false in the only place it mattered, and the `drift`-only test could
+        not see it because it never ran.
+
+        Codex, sixth cut of this one wire, 2026-09-08. Both readers go through
+        `protocol_settings` now, and this drives `run` rather than `drift`.
+        """
+        import pair_corpus
+
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        del body["protocol"]["provider"]
+        del body["protocol"]["profile"]
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        seen = []
+
+        def fake(case, **kwargs):
+            seen.append((kwargs.get("provider"), kwargs.get("profile")))
+            return {"case_id": case["case_id"], "pair_success": True,
+                    "case_digest": frozen_digest(world, case["case_id"])}
+
+        monkeypatch.setattr(pair_corpus, "run_case", fake)
+
+        assert experiment.run("e", "a", None) == 0
+        assert set(seen) == {(experiment.PROTOCOL_PROVIDER,
+                              experiment.PROTOCOL_PROFILE)}, seen
+
+    @pytest.mark.parametrize("only", [None, "go-a"])
+    @pytest.mark.parametrize("block", [None, [], "protocol", 7, True, {}])
+    def test_run_refuses_a_protocol_block_of_the_wrong_shape(
+            self, world, monkeypatch, capsys, only, block):
+        """**The block itself can be the wrong shape.** Every check reads it
+        with `.get`, so a `protocol` that is `null`, a list, a string or a
+        number raised `TypeError` or `AttributeError` — a crash out of both
+        `verify` and `run`, where the contract says exit 2 with a reason.
+
+        The repair before this one covered a *missing* block and malformed
+        fields *inside* a well-formed one, and not the case between them.
+
+        `{}` is in the list and is not malformed: an empty block is a block,
+        and it is refused for naming no order rather than for its shape. It is
+        here because the first attempt at this repair skipped the order check
+        whenever the block was falsy, which let exactly that shape through.
+
+        Codex, ninth cut of this wire, 2026-09-08.
+        """
+        import pair_corpus
+
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        body["protocol"] = block
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        def never(case, **kwargs):
+            raise AssertionError("a refused manifest must buy nothing")
+
+        monkeypatch.setattr(pair_corpus, "run_case", never)
+
+        assert experiment.run("e", "a", only) == 2
+        assert "protocol" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("only", [None, "go-a"])
+    @pytest.mark.parametrize("order,marker", [
+        # An absent `order` is refused at the loader now — earlier than
+        # `protocol_settings`, and by the rule that a block's required fields
+        # are checked where the file becomes an object.
+        (None, "records no order"),
+        ([], "names no sequence"),
+        ("go-a", "names no sequence"),
+        ([1, 2], "not a case id"),
+        (["go-a", "go-a"], "more than once"),
+        (["go-a"], "do not describe the same experiment"),
+        (["go-a", "py-a", "ghost"], "do not describe the same experiment"),
+    ])
+    def test_run_refuses_a_protocol_whose_order_is_unusable(
+            self, world, monkeypatch, capsys, only, order, marker):
+        """**A present block is not a runnable one.** `protocol_settings`
+        validated the provider and the profile and called that enough, so a
+        manifest with the block but no `order` passed `drift`, returned no
+        problems, and then raised `KeyError` in `run` — the same contract
+        violation one field over.
+
+        The last two shapes are not about crashing: an order naming fewer or
+        other cases than the manifest freezes would buy a shorter or a
+        different experiment under this one's name, and nothing would have
+        said so. Duplicates would buy one case twice.
+
+        Codex, eighth cut of this one wire, 2026-09-08.
+        """
+        import pair_corpus
+
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        if order is None:
+            del body["protocol"]["order"]
+        else:
+            body["protocol"]["order"] = order
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        def never(case, **kwargs):
+            raise AssertionError("a refused manifest must buy nothing")
+
+        monkeypatch.setattr(pair_corpus, "run_case", never)
+
+        assert experiment.run("e", "a", only) == 2
+        assert marker in capsys.readouterr().err
+
+    @pytest.mark.parametrize("only", [None, "go-a"])
+    def test_run_refuses_an_unrunnable_manifest_rather_than_crashing(
+            self, world, monkeypatch, capsys, only):
+        """**Exit 2, not a traceback.** `run` indexed
+        `body["protocol"]["order"]` before it checked anything, so a manifest
+        with no protocol block raised `KeyError` — "I could not check"
+        rendered as a crash, in the command that spends.
+
+        Both entry points, because the index happens at two places: with
+        `only` supplied and without. Codex, seventh cut of this one wire,
+        2026-09-08; its predecessor tested `drift` alone while describing
+        end-to-end coverage.
+        """
+        import pair_corpus
+
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        del body["protocol"]
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        def never(case, **kwargs):
+            raise AssertionError("a refused manifest must buy nothing")
+
+        monkeypatch.setattr(pair_corpus, "run_case", never)
+
+        assert experiment.run("e", "a", only) == 2
+        # The refusal moved outward with the rule: `load` checks every block a
+        # reader consumes now, so a manifest with no protocol is refused at the
+        # boundary rather than by `protocol_settings` further in. Earlier and
+        # more specific, and this asserts the reason rather than the layer.
+        assert "for its protocol" in capsys.readouterr().err
+
+    def test_a_manifest_with_no_protocol_block_is_refused(self, world):
+        """It is not a runnable document and the fallback must not pretend
+        otherwise. `run` reads the case order from the same block, so a
+        manifest without it names no order either — the end-to-end test for
+        this shape raised `KeyError: 'protocol'` on the order, not on the
+        provider. Saying "the constants apply" would be a compatibility claim
+        that is false the moment anybody acts on it."""
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        del body["protocol"]
+
+        moved = experiment.drift(body)
+
+        assert any("no protocol block" in line for line in moved), moved
+
+    def test_a_manifest_that_froze_no_protocol_keys_is_not_refused_for_it(
+            self, world):
+        """The control, and the reason an absent key and a present-but-unusable
+        one had to be told apart: a manifest frozen before the protocol block
+        existed supplies nothing and must fall back to the constants, not be
+        refused for holding a provider it never had.
+
+        Both shapes, because the first version deleted the two keys and never
+        tested a manifest with no block at all — which is the older document it
+        was written for. Codex, 2026-09-08.
+        """
+        experiment.freeze("e", dry_run=False)
+        path = world / "measurements" / "experiment-e" / "manifest.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        del body["protocol"]["provider"]
+        del body["protocol"]["profile"]
+
+        assert experiment.drift(body) == []
+
+    def test_the_protocol_provider_is_not_the_ambient_default(self):
+        """The premise the two above rest on: if the protocol asked for what
+        the shell already gives, neither could tell a wired reader from a
+        disconnected one."""
+        from pair_corpus import effective_config
+
+        from security_agent.config import config_to_dict
+
+        assert (config_to_dict(effective_config(Path("/frozen")))["provider"]
+                != experiment.PROTOCOL_PROVIDER)
+
+    def test_the_names_recorded_separately_are_inside_the_behavioural_list(
+            self):
+        """The three left out of the digest are left out because the block
+        records them by name, not because they are not behavioural — so they
+        have to be in `BEHAVIOURAL`, and they must not be all of it."""
+        from security_agent.config import BEHAVIOURAL
+
+        assert experiment.NAMED_BEHAVIOUR <= BEHAVIOURAL
+        assert BEHAVIOURAL - experiment.NAMED_BEHAVIOUR

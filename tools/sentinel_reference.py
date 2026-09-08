@@ -51,7 +51,13 @@ CORPUS = ROOT / "corpus-real"
 # been made, so a "fresh" reference would have frozen the old rows under a new
 # name. D-015 requires a new experiment directory and a new output file, and
 # neither is a thing to remember at the command line.
-EXPERIMENT = ROOT / "measurements" / "experiment-noise-floor-2"
+# The one baseline the `environment_equivalence` block below is *about*. It
+# names a digest, a commit range and twenty-six rescored rows, all of which are
+# facts about this experiment and about no other — so the block travels with
+# the name rather than with every reference this module builds.
+GRANDFATHERED = "experiment-noise-floor-2"
+
+EXPERIMENT = ROOT / "measurements" / GRANDFATHERED
 SUITE = ROOT / "suites" / "sentinel.yml"
 PASSES = ("pass-a", "pass-b")
 # What this reference is about, and what the rows must show. Declared here and
@@ -300,7 +306,14 @@ def build() -> dict:
         entries[case_id] = entry
 
     return {
-        "reference": "experiment-noise-floor-2",
+        # **Derived from the source, not written down.** It was the literal
+        # `"experiment-noise-floor-2"`, and `EXPERIMENT` is rebound — by
+        # `--from` and by `sonnet_trial._build_reference` — so a reference
+        # built from a fresh Opus arm announced itself as the old baseline.
+        # Every later reader of that field, and the ledger that records the
+        # freeze, would have carried the wrong provenance. Codex, on the round
+        # before the first purchase, 2026-09-08.
+        "reference": EXPERIMENT.name,
         "model": MODEL,
         # The verifier followed the reviewer here, and the artifacts of that run
         # do not say so: `verify_model` was added to the recorded settings on
@@ -334,7 +347,14 @@ def build() -> dict:
         # construction, verification decision or gate. Buying a fresh Opus
         # reference would cost about $26 and would mostly measure a new
         # stochastic sample of the same model.
-        "environment_equivalence": {
+        # **Only for the baseline these claims are about.** They name a
+        # specific digest, a specific commit range and twenty-six rescored
+        # rows, and none of that is true of a reference built from a fresh arm
+        # — which needs no equivalence claim at all, having been frozen from
+        # the tree it will be compared against. Emitting them anyway attached
+        # somebody else's provenance to a new measurement. Codex, on the round
+        # before the first purchase, 2026-09-08.
+        **({"environment_equivalence": {
             "reviewer": {
                 "status": "accepted_by_static_analysis",
                 "reference_digest": "aa3d401c17640eed",
@@ -359,7 +379,7 @@ def build() -> dict:
             "not_established": "Provider-side drift. Neither this reference "
                                "nor a freshly bought one rules it out; a new "
                                "one would only move the question to today.",
-        },
+        }} if EXPERIMENT.name == GRANDFATHERED else {}),
         "cases": entries,
         "missing": missing,
         "unstable_under_reference": unstable,
