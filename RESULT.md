@@ -12,7 +12,7 @@ against that goal.
 | | |
 |---|---|
 | what it is | an autonomous reviewer that reads a code change, follows the code until it understands it, and reports what it finds |
-| measured with | reviewer: `claude-opus-5` **requested and served**, no substitution, on a Claude subscription. Verifier: `claude-opus-5` requested; which model *served* it is **not recorded** — no row anywhere carries `models_verified`, the same gap that retires the Sonnet baseline below |
+| measured with | reviewer: `claude-opus-5` **requested and served**, no substitution, on a Claude subscription. Verifier: `claude-opus-5` requested; which model *served* it is **not recorded** in these rows — they predate `models_verified`, which is why the first Sonnet baseline was retired and refrozen before the trial below could run |
 | golden data | 78 matched pairs — the same code with and without one security-relevant construct |
 | finds the weakness | **78%** of vulnerable versions · 95% CI 68–86% |
 | alarms on the patched twin | **26%** · 95% CI 17–36% · **not** a false-alarm rate |
@@ -20,7 +20,7 @@ against that goal.
 | mentions anything on an ordinary change | **1 of 27** · 4% · 95% CI 1–18% |
 | gives the same answer twice | **11 of 13.** Two cases flipped with nothing changed — **15% instability** |
 | what the measurement cost | **$0 charged**, which is what `tools/spend.py` prints for those 27 runs. The notional figure — API list price for the tokens, charged to nobody — is $8.06, and it is in `--breakdown`, not in the headline. Repricing the same tokens from this repository's own table gives $8.02; both are notional and the 0.4% between them is the price table, not a charge |
-| Sonnet | **never run.** 0 records anywhere under `measurements/` |
+| Sonnet | **run, and rejected.** 52 paid reviews, net 2 regressions at a threshold of 2, on 11 comparable cases of 13. A tripwire, not a sample — see below |
 
 ## The golden data, and why it is not gameable
 
@@ -130,11 +130,47 @@ repeats one case N times when that question comes up again; 13 cases seeing 2
 flips is a thin sample and puts the instability somewhere around 15%, not
 exactly there.
 
+## The cheaper model, measured
+
+`claude-sonnet-5` as the reviewer, against `claude-opus-5` as the reference,
+with the verifier held on Opus in both arms. 52 paid reviews, bought
+2026-09-08, compared 2026-09-09.
+
+| | |
+|---|---|
+| verdict | **reject**, net 2, at a threshold frozen before the purchase (`reject_at_net: 2`) |
+| comparable | 11 of 13 cases. Two are excluded because the reference itself answered them two ways |
+| regressed | `js-q4gh-4ffp-5cg8`, `rb-g65v-27r3-5p6m` — confirmed in both passes |
+| steady | the other nine |
+| improved | none |
+| reference | `20462678c3d8af07`, frozen from the Opus arm's 52 rows |
+| the rows | `measurements/experiment-sonnet-trial-q-{opus,sonnet}/`, ledger in `measurements/sonnet-trial-sonnet-trial-q/` |
+
+Net 2 is the rejection line exactly, not a margin past it. What that buys is a
+decision about whether to spend more, and the answer is no: the frozen rule
+says two confirmed regressions reject the change, and improvements do not
+cancel them because finding a weakness in one case does not put back the
+weakness missed in another.
+
+**Thirteen cases are a tripwire, not a sample.** The reference says so itself.
+A `reject` here means the wider measurement is not worth buying; it does not
+establish a rate for the other sixty-nine cases, and no number in this section
+should be read as one.
+
+Two units did not conclude on the way, both on the Sonnet arm. Each stopped the
+run rather than being counted, and each was re-run — a review that does not
+conclude is a missing value, not a clean result.
+
+The comparison refused to run twice before it produced this, and both refusals
+were defects in the comparator rather than facts about the models. They are
+described in the commit that repaired them; the shorter version is that one
+rule refused the reference against itself, and the other read a false alarm on
+a safe member — the measurement — as a changed instrument.
+
 ## What has not been measured at all
 
 | | |
 |---|---|
-| **Sonnet, or any cheaper model** | never run. The sentinel baseline is retired — no row anywhere carries `models_verified`, so it cannot separate the model that reviewed from the model that verified |
 | a false-positive rate on ordinary code | the 27 above are a pilot, not an estimate for the frame |
 | behaviour on untrusted contributions | out of scope, and `LIMITATIONS.md` says why |
 | anything a person independently checked | every adjudication in this repository was written by a model |

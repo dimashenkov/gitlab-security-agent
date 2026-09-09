@@ -102,3 +102,4 @@
 {"index": 50, "kind": "done", "previous": "bdb7358c5aa1d497", "result_digest": "92c4bddc3b7e8cdb", "schedule_digest": "b17fde7133690b93", "seq": 101}
 {"arm": "sonnet", "case_id": "rb-mx5j-mp4f-g8jg", "index": 51, "kind": "prepared", "pass": "b", "previous": "d0fbfc28ce9bbf00", "schedule_digest": "b17fde7133690b93", "seq": 102}
 {"index": 51, "kind": "done", "previous": "01b3af8c784217a7", "result_digest": "149c5a559f0c6edc", "schedule_digest": "b17fde7133690b93", "seq": 103}
+{"after_units": 52, "built_from": "measurements/experiment-sonnet-trial-q-opus", "kind": "reference", "path": "measurements/sonnet-trial-sonnet-trial-q/reference.json", "previous": "f61db7347f00e0ff", "reference_digest": "20462678c3d8af07", "seq": 104}
