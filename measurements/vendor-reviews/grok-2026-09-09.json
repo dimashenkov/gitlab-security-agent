@@ -1,0 +1,35 @@
+{
+  "schema": "grok-review/1",
+  "vendor": "xai",
+  "model_requested": "grok-4.6-build",
+  "cli_version": "grok 1.0.13 (5e9a58528b76)",
+  "what_this_is": "Grok asked to review the uncommitted change while Codex was over its usage limit. Recorded because every paid call is recorded when it is made, whatever it returned.",
+  "what_this_is_not": "A review. The one call that produced an answer made ZERO tool calls and never opened the diff; what it returned names a flag that does not exist (`check_accounted.py --frozen`) and places `wait_for_fresh_window` in a file it is not in. It is not evidence about the code and nothing in the change was altered on the strength of it.",
+  "started_at": "2026-09-09T15:30:00+00:00",
+  "finished_at": "2026-09-09T16:05:00+00:00",
+  "findings": [],
+  "counts": {
+    "invocations": 11,
+    "with_a_recorded_cost": 3,
+    "cost_not_established": 8,
+    "tool_calls_in_the_review": 0
+  },
+  "reported_cost_usd": 0.2419,
+  "cost_is_a_floor": true,
+  "why_a_floor": "Only `--output-format streaming-json` emits the row that carries a cost. Eight invocations used the default format and priced nothing, so this figure is what three of eleven calls cost and not what the eleven cost.",
+  "billing_arrangement": "SuperGrok Lite, EUR 20 a month, flat. One more call moves no bill; this figure is list price charged to nobody.",
+  "priced_calls": [
+    {"what": "git diff --stat, with --permission-mode plan", "cost_usd": 0.0039729,
+     "outcome": "the tool call was CANCELLED by plan mode"},
+    {"what": "git diff --stat, without plan", "cost_usd": 0.00798728,
+     "outcome": "completed; this is how the cancellation above was identified"},
+    {"what": "the review itself", "cost_usd": 0.2299,
+     "outcome": "answered with zero tool calls"}
+  ],
+  "what_was_learnt": [
+    "`grok -p` does run an agent loop with tools; the owner corrected me on this.",
+    "The default permission behaviour is `ask`, and in a non-interactive session nobody answers, so the run ends having touched nothing and prints only its opening sentence. `--always-approve` is required.",
+    "`--permission-mode plan` does not restrict tools to reading — it CANCELS them. The stream says `User cancelled the execution` and `stopReason: cancelled`.",
+    "Without `--output-format streaming-json` none of this is visible: an early test appeared to succeed because the model answered `main` from inference, and only the stream showed there had been no tool call at all."
+  ]
+}

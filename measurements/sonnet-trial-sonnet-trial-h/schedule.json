@@ -1,0 +1,358 @@
+{
+  "arms": {
+    "opus": {
+      "experiment": "sonnet-trial-h-opus",
+      "manifest_digest": "3a84362302be5395",
+      "model": "claude-opus-5",
+      "prompt_digests": {
+        "findings.schema.json": "771225ae1a564f71",
+        "system.md": "bd359730e26be159",
+        "verifier.md": "4c3ea369c2d10317"
+      },
+      "verifier": "claude-opus-5"
+    },
+    "sonnet": {
+      "experiment": "sonnet-trial-h-sonnet",
+      "manifest_digest": "3b3b582cd418080f",
+      "model": "claude-sonnet-5",
+      "prompt_digests": {
+        "findings.schema.json": "771225ae1a564f71",
+        "system.md": "bd359730e26be159",
+        "verifier.md": "4c3ea369c2d10317"
+      },
+      "verifier": "claude-opus-5"
+    }
+  },
+  "cases": [
+    "go-8r62-w5wh-fc5m",
+    "go-m6jg-wr9m-cg2f",
+    "js-q4gh-4ffp-5cg8",
+    "jv-45ph-gxxr-gwgw",
+    "php-5h77-88j3-r659",
+    "php-p2ch-c2c3-4xm5",
+    "py-2wxc-x7rj-hg8f",
+    "py-p43p-whwx-q52h",
+    "rb-g65v-27r3-5p6m",
+    "rb-mx5j-mp4f-g8jg",
+    "rs-4pj9-g833-qx53",
+    "ts-34pm-923j-7wf8",
+    "ts-q7m3-rhxg-7vxr"
+  ],
+  "committed": "this file is written before the first review and its digest is the trial's identity. The order in `units` is the order the reviews are bought in, and a run that departs from it is refused rather than recorded.",
+  "seed": "sonnet-trial-h",
+  "trial": "sonnet-trial-h",
+  "units": [
+    {
+      "arm": "sonnet",
+      "case_id": "go-8r62-w5wh-fc5m",
+      "index": 0,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "rb-mx5j-mp4f-g8jg",
+      "index": 1,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "py-2wxc-x7rj-hg8f",
+      "index": 2,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "py-2wxc-x7rj-hg8f",
+      "index": 3,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "go-m6jg-wr9m-cg2f",
+      "index": 4,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "rb-g65v-27r3-5p6m",
+      "index": 5,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "rb-g65v-27r3-5p6m",
+      "index": 6,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "py-p43p-whwx-q52h",
+      "index": 7,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "js-q4gh-4ffp-5cg8",
+      "index": 8,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "go-m6jg-wr9m-cg2f",
+      "index": 9,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "ts-q7m3-rhxg-7vxr",
+      "index": 10,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "php-5h77-88j3-r659",
+      "index": 11,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "ts-34pm-923j-7wf8",
+      "index": 12,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "py-p43p-whwx-q52h",
+      "index": 13,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "rs-4pj9-g833-qx53",
+      "index": 14,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "ts-34pm-923j-7wf8",
+      "index": 15,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "php-p2ch-c2c3-4xm5",
+      "index": 16,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "php-p2ch-c2c3-4xm5",
+      "index": 17,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "ts-q7m3-rhxg-7vxr",
+      "index": 18,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "rb-g65v-27r3-5p6m",
+      "index": 19,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "go-m6jg-wr9m-cg2f",
+      "index": 20,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "ts-q7m3-rhxg-7vxr",
+      "index": 21,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "js-q4gh-4ffp-5cg8",
+      "index": 22,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "rs-4pj9-g833-qx53",
+      "index": 23,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "jv-45ph-gxxr-gwgw",
+      "index": 24,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "go-m6jg-wr9m-cg2f",
+      "index": 25,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "php-5h77-88j3-r659",
+      "index": 26,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "py-2wxc-x7rj-hg8f",
+      "index": 27,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "rb-mx5j-mp4f-g8jg",
+      "index": 28,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "go-8r62-w5wh-fc5m",
+      "index": 29,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "py-2wxc-x7rj-hg8f",
+      "index": 30,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "ts-34pm-923j-7wf8",
+      "index": 31,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "php-p2ch-c2c3-4xm5",
+      "index": 32,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "php-5h77-88j3-r659",
+      "index": 33,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "py-p43p-whwx-q52h",
+      "index": 34,
+      "pass": "a"
+    },
+    {
+      "arm": "opus",
+      "case_id": "go-8r62-w5wh-fc5m",
+      "index": 35,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "php-5h77-88j3-r659",
+      "index": 36,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "js-q4gh-4ffp-5cg8",
+      "index": 37,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "py-p43p-whwx-q52h",
+      "index": 38,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "rb-mx5j-mp4f-g8jg",
+      "index": 39,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "go-8r62-w5wh-fc5m",
+      "index": 40,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "js-q4gh-4ffp-5cg8",
+      "index": 41,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "jv-45ph-gxxr-gwgw",
+      "index": 42,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "rs-4pj9-g833-qx53",
+      "index": 43,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "rb-g65v-27r3-5p6m",
+      "index": 44,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "php-p2ch-c2c3-4xm5",
+      "index": 45,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "ts-34pm-923j-7wf8",
+      "index": 46,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "ts-q7m3-rhxg-7vxr",
+      "index": 47,
+      "pass": "b"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "rb-mx5j-mp4f-g8jg",
+      "index": 48,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "jv-45ph-gxxr-gwgw",
+      "index": 49,
+      "pass": "a"
+    },
+    {
+      "arm": "sonnet",
+      "case_id": "rs-4pj9-g833-qx53",
+      "index": 50,
+      "pass": "b"
+    },
+    {
+      "arm": "opus",
+      "case_id": "jv-45ph-gxxr-gwgw",
+      "index": 51,
+      "pass": "b"
+    }
+  ]
+}

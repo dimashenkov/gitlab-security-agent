@@ -1,0 +1,414 @@
+{
+ "reference": "experiment-sonnet-trial-q-opus",
+ "model": "claude-opus-5",
+ "verifier_model": "claude-opus-5",
+ "observed_models": {
+  "any_role": {
+   "safe": [
+    "claude-opus-5"
+   ],
+   "unsafe": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+   ]
+  },
+  "reviewing": {
+   "safe": [
+    "claude-opus-5"
+   ],
+   "unsafe": [
+    "claude-opus-5"
+   ]
+  },
+  "verifying": {
+   "safe": [],
+   "unsafe": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+   ]
+  }
+ },
+ "environment": {
+  "agent_version": "0.1.0",
+  "system_prompt": "bd359730e26be159",
+  "verifier_prompt": "4c3ea369c2d10317",
+  "findings_schema": "771225ae1a564f71",
+  "adjudications": "99a162834861b54a",
+  "scorer": "41dc12dea08922c3",
+  "reviewer": "5ef584629771f12b",
+  "driver": "8ea050244ec23758",
+  "behaviour": "47a7b8075304472a",
+  "corpus_git": "/opt/homebrew/bin/git \u00b7 git version 2.55.0",
+  "reviewer_git": "/usr/bin/git \u00b7 git version 2.50.1 (Apple Git-155)",
+  "review_cli": "/opt/homebrew/bin/claude -> /opt/homebrew/Caskroom/claude-code/2.1.236/claude \u00b7 317044624 bytes",
+  "review_cli_version": "unestablished: no version file beside /opt/homebrew/Caskroom/claude-code/2.1.236/claude, and the CLI is not run to ask it",
+  "model_requested": "claude-opus-5",
+  "verifier_requested": "claude-opus-5",
+  "verify": "on"
+ },
+ "cases": {
+  "go-8r62-w5wh-fc5m": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    }
+   },
+   "case_digest": "1d538b5a3bf82303",
+   "unstable_under_reference": false
+  },
+  "go-m6jg-wr9m-cg2f": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": false
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    },
+    "pass-b": {
+     "missed": true,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    }
+   },
+   "case_digest": "8460f79ee6e91abe",
+   "unstable_under_reference": true
+  },
+  "js-q4gh-4ffp-5cg8": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    }
+   },
+   "case_digest": "4faa659b1403d3d9",
+   "unstable_under_reference": false
+  },
+  "jv-45ph-gxxr-gwgw": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    }
+   },
+   "case_digest": "25447ccbbb8d643e",
+   "unstable_under_reference": false
+  },
+  "php-5h77-88j3-r659": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    }
+   },
+   "case_digest": "3ffc547d64def2fe",
+   "unstable_under_reference": false
+  },
+  "php-p2ch-c2c3-4xm5": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    }
+   },
+   "case_digest": "9ccba6cf3855c0ea",
+   "unstable_under_reference": false
+  },
+  "py-2wxc-x7rj-hg8f": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    }
+   },
+   "case_digest": "7bcd0f20a02fbe82",
+   "unstable_under_reference": false
+  },
+  "py-p43p-whwx-q52h": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": false
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    },
+    "pass-b": {
+     "missed": true,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    }
+   },
+   "case_digest": "5360605ca881050a",
+   "unstable_under_reference": true
+  },
+  "rb-g65v-27r3-5p6m": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    }
+   },
+   "case_digest": "9e82ba8e60ddf4a7",
+   "unstable_under_reference": false
+  },
+  "rb-mx5j-mp4f-g8jg": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    }
+   },
+   "case_digest": "aae86416c7fc9015",
+   "unstable_under_reference": false
+  },
+  "rs-4pj9-g833-qx53": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    }
+   },
+   "case_digest": "e7d7c4f469538d43",
+   "unstable_under_reference": false
+  },
+  "ts-34pm-923j-7wf8": {
+   "outcomes": {
+    "pass-a": true,
+    "pass-b": true
+   },
+   "shape": {
+    "pass-a": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    },
+    "pass-b": {
+     "missed": false,
+     "false_alarm": false,
+     "exits": [
+      0,
+      1
+     ]
+    }
+   },
+   "case_digest": "d85b5108c3b3926e",
+   "unstable_under_reference": false
+  },
+  "ts-q7m3-rhxg-7vxr": {
+   "outcomes": {
+    "pass-a": false,
+    "pass-b": false
+   },
+   "shape": {
+    "pass-a": {
+     "missed": true,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    },
+    "pass-b": {
+     "missed": true,
+     "false_alarm": false,
+     "exits": [
+      0,
+      0
+     ]
+    }
+   },
+   "case_digest": "41f9486a1e4fa269",
+   "unstable_under_reference": false
+  }
+ },
+ "missing": [],
+ "unstable_under_reference": [
+  "go-m6jg-wr9m-cg2f",
+  "py-p43p-whwx-q52h"
+ ],
+ "comparable": [
+  "go-8r62-w5wh-fc5m",
+  "js-q4gh-4ffp-5cg8",
+  "jv-45ph-gxxr-gwgw",
+  "php-5h77-88j3-r659",
+  "php-p2ch-c2c3-4xm5",
+  "py-2wxc-x7rj-hg8f",
+  "rb-g65v-27r3-5p6m",
+  "rb-mx5j-mp4f-g8jg",
+  "rs-4pj9-g833-qx53",
+  "ts-34pm-923j-7wf8",
+  "ts-q7m3-rhxg-7vxr"
+ ],
+ "threshold": {
+  "reject_at_net": 2,
+  "confirmations_required": 2,
+  "rule_version": 2,
+  "in_words": "A case counts as regressed when it gives the worse result in `confirmations_required` separate runs of the challenger under one system identity. Net is the count of confirmed regressions; improvements are reported and do not cancel them, because finding a weakness in one case does not put back the weakness missed in another. At `reject_at_net` the change is rejected; at one, nothing is decided and the sample is widened; at zero it passes this gate, which is grounds to buy wider confirmation and not a verdict about the corpus. A case still failing counts downward only when a kind of failure it did not have appears; trading one kind for the other decides nothing. Cases the reference itself answered two ways are not counted."
+ },
+ "not_answerable": "Thirteen cases are a tripwire, not a sample. Passing says the wider measurement is worth buying; it says nothing about the other sixty-nine cases."
+}
