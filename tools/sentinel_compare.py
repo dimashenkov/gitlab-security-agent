@@ -118,9 +118,27 @@ def _is_name_list(value) -> bool:
     iterates a string into characters, so `"claude-opus-5"` passes any check
     that only asks whether the value can be walked, and the comparison then
     runs against thirteen one-letter model names instead of refusing.
+
+    Shape only. A repeated entry is refused by `_is_model_list` for the model
+    lists and by the caller's own rule for the case-id lists, where a duplicate
+    already has a sentence naming what it means — "reports one exclusion as
+    two" — and a generic shape complaint would replace it with a worse one.
     """
     return (isinstance(value, (list, tuple))
             and all(isinstance(m, str) and m.strip() for m in value))
+
+
+def _is_model_list(value) -> bool:
+    """A list of *distinct* model names.
+
+    `note_served` deduplicates, so `["claude-sonnet-5", "claude-sonnet-5"]` is
+    a shape production does not write — and every reader here turns the list
+    into a set, which would silently normalise the malformed artifact into
+    agreement with a single Sonnet response and let it count toward the net.
+    Codex, 2026-09-09. Refusing at the boundary is what keeps the three
+    spellings of this rule from disagreeing about it.
+    """
+    return _is_name_list(value) and len(set(value)) == len(value)
 
 
 def _reference_shape(entry: dict, case_id: str) -> dict:
@@ -247,7 +265,7 @@ def _check_row_shape(case_id: str, row: dict) -> None:
             raise ComparisonError(
                 "{}: the run records no served model, so nothing says which "
                 "model answered".format(case_id))
-        if not _is_name_list(served):
+        if not _is_model_list(served):
             raise ComparisonError(
                 "{}: the run records {} for `models_served`, where a list of "
                 "model names is required".format(
@@ -259,7 +277,7 @@ def _check_row_shape(case_id: str, row: dict) -> None:
         # to turn `0`, `""` and `{}` into "nothing was verified", which this
         # file then acts on.
         verified = prov.get("models_verified", [])
-        if not _is_name_list(verified):
+        if not _is_model_list(verified):
             raise ComparisonError(
                 "{}: the run records {} for `models_verified`, where a list of "
                 "model names is required".format(
@@ -645,7 +663,7 @@ def _reference_problems(reference: dict) -> None:
                 "challenger is then free in exactly that place".format(
                     " or ".join(absent), role))
         for member, names in sorted(observed[role].items()):
-            if not _is_name_list(names):
+            if not _is_model_list(names):
                 raise ComparisonError(
                     "the reference records {} for "
                     "`observed_models[{!r}][{!r}]`, where a list of model "
@@ -959,7 +977,7 @@ def compare(reference_path, run_paths: list) -> dict:
                 # absence here has a defined meaning; a present value that
                 # cannot be read does not. Codex, 2026-09-05.
                 verified = prov.get("models_verified", [])
-                if not _is_name_list(verified):
+                if not _is_model_list(verified):
                     raise ComparisonError(
                         "{}: the run records {} for `models_verified`, where a "
                         "list of model names is required".format(
@@ -1138,14 +1156,23 @@ def compare(reference_path, run_paths: list) -> dict:
         # proceeded anyway. A union answers "which models appeared at all",
         # which is not the question.
         #
-        # The reviewing role above stays a union, and that is not the same
-        # mistake: its expectation is a single model, so a union that equals it
-        # can only have come from every row matching it.
+        # **The reviewing role is per observation too.** The comment that
+        # stood here excused a union on the grounds that its expectation is a
+        # single model, so a union equalling it must have come from every row.
+        # That is false for an *empty* contribution, and empty is producible:
+        # `_reviewing` returns nothing when the requested model is absent from
+        # `models_served` and everything served also verified — the shape of 25
+        # real rows, with the reviewer asked for and never answering. Such a
+        # row adds nothing to the union, its own reviewer goes unchecked, and
+        # its pass or fail still counts toward the net. Found 2026-09-09.
+        reviewing_seen: list = []
         verifying_seen: list = []
         for run in runs:
             for case_id, row in run.items():
                 for name, block in (row.get("members") or {}).items():
                     prov = (block or {}).get("provenance") or {}
+                    reviewing_seen.append(
+                        (case_id, name, frozenset(_reviewing(prov))))
                     seen_reviewing.setdefault(name, set()).update(
                         _reviewing(prov))
                     verified = frozenset(prov.get("models_verified") or [])
@@ -1155,15 +1182,22 @@ def compare(reference_path, run_paths: list) -> dict:
         # depend on what was found there, and equality per member is the right
         # rule: it is the one role the experiment substitutes, and a member
         # reviewed by anything else is a second change.
-        for name, expected in sorted(by_role["reviewing"].items()):
-            if seen_reviewing.get(name, set()) != expected:
+        for case_id, name, models in sorted(reviewing_seen):
+            expected = by_role["reviewing"].get(name)
+            if expected is None:
                 raise ComparisonError(
-                    "the {} member was reviewed by {} and the reference was "
-                    "reviewed by {}. Beside the model under test, the "
+                    "{}: the run has a {} member and the reference records no "
+                    "reviewer for one. A member the reference never saw is not "
+                    "a member it can hold a challenger to.".format(
+                        case_id, name))
+            if models != expected:
+                raise ComparisonError(
+                    "{}: the {} member was reviewed by {} and the reference "
+                    "was reviewed by {}. Beside the model under test, the "
                     "machinery has to be the same or the comparison measures "
                     "two changes.".format(
-                        name, sorted(seen_reviewing.get(name, set()))
-                        or "nothing", sorted(expected) or "nothing"))
+                        case_id, name, sorted(models) or "nothing",
+                        sorted(expected) or "nothing"))
 
         # The verifying role is **not** held per member, and holding it there
         # was a defect: what verified is downstream of what was found. The

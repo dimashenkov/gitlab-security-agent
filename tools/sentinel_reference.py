@@ -44,6 +44,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from artifact import case_digest, legacy_case_digest  # noqa: E402
+from experiment import digest_file  # noqa: E402
 
 CORPUS = ROOT / "corpus-real"
 # The default input, and no longer the only one. Codex, 2026-09-06: with this
@@ -109,11 +110,19 @@ def _row_of(path: Path, case_id: str) -> dict:
                 "{}: the {} member asked for {!r} and this reference is about "
                 "{}".format(path.name, name, prov.get("model_requested"),
                             MODEL))
+        # Shape before contents, and both before anything converts them.
+        # Codex, 2026-09-09: `if not served` accepted the string
+        # `"claude-opus-5"`, which `reviewing_models` then walks into thirteen
+        # one-letter model names; and `isinstance(..., list)` below accepted
+        # `[{}]`, which raises `TypeError` on the set conversion. One malformed
+        # artifact taking down the freezer is the same class the readers were
+        # repaired for an hour earlier, in the file that repaired them.
         served = prov.get("models_served")
-        if not served:
+        if not _model_list(served):
             raise ReferenceError(
-                "{}: the {} member records no served model".format(
-                    path.name, name))
+                "{}: the {} member records {!r} for `models_served`, where a "
+                "list of distinct model names is required".format(
+                    path.name, name, served))
         # **Required, not defaulted.** `settings.get("verify", True)` read an
         # absent field as verification having been on, so a row that never
         # recorded the setting was frozen into a reference that then states
@@ -152,12 +161,12 @@ def _row_of(path: Path, case_id: str) -> dict:
                 "this reference is about {}".format(
                     path.name, name, settings.get("verify_model"), VERIFIER))
         verified = prov.get("models_verified")
-        if not isinstance(verified, list):
+        if verified != [] and not _model_list(verified):
             raise ReferenceError(
-                "{}: the {} member records {} for `models_verified`, where a "
-                "list is required. A reference built from rows that cannot "
-                "say who verified cannot hold a challenger to a verifier"
-                .format(path.name, name, type(verified).__name__))
+                "{}: the {} member records {!r} for `models_verified`, where a "
+                "list of distinct model names is required. A reference built "
+                "from rows that cannot say who verified cannot hold a "
+                "challenger to a verifier".format(path.name, name, verified))
 
     if row.get("case_id") != case_id:
         raise ReferenceError("{}: the row inside is about {!r}".format(
@@ -207,6 +216,20 @@ def _shape(row: dict) -> dict:
         out[kind] = (not value) if kind == "missed" else value
     out["exits"] = [row.get("safe_exit"), row.get("unsafe_exit")]
     return out
+
+
+def _model_list(value) -> bool:
+    """A non-empty list of distinct model names, and a `str` is not one.
+
+    Python iterates a string into characters, so `"claude-opus-5"` passes any
+    check that only asks whether the value can be walked. A member that is not
+    a string cannot go into a set at all. And `note_served` deduplicates, so a
+    repeated name is a shape production does not write — collapsing it silently
+    would normalise a malformed artifact into agreement.
+    """
+    return (isinstance(value, list) and bool(value)
+            and all(isinstance(m, str) and m.strip() for m in value)
+            and len(set(value)) == len(value))
 
 
 def reviewing_models(prov: dict) -> list:
@@ -279,9 +302,73 @@ def observed() -> dict:
     }
 
 
+def suite_the_arm_froze(manifest: dict) -> list:
+    """The case list, held against the one the arm was run under.
+
+    `build` took its cases from the live `suites/sentinel.yml` and read only
+    `environment` out of the arm's manifest — so a suite rewritten between the
+    run and the freeze silently changed what the reference is about. The
+    widening direction was caught, because a case with no rows lands in
+    `missing` and `main` refuses; **narrowing was not**. A suite cut from
+    thirteen cases to six produced a reference with five comparable cases and
+    no complaint, while `threshold.reject_at_net` stayed at 2 — the challenger
+    then needing two confirmed regressions out of five instead of out of
+    eleven, which is a different experiment wearing the same number.
+
+    This is not hypothetical drift: `tools/sentinel.py --check` reports the
+    file and the rule have already parted, and both tools' own docstrings
+    document `--write suites/sentinel.yml`, which closes the loop.
+
+    The manifest froze both the digest and the list, and neither was read.
+    `sonnet_trial._build_reference` was covered because it calls
+    `experiment.drift()`, which compares the digest; the standalone tool and
+    every future caller were not.
+    """
+    frozen = manifest.get("suite")
+    if not isinstance(frozen, dict) or not frozen.get("digest"):
+        raise ReferenceError(
+            "the arm's manifest records no suite digest, so nothing says which "
+            "suite it was run under and a reference built from it would be "
+            "about a case list nobody chose")
+    # **The whole block, not the digest alone.** `experiment.freeze` writes
+    # `file`, `digest` and `count`, and reading one of the three let a manifest
+    # naming another suite file, or contradicting its own case count, be
+    # republished as valid provenance. Codex, 2026-09-09. Internally
+    # inconsistent provenance is not a smaller version of consistent
+    # provenance; it is a record that cannot be true.
+    frozen_cases = [entry.get("case_id") for entry in manifest.get("cases") or []]
+    if Path(frozen.get("file") or "").name != SUITE.name:
+        raise ReferenceError(
+            "the arm's manifest was run under {!r} and this is {}. A reference "
+            "takes its cases from the suite, so the two have to be the same "
+            "file".format(frozen.get("file"), SUITE.name))
+    if frozen.get("count") != len(frozen_cases):
+        raise ReferenceError(
+            "the arm's manifest counts {} suite case(s) and lists {}. One of "
+            "the two is not what it claims to be, and guessing which is the "
+            "judgement this file must not make".format(
+                frozen.get("count"), len(frozen_cases)))
+    now = digest_file(SUITE)
+    if now != frozen["digest"]:
+        raise ReferenceError(
+            "{} is {} and the arm was run under {}. A reference takes its "
+            "cases from the suite, so freezing against a rewritten one changes "
+            "what the experiment is about — and the threshold does not move "
+            "with it. Re-freeze the suite deliberately, or build from an arm "
+            "that ran under this one".format(SUITE.name, now,
+                                             frozen["digest"]))
+    return [entry["case_id"] for entry in manifest.get("cases") or []]
+
+
 def build() -> dict:
-    cases = yaml.safe_load(SUITE.read_text(encoding="utf-8"))["cases"]
     manifest = json.loads((EXPERIMENT / "manifest.json").read_text(encoding="utf-8"))
+    cases = yaml.safe_load(SUITE.read_text(encoding="utf-8"))["cases"]
+    frozen_cases = suite_the_arm_froze(manifest)
+    if sorted(cases) != sorted(frozen_cases):
+        raise ReferenceError(
+            "the suite holds {} case(s) and the arm froze {}. The digests "
+            "agree, so one of the two lists is not the one it claims to "
+            "be".format(len(cases), len(frozen_cases)))
 
     entries, missing, unstable = {}, [], []
     for case_id in cases:

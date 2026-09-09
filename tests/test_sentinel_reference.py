@@ -18,6 +18,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 import sentinel_reference
+from experiment import digest_file
 
 DIGESTS = {}
 
@@ -75,12 +76,6 @@ def reference(tmp_path, monkeypatch):
     """Two cases, two passes, one of them disagreeing with itself."""
     experiment = tmp_path / "experiment"
     experiment.mkdir()
-    (experiment / "manifest.json").write_text(
-        json.dumps({"environment": {"system_prompt": "aaa",
-                                    "verifier_prompt": "bbb",
-                                    "findings_schema": "ccc",
-                                    "agent_version": "ddd"}}),
-        encoding="utf-8")
 
     corpus = tmp_path / "corpus-real"
     for case_id in ("steady", "wobbly"):
@@ -90,6 +85,21 @@ def reference(tmp_path, monkeypatch):
     suite = tmp_path / "sentinel.yml"
     suite.write_text(yaml.safe_dump({"cases": ["steady", "wobbly"]}),
                      encoding="utf-8")
+
+    # The manifest as a real freeze writes it: the suite it was run under, by
+    # digest and by case list, beside the environment. Without those the
+    # fixture builds a manifest `experiment.freeze` never emits, and the check
+    # that a rewritten suite cannot be frozen against has nothing to read.
+    (experiment / "manifest.json").write_text(
+        json.dumps({"environment": {"system_prompt": "aaa",
+                                    "verifier_prompt": "bbb",
+                                    "findings_schema": "ccc",
+                                    "agent_version": "ddd"},
+                    "suite": {"file": "sentinel.yml",
+                              "digest": digest_file(suite),
+                              "count": 2},
+                    "cases": [{"case_id": "steady"}, {"case_id": "wobbly"}]}),
+        encoding="utf-8")
 
     for label in ("pass-a", "pass-b"):
         write_row(experiment, label, "steady", True)
@@ -185,6 +195,146 @@ def test_the_freezer_will_not_assume_a_verification_it_cannot_see(
     assert expected in str(caught.value)
 
 
+@pytest.mark.parametrize("provenance, expected", [
+    ({"models_served": "claude-opus-5", "models_verified": []},
+     "for `models_served`"),
+    ({"models_served": ["claude-opus-5", "claude-opus-5"],
+      "models_verified": []}, "for `models_served`"),
+    ({"models_served": ["claude-opus-5", 7], "models_verified": []},
+     "for `models_served`"),
+    ({"models_served": ["claude-opus-5"], "models_verified": [{}]},
+     "for `models_verified`"),
+    ({"models_served": ["claude-opus-5"],
+      "models_verified": ["claude-opus-5", "claude-opus-5"]},
+     "for `models_verified`"),
+])
+def test_the_freezer_refuses_a_row_it_cannot_read(reference, provenance,
+                                                  expected):
+    """Codex, 2026-09-09. `if not served` accepted the bare string
+    `"claude-opus-5"`, which `reviewing_models` then walks into thirteen
+    one-letter model names; `isinstance(..., list)` accepted `[{}]`, which
+    raises `TypeError` on the set conversion.
+
+    The same class the readers were repaired for an hour earlier, still
+    standing in the file that repaired them — and the freezer is the one place
+    where a malformed row becomes a frozen claim about a whole experiment.
+    """
+    member = {"provenance": dict({"model_requested": "claude-opus-5",
+                                  "model_substituted": False}, **provenance),
+              "settings": {"verify": True, "verify_model": "claude-opus-5"}}
+    write_row(reference / "experiment", "pass-a", "steady", True,
+              members={"safe": member, "unsafe": dict(member)})
+
+    with pytest.raises(sentinel_reference.ReferenceError) as caught:
+        sentinel_reference.build()
+
+    assert expected in str(caught.value)
+
+
+class TestTheSuiteTheArmRanUnder:
+    """Found 2026-09-09 by a hunt for instruments reshaped by their own
+    results.
+
+    `build` took its cases from the live `suites/sentinel.yml` and read only
+    `environment` out of the arm's manifest, which freezes both the suite
+    digest and the case list. A suite rewritten between the run and the freeze
+    therefore changed what the reference is about, silently in one direction:
+    a widened suite puts a case with no rows into `missing` and `main` refuses,
+    while a **narrowed** one just makes a smaller reference.
+
+    `threshold.reject_at_net` does not move with it. Thirteen cases cut to six
+    gives five comparable, so the challenger needs two confirmed regressions
+    out of five rather than out of eleven — a different experiment reported
+    under the same number.
+
+    `sonnet_trial._build_reference` was covered by `experiment.drift()`, which
+    compares the digest. The standalone tool was not, and its own docstring
+    documents `--write`.
+    """
+
+    def test_a_narrowed_suite_is_refused_and_not_quietly_frozen(
+            self, reference):
+        (reference / "sentinel.yml").write_text(
+            yaml.safe_dump({"cases": ["steady"]}), encoding="utf-8")
+
+        with pytest.raises(sentinel_reference.ReferenceError) as caught:
+            sentinel_reference.build()
+
+        assert "the arm was run under" in str(caught.value)
+
+    def test_a_widened_suite_is_refused_here_rather_than_downstream(
+            self, reference):
+        (reference / "sentinel.yml").write_text(
+            yaml.safe_dump({"cases": ["steady", "wobbly", "third"]}),
+            encoding="utf-8")
+
+        with pytest.raises(sentinel_reference.ReferenceError) as caught:
+            sentinel_reference.build()
+
+        assert "the arm was run under" in str(caught.value)
+
+    def test_a_manifest_that_names_no_suite_cannot_anchor_a_reference(
+            self, reference):
+        path = reference / "experiment" / "manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        del manifest["suite"]
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with pytest.raises(sentinel_reference.ReferenceError) as caught:
+            sentinel_reference.build()
+
+        assert "records no suite digest" in str(caught.value)
+
+    def test_a_manifest_naming_another_suite_file_is_refused(self, reference):
+        """Codex, 2026-09-09: only the digest was read, while
+        `experiment.freeze` writes `file`, `digest` and `count`. A manifest
+        naming a different suite passed as valid provenance."""
+        path = reference / "experiment" / "manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["suite"]["file"] = "suites/some-other.yml"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with pytest.raises(sentinel_reference.ReferenceError) as caught:
+            sentinel_reference.build()
+
+        assert "have to be the same file" in str(caught.value)
+
+    def test_a_manifest_whose_count_contradicts_its_own_list_is_refused(
+            self, reference):
+        """Internally inconsistent provenance is not a smaller version of
+        consistent provenance. It is a record that cannot be true, and picking
+        which half to believe is the judgement this file must not make."""
+        path = reference / "experiment" / "manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["suite"]["count"] = 7
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with pytest.raises(sentinel_reference.ReferenceError) as caught:
+            sentinel_reference.build()
+
+        assert "counts 7 suite case(s) and lists 2" in str(caught.value)
+
+    def test_a_matching_digest_over_a_different_list_is_refused(
+            self, reference):
+        """The digest and the list are two records of one fact. If they
+        disagree, one of them is not what it claims to be, and guessing which
+        is exactly the judgement this file must not make."""
+        path = reference / "experiment" / "manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        # `count` moves with the list, so the manifest is internally
+        # consistent and only disagrees with the suite it names. Leaving
+        # `count` at 2 would be refused one check earlier, by the block's own
+        # arithmetic, and this case would never be reached.
+        manifest["cases"] = [{"case_id": "steady"}]
+        manifest["suite"]["count"] = 1
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with pytest.raises(sentinel_reference.ReferenceError) as caught:
+            sentinel_reference.build()
+
+        assert "not the one it claims to be" in str(caught.value)
+
+
 def test_what_the_builder_writes_the_comparator_accepts(reference, tmp_path):
     """The chain, not the two links. The comparator gained a rule on
     2026-09-06 — the two roles must account for what served — and a rule about
@@ -215,6 +365,18 @@ def test_what_the_builder_writes_the_comparator_accepts(reference, tmp_path):
     (reference / "sentinel.yml").write_text(
         yaml.safe_dump({"cases": ["steady", "wobbly", "steadier",
                                   "steadiest"]}), encoding="utf-8")
+    # The arm is being described as having run under the wider suite, so its
+    # manifest says so. Rewriting the suite and leaving the manifest behind is
+    # what the freezer now refuses, and refusing it here would hide the rule
+    # this test is actually about.
+    manifest_path = reference / "experiment" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["suite"] = {"file": "sentinel.yml",
+                         "digest": digest_file(reference / "sentinel.yml"),
+                         "count": 4}
+    manifest["cases"] = [{"case_id": c} for c in
+                         ("steady", "wobbly", "steadier", "steadiest")]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     write_row(reference / "experiment", "pass-a", "steady", True,
               members={"safe": {"provenance": {

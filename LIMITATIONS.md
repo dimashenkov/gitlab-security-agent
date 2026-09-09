@@ -1319,6 +1319,115 @@ Two more boundaries of the same tool:
   recovery — but it depends on the arm's rows still building the same thing,
   which is exactly what the drift check above is for.
 
+## A deletion an exclude rule hides leaves no trace in the artifact
+
+Found 2026-09-09, hunting every change shape that reaches the gate with nothing
+opened. Seventeen shapes were built as real commits and checked — rename, mode
+change, symlink, type change, submodule, empty file, `.gitattributes -diff`,
+quoted paths, merge base, orphan base — and every one of them exits 2. Two
+things about deletions do not, and one of them is fixed.
+
+**Fixed:** a deletion-only change whose path an exclude rule or the `--path`
+scope hides emptied every list, so the report named no filter and said "This
+change adds or modifies no file, so there was nothing to review" over a removed
+guard — while the same file *modified* correctly said every file was excluded.
+`every_changed_file` now sees deletions and the sentence names the filter and
+the removal.
+
+**Not fixed, and this is the record that it is missing rather than overlooked:**
+
+* `changed_objects()` applies `is_excluded` and `in_scope` before building
+  `coverage.deleted`. So when a change removes an excluded file **and** edits a
+  reviewable one, the run proceeds normally, exits 0 or 1 on its merits, and
+  the removed path appears in **no field of `Coverage` at all** — not
+  `deleted`, not `excluded`, not `out_of_scope`.
+* `Coverage.excluded` is declared and serialised and **never assigned**. The
+  only writer of the neighbouring `out_of_scope` explains itself in a sentence
+  that applies word for word here: *a scoped review that reports "no findings"
+  without saying what it did not look at is the same sentence as a full review
+  that found nothing.* An excluded-only change's artifact is field-for-field
+  identical to an empty commit's.
+
+The two are one repair: record what a rule hid, by rule, instead of dropping
+it. It is not made here because it changes what every artifact carries, and the
+report renders coverage — a field that appears where nothing was written before
+changes what a reader is told without anyone deciding what it means.
+
+An earlier draft of this paragraph said the reuse key and `check_accounted`
+would have to be told as well. Codex checked and that is overstated: reuse is
+already keyed on the configured excludes, and `check_accounted` reads no
+coverage field at all. The claim was larger than the evidence, which is the
+thing this file exists to catch elsewhere.
+
+The policy question is separate and is not what this records. An operator who
+excludes `vendor/` has said not to *review* it; nothing in that says the
+artifact should be unable to mention that a file there was deleted.
+
+## A row refused for its reviewer is refused silently
+
+`stop_rule.is_product_row` decides whether a measurement row answers for this
+model. When it says no, the row is skipped and an older one answers instead,
+and nothing says that happened. Two readers depend on it —
+`stop_rule.latest_rows` and `sentinel.recorded_outcomes` — and between them
+they set the recall and false-alarm figures, the alarm codebook, and the labels
+in the sentinel suite.
+
+The rule allows the product model plus any name in a helper *family*
+(`claude-haiku-`), which is measured: all 97 member records on disk flagged
+`model_substituted` record Haiku beside Opus and are genuine paid Opus
+measurements. Codex, 2026-09-09, on the version before that: holding the dated
+`claude-haiku-4-5-20251001` exactly, while `config.py` spells the same model
+`claude-haiku-4-5`, would have discarded paid rows the moment the provider
+answered with the configured alias.
+
+The family match removes that specific trap and not the general one. **A helper
+from a family nobody has listed still refuses the row, and the failure looks
+like headline numbers quietly falling back to older measurements.** That is the
+right direction to be wrong in — the alternative counts a foreign reviewer as
+this one — but a refusal nobody can see is a refusal nobody will diagnose.
+
+What is missing is a diagnostic: the readers should be able to say how many
+rows they skipped and why. It is not built, and this paragraph is the record
+that it is missing rather than overlooked.
+
+## Three readers still ask "was it bought", never "was *this* model measured"
+
+Found 2026-09-09, when the Sonnet trial's 52 rows landed under `measurements/`.
+Four readers took another model's rows for the product's; three are repaired
+and this is the fourth case, left standing on purpose.
+
+`stop_rule.latest_rows` and `sentinel.recorded_outcomes` now share
+`stop_rule.is_product_row`: a row carrying `members` has to name
+`claude-opus-5` in **every** member, and a row with no `members` key predates
+the field and is read. These three do not:
+
+| Reader | What it does with a foreign row |
+|---|---|
+| `run_queue.already_run` | returns `True` and skips buying the Opus measurement |
+| `check_accounted.executed` | files the case `unadopted` rather than `unrun` |
+| `stage2.measured_outside_the_stream` | reports product work as already measured |
+
+**The trigger is one row**: a scorable row for a case that has *no* Opus
+result, produced by another model, at the current case digest. None exists
+today — every case the Sonnet arm touched already carries an Opus row, which is
+why `executed()` returns 78 either way and the live baskets do not move. The
+guard is a coincidence of the corpus, not a mechanism.
+
+The consequence is the expensive direction: all three would tell the owner not
+to buy a measurement that has never been made.
+
+**Not repaired by copying the filter**, and that is the reason it is written
+down instead of fixed. These readers' question is "was this bought", and a run
+on another model is a real charge — `run_queue`'s own docstring records the
+double payment that cost about a dollar twice. Dropping the row here restores
+that defect. The repair is to record *which model* beside the case, so the
+readers can answer both questions; that is a change to what the queue and the
+accounting store, not a line in a glob.
+
+Codex, 2026-09-09: *"All three ask whether any paid measurement exists, not
+whether this product was measured. They should share a per-member reviewer-
+identity predicate, with an explicit legacy policy."*
+
 ## A single file whose diff is over 120,000 characters can never be read whole
 
 Two ceilings cut the diff and they are independent. `Workspace.diff_ceiling`

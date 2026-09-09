@@ -227,6 +227,52 @@ def test_the_verification_block_cannot_close_its_own_details():
     assert "<h1>" not in _render(outcome)
 
 
+# ------------------------------------------------------- the banner's colour
+
+
+def test_the_banner_carries_the_worst_severity_and_not_the_first():
+    """Found 2026-09-09. `decision.blocking` keeps the order the findings were
+    reported in, and the banner took `blocking[0]` — so a medium reported
+    before a critical put a yellow circle over the one line a reader sees in
+    the merge request preview.
+
+    Every other renderer in `report.py` sorts before it prints, and
+    `ScanOutcome.worst_severity` existed and was not used here. Reordering two
+    `report_finding` calls changed the top-line signal with no change to the
+    code, which is the shape this repository hunts: a claim about the change
+    that depends on something other than the change.
+    """
+    outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+    outcome.coverage.changed = ["app/views.py"]
+    outcome.exposures = [("app/views.py", "get_diff")]
+    # `Candidate.severity` is the *derived* disposition, not the label the
+    # model proposed, and it is what the banner reads. Setting it directly is
+    # what the derivation would produce; going through the finding's own
+    # `severity` would test a field this line never looks at.
+    worst = _candidate(title="Command exec", file="app/exec.py")
+    worst.severity = "critical"
+    lesser = _candidate()
+    lesser.severity = "high"
+    outcome.reported = [worst, lesser]
+    cfg = Config(post_comment=False)
+
+    reversed_order = ScanOutcome(mode="diff", model="claude-opus-5")
+    reversed_order.coverage.changed = ["app/views.py"]
+    reversed_order.exposures = [("app/views.py", "get_diff")]
+    reversed_order.reported = list(reversed(outcome.reported))
+
+    first = render_markdown(cfg, outcome, decide(cfg, outcome))
+    second = render_markdown(cfg, reversed_order,
+                             decide(cfg, reversed_order))
+
+    def banner(text: str) -> str:
+        return next(line for line in text.splitlines()
+                    if line.startswith("## "))
+
+    assert banner(first) == banner(second)
+    assert "🔴" in banner(first)
+
+
 # ------------------------------------------- a review that never happened
 
 

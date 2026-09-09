@@ -985,15 +985,50 @@ class Workspace:
         `--path` did it. This is the unfiltered list the two predicates are
         then asked about one at a time.
 
-        Same diff filter as `changed_files`, and deliberately unlike
-        `raw_changed_paths`: the question here is what *could* have been
-        reviewed, so a deleted file is correctly absent rather than counted as
-        something a rule hid.
+        **Deletions included, and the reason the old sentence gave for leaving
+        them out was backwards.** It said a deleted file is "correctly absent
+        rather than counted as something a rule hid" — but when a rule *does*
+        hide one, that is exactly what it is. Measured 2026-09-09: a merge
+        request whose only change was `git rm vendor/guard.php` — a path in
+        `DEFAULT_EXCLUDES`, so no operator configuration involved — emptied
+        `changed_files` and `changed_objects` both, and this list was empty
+        too, so the caller could name neither filter and reported "This change
+        adds or modifies no file, so there was nothing to review." over a
+        removed guard. The same file *modified* correctly said every file was
+        excluded. The deletion was reported strictly worse than the
+        modification, which is the asymmetry the gate's own deletion hole had.
+
+        The status is carried through, so the caller can say what was removed
+        rather than only that something was.
         """
         saved_excludes, saved_scope = self.excludes, self.scope
         self.excludes, self.scope = (), ()
         try:
-            return self.changed_files()
+            seen = self.changed_files()
+            known = {path for path, _ in seen}
+            # From `changed_objects` and not `raw_changed_paths`. The latter
+            # runs `--no-renames`, so a rename reports its old path as a `D` —
+            # and this list would then claim a moved file was deleted. Nothing
+            # reads it that way today, because a rename leaves `changed_files`
+            # non-empty and this list's only caller runs when that is empty;
+            # but a list that says a false thing is one the next caller
+            # believes. `changed_objects` is `-M`-aware, and with the two
+            # filters cleared above it sees everything.
+            #
+            # A rename's *source* counts too, and Codex found that on
+            # 2026-09-09: `app/guard.py -> vendor/guard.py` reported only the
+            # new path, so a guard moved behind an exclude rule was described
+            # less clearly than one deleted outright — the same asymmetry, one
+            # step along. The old path is carried as `moved_from` rather than
+            # `deleted`, because it is a different fact and the caller counts
+            # them separately.
+            gone = []
+            for obj in self.changed_objects():
+                if obj.status == "deleted" and obj.path not in known:
+                    gone.append((obj.path, "deleted"))
+                elif obj.old_path and obj.old_path not in known:
+                    gone.append((obj.old_path, "moved_from"))
+            return seen + gone
         finally:
             self.excludes, self.scope = saved_excludes, saved_scope
 

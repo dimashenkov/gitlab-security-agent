@@ -21,8 +21,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
+import sentinel
 from sentinel import (
     read_cases,
+    read_outcomes,
     recorded_outcomes,
     refusals,
     render,
@@ -267,6 +269,116 @@ class TestAVerdictIsReadNotCoerced:
         assert recorded_outcomes(measurements)["go-a"] == "pass"
 
 
+def reviewed_by(name: str) -> dict:
+    """One member's provenance as a real run writes it.
+
+    `models_served` is what the predicate reads, because what was *asked for*
+    is not what answered: a row asking for Opus and served Sonnet carries
+    `model_requested: claude-opus-5`. Every one of the 356 member records on
+    disk records a non-empty `models_served`, so a fixture without one builds a
+    shape production never emits — and a green test over such a shape is the
+    defect this repository keeps finding in its own tests.
+    """
+    return {"provenance": {"model_requested": name, "models_served": [name],
+                           "models_verified": []}}
+
+
+class TestAnotherModelsVerdictIsNotThisOnes:
+    """Measured 2026-09-09 on the live tree.
+
+    `js-q4gh-4ffp-5cg8` is passed by Opus in all five of its rows and failed by
+    the Sonnet trial's arm in both of its. The unfiltered fold called the case
+    `unstable`, so the suite asserted that the product moves on its own on a
+    case it has never moved on — and `suites/sentinel.yml` is the suite the
+    Sonnet trial itself runs. The losing arm was reshaping the instrument that
+    judged it.
+
+    `--check` compares only the case list, so nothing printed: JavaScript has
+    one eligible case and a singleton is selected either way. In a language
+    with two, a flip *adds* a case, and a suite case is a paid run on every
+    future round.
+    """
+
+    def test_a_row_from_another_model_does_not_make_a_case_unstable(
+            self, world):
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        measured(measurements, [dict(row("go-a", True), members={
+            "safe": reviewed_by("claude-opus-5"),
+            "unsafe": reviewed_by("claude-opus-5")})])
+        measured(measurements, [dict(row("go-a", False), members={
+            "safe": reviewed_by("claude-sonnet-5"),
+            "unsafe": reviewed_by("claude-sonnet-5")})],
+            name="batch-2.json")
+
+        assert recorded_outcomes(measurements)["go-a"] == "pass"
+
+    def test_a_row_served_another_model_does_not_count_as_this_one(
+            self, world):
+        """Codex, 2026-09-09. What was asked for is not what answered: a row
+        requesting Opus and served Sonnet carries `model_requested:
+        claude-opus-5`, and reading only that reported Sonnet's behaviour as
+        the product's."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        measured(measurements, [dict(row("go-a", True), members={
+            "safe": reviewed_by("claude-opus-5"),
+            "unsafe": reviewed_by("claude-opus-5")})])
+        substituted = {"provenance": {"model_requested": "claude-opus-5",
+                                      "models_served": ["claude-sonnet-5"],
+                                      "models_verified": [],
+                                      "model_substituted": True}}
+        measured(measurements, [dict(row("go-a", False),
+                                     members={"safe": substituted,
+                                              "unsafe": dict(substituted)})],
+                 name="batch-2.json")
+
+        assert recorded_outcomes(measurements)["go-a"] == "pass"
+
+    def test_the_helper_the_provider_serves_alongside_does_not_drop_the_row(
+            self, world):
+        """The other direction, and it is why the rule is membership rather
+        than equality: all 97 member records flagged `model_substituted` on
+        disk record `["claude-haiku-4-5-20251001", "claude-opus-5"]` as having
+        reviewed them. They are genuine paid Opus measurements, and a rule
+        demanding the product alone would throw away every one."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        helped = {"provenance": {
+            "model_requested": "claude-opus-5",
+            "models_served": ["claude-opus-5", "claude-haiku-4-5-20251001"],
+            "models_verified": [],
+            "model_substituted": True}}
+        measured(measurements, [dict(row("go-a", True),
+                                     members={"safe": helped,
+                                              "unsafe": dict(helped)})])
+
+        assert recorded_outcomes(measurements)["go-a"] == "pass"
+
+    def test_a_row_from_before_pairs_existed_still_counts(self, world):
+        """The tolerance, and it is the same one `stop_rule` grants: a row with
+        no `members` key predates the field and is read."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        measured(measurements, [row("go-a", True), row("go-a", False)])
+
+        assert recorded_outcomes(measurements)["go-a"] == "unstable"
+
+    def test_one_named_member_does_not_speak_for_the_other(self, world):
+        """The union hole, here as well: half a pair identified is not a pair
+        identified."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        measured(measurements, [dict(row("go-a", True), members={
+            "safe": reviewed_by("claude-opus-5"),
+            "unsafe": reviewed_by("claude-opus-5")})])
+        measured(measurements, [dict(row("go-a", False), members={
+            "safe": reviewed_by("claude-opus-5"),
+            "unsafe": {"provenance": {}}})], name="batch-2.json")
+
+        assert recorded_outcomes(measurements)["go-a"] == "pass"
+
+
 class TestTheManifest:
     def test_the_written_list_round_trips(self, world, tmp_path):
         corpus, measurements = world
@@ -294,6 +406,83 @@ class TestTheManifest:
         assert "pool: 2" in text
         assert "count: 2" in text
         assert "eligible: 1 pass, 1 fail, 0 unstable" in text
+
+
+class TestTheCheckNoticesMoreThanTheCaseList:
+    """Codex, 2026-09-09. `--check` compared only the case ids, so a case that
+    changed its recorded label while staying selected was invisible — and one
+    had. The Sonnet trial's rows relabelled `js-q4gh-4ffp-5cg8` from `pass` to
+    `unstable`, the selection did not move because JavaScript has one eligible
+    case, and the guard printed "the manifest matches the rule" throughout.
+
+    The label is what the suite asserts about the case, `refusals()` reads it,
+    and the stratum counts say what pool each language drew from. The whole
+    rendered manifest is compared.
+    """
+
+    def _check(self, monkeypatch, capsys, corpus, measurements, path):
+        monkeypatch.setattr(sys, "argv",
+                            ["sentinel.py", "--corpus", str(corpus),
+                             "--measurements", str(measurements),
+                             "--check", str(path)])
+        code = sentinel.main()
+        return code, capsys.readouterr().out
+
+    def test_a_matching_manifest_passes(self, world, tmp_path, monkeypatch,
+                                        capsys):
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        case(corpus, "go-b", "go")
+        measured(measurements, [row("go-a", True), row("go-b", False)])
+        path = tmp_path / "sentinel.yml"
+        path.write_text(render(select(corpus, measurements)), encoding="utf-8")
+
+        code, out = self._check(monkeypatch, capsys, corpus, measurements, path)
+
+        assert code == 0
+        assert "matches the rule" in out
+
+    def test_a_relabelled_case_that_stays_selected_is_reported(
+            self, world, tmp_path, monkeypatch, capsys):
+        """The exact shape that went unnoticed: the relabelled case is selected
+        before and after, so the ids do not move and only the label does.
+
+        `go-b` is the fail arm to begin with. A second, disagreeing verdict
+        makes it `unstable`, and step three takes *every* unstable case in the
+        language — so it stays in, under a different claim.
+        """
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        case(corpus, "go-b", "go")
+        measured(measurements, [row("go-a", True), row("go-b", False)])
+        path = tmp_path / "sentinel.yml"
+        before = select(corpus, measurements)
+        path.write_text(render(before), encoding="utf-8")
+        assert "go-b   # fail" in path.read_text(encoding="utf-8")
+
+        measured(measurements, [row("go-b", True)], name="batch-2.json")
+        assert select(corpus, measurements)["cases"] == before["cases"]
+
+        code, out = self._check(monkeypatch, capsys, corpus, measurements, path)
+
+        assert code == 1
+        assert "go-b fail -> unstable" in out
+        assert "only in the manifest: -" in out
+
+    def test_the_labels_are_read_back_out_of_the_comment(self, world,
+                                                         tmp_path):
+        """`render` writes the label as a `#` comment, which made it look like
+        a note rather than part of the record."""
+        corpus, measurements = world
+        case(corpus, "go-a", "go")
+        case(corpus, "go-b", "go")
+        measured(measurements, [row("go-a", True), row("go-b", False)])
+        suite = select(corpus, measurements)
+        path = tmp_path / "sentinel.yml"
+        path.write_text(render(suite), encoding="utf-8")
+
+        assert read_outcomes(path) == {
+            case_id: suite["outcomes"][case_id] for case_id in suite["cases"]}
 
 
 class TestASuiteThatCannotDoItsJobIsRefused:

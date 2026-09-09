@@ -24,6 +24,18 @@ def row(case_id, *, recall=True, alert=False, when="2026-08-28T12:00:00+00:00"):
             "safe_false_positive": alert, "ran_at": when}
 
 
+def reviewed_by(name: str) -> dict:
+    """One member's provenance as a real run writes it.
+
+    The predicate reads `models_served`, because what was asked for is not what
+    answered. Every one of the 356 member records on disk carries a non-empty
+    one, so a fixture without it builds a shape production never emits — and
+    then the test passes for a reason it does not name.
+    """
+    return {"provenance": {"model_requested": name, "models_served": [name],
+                           "models_verified": []}}
+
+
 def world(tmp_path, rows):
     (tmp_path / "measurements").mkdir()
     (tmp_path / "measurements" / "batch.json").write_text(
@@ -85,6 +97,57 @@ class TestTheVerdictHasNoPassBranch:
         assert {"stop": 1, "no catastrophe": 0, "cannot say": 2}["cannot say"] == 2
 
 
+OPUS = "claude-opus-5"
+
+
+@pytest.mark.parametrize("provenance", [
+    {"model_requested": OPUS},                                   # both absent
+    {"model_requested": OPUS, "models_verified": []},            # served absent
+    {"model_requested": OPUS, "models_served": [], "models_verified": []},
+    {"model_requested": OPUS, "models_served": None},
+    {"model_requested": OPUS, "models_served": [OPUS],
+     "models_verified": None},
+    {"model_requested": OPUS, "models_served": [OPUS],
+     "models_verified": False},
+    {"model_requested": OPUS, "models_served": [OPUS],
+     "models_verified": 0},
+    {"model_requested": OPUS, "models_served": False},
+    {"models_served": [OPUS], "models_verified": []},        # requested absent
+    "claude-opus-5",                                        # not an object
+    [],
+    None,
+])
+def test_no_provenance_short_of_a_whole_one_answers_for_the_product(
+        provenance):
+    """The boundary, state by state, and nothing here may raise.
+
+    Two of these were live defects within one day of each other: `[{}]` took
+    down every reader with a `TypeError`, and an explicit `null` was read as an
+    absent field. Enumerating the states is what turns "I think it handles
+    that" into something a later reader can check without rerunning the
+    argument.
+
+    `False` and `0` are here because `or []` would have turned both into "no
+    verifiers", which is a meaningful answer this predicate acts on.
+    """
+    row = {"case_id": "a",
+           "members": {"safe": {"provenance": provenance},
+                       "unsafe": {"provenance": provenance}}}
+
+    assert stop_rule.is_product_row(row) is False
+
+
+def test_the_whole_one_answers():
+    """The control, or the test above passes on a predicate that refuses
+    everything."""
+    prov = {"model_requested": OPUS, "models_served": [OPUS],
+            "models_verified": []}
+
+    assert stop_rule.is_product_row(
+        {"case_id": "a", "members": {"safe": {"provenance": prov},
+                                     "unsafe": {"provenance": dict(prov)}}})
+
+
 class TestWhichRowAnswers:
     def test_a_later_row_supersedes_an_earlier_one(self, tmp_path, monkeypatch):
         monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
@@ -111,6 +174,239 @@ class TestWhichRowAnswers:
         monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
             row("a", recall=True),
             {"case_id": "a", "unsafe_recall": False, "safe_false_positive": True},
+        ]))
+
+        assert stop_rule.rates(stop_rule.latest_rows())["found"] == 1
+
+    def test_a_row_reviewed_by_another_model_does_not_answer(
+            self, tmp_path, monkeypatch):
+        """Measured 2026-09-09, on the live tree.
+
+        `latest_rows` globs everything under `measurements/`, and the Sonnet
+        trial put 52 rows there. Six cases were then answered by the arm of the
+        model this repository had just rejected — one of them raising a false
+        alarm Opus never raised, which took the alarm codebook from 20 live
+        alarms to 21 and turned three tests red. The rejected model's own rows
+        were moving the product's headline numbers.
+
+        The later row wins only among rows about the same thing. A row that
+        names another reviewer is about another thing.
+        """
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, alert=False,
+                when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, alert=True,
+                     when="2026-09-08T09:00:00+00:00"),
+                 members={"safe": reviewed_by("claude-sonnet-5"),
+                          "unsafe": reviewed_by("claude-sonnet-5")}),
+        ]))
+
+        rates = stop_rule.rates(stop_rule.latest_rows())
+        assert rates["found"] == 1
+        assert rates["fired"] == 0
+
+    def test_a_row_from_before_pairs_existed_still_answers(
+            self, tmp_path, monkeypatch):
+        """The other half of the same rule, and it is a tolerance rather than a
+        judgement: 27 rows predate `model_requested`, all of them the ordinary-
+        code pilot, and dropping them would throw the pilot away. An unnamed
+        row is not evidence that Opus produced it — it is read because the
+        alternative loses more."""
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=False, when="2026-08-01T09:00:00+00:00"),
+            row("a", recall=True, when="2026-08-28T09:00:00+00:00"),
+        ]))
+
+        assert stop_rule.rates(stop_rule.latest_rows())["found"] == 1
+
+    def test_a_pair_that_names_nobody_cannot_pass_as_a_legacy_row(
+            self, tmp_path, monkeypatch):
+        """Codex, 2026-09-09. The first version of the filter granted the
+        legacy exception to any row that named nothing, so a newer row could
+        drop its `provenance` and supersede a genuine Opus row on `ran_at`
+        alone — the identity check switched off by an omission.
+
+        The exception is by schema instead: a row carrying `members` has to say
+        who reviewed them. Checked on disk — every row with `members` names a
+        model, and the 27 that name none have no `members` key at all.
+        """
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, alert=False,
+                when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, alert=True,
+                     when="2026-09-08T09:00:00+00:00"),
+                 members={"safe": {"provenance": {}},
+                          "unsafe": {"provenance": {}}}),
+        ]))
+
+        rates = stop_rule.rates(stop_rule.latest_rows())
+        assert rates["found"] == 1
+        assert rates["fired"] == 0
+
+    def test_one_named_member_does_not_speak_for_the_other(
+            self, tmp_path, monkeypatch):
+        """Codex, 2026-09-09, on the staged repair itself.
+
+        The filter compared the *union* of the members' names against the
+        product's, so a pair whose safe member named Opus and whose unsafe
+        member named nothing produced `{"claude-opus-5"}` and superseded a
+        fully identified row. Half a pair identified is not a pair identified,
+        and the missing half is where a foreign reviewer would sit.
+        """
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, alert=False,
+                when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, alert=True,
+                     when="2026-09-09T12:00:00+00:00"),
+                 members={"safe": reviewed_by("claude-opus-5"),
+                          "unsafe": {"provenance": {}}}),
+        ]))
+
+        rates = stop_rule.rates(stop_rule.latest_rows())
+        assert rates["found"] == 1
+        assert rates["fired"] == 0
+
+    def test_half_a_pair_is_not_a_pair(self, tmp_path, monkeypatch):
+        """Codex, 2026-09-09. `all()` over the members that happened to be
+        present accepted a row carrying only `safe`: the loop had nothing to
+        disagree with, so the row passed as fully identified."""
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, alert=False,
+                when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, alert=True,
+                     when="2026-09-09T12:00:00+00:00"),
+                 members={"safe": reviewed_by("claude-opus-5")}),
+        ]))
+
+        rates = stop_rule.rates(stop_rule.latest_rows())
+        assert rates["found"] == 1
+        assert rates["fired"] == 0
+
+    @pytest.mark.parametrize("block", ["claude-opus-5", 7, [], None])
+    def test_a_member_that_is_not_an_object_drops_the_row_and_does_not_crash(
+            self, tmp_path, monkeypatch, block):
+        """A truthy string or number reached `.get()` and raised
+        `AttributeError`, taking down `stop_rule` and `sentinel` both. A
+        malformed row is dropped; "I could not read it" is not "it agrees"."""
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, when="2026-09-09T12:00:00+00:00"),
+                 members={"safe": reviewed_by("claude-opus-5"),
+                          "unsafe": block}),
+        ]))
+
+        assert stop_rule.rates(stop_rule.latest_rows())["found"] == 1
+
+    @pytest.mark.parametrize("provenance", [
+        {"model_requested": "claude-opus-5",
+         "models_served": ["claude-opus-5"], "models_verified": [{}]},
+        {"model_requested": "claude-opus-5", "models_served": "claude-opus-5",
+         "models_verified": []},
+        {"model_requested": "claude-opus-5",
+         "models_served": ["claude-opus-5", 7], "models_verified": []},
+        {"model_requested": "claude-opus-5",
+         "models_served": ["claude-opus-5", "claude-opus-5"],
+         "models_verified": []},
+    ])
+    def test_a_row_nobody_can_read_is_refused_and_does_not_crash(
+            self, tmp_path, monkeypatch, provenance):
+        """Codex, 2026-09-09. `set(prov.get("models_verified") or ())` ran
+        before anything had looked at the contents, so `[{}]` raised
+        `TypeError` on an unhashable member and took down `latest_rows` and
+        `sentinel.recorded_outcomes` both — one malformed artifact crashing
+        every reader that globs the measurements directory.
+
+        The duplicate case is the other half: `note_served` deduplicates, so a
+        repeated name is a shape production does not write, and turning it into
+        a set would normalise it into agreement rather than refuse it.
+
+        Three answers, not two. An empty set means nothing reviewed, which is a
+        fact about the run; a row nobody can read has stated no such fact.
+        """
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, alert=False,
+                when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, alert=True,
+                     when="2026-09-09T12:00:00+00:00"),
+                 members={"safe": {"provenance": dict(provenance)},
+                          "unsafe": {"provenance": dict(provenance)}}),
+        ]))
+
+        rates = stop_rule.rates(stop_rule.latest_rows())
+        assert rates["found"] == 1
+        assert rates["fired"] == 0
+
+    def test_a_row_reviewed_by_the_product_and_a_stranger_is_refused(
+            self, tmp_path, monkeypatch):
+        """Codex, 2026-09-09, on my own repair — and the comment beside it
+        admitted the gap instead of closing it.
+
+        Requiring only that the product be *among* what reviewed let
+        `["claude-opus-5", "claude-sonnet-5"]` pass, on the ground that one
+        review does not produce that shape. A shape production does not write
+        is exactly the shape a malformed or forged row has, and this predicate
+        is what stands between such a row and the product's headline numbers.
+
+        The known helper is still allowed, which is the reason membership was
+        chosen: all 97 records flagged `model_substituted` on disk record
+        Haiku beside Opus and are genuine paid measurements.
+        """
+        def pair(*names):
+            block = {"provenance": {
+                "model_requested": "claude-opus-5",
+                "models_served": list(names), "models_verified": []}}
+            return {"safe": block, "unsafe": dict(block)}
+
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, alert=False,
+                when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, alert=True,
+                     when="2026-09-09T12:00:00+00:00"),
+                 members=pair("claude-opus-5", "claude-sonnet-5")),
+        ]))
+
+        rates = stop_rule.rates(stop_rule.latest_rows())
+        assert rates["found"] == 1
+        assert rates["fired"] == 0
+
+    def test_the_known_helper_beside_the_product_is_still_a_product_row(
+            self, tmp_path, monkeypatch):
+        """The other direction, and it is why the rule is not equality."""
+        block = {"provenance": {
+            "model_requested": "claude-opus-5",
+            "models_served": ["claude-opus-5", "claude-haiku-4-5-20251001"],
+            "models_verified": [], "model_substituted": True}}
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=False, when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=True, when="2026-09-09T12:00:00+00:00"),
+                 members={"safe": block, "unsafe": dict(block)}),
+        ]))
+
+        assert stop_rule.rates(stop_rule.latest_rows())["found"] == 1
+
+    def test_a_pair_with_an_empty_members_object_is_not_a_legacy_row(
+            self, tmp_path, monkeypatch):
+        """`members: {}` names nobody and is still a pair-shaped row. Reading
+        the key's presence rather than its contents is what keeps this from
+        being the same hole one level down."""
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, when="2026-09-08T09:00:00+00:00"),
+                 members={}),
+        ]))
+
+        assert stop_rule.rates(stop_rule.latest_rows())["found"] == 1
+
+    def test_the_reviewer_is_read_from_every_member(
+            self, tmp_path, monkeypatch):
+        """A pair is two members and either can carry the foreign model. Reading
+        only the safe one would let an unsafe member reviewed by Sonnet answer
+        for the product."""
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, when="2026-09-08T09:00:00+00:00"),
+                 members={"safe": reviewed_by("claude-opus-5"),
+                          "unsafe": reviewed_by("claude-sonnet-5")}),
         ]))
 
         assert stop_rule.rates(stop_rule.latest_rows())["found"] == 1

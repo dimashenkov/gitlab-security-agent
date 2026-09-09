@@ -876,6 +876,15 @@ def test_a_name_list_never_accepts_a_bare_string():
     assert not sentinel_compare._is_name_list("ab")
     assert not sentinel_compare._is_name_list(None)
     assert not sentinel_compare._is_name_list([" "])
+    # Shape only. A repeated entry is a *model* list's problem, because
+    # `note_served` deduplicates and every reader turns that list into a set —
+    # which would normalise the malformed artifact into agreement with one
+    # response and let it count toward the net. Codex, 2026-09-09. The case-id
+    # lists keep their own sentence for a duplicate, which says what it means.
+    assert sentinel_compare._is_name_list(["a", "a"])
+    assert not sentinel_compare._is_model_list(["a", "a"])
+    assert sentinel_compare._is_model_list(["a", "b"])
+    assert not sentinel_compare._is_model_list("ab")
     assert not sentinel_compare._is_name_list({"a": 1})
 
 

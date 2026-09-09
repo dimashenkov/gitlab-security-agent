@@ -69,6 +69,201 @@ def wilson(hits: int, total: int, z: float = 1.96) -> Tuple[float, float]:
     return (max(0.0, centre - spread), min(1.0, centre + spread))
 
 
+PRODUCT_MODEL = "claude-opus-5"
+
+# What the provider serves *beside* the model that was asked for. Not a policy
+# and not a guess: every one of the 97 member records on disk flagged
+# `model_substituted` records `{"claude-haiku-4-5-20251001", "claude-opus-5"}`
+# as having reviewed it, and they are genuine paid Opus measurements. Nothing
+# else has ever appeared in that position.
+#
+# **By family, not by the dated identifier.** The first version held
+# `claude-haiku-4-5-20251001` exactly, while `config.py` spells the same model
+# `claude-haiku-4-5` — so the configured alias, or the next dated revision of
+# the same helper, would have made `latest_rows` and
+# `sentinel.recorded_outcomes` discard paid Opus rows and quietly fall back to
+# older ones. Codex, 2026-09-09: a transient response identifier written down
+# as permanent provenance policy.
+#
+# A name outside the families still refuses the row rather than being waved
+# through, and that remains the direction to be wrong in. What it costs is
+# recorded in `LIMITATIONS.md`: the refusal is silent, so a genuinely new
+# helper family shows up as headline numbers falling back to older rows with
+# nothing saying why.
+PROVIDER_HELPER_FAMILIES = ("claude-haiku-",)
+
+
+def _is_helper(name: str) -> bool:
+    """A name in a helper family, followed by a version and nothing else.
+
+    A bare prefix test accepted `claude-haiku-`, `claude-haiku-sonnet-5` and
+    `claude-haiku-not-a-model` — Codex, 2026-09-09 — so a forged row could put
+    any string it liked behind the prefix and be read as a paid Opus
+    measurement, in the predicate whose comment says unknown responders are
+    refused.
+
+    The remainder has to start with a digit, which is what every real name in
+    this family does: `claude-haiku-4-5`, `claude-haiku-4-5-20251001`. That is
+    narrow, and narrow is the direction to be wrong in here — a family whose
+    naming changes refuses rows visibly rather than admitting a stranger
+    quietly.
+    """
+    for prefix in PROVIDER_HELPER_FAMILIES:
+        if name.startswith(prefix):
+            rest = name[len(prefix):]
+            if rest and rest[0].isdigit():
+                return True
+    return False
+
+
+def reviewing_models(row: dict) -> set:
+    """Every model a member of this row asked to review with."""
+    asked = set()
+    for block in (row.get("members") or {}).values():
+        name = ((block or {}).get("provenance") or {}).get("model_requested")
+        if name:
+            asked.add(name)
+    return asked
+
+
+def _names(value) -> Optional[list]:
+    """`value` as a list of model names, or `None` if it is not one.
+
+    Codex, 2026-09-09: `set(prov.get("models_verified") or ())` ran before
+    anything had looked at the contents, so a row recording
+    `"models_verified": [{}]` raised `TypeError` on an unhashable member and
+    took down `latest_rows` and `sentinel.recorded_outcomes` both — a malformed
+    artifact crashing every reader that globs the measurements directory.
+
+    "I could not read it" is not "it agrees" and it is not a crash either. The
+    row is refused.
+    """
+    # **`None` is refused, and absence is handled by the caller.** Codex,
+    # 2026-09-09: mapping `None` to `[]` here made an absent field and an
+    # explicit `"models_verified": null` the same answer, because `.get()`
+    # returns `None` for both. One is a legacy row that predates the field;
+    # the other is malformed. `reviewed` asks with `prov.get(field, [])`, so
+    # the two arrive here as `[]` and `None` and are told apart.
+    #
+    # A test in `test_model_list_predicates.py` called this difference
+    # deliberate. It was not — it was a predicate that could not see the
+    # distinction it was credited with making.
+    if not isinstance(value, list) or any(
+            not isinstance(m, str) or not m.strip() for m in value):
+        return None
+    if len(set(value)) != len(value):
+        # `note_served` deduplicates, so a repeated name is a shape production
+        # does not write. Collapsing it into a set here would normalise a
+        # malformed artifact into agreement, which is the refusal this file is
+        # about.
+        return None
+    return value
+
+
+def reviewed(prov: dict) -> Optional[set]:
+    """The models that answered the *review* in one member's provenance.
+
+    The third spelling of `Provenance.review_models` and
+    `sentinel_compare._reviewing`, and it exists because this file cannot
+    import either: `models.py` builds a dataclass from a live run and
+    `sentinel_compare` is the comparator. The rule is theirs, and the tests
+    pin the three against the same shapes.
+
+    Verification is excluded by subtraction, which would empty the list when
+    one model did both jobs — so the requested model is kept in that case.
+
+    Returns `None` when either list is not a list of distinct model names.
+    That is a third answer and it has to be one: an empty set means "nothing
+    reviewed", which is a fact about the run, and a row nobody can read has
+    stated no such fact.
+    """
+    # `prov.get(field, [])` and not `prov.get(field)`: a key that is absent
+    # returns the default, while a key present and `null` returns `None`. That
+    # is the whole of the distinction between a legacy row and a malformed one.
+    served = _names(prov.get("models_served", []))
+    verified = _names(prov.get("models_verified", []))
+    if served is None or verified is None:
+        return None
+    reviewing = [m for m in served if m not in set(verified)]
+    requested = prov.get("model_requested")
+    if requested in served and not reviewing:
+        return {requested}
+    return set(reviewing)
+
+
+def is_product_row(row: dict) -> bool:
+    """Whether this row is a measurement of the product rather than of some
+    other model.
+
+    One spelling, called from every reader that settles a question about *this*
+    model's behaviour — `latest_rows` here and `sentinel.recorded_outcomes`.
+    Two spellings of one rule drift, and this rule is now load-bearing in two
+    places that answer different questions from the same files.
+
+    Not for the readers whose question is "what was bought": a run on another
+    model is a real charge and `spend`, `stage2`'s billing probe and
+    `window_recut` count it on purpose.
+
+    **Every member, one at a time.** Codex, 2026-09-09: comparing the *union*
+    of the members' names against `{PRODUCT_MODEL}` accepted a pair whose safe
+    member named Opus and whose unsafe member named nothing — the union is
+    `{"claude-opus-5"}` and the row supersedes a fully identified one. The
+    check the change exists to add, switched off by an omission, inside the
+    line that added it.
+
+    **Exactly the two members, and each an object.** Codex again, the same day:
+    `all()` over whatever members happened to be present accepted a row
+    carrying only `safe`, and a member stored as a string or a number reached
+    `.get()` and crashed both readers instead of dropping the row. A pair is a
+    safe member and an unsafe one; anything else is not a pair and cannot say
+    it was measured by this model.
+    """
+    if "members" not in row:
+        return True
+    members = row.get("members")
+    if not isinstance(members, dict) or set(members) != {"safe", "unsafe"}:
+        return False
+    for block in members.values():
+        if not isinstance(block, dict):
+            return False
+        prov = block.get("provenance")
+        if not isinstance(prov, dict):
+            return False
+        if prov.get("model_requested") != PRODUCT_MODEL:
+            return False
+        # **What was asked for is not what answered.** Codex, 2026-09-09: a row
+        # asking for Opus and served Sonnet carries `model_substituted: true`
+        # and `models_served: ["claude-sonnet-5"]`, and reading only
+        # `model_requested` reported Sonnet's behaviour as Opus's.
+        #
+        # Membership, not equality, and that is not the union mistake made two
+        # paragraphs above: the provider serves part of the *review* with a
+        # smaller model exactly as it does the verification. All 97 member
+        # records flagged `model_substituted` have `_reviewing` equal to
+        # `{"claude-haiku-4-5-20251001", "claude-opus-5"}` — genuine paid Opus
+        # measurements, every one — so demanding the product alone would throw
+        # away 97 records to catch a shape that has never occurred.
+        #
+        # So: the product must be among what reviewed, and everything else
+        # must be a helper the provider is known to serve alongside it.
+        #
+        # The first version stopped at the first clause and the comment here
+        # admitted the gap rather than closing it — `["claude-opus-5",
+        # "claude-sonnet-5"]` passed as an Opus measurement on the grounds that
+        # a single review does not produce that shape. Codex, 2026-09-09: a
+        # shape production does not write is exactly the shape a malformed or
+        # forged row has, and this predicate is what stands between such a row
+        # and the product's headline numbers. Requiring the known is not the
+        # same as trusting that the unknown cannot occur.
+        answered = reviewed(prov)
+        if answered is None or PRODUCT_MODEL not in answered:
+            return False
+        if any(not _is_helper(name)
+               for name in answered - {PRODUCT_MODEL}):
+            return False
+    return True
+
+
 def latest_rows() -> Dict[str, dict]:
     """The most recent row per case, from every measurement file.
 
@@ -77,6 +272,38 @@ def latest_rows() -> Dict[str, dict]:
     `…T12:00:00+00:00` and is two hours earlier. Not by filename either —
     `round.compare` settled a case that way until 2026-09-03, and renaming two
     files moved its answer.
+
+    **A row reviewed by another model does not answer for this one.** The glob
+    reads everything under `measurements/`, and on 2026-09-09 that included the
+    52 rows of the Sonnet trial. Six cases were then answered by the arm of a
+    model this repository had just rejected, one of them contributing a false
+    alarm that Opus never raised — so the alarm codebook, `check_accounted` and
+    `stage2` were reporting Sonnet's behaviour as the product's. The rejected
+    model's own rows moving the product's headline numbers is the exact defect
+    this repository exists to catch, arrived at from the inside.
+
+    The filter is on what the row says, not on where it sits: experiment
+    directories hold legitimate measurements of *this* model, and
+    `check_accounted` and `stage2` include them on purpose.
+
+    **A row from before pairs existed is still read, and only that.** 27 rows
+    predate `model_requested`, all in `ordinary-noise`, and dropping them would
+    throw away the whole ordinary-code pilot. The exception is granted by
+    schema and not by the absence of a name: a row that carries `members` has
+    to say who reviewed them, and a row that carries none is not a pair and
+    holds no member-level evidence to withhold.
+
+    Codex, 2026-09-09: the first version granted the exception to any row that
+    named nothing, anywhere under `measurements/`, so a newer Sonnet row could
+    drop its `provenance` and supersede a genuine Opus row on `ran_at` alone.
+    Checked on disk: 178 rows carry `members`, all 356 of their member records
+    name a model and record a non-empty `models_served`, and the 27 rows that
+    name none are exactly the 27 with no `members` key. The two populations do
+    not overlap, so the schema separates them cleanly.
+
+    It is still a tolerance rather than a judgement — an unnamed row is not
+    evidence that Opus produced it — and it ends when those rows are
+    re-measured.
     """
     best: Dict[str, Tuple[Optional[object], dict]] = {}
     for path in glob.glob(str(ROOT / "measurements" / "**" / "*.json"),
@@ -95,6 +322,8 @@ def latest_rows() -> Dict[str, dict]:
                 continue
             case_id = row.get("case_id")
             if not case_id:
+                continue
+            if not is_product_row(row):
                 continue
             when = instant(row.get("ran_at"))
             held = best.get(case_id)

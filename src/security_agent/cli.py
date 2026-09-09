@@ -185,14 +185,39 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
             # applied together inside `changed_files`, so from its result alone
             # the report could only guess — and it guessed "excludes" at every
             # reader, including the one whose `--path` did it.
-            every = [path for path, _ in workspace.every_changed_file()]
+            entries = workspace.every_changed_file()
+            every = [path for path, _ in entries]
             excluded = [p for p in every if workspace.is_excluded(p)]
             out_of_scope = [p for p in every
                             if not workspace.is_excluded(p)
                             and not workspace.in_scope(p)]
+            hidden = set(excluded + out_of_scope)
+            # **What left the reviewed set**, which is not the same as what a
+            # rule covers. Only `deleted` counted at first, so a guard renamed
+            # into an excluded directory was described less clearly than one
+            # deleted — Codex, 2026-09-09. Counting every `moved_from` then
+            # went wrong the other way: a file moved *into* review reports its
+            # old, excluded path as `moved_from`, and nothing left the set at
+            # all. Measured on four rename shapes.
+            #
+            # So: a deletion counts when a rule was covering it, and a move
+            # counts when the path that moved was reviewable and its
+            # destination is not.
+            #
+            # Two counts and not one. Codex, 2026-09-09: a file deleted under
+            # `vendor/` was never in the reviewed set, so saying it "was
+            # removed from the reviewed set" is a false sentence about the one
+            # thing this path reports — and the test written for it required
+            # the false wording rather than catching it.
+            deleted = len([p for p, s in entries
+                           if s == "deleted" and p in hidden])
+            moved_out = len([p for p, s in entries
+                             if s == "moved_from" and p not in hidden])
             return _nothing_to_review(
                 cfg, args, mode,
-                _nothing_reviewable_summary(excluded, out_of_scope, cfg.scope))
+                _nothing_reviewable_summary(
+                    excluded, out_of_scope, cfg.scope,
+                    deleted=deleted, moved_out=moved_out))
         # The deletions counted beside the openable files rather than folded
         # into them: "reviewing 0 changed file(s)" while proceeding is a line
         # an operator reads as a bug in the run.
@@ -443,7 +468,9 @@ def _nothing_to_review(cfg: Config, args: argparse.Namespace, mode: str,
 
 def _nothing_reviewable_summary(excluded: Sequence[str],
                                 out_of_scope: Sequence[str],
-                                scope: Sequence[str]) -> str:
+                                scope: Sequence[str],
+                                deleted: int = 0,
+                                moved_out: int = 0) -> str:
     """Why this change had nothing to review: the excludes, the scope, or both.
 
     One sentence used to cover every reading — "Every file in this change is
@@ -460,23 +487,43 @@ def _nothing_reviewable_summary(excluded: Sequence[str],
     """
     tail = " This is not a statement about the code."
     where = " (--path {})".format(" ".join(scope)) if scope else ""
+    # **Say that something was removed.** A rule hiding a *deletion* is the
+    # case worth naming: the diff of a removed security control is exactly what
+    # a review exists to read, and until 2026-09-09 this function could not
+    # even see it — `every_changed_file` was diff-filtered to `ACMRT`, so a
+    # deletion-only change reached the last branch below and was reported as
+    # "adds or modifies no file", naming no filter at all. Measured on
+    # `git rm vendor/guard.php`, a path in `DEFAULT_EXCLUDES`, so with no
+    # operator configuration involved.
+    said = []
+    if deleted:
+        # Not "removed from the reviewed set". A file under an exclude rule was
+        # never in it; what is worth saying is that a rule was covering a file
+        # this change *deleted*, because the removed lines are what a security
+        # review reads.
+        said.append(" {} of them {} deleted by this change.".format(
+            deleted, "was" if deleted == 1 else "were"))
+    if moved_out:
+        said.append(" {} reviewable file(s) were moved to a path a rule "
+                    "covers.".format(moved_out))
+    gone = "".join(said)
 
     if excluded and out_of_scope:
         return (
             "Nothing in this change was reviewable: {} file(s) are excluded by "
             "configuration and {} file(s) are outside the reviewed scope{}."
-            .format(len(excluded), len(out_of_scope), where) + tail
+            .format(len(excluded), len(out_of_scope), where) + gone + tail
         )
     if out_of_scope:
         return (
             "Every file in this change is outside the reviewed scope{}, so "
             "there was nothing to review. The exclude rules did not do this."
-            .format(where) + tail
+            .format(where) + gone + tail
         )
     if excluded:
         return (
             "Every file in this change is excluded by configuration, so there "
-            "was nothing to review." + tail
+            "was nothing to review." + gone + tail
         )
     return (
         "This change adds or modifies no file, so there was nothing to "

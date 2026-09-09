@@ -60,6 +60,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import stop_rule
 from pair_corpus import malformed_cases
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,6 +156,21 @@ def recorded_outcomes(root: Path = MEASUREMENTS) -> dict:
             if not case_id or row.get("incomplete"):
                 continue
             if not isinstance(verdict, bool):
+                continue
+            # **Another model's verdict is not this one's.** Measured
+            # 2026-09-09: `js-q4gh-4ffp-5cg8` is passed by Opus in all five of
+            # its rows and failed by the Sonnet arm in both of its, and the
+            # unfiltered fold called the case `unstable` — the suite asserting
+            # that the product moves on its own on a case it has never moved
+            # on. The circle is the point: `suites/sentinel.yml` is the suite
+            # the Sonnet trial runs, so the losing arm was reshaping the
+            # instrument that judged it.
+            #
+            # `--check` compares only the case list, so this drift was
+            # invisible: JavaScript has one eligible case and a singleton is
+            # selected either way. In a language with two it would have added a
+            # case, and a suite case is a paid run on every future round.
+            if not stop_rule.is_product_row(row):
                 continue
             seen[case_id].add("pass" if verdict else "fail")
 
@@ -292,6 +308,26 @@ def read_cases(path: Path) -> list:
     return cases
 
 
+def read_outcomes(path: Path) -> dict:
+    """The label the frozen manifest records beside each case.
+
+    `render` writes it as a comment, which made it look like a note rather than
+    part of the record. It is the claim the suite makes about the case, and
+    `--check` compares it.
+    """
+    labels = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- ") or stripped.startswith("- language:"):
+            continue
+        body = stripped[2:]
+        if "#" not in body:
+            continue
+        case_id, _, label = body.partition("#")
+        labels[case_id.strip()] = label.strip()
+    return labels
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--corpus", default=str(CORPUS))
@@ -333,10 +369,25 @@ def main() -> int:
         if not path.is_file():
             print("no suite at {}".format(path), file=sys.stderr)
             return 1
-        frozen, now = read_cases(path), suite["cases"]
-        if frozen == now:
-            print("{} case(s); the manifest matches the rule.".format(len(now)))
+        # **The whole rendered manifest, not the case list.** Codex,
+        # 2026-09-09: comparing only the ids made every other kind of drift
+        # invisible, and one of them had already happened. The Sonnet trial's
+        # rows relabelled `js-q4gh-4ffp-5cg8` from `pass` to `unstable` and the
+        # selected ids did not move, because JavaScript has one eligible case
+        # and a singleton is chosen either way. The guard whose job is to
+        # notice that the rule and the manifest have parted printed "the
+        # manifest matches the rule" throughout.
+        #
+        # The label is not decoration: it is what the suite asserts about the
+        # case, `refusals()` reads it to decide whether a suite can do its job
+        # at all, and the stratum counts say how large a pool each language
+        # drew from. All of it is rendered, so all of it is compared.
+        frozen_text = path.read_text(encoding="utf-8")
+        if frozen_text == render(suite):
+            print("{} case(s); the manifest matches the rule.".format(
+                len(suite["cases"])))
             return 0
+        frozen, now = read_cases(path), suite["cases"]
         # Not an error in itself. New measurements change what the rule
         # selects, and the suite is meant to be stable across that — so this
         # says the two have parted and leaves the decision to a person.
@@ -345,6 +396,16 @@ def main() -> int:
             ", ".join(sorted(set(frozen) - set(now))) or "-"))
         print("  only from the rule:   {}".format(
             ", ".join(sorted(set(now) - set(frozen))) or "-"))
+        frozen_labels = read_outcomes(path)
+        moved = sorted(
+            case_id for case_id in set(frozen_labels) & set(suite["outcomes"])
+            if frozen_labels[case_id] != suite["outcomes"][case_id])
+        print("  relabelled:           {}".format(
+            ", ".join("{} {} -> {}".format(
+                case_id, frozen_labels[case_id], suite["outcomes"][case_id])
+                for case_id in moved) or "-"))
+        if frozen == now and not moved:
+            print("  the strata differ; the cases and labels do not")
         print("\nA suite that follows the newest measurements is not a "
               "baseline. Re-freeze deliberately, or leave it.")
         return 1

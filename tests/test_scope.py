@@ -83,6 +83,116 @@ def test_no_scope_reviews_every_changed_file(repo):
     assert set(paths) == {"app/views.py", "vendor/lib.py", "README.md"}
 
 
+def test_a_deletion_a_rule_hid_is_still_in_the_unfiltered_list(repo, tmp_path):
+    """Found 2026-09-09, hunting the shapes that reach the gate with nothing
+    opened.
+
+    `every_changed_file` exists so the report can say *which* filter emptied
+    the review — the excludes or the `--path`. It kept `--diff-filter=ACMRT`,
+    with a docstring arguing that a deleted file is "correctly absent rather
+    than counted as something a rule hid". When a rule hides one, that is
+    exactly what it is.
+
+    A merge request whose only change was `git rm vendor/guard.php` — a path in
+    `DEFAULT_EXCLUDES`, so with no operator configuration involved — emptied
+    every list, so the report named no filter and said "This change adds or
+    modifies no file". The same file *modified* correctly said every file was
+    excluded: the deletion was reported strictly worse than the modification.
+    """
+    root, _base = repo
+    subprocess.run(["git", "-C", str(root), "rm", "-q", "vendor/lib.py"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "remove"],
+                   check=True, capture_output=True)
+
+    # The removal commit alone, so the change really is a deletion and nothing
+    # else — the shape that emptied every list.
+    ws = Workspace(root=root, excludes=("*/vendor/*", "vendor/*"),
+                   diff_base="HEAD~1", diff_head="HEAD")
+
+    assert ws.changed_files() == []
+    every = dict(ws.every_changed_file())
+    assert "vendor/lib.py" in every
+    assert every["vendor/lib.py"] == "deleted"
+    # And the filter is still off in the unfiltered list: the caller asks the
+    # two predicates itself, one at a time.
+    assert ws.is_excluded("vendor/lib.py")
+
+
+def test_a_rename_out_of_the_reviewed_set_shows_both_ends(repo):
+    """Codex, 2026-09-09, on my own repair — and on the test I wrote for it.
+
+    Moving a guard from `app/` to `vendor/` empties the review exactly as
+    deleting it does, because the new path is excluded. Reporting only the new
+    path said "every file is excluded" and counted nothing as removed, so a
+    guard moved out of review was described less clearly than one deleted —
+    the same asymmetry, one step along.
+
+    My first test for this used no excludes and asserted only that the old path
+    was absent, which **passes with the old implementation restored**, because
+    `changed_files` was already `-M`-aware. It proved nothing. This one names
+    the case that separates the two.
+    """
+    root, _base = repo
+    subprocess.run(["git", "-C", str(root), "mv", "app/views.py",
+                    "vendor/views.py"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "move"],
+                   check=True, capture_output=True)
+
+    ws = Workspace(root=root, excludes=("*/vendor/*", "vendor/*"),
+                   diff_base="HEAD~1", diff_head="HEAD")
+
+    assert ws.changed_files() == []
+    every = dict(ws.every_changed_file())
+    assert every == {"vendor/views.py": "renamed",
+                     "app/views.py": "moved_from"}
+
+
+def test_a_rename_into_the_reviewed_set_reports_its_old_path_too(repo):
+    """And the caller must not read that as a removal.
+
+    Measured 2026-09-09 across four rename shapes. Counting every `moved_from`
+    was the first repair and it is wrong in this direction: a file moved *into*
+    review reports its old, excluded path as `moved_from`, and nothing left the
+    reviewed set at all. `cli.py` therefore counts a move only when the path
+    that moved was itself reviewable.
+    """
+    root, _base = repo
+    subprocess.run(["git", "-C", str(root), "mv", "vendor/lib.py",
+                    "app/lib.py"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "move in"],
+                   check=True, capture_output=True)
+
+    ws = Workspace(root=root, excludes=("*/vendor/*", "vendor/*"),
+                   diff_base="HEAD~1", diff_head="HEAD")
+
+    # Non-empty, so the diagnostic branch never runs for this shape — but the
+    # list is what the next caller will read.
+    assert [p for p, _ in ws.changed_files()] == ["app/lib.py"]
+    assert dict(ws.every_changed_file()) == {"app/lib.py": "renamed",
+                                             "vendor/lib.py": "moved_from"}
+
+
+def test_a_rename_inside_the_reviewed_set_is_not_a_removal(repo):
+    """The control. A file moved from one reviewable path to another has not
+    left the reviewed set, and the old path is `moved_from` rather than
+    `deleted` so the caller can tell the two apart."""
+    root, _base = repo
+    subprocess.run(["git", "-C", str(root), "mv", "app/views.py",
+                    "app/handlers.py"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "rename"],
+                   check=True, capture_output=True)
+
+    every = dict(Workspace(root=root, excludes=(), diff_base="HEAD~1",
+                           diff_head="HEAD").every_changed_file())
+
+    assert every == {"app/handlers.py": "renamed", "app/views.py": "moved_from"}
+    # Not "deleted": `raw_changed_paths` runs `--no-renames` and would have
+    # said so, and a list that says a false thing is one the next caller
+    # believes.
+    assert "deleted" not in every.values()
+
+
 def test_a_directory_name_matches_everything_under_it(repo):
     """What a person means by "just look at the app code". Requiring
     `app/*` for that would be a trap rather than a feature."""

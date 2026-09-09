@@ -432,6 +432,34 @@ def test_a_finished_review_that_opened_nothing_is_not_a_pass(config):
     assert "cut before all of it reached the reviewer" not in decision.reason
 
 
+def test_a_deletion_only_change_that_nobody_read_is_not_a_pass(config):
+    """The same hole, one filter away, found 2026-09-09.
+
+    `coverage.changed` comes from a `--diff-filter=ACMRT` call, so a pure
+    deletion is not in it — `workspace.py` says exactly that on the line that
+    builds the list. A merge request whose only change was `git rm` of a guard,
+    reviewed by a run that called `finish_review` on its first turn, therefore
+    reached `_reviewed_nothing` true and `_readable_change` false, and came out
+    `exit 0`, "No security findings."
+
+    The same file modified instead of deleted exits 2. A removed security
+    control is one of the things this product exists to catch, and it was the
+    one case the predicate dropped.
+    """
+    outcome = ScanOutcome(mode="diff", summary="Nothing looked suspicious.",
+                          stop_reason=STOP_COMPLETED, finished_explicitly=True)
+    outcome.reported = []
+    outcome.exposures = []
+    outcome.coverage = Coverage(changed=[], examined=[],
+                                deleted=["auth/guard.py"],
+                                whole_diff_delivered=True)
+
+    decision = decide(config, outcome)
+
+    assert decision.exit_code == EXIT_ERROR
+    assert "without opening any part of the change" in decision.reason
+
+
 def test_a_review_that_opened_nothing_because_nothing_changed_still_passes(
         config):
     """The control. An empty change has nothing to open, and refusing it would

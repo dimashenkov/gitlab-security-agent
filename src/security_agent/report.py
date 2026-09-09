@@ -203,7 +203,18 @@ def _header(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
         return ["## ⚠️ AI security review did not complete", "",
                 plain(decision.reason)]
     if decision.blocking:
-        worst = SEVERITY_EMOJI.get(decision.blocking[0].severity, "🔴")
+        # **The worst, not the first.** `decision.blocking` keeps the order the
+        # findings were reported in, and every other renderer in this file
+        # sorts before it prints — so a medium that blocks because it removes a
+        # control, reported before a critical, put a yellow circle over the one
+        # line a reader sees in the merge request preview. Reordering two
+        # `report_finding` calls changed the banner with no change to the code.
+        # Found 2026-09-09. The exit code was never affected; this is the
+        # top-line signal, which is the part a warning further down does not
+        # undo.
+        worst = SEVERITY_EMOJI.get(
+            max(decision.blocking,
+                key=lambda c: severity_rank(c.severity)).severity, "🔴")
         return [
             "## {} AI security review — {} blocking finding{}".format(
                 worst, len(decision.blocking),

@@ -145,9 +145,25 @@ def _readable_change(outcome: ScanOutcome) -> bool:
     content for a pure rename either, but the file is readable and a rename can
     move code out of a protected path — a reviewer that opened nothing has not
     reviewed it.
+
+    **A deletion counts, and until 2026-09-09 it did not.** `coverage.changed`
+    is filled from a `--diff-filter=ACMRT` call, and `workspace.py` says on the
+    line that builds it that a pure deletion is therefore not in the list at
+    all. So a merge request whose only change was `git rm` of a guard, reviewed
+    by a run that called `finish_review` on its first turn, reached
+    `_reviewed_nothing` true, `_partial` false and this predicate false — and
+    came out `exit 0`, "No security findings." The same file *modified* instead
+    exits 2 with "none reached the reviewer". The one change a security review
+    exists to catch was the one the aggregate dropped.
+
+    Deleted paths are counted here rather than in `coverage.changed` because a
+    deleted file cannot be opened: it belongs to what had to be *accounted
+    for*, which is the question this predicate asks, and not to what had to be
+    read.
     """
     unreadable = {path for path, _ in outcome.coverage.unreadable}
-    return bool(set(outcome.coverage.changed) - unreadable)
+    return bool((set(outcome.coverage.changed) - unreadable)
+                or outcome.coverage.deleted)
 
 
 def _reviewed_nothing(outcome: ScanOutcome) -> bool:
