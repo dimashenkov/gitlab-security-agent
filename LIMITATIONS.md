@@ -1319,6 +1319,58 @@ Two more boundaries of the same tool:
   recovery — but it depends on the arm's rows still building the same thing,
   which is exactly what the drift check above is for.
 
+## Repo mode had no "the reviewer opened nothing" refusal — adjudicated and closed
+
+Found 2026-09-09, hunting for a fourth route to exit 0. `coverage.changed`,
+`coverage.deleted` and `coverage.unreadable` are filled at exactly two places
+and both are behind `mode == "diff"` — `agent.py` and
+`runner_claude_code.py`. So in repo mode `gate._readable_change` is `False`,
+`_partial` is `False`, and the branch that refuses a review which ended saying
+it was done without opening anything **cannot fire at all**.
+
+Measured: `mode="repo"`, no exposures, `finish_review` on the first turn —
+`exit 0`, "✅ AI security review — no findings reported". The identical run in
+diff mode exits 2 and says no setting makes it a pass.
+
+**This is not a corner.** `Config.resolve_mode` returns `repo` whenever the
+mode is `auto` and there is no merge-request id, and `is_merge_request` is
+`bool(CI_MERGE_REQUEST_IID)`. An ordinary GitLab **branch pipeline** sets none
+— and that is the pipeline an MR shows under "Pipelines must succeed". On
+GitHub the same holds for a `push` event. So every hole closed on the diff path
+today has a twin here, in the mode a large share of installations gate on.
+
+**Why it is recorded rather than repaired.** The obvious fix — answer `True`
+for every non-diff mode, since a whole tree always has something that could be
+opened — was written, and it turns **15 of this repository's own tests red**:
+the exit-code tests, the artifact test, both suppression tests, the
+verification handoff. Every one of them drives a fake model that replies once,
+with `end_turn`, and calls no tool.
+
+So the question underneath the repair is not mechanical: **is a repo-mode
+review that made no tool call a pass?** Fifteen tests currently assert that it
+is, and the gate's own comment names "a provider that returns `end_turn` before
+any tool call" as the thing it exists to refuse. Those two cannot both stand.
+
+**Codex adjudicated it the same day, and it is closed.**
+
+> *"Repo mode with zero exposures must not pass. Repo mode is a claim about an
+> entire repository, so a completed response without receiving repository
+> content is not a review. The 15 failing tests are stale fixtures: give their
+> fake reviewers a real exposure or explicitly mark runs as non-performed. Do
+> not preserve an unsafe product contract to accommodate mocks."*
+
+`_readable_change` answers `True` for any mode but `diff`, and the fifteen
+fixtures were given a reviewer that opens a file before it says anything — one
+turn, added in `install_client`, which is what a real review does first. A
+fixture whose reviewer reports a finding in a file it never opened was
+asserting the hole rather than the behaviour.
+
+The branch is also conditioned on `review_status == performed`, because the two
+non-performed dispositions reach it with no exposures by design: without that,
+the skip label exited 2 instead of 0 — the escape hatch turned into a block,
+and the first of the seven things the `review_status` adjudication said must
+not break. The suite caught it one edit after it was introduced.
+
 ## A deletion an exclude rule hides leaves no trace in the artifact
 
 Found 2026-09-09, hunting every change shape that reaches the gate with nothing
@@ -1334,36 +1386,39 @@ guard — while the same file *modified* correctly said every file was excluded.
 `every_changed_file` now sees deletions and the sentence names the filter and
 the removal.
 
-**Not fixed, and this is the record that it is missing rather than overlooked:**
+**Also fixed, 2026-09-09.** Two more, and they were one repair:
 
 * `changed_objects()` applies `is_excluded` and `in_scope` before building
-  `coverage.deleted`. So when a change removes an excluded file **and** edits a
-  reviewable one, the run proceeds normally, exits 0 or 1 on its merits, and
-  the removed path appears in **no field of `Coverage` at all** — not
-  `deleted`, not `excluded`, not `out_of_scope`.
-* `Coverage.excluded` is declared and serialised and **never assigned**. The
-  only writer of the neighbouring `out_of_scope` explains itself in a sentence
-  that applies word for word here: *a scoped review that reports "no findings"
-  without saying what it did not look at is the same sentence as a full review
-  that found nothing.* An excluded-only change's artifact is field-for-field
-  identical to an empty commit's.
+  `coverage.deleted`, so when a change removed an excluded file **and** edited
+  a reviewable one, the run proceeded normally and the removed path appeared
+  in **no field of `Coverage` at all**.
+* `Coverage.excluded` was declared and serialised and **never assigned**. An
+  excluded-only change's artifact was field-for-field identical to an empty
+  commit's.
 
-The two are one repair: record what a rule hid, by rule, instead of dropping
-it. It is not made here because it changes what every artifact carries, and the
-report renders coverage — a field that appears where nothing was written before
-changes what a reader is told without anyone deciding what it means.
+`Workspace.hidden_by_rules` reads the change with both filters cleared and
+returns what each rule covered, deletions included; both runners call it and
+fill `excluded` and `out_of_scope` from it. `is_excluded` is asked first, so a
+path both rules cover is reported once — two overlapping lists are counted
+twice by anybody who adds them.
 
-An earlier draft of this paragraph said the reuse key and `check_accounted`
-would have to be told as well. Codex checked and that is overstated: reuse is
-already keyed on the configured excludes, and `check_accounted` reads no
-coverage field at all. The claim was larger than the evidence, which is the
+The argument is the one `out_of_scope`'s own docstring already made: *a scoped
+review that reports "no findings" without saying what it did not look at is the
+same sentence as a full review that found nothing.* An operator who excludes
+`vendor/` has said not to *review* it; nothing in that says the artifact should
+be unable to mention that a file there was deleted.
+
+An earlier draft of this section said the reuse key and `check_accounted` would
+have to be told about the new field. Codex checked and that was overstated:
+reuse is already keyed on the configured excludes, and `check_accounted` reads
+no coverage field at all. The claim was larger than the evidence, which is the
 thing this file exists to catch elsewhere.
 
 The policy question is separate and is not what this records. An operator who
 excludes `vendor/` has said not to *review* it; nothing in that says the
 artifact should be unable to mention that a file there was deleted.
 
-## A row refused for its reviewer is refused silently
+## A row refused for its reviewer is refused silently — fixed
 
 `stop_rule.is_product_row` decides whether a measurement row answers for this
 model. When it says no, the row is skipped and an older one answers instead,
@@ -1386,9 +1441,61 @@ like headline numbers quietly falling back to older measurements.** That is the
 right direction to be wrong in — the alternative counts a foreign reviewer as
 this one — but a refusal nobody can see is a refusal nobody will diagnose.
 
-What is missing is a diagnostic: the readers should be able to say how many
-rows they skipped and why. It is not built, and this paragraph is the record
-that it is missing rather than overlooked.
+**The diagnostic is built, 2026-09-09.** `why_not_product_row` returns the
+reason instead of a boolean, the two readers count reasons into
+`stop_rule.SKIPPED`, cleared at the start of each pass, and both command lines
+print one line under their answer. On this repository today:
+
+```
+26 row(s) did not answer for claude-opus-5: 26 asked for claude-sonnet-5
+```
+
+Six reasons, not one, because a single message would send every reader looking
+in the wrong place. Silence now means every row was read — which is still a
+different statement from silence about whether anybody looked, and that
+distinction is the reason the line exists at all.
+
+## A skipped parameter was subtracted twice — adjudicated and fixed
+
+Found 2026-09-09 while repairing the parameter-level marker in
+`stage2._conditionally_marked_cases`. Not created by that repair — the
+single-decorator form of it was already there — but the repair makes it
+reachable in more shapes, so it is written down rather than left in somebody's
+head.
+
+`skip`, `skipif` and `xfail` are all treated as conditional, and the count is
+subtracted from the recorded passes. But **only `xfail` can pollute the pass
+count**: a skipped case is written into the junit report with a `<skipped>`
+child and is already excluded, while an xpass has no child at all and is
+indistinguishable from a pass. Subtracting the skipped ones again
+double-penalises.
+
+Measured: one `skip`-marked value stacked with three plain ones generates six
+cases — three genuinely skipped and **three genuine unconditional passes**. The
+count is 3, the recorded passes are 3, `3 > 3` is false, and the scenario is
+reported uncovered although three unconditional cases passed. Before the repair
+it read covered, by accident of under-counting.
+
+**The obvious fix is to count only `xfail`, and it is a trade rather than a
+correction.** It contradicts `_conditionally_run`'s stated stance that any
+conditional marker disqualifies a test whichever way it ends, and it has a
+measured cost of its own: `skipif(False)` runs and is recorded as a plain
+`PASSED`, so an xfail-only count would credit a `skipif`-marked case as
+coverage.
+
+Two defensible rules, opposite failure directions, and picking one alone is the
+kind of decision this repository sends to review.
+
+**Codex adjudicated it the same day, and it is built.** *"Only `xfail` needs
+special subtraction because XPASS is indistinguishable from PASS in JUnit;
+runtime JUnit results should decide `skip`/`skipif`. Apply that rule at both
+function and parameter level."*
+
+So `_CONDITIONAL` holds `xfail` alone. The runtime result decides `skip` and
+`skipif` — a skipped case carries a `<skipped>` child and never enters the pass
+count, so subtracting its marker again was the double penalty; a
+`skipif(False)` runs, is recorded as a plain pass, and now counts. The source
+is read only for what the report cannot say.
 
 ## Three readers still ask "was it bought", never "was *this* model measured"
 

@@ -20,6 +20,7 @@ from typing import List
 from . import PROJECT_NAME, PROJECT_URL, __version__
 from .gate import EXIT_ERROR, EXIT_OK, Decision
 from .models import (
+    REVIEW_PERFORMED,
     VERDICT_CONFIRMED,
     VERDICT_REFUTED,
     VERDICT_UNCERTAIN,
@@ -96,7 +97,21 @@ def render(outcome: ScanOutcome, decision: Decision, report_path: str = "") -> s
         # answer at all must never print this line, whatever else it holds.
         # Exit 2 means "I could not check", and that is the one thing this
         # renderer may not render as "nothing to report".
-        if not decision.partial and decision.exit_code != EXIT_ERROR:
+        # **And a review that was never performed does not get the green
+        # sentence either.** `report._header` was repaired for exactly this on
+        # 2026-09-09 and this renderer was left behind — which the comment
+        # above records happening to it once before. A skipped run and a real
+        # clean review printed the same green line, colour code and all; only
+        # the banner word differed, which is a difference a reader skims past.
+        #
+        # `review_status` is asked rather than inferred: `partial` is false for
+        # both non-performed dispositions by design, because a label waiver
+        # that blocked the merge would be an escape hatch nobody can use.
+        if outcome.review_status != REVIEW_PERFORMED:
+            lines += ["", INDENT + s(
+                "No review was performed — this is not a statement about the "
+                "code.", "33")]
+        elif not decision.partial and decision.exit_code != EXIT_ERROR:
             lines += ["", INDENT + s("No findings reported.", "32")]
         else:
             lines += ["", INDENT + s("No findings — the review did not complete.", "33")]
@@ -257,14 +272,35 @@ def _checked(candidate: Candidate) -> str:
     """One line summarising everything that was done to disbelieve this."""
     bits = []
     if candidate.votes:
-        agreeing = sum(1 for v in candidate.votes if v.verdict == candidate.verdict)
+        # **A seat that never answered is not a seat that agreed.** Every
+        # failed verification call records `verdict=uncertain` with an `error`
+        # — `verify.py` does it in two places — so when the panel lands on
+        # `uncertain` a dead seat entered the numerator and the line read
+        # "left uncertain by 2 of 3 independent verifiers", which is what it
+        # also reads when all three really answered. Found 2026-09-09.
+        #
+        # The failures are named rather than dropped: a panel that lost a seat
+        # is a weaker panel, and subtracting it silently would make three
+        # verifiers of which one died read as a two-seat panel that worked.
+        failed = [v for v in candidate.votes if getattr(v, "error", "")]
+        answering = [v for v in candidate.votes if not getattr(v, "error", "")]
+        agreeing = sum(1 for v in answering if v.verdict == candidate.verdict)
         word = {
             VERDICT_CONFIRMED: "confirmed", VERDICT_UNCERTAIN: "left uncertain",
             VERDICT_REFUTED: "refuted",
         }.get(candidate.verdict, candidate.verdict)
+        # **The denominator is the seats the panel reserved.** Publishing only
+        # the seats that answered was the first repair and Codex refused it the
+        # same day: `2/2` says a complete two-person panel agreed, where the
+        # truth is two of three seats with the quorum degraded. `panel.py`
+        # defines the panel as the reserved seats, and a renderer that quietly
+        # redefines it is the second definition this repository keeps finding.
         bits.append("{} by {} of {} independent verifier{}".format(
             word, agreeing, len(candidate.votes),
             "" if len(candidate.votes) == 1 else "s"))
+        if failed:
+            bits.append("{} verifier call{} failed".format(
+                len(failed), "" if len(failed) == 1 else "s"))
     else:
         bits.append("cited code found in the file; not verified")
     if candidate.removes_control:

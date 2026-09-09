@@ -97,10 +97,31 @@ def _head_sha(repo):
     return _repo_git(repo, "rev-parse", "HEAD").strip()
 
 
-def install_client(monkeypatch, script, verifier_script=None):
-    """Replace the SDK constructor with one that returns a scripted client."""
+def install_client(monkeypatch, script, verifier_script=None, reads=True):
+    """Replace the SDK constructor with one that returns a scripted client.
+
+    The scripted reviewer opens a file before it says anything, unless the
+    caller passes `reads=False` because the case under test is precisely a
+    reviewer that opened nothing.
+
+    Adjudicated by Codex on 2026-09-09. Repo mode had no "the reviewer opened
+    nothing" refusal at all — `coverage.changed` is filled only on the diff
+    path, so `_readable_change` was `False` and the branch could not fire.
+    Closing it turned 15 tests red, every one of them driving a model that
+    replies once with `end_turn` and calls no tool: *"The 15 failing tests are
+    stale fixtures. Do not preserve an unsafe product contract to accommodate
+    mocks."*
+
+    One extra turn, and it is what a real review does first. A fixture whose
+    reviewer reports a finding in a file it never opened was asserting the hole
+    rather than the behaviour.
+    """
     import anthropic
 
+    if reads:
+        script = [FakeResponse([tool_use("read_file", {"path": "app/views.py"},
+                                         id="t-read")],
+                               stop_reason="tool_use"), *script]
     client = FakeClient(script, verifier_script)
     monkeypatch.setattr(anthropic, "Anthropic", lambda **kwargs: client)
     return client
@@ -711,6 +732,85 @@ class TestSkipHatches:
 
         assert run(git_repo, "--output-dir", str(tmp_path / "out")) == EXIT_OK
         assert client.requests == []
+
+    def test_the_skipped_artifact_says_a_review_did_not_happen(
+            self, git_repo, monkeypatch, tmp_path):
+        """The seven things Codex's ruling of 2026-09-08 said the
+        `review_status` repair must not break, in the one place they all meet.
+
+        The defect was that a skipped run's artifact said `stop_reason:
+        completed` and `complete: true` with no findings, which is what
+        `pair_corpus.hits_target` reads — so an unsafe case scored as a *miss*
+        over a review nobody performed. The obvious repair, `complete = False`,
+        would have made `_partial` true against a `fail_on_incomplete` that
+        defaults true, turning "skip this review" into "block this merge".
+
+        So `complete`, `stop_reason` and the exit code all keep their meanings,
+        and the new field carries the fact none of them could.
+        """
+        monkeypatch.setenv("CI_MERGE_REQUEST_IID", "42")
+        monkeypatch.setenv("CI_MERGE_REQUEST_LABELS", "urgent,skip-ai-security")
+        client = install_client(monkeypatch, [])
+        out = tmp_path / "out"
+
+        assert run(git_repo, "--output-dir", str(out)) == EXIT_OK
+        # Nothing was bought. The skip returns before any provider is reached.
+        assert client.requests == []
+
+        body = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        assert body["review_status"] == "skipped"
+        assert body["complete"] is True
+        assert body["stop_reason"] == "completed"
+        assert body["verdict"]["exit_code"] == EXIT_OK
+        assert body["counts"]["reported"] == 0
+
+        # And the one line a reader sees does not claim a review happened. The
+        # terminal already said NOT REVIEWED; the markdown under it said
+        # "✅ … no findings reported", which is what a merge request previews.
+        heading = next(line for line in
+                       (out / "report.md").read_text(encoding="utf-8").splitlines()
+                       if line.startswith("## "))
+        assert "skip label" in heading
+        assert "✅" not in heading
+
+    def test_a_change_with_nothing_reviewable_says_so_too(
+            self, git_repo, monkeypatch, tmp_path):
+        """The other disposition, and it is a different event: the tool
+        considered the input and the reviewable set was empty. Merging the two
+        would lose the only fact an operator reading the artifact wants back —
+        whether a person decided this, or the change simply had nothing in it.
+        """
+        client = install_client(monkeypatch, [])
+        out = tmp_path / "out"
+        # Diff mode: the empty-review branch is on the diff path, and `run`
+        # above asks for `--mode repo`, where every tracked file is the subject
+        # and a scope that matches nothing is a different question.
+        (git_repo / "app" / "views.py").write_text(
+            "def get_user(uid):\n    return uid\n", encoding="utf-8")
+        _commit(git_repo, "second")
+
+        assert cli.main(["--repo", str(git_repo), "--mode", "diff",
+                         "--no-comment", "--base", "HEAD~1", "--head", "HEAD",
+                         "--path", "no-such-directory",
+                         "--output-dir", str(out)]) == EXIT_OK
+        assert client.requests == []
+
+        body = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        assert body["review_status"] == "nothing_reviewable"
+        assert body["complete"] is True
+
+    def test_a_real_review_still_says_it_was_performed(
+            self, git_repo, monkeypatch, tmp_path):
+        """The control. A field that says `nothing_reviewable` for every run
+        makes every recall figure `None` and every artifact unreusable, which
+        is a worse answer than the one it replaced."""
+        install_client(monkeypatch, [])
+        out = tmp_path / "out"
+
+        run(git_repo, "--output-dir", str(out))
+
+        body = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        assert body["review_status"] == "performed"
 
     def test_a_skipped_change_that_edits_the_prompts_is_refused(
         self, git_repo, monkeypatch, tmp_path

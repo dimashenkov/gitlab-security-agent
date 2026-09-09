@@ -684,9 +684,13 @@ class ClaudeCodeRunner:
             outcome.coverage.changed = [p for p, _ in self.ws.changed_files()]
             (outcome.coverage.unreadable,
              outcome.coverage.deleted) = inventory_notes(self.ws)
-            if self.ws.scope:
-                outcome.coverage.out_of_scope = self.ws.out_of_scope(
-                    [p for p, _ in self.ws.all_changed_files()])
+            # What a rule hid, deletions included. Both runners fill coverage
+            # and both had the same gap: `changed_objects` applies the filters
+            # as it reads, so an excluded deletion reached no field at all.
+            # One method now, called from both, because two spellings of one
+            # rule drift and this one is what an artifact is read for.
+            (outcome.coverage.excluded,
+             outcome.coverage.out_of_scope) = self.ws.hidden_by_rules()
 
         outcome.stop_reason = stop_reason
         outcome.stop_detail = stop_detail

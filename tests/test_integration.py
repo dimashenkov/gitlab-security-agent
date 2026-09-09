@@ -241,6 +241,15 @@ class TestVerificationHandoff:
     def _run_with_verdict(self, cfg, ws, status):
         client = FakeClient(
             script=[
+                # The reviewer opens a file before it says anything. Adjudicated
+                # by Codex on 2026-09-09, when repo mode gained the refusal it
+                # never had: a fixture whose reviewer reports a finding in a
+                # file it never opened is asserting the hole rather than the
+                # behaviour, and "do not preserve an unsafe product contract to
+                # accommodate mocks".
+                FakeResponse([tool_use("read_file", {"path": "app/views.py"},
+                                       id="t-read")],
+                             stop_reason="tool_use"),
                 FakeResponse([tool_use("report_finding", FINDING_ARGS, id="t1")],
                              stop_reason="tool_use"),
                 FakeResponse([text("One finding.")], stop_reason="end_turn"),

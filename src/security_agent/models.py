@@ -768,6 +768,111 @@ class Usage:
 # Why the agent stopped. Only `completed` means the review reached a conclusion;
 # every other value means the verdict is partial and must not be reported as a
 # clean pass.
+# Whether a review was performed at all, which is a different question from
+# whether it finished. Adjudicated by Codex on 2026-09-08, built 2026-09-09.
+#
+# **The defect.** `_nothing_to_review` built a `ScanOutcome` with no
+# `stop_reason`, so it defaulted to `STOP_COMPLETED` and the artifact said
+# `"complete": true` with no findings. `pair_corpus.hits_target` reads exactly
+# those two fields, so a run that examined nothing scored as a **miss** — an
+# unsafe case counted as "the reviewer looked and found nothing" when nobody
+# had looked. Three routes reach it: excludes hiding every file, `--path`
+# leaving every file out, and a merge request labelled to skip the review.
+#
+# `hits_target`'s own docstring records this same defect found and fixed once
+# before, for runs that exited 2. The skip path reintroduced it by a route
+# where the exit code is 0.
+#
+# **Why the obvious repair is wrong.** Setting `complete = False` makes
+# `_partial` true, and `fail_on_incomplete` defaults true — so "skip this
+# review" would become "block this merge", and an escape hatch that cannot be
+# used gets deleted rather than obeyed.
+#
+# So `complete` keeps its meaning — the invoked workflow reached its expected
+# end — and the disposition is recorded beside it. Both non-performed states
+# stay `complete: true`, exit 0, and need no `_partial` special case.
+REVIEW_PERFORMED = "performed"
+# The tool considered the input and the reviewable set was empty: excludes,
+# scope, or an empty range.
+REVIEW_NOTHING_REVIEWABLE = "nothing_reviewable"
+# Reviewable code existed and review was deliberately not performed. A label
+# waiver is not the same event as an empty change, and merging the two loses
+# the only fact an operator would want back.
+REVIEW_SKIPPED = "skipped"
+
+
+def review_performed(payload: Dict[str, Any]) -> bool:
+    """Did this artifact come from a run that actually reviewed something?
+
+    Reads `review_status` when the artifact carries it, and answers from what
+    the run left behind when it does not.
+
+    **Absence was read as agreement, in the repair for absence read as
+    agreement.** The first version of this, written on 2026-09-09, was
+    `payload.get("review_status", "performed")` in both readers, on the ground
+    that every artifact predating the field was a performed review. The
+    repository disproves it: `_nothing_to_review` has written artifacts since
+    2026-08-26 and the skip-label route since 2026-09-03, and every one of them
+    says `complete: true`, carries no finding, and has no `review_status`. So
+    an old skip was still scored as a genuine miss by
+    `pair_corpus.hits_target` — the exact defect the field was added to end.
+    Codex, 2026-09-09.
+
+    The concrete input is `{"complete": true, "findings": [], "coverage":
+    {"files_examined": [], "exposures": [], "turns": 0, "tool_calls": []}}` —
+    what a run stopped by the skip label wrote. The old behaviour was `False`,
+    "the reviewer looked and found nothing"; the new one is "no review was
+    performed", and `hits_target` answers `None`.
+
+    The test is `ScanOutcome.review_ran` read off an artifact instead of a live
+    outcome: any turn, any tool call, or any exposure. **Not `exposures`
+    alone**, though `gate._reviewed_nothing` uses exactly that — the gate asks
+    whether any code reached the model, and this asks whether a review was
+    attempted at all. Measured rather than argued: `coverage.exposures` was
+    only written from 2026-08-28, so
+    `measurements/2026-08-25-decoy-validator/reviewer-only.json` and
+    `measurements/2026-08-25-verifier-replay/fixed-candidate.json` are complete
+    reviews with a reported finding and no exposures key, and an
+    exposures-only test silently reclassifies both as runs that never looked.
+
+    **Not `coverage_accounting.changed` either**, which looks like the cleanest
+    separator and is not one: `measurements/cli-batch-1.json`, case
+    `go-mmfr-pmjx-hw9w`, safe member, is a completed review with files examined
+    and `changed: []`.
+
+    **What this cannot establish.** A review that ran, completed, took no turn
+    and called no tool is indistinguishable from a skip and is read as one.
+    That loses a data point rather than inventing one — the direction
+    `reusable` already chooses — and `gate._reviewed_nothing` refuses such a
+    run, so it never reaches a reader as a clean pass. It also cannot say which
+    of the two non-performed states an old artifact was; nothing downstream
+    asks, and guessing would be a second wrong answer in place of the first.
+
+    Checked against every artifact on disk: zero of the 24 change their
+    `hits_target` answer under this rule, and two do under the exposures-only
+    one. That is the reason to reject that variant rather than a reason to
+    accept it.
+    """
+    status = payload.get("review_status") if isinstance(payload, dict) else None
+    # A present-but-empty, null, or non-string status is not a claim. It falls
+    # through to the evidence rather than being read as `performed`, because
+    # the stated threat model for these files is truncation and hand edits.
+    if isinstance(status, str) and status:
+        return status == REVIEW_PERFORMED
+    coverage = payload.get("coverage") if isinstance(payload, dict) else None
+    coverage = coverage if isinstance(coverage, dict) else {}
+    turns = coverage.get("turns")
+    tool_calls = coverage.get("tool_calls")
+    exposures = coverage.get("exposures")
+    # Every branch asks what the value *is* before reading it as one. A
+    # `"tool_calls": "17"` left by a hand edit is truthy and is not work.
+    return bool(
+        (isinstance(turns, int) and not isinstance(turns, bool) and turns > 0)
+        or (isinstance(tool_calls, list) and tool_calls)
+        or (isinstance(exposures, list) and exposures)
+    )
+
+
 STOP_COMPLETED = "completed"
 STOP_TURN_LIMIT = "turn_limit"
 STOP_TIME_LIMIT = "time_limit"
@@ -1281,6 +1386,11 @@ class ScanOutcome:
     summary: str = ""
     turns: int = 0
     model: str = ""
+    # Was a review performed at all? `stop_reason` says how a review ended and
+    # `complete` says whether it reached its expected end; neither can say that
+    # none was attempted. Defaults to `performed`, so the only outcomes that
+    # claim otherwise are the ones that say so explicitly.
+    review_status: str = REVIEW_PERFORMED
 
     # Everything the agent claimed, partitioned by what happened to it. A
     # candidate appears in exactly one list, and all four are shown in the

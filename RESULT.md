@@ -20,7 +20,7 @@ against that goal.
 | mentions anything on an ordinary change | **1 of 27** · 4% · 95% CI 1–18% |
 | gives the same answer twice | **11 of 13.** Two cases flipped with nothing changed — **15% instability** |
 | what the measurement cost | **$0 charged**, which is what `tools/spend.py` prints for those 27 runs. The notional figure — API list price for the tokens, charged to nobody — is $8.06, and it is in `--breakdown`, not in the headline. Repricing the same tokens from this repository's own table gives $8.02; both are notional and the 0.4% between them is the price table, not a charge |
-| Sonnet | **run, and rejected.** 52 paid reviews, net 2 regressions at a threshold of 2, on 11 comparable cases of 13. A tripwire, not a sample — see below |
+| Sonnet | **run, and rejected — worse and dearer.** 52 paid reviews, net 2 regressions at a threshold of 2 on 11 comparable cases of 13, and 83% more output tokens than Opus. A tripwire, not a sample — see below |
 
 ## The golden data, and why it is not gameable
 
@@ -151,6 +151,32 @@ decision about whether to spend more, and the answer is no: the frozen rule
 says two confirmed regressions reject the change, and improvements do not
 cancel them because finding a weakness in one case does not put back the
 weakness missed in another.
+
+### And it is not cheaper either
+
+The trial was bought to answer one question — *is a cheaper model cheaper* —
+and the verdict above answers a neighbouring one. The question as asked has an
+answer too, from the tokens the two arms recorded:
+
+| | output tokens | cache read | at API list price |
+|---|---|---|---|
+| Opus | 399,246 | 8,882,955 | $24.66 |
+| **Sonnet** | **731,310** | **24,724,501** | **$26.54** |
+
+**The cheaper model cost more.** It wrote 83% more output and read three times
+the cache, and its lower rate did not cover the difference.
+
+Three qualifications travel with those figures and none of them is small:
+
+* **Nobody paid this.** Both arms ran on a flat monthly subscription, where one
+  more call moves no invoice. These are list prices for the same tokens — a
+  weight, not a bill, and the same distinction `tools/spend.py` draws.
+* Sonnet's 28 rows against Opus's 26 include two reviews that did not conclude
+  and were re-run, so a little repeated work is inside its figure.
+* Sonnet's rates are introductory until 2026-08-31. After that the gap widens.
+
+So the answer is double, and only the first half was being reported: **worse,
+and dearer.**
 
 **Thirteen cases are a tripwire, not a sample.** The reference says so itself.
 A `reject` here means the wider measurement is not worth buying; it does not

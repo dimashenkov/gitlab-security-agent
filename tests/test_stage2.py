@@ -1122,6 +1122,408 @@ class TestANamedTestIsNotATestThatRan:
         assert "12/13 passed" in result.detail
         assert "never passed" in result.detail
 
+    def _one_marked(self, keys, marks: str) -> str:
+        return ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("v", [\n'
+                '    pytest.param("m", marks={}),\n'
+                '])\n'
+                "def test_{}_is_handled(v):\n    assert True\n\n\n".format(
+                    marks, keys[0]))
+
+    def test_a_parameter_level_marker_does_not_establish_coverage(
+            self, tmp_path, monkeypatch):
+        """`_conditionally_run` reads the decorators of the function, and a
+        marker written inside `pytest.param(..., marks=…)` is not one.
+
+        Measured 2026-09-09: the file below reports `1 xpassed`, exits 0, and
+        the junit report gives that case no `failure`, `error` or `skipped`
+        child — indistinguishable from an ordinary pass. The scenario counted
+        as covered although the only parameter that says anything about it is
+        xfail-marked.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = self._one_marked(keys, 'pytest.mark.xfail(reason="known")')
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        result = stage2.probe_conformance(self.Running())
+
+        assert result.state == PARTIAL
+        assert "12/13 passed" in result.detail
+
+    def test_a_marks_list_is_read_the_same_as_a_single_mark(
+            self, tmp_path, monkeypatch):
+        """`marks=` takes a sequence too, and `marks=[pytest.mark.xfail]` is
+        the spelling pytest's own documentation uses. Reading only the single
+        mark would leave the commonest form unseen."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = self._one_marked(keys, "[pytest.mark.xfail]")
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == PARTIAL
+
+    def test_an_unmarked_parameter_beside_a_marked_one_still_covers(
+            self, tmp_path, monkeypatch):
+        """The control, and it passes with the fix reverted as well — today's
+        code called this covered for the wrong reason. It is here to forbid
+        the blunt fix: tainting the whole name because one of its parameters
+        is marked would invent a gap, and a tracker that invents a gap teaches
+        its reader to skip the line, which costs what hiding one costs."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("v", [\n'
+                '    "plain",\n'
+                '    pytest.param("m", marks=pytest.mark.xfail(reason="known")),\n'
+                '])\n'
+                "def test_{}_is_handled(v):\n    assert True\n\n\n".format(keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    def test_stacked_parametrize_is_a_product_and_not_a_list(
+            self, tmp_path, monkeypatch):
+        """Found by Codex on 2026-09-09, in code written the same day.
+
+        pytest takes the Cartesian product of stacked `parametrize`
+        decorators. One xfail-marked value stacked with two plain ones
+        generates **two** cases and both of them are conditional. Measured:
+        `2 xpassed`, two testcases in the junit report, `[a-m]` and `[b-m]`,
+        neither with a `failure`, `error` or `skipped` child.
+
+        With the fix reverted the counter answers 1 — it counted the
+        `pytest.param` declarations — the recorded passes are 2, `2 > 1`
+        holds, and the probe returns `done 13/13`. Every generated case is
+        conditional and nobody has committed to the scenario.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("v", [\n'
+                '    pytest.param("m", marks=pytest.mark.xfail(reason="known")),\n'
+                '])\n'
+                '@pytest.mark.parametrize("w", ["a", "b"])\n'
+                "def test_{}_is_handled(v, w):\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        result = stage2.probe_conformance(self.Running())
+
+        assert result.state == PARTIAL
+        assert "12/13 passed" in result.detail
+
+    def test_the_conditional_cases_are_a_subtraction_and_not_a_sum(
+            self, tmp_path, monkeypatch):
+        """A marked value in *each* of two stacked decorators.
+
+        Measured 2026-09-09: four cases, `1 passed, 3 xpassed`. Three of the
+        four are conditional — only `[plainw-plainv]` is not. Multiplying one
+        decorator's marked count by the other's total and adding gives 4 and
+        counts the doubly-marked case twice; `generated - unconditional` gives
+        3, which is the number pytest generated.
+
+        With the fix reverted the count is 2 — the two declarations — so this
+        asserts the number and not only the verdict. The verdict is `done`
+        either way here, which is exactly why the number has to be asserted:
+        the old arithmetic was right by accident and stops being right the
+        moment the unmarked value goes.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("v", [\n'
+                '    pytest.param("m", marks=pytest.mark.xfail(reason="known")),\n'
+                '    "plainv",\n'
+                '])\n'
+                '@pytest.mark.parametrize("w", [\n'
+                '    pytest.param("n", marks=pytest.mark.xfail(reason="known")),\n'
+                '    "plainw",\n'
+                '])\n'
+                "def test_{}_is_handled(v, w):\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+        path = stage2.TESTS / "test_runner_conformance.py"
+
+        counted, uncountable = stage2._conditionally_marked_cases([path])
+
+        name = "test_{}_is_handled".format(keys[0])
+        assert counted[name] == 3
+        assert not uncountable
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    def test_a_marked_value_is_multiplied_by_the_other_decorator(
+            self, tmp_path, monkeypatch):
+        """The product with three values on the other side.
+
+        Measured 2026-09-09: six cases, `3 passed, 3 xpassed`. Three
+        conditional, not one. With the fix reverted the count is 1, and the
+        verdict is `done` both ways — the number is the assertion, because a
+        count of 1 against six recorded passes would go on holding while the
+        marked half of the product grew.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("v", [\n'
+                '    pytest.param("m", marks=pytest.mark.xfail(reason="known")),\n'
+                '    "plainv",\n'
+                '])\n'
+                '@pytest.mark.parametrize("w", ["a", "b", "c"])\n'
+                "def test_{}_is_handled(v, w):\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+        path = stage2.TESTS / "test_runner_conformance.py"
+
+        counted, _ = stage2._conditionally_marked_cases([path])
+
+        assert counted["test_{}_is_handled".format(keys[0])] == 3
+
+    def test_a_list_referred_to_by_name_is_not_counted_as_zero_marks(
+            self, tmp_path, monkeypatch):
+        """The limitation, stated as a test rather than only in a docstring.
+
+        `@pytest.mark.parametrize("w", CASES)` puts an `ast.Name` where the
+        list should be, and no reader that does not execute the file can say
+        how many cases it holds. Stacked with a decorator that *does* carry a
+        conditional marker, the product has an unknown factor and no honest
+        number exists — so the name comes back as uncountable and the call
+        site refuses to credit it, the way `_passing_test_names` returns None
+        rather than an empty set.
+
+        With the fix reverted the unreadable decorator contributes nothing at
+        all, the count is 1 against 2 recorded passes, and the probe returns
+        `done` — both generated cases being xpasses.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n'
+                'CASES = ["a", "b"]\n\n\n'
+                '@pytest.mark.parametrize("v", [\n'
+                '    pytest.param("m", marks=pytest.mark.xfail(reason="known")),\n'
+                '])\n'
+                '@pytest.mark.parametrize("w", CASES)\n'
+                "def test_{}_is_handled(v, w):\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == PARTIAL
+
+    def test_a_list_referred_to_by_name_alone_keeps_what_it_has(
+            self, tmp_path, monkeypatch):
+        """The other half of the limitation, and it must not become a refusal.
+
+        `CASES` here holds the xfail-marked value itself, and this reader sees
+        none of it — measured 2026-09-09: `1 passed, 1 xpassed`, and the
+        source shows an `ast.Name`. The scenario keeps the coverage it has and
+        gains none. Refusing it instead would invent a gap for every test in
+        the repository that builds its cases in a module-level list, which is
+        a common and blameless thing to do.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n'
+                'CASES = [\n'
+                '    pytest.param("m", marks=pytest.mark.xfail(reason="known")),\n'
+                '    "plain",\n'
+                ']\n\n\n'
+                '@pytest.mark.parametrize("v", CASES)\n'
+                "def test_{}_is_handled(v):\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    def test_tuple_values_and_an_ids_list_are_still_read(
+            self, tmp_path, monkeypatch):
+        """`parametrize("a,b", [(1, 2), pytest.param(3, 4, marks=…)], ids=[…])`.
+
+        Two shapes in one, both of which the repair has to survive: the marked
+        entry is one element of a list whose other element is a tuple, and the
+        decorator carries a third argument. Reading `args[1]` rather than
+        walking the whole decorator is what makes `ids=` harmless; counting
+        the list's top-level elements is what makes the tuple harmless.
+        Measured 2026-09-09: two cases, `1 passed, 1 xpassed`, count 1, and
+        the unmarked case carries the scenario.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("a,b", [\n'
+                '    (1, 2),\n'
+                '    pytest.param(3, 4, marks=pytest.mark.xfail(reason="k")),\n'
+                '], ids=["plain", "marked"])\n'
+                "def test_{}_is_handled(a, b):\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+        path = stage2.TESTS / "test_runner_conformance.py"
+
+        counted, _ = stage2._conditionally_marked_cases([path])
+
+        assert counted["test_{}_is_handled".format(keys[0])] == 1
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    def test_a_skipped_parameter_is_not_subtracted_twice(
+            self, tmp_path, monkeypatch):
+        """Adjudicated by Codex on 2026-09-09, on the question this repository
+        recorded rather than decided.
+
+        The junit report gives a skipped case a `<skipped>` child, so it never
+        enters the pass count — and the source marker was subtracted from that
+        count as well. One `skip`-marked value stacked with three plain ones
+        generates six cases: three genuinely skipped and three genuine
+        unconditional passes. The old rule counted 3 conditional against 3
+        recorded passes, `3 > 3` is false, and the scenario read uncovered
+        although three unconditional cases passed.
+
+        Only `xfail` needs the subtraction, because only an xpass is written
+        into the report exactly as a pass is. The runtime result decides the
+        rest.
+
+        Codex again, on the first version of this test: it put only the
+        skipped value in the list, so the file generated three skipped cases
+        and **no passes**, and `PARTIAL` came out under the old rule and the
+        new one alike. A test that cannot tell the two apart proves nothing
+        about either. The list carries an unmarked value beside the skipped
+        one now, and the expected answer is `DONE`.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("v", [\n'
+                '    "plain",\n'
+                '    pytest.param("m", marks=pytest.mark.skip(reason="known")),\n'
+                '])\n'
+                '@pytest.mark.parametrize("w", ["a", "b", "c"])\n'
+                "def test_{}_is_handled(v, w):\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        # Six cases: three skipped, three unconditional passes. The old rule
+        # counted 3 conditional against those 3 passes, `3 > 3` is false, and
+        # the scenario read uncovered.
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    def test_an_xfail_that_did_not_fire_still_counts_as_coverage(
+            self, tmp_path, monkeypatch):
+        """Codex, 2026-09-09: the same false negative as `skipif(False)`, one
+        marker along. `xfail(False, reason=…)` does not fire, the case runs as
+        an ordinary one and is recorded as a plain pass — and the marker was
+        subtracted from that pass anyway.
+
+        Only a literal is read. A condition written as a name is settled at
+        import time and stays conditional, which understates coverage rather
+        than inventing it.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("v", [\n'
+                '    pytest.param("m",\n'
+                '                 marks=pytest.mark.xfail(False, reason="no")),\n'
+                '])\n'
+                "def test_{}_is_handled(v):\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    def test_an_xfail_written_as_a_keyword_condition_is_read_too(
+            self, tmp_path, monkeypatch):
+        """`condition=False` is the same marker spelled the other way, and a
+        reader that saw only the positional form would let it through."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.xfail(condition=False, reason="no")\n'
+                "def test_{}_is_handled():\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    @pytest.mark.parametrize("marks, body", [
+        ('pytest.mark.xfail(reason="k", strict=True)', "assert v == 'plain'"),
+        ('pytest.mark.xfail(reason="k", run=False)', "assert True"),
+    ])
+    def test_an_xfail_the_report_can_flag_is_not_subtracted(
+            self, tmp_path, monkeypatch, marks, body):
+        """Found here on 2026-09-09, measuring the seven xfail spellings
+        through real pytest rather than reasoning about them.
+
+        The subtraction exists for one spelling only: a non-strict `xfail`
+        whose test passes is written into the junit report with no child, the
+        same as an ordinary pass. `strict=True` makes that case a `<failure>`
+        and `run=False` makes it `<skipped>`, so neither ever enters the pass
+        count — and subtracting its marker from that count as well is the
+        double penalty Codex adjudicated away for `skip`, one marker along.
+
+        Measured beside a plain parameter that did pass: one recorded pass
+        against one counted conditional case, `1 > 1` false, uncovered although
+        an unconditional case passed.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        source = ('import pytest\n\n\n'
+                  '@pytest.mark.parametrize("v", [\n'
+                  '    "plain",\n'
+                  '    pytest.param("m", marks={}),\n'
+                  '])\n'
+                  "def test_{}_is_handled(v):\n    {}\n\n\n".format(
+                      marks, keys[0], body))
+        source += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(k)
+                          for k in keys[1:])
+        self.stub(tmp_path, monkeypatch, source)
+
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
+    def test_an_xfail_with_no_condition_still_disqualifies(
+            self, tmp_path, monkeypatch):
+        """The control. A bare `xfail` fires, its xpass is written into the
+        report exactly like a pass, and it must not establish coverage — which
+        is the whole reason the subtraction exists."""
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.xfail(reason="known")\n'
+                "def test_{}_is_handled():\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == PARTIAL
+
+    def test_a_skipif_that_did_not_fire_still_counts_as_coverage(
+            self, tmp_path, monkeypatch):
+        """The other half, and the one the old rule got wrong in the direction
+        that invents a gap: `skipif(False)` runs and is recorded as a plain
+        pass. Refusing it coverage denies a test that really did execute.
+        """
+        keys = list(stage2.CONFORMANCE_SCENARIOS)
+        body = ('import pytest\n\n\n'
+                '@pytest.mark.parametrize("v", [\n'
+                '    pytest.param("m",\n'
+                '                 marks=pytest.mark.skipif(False, reason="no")),\n'
+                '])\n'
+                "def test_{}_is_handled(v):\n    assert True\n\n\n".format(
+                    keys[0]))
+        body += "".join("def test_{}_is_handled():\n    pass\n\n\n".format(key)
+                        for key in keys[1:])
+        self.stub(tmp_path, monkeypatch, body)
+
+        assert stage2.probe_conformance(self.Running()).state == DONE
+
     def test_all_thirteen_passing_is_still_done(self, tmp_path, monkeypatch):
         """The control, and it has to run for the fix to mean anything: an
         under-count here would read as the same refusal as a real gap."""
@@ -1261,3 +1663,96 @@ class TestAGreenExitCodeIsNotATestHavingRun:
         passed, _summary = stage2._pytest([path], run=True)
 
         assert passed is True
+
+
+class TestTheTwoConfinementGuaranteesAreRunApart:
+    """Point 4 is two guarantees and its docstring says they are counted
+    separately. The separate counting was applied to *existence* only: `have`
+    asked whether each group has a file, and then both groups went into one
+    `_from_tests` call — one pytest run, one verdict, and the ambient tests
+    answering for a denial group with none of its own.
+
+    Measured 2026-09-09 with two stub files: the denial group alone gives
+    `broken · 2 skipped — no test passed`, the two merged give
+    `done · 2 passed, 2 skipped`. So the half with zero passing tests printed
+    `done  tool confinement  2/2`. Latent — no such marker is in `tests/`.
+    """
+
+    class Running:
+        tests = True
+        full = False
+
+    AMBIENT = ('"""ClaudeCodeRunner must not read an ambient CLAUDE.md."""\n\n\n'
+               "def test_ambient_config_cannot_reach_the_model():\n"
+               "    assert True\n")
+    DENIAL_ALIVE = ('"""ClaudeCodeRunner passes disallowedTools."""\n\n\n'
+                    "def test_a_denied_tool_is_denied():\n    assert True\n")
+    DENIAL_SKIPPED = (
+        "import pytest\n\n"
+        '"""ClaudeCodeRunner passes disallowedTools."""\n\n\n'
+        '@pytest.mark.skip(reason="left behind after a rewrite")\n'
+        "def test_a_denied_tool_is_denied():\n    assert True\n")
+    AMBIENT_SKIPPED = (
+        "import pytest\n\n"
+        '"""ClaudeCodeRunner must not read an ambient CLAUDE.md."""\n\n\n'
+        '@pytest.mark.skip(reason="left behind after a rewrite")\n'
+        "def test_ambient_config_cannot_reach_the_model():\n    assert True\n")
+
+    def stub(self, tmp_path, monkeypatch, ambient, denial):
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_ambient.py").write_text(ambient, encoding="utf-8")
+        (tests / "test_denial.py").write_text(denial, encoding="utf-8")
+        monkeypatch.setattr(stage2, "TESTS", tests)
+
+    def test_a_denial_group_with_no_passing_test_is_not_confinement_done(
+            self, tmp_path, monkeypatch):
+        self.stub(tmp_path, monkeypatch, self.AMBIENT, self.DENIAL_SKIPPED)
+
+        result = stage2.probe_confinement(self.Running())
+
+        assert result.state == BROKEN
+        assert "tool denial" in result.detail
+        # And not the half that is fine. A line that says "broken" without
+        # saying which guarantee sends the reader to the passing tests.
+        assert "ambient config" not in result.detail
+
+    def test_an_ambient_group_with_no_passing_test_is_caught_too(
+            self, tmp_path, monkeypatch):
+        """The merge hid whichever half was silent, not one nominated half."""
+        self.stub(tmp_path, monkeypatch, self.AMBIENT_SKIPPED,
+                  self.DENIAL_ALIVE)
+
+        result = stage2.probe_confinement(self.Running())
+
+        assert result.state == BROKEN
+        assert "ambient config" in result.detail
+
+    def test_both_guarantees_passing_is_still_done(self, tmp_path, monkeypatch):
+        """The control. It passes either way, and is here so the fix cannot be
+        the blunt one — a probe that reported BROKEN unconditionally would
+        satisfy the two tests above and take a green row off the tracker."""
+        self.stub(tmp_path, monkeypatch, self.AMBIENT, self.DENIAL_ALIVE)
+
+        result = stage2.probe_confinement(self.Running())
+
+        assert result.state == DONE
+        assert "2/2" in result.detail
+
+
+def test_scenarios_named_by_survives_being_handed_an_iterator():
+    """It walks its argument once per scenario key and `any` short-circuits, so
+    a generator is consumed a few names at a time and every key after the first
+    is asked of the remainder.
+
+    Found 2026-09-09 while writing the parameter-marker repair: a first draft
+    passed a generator and got 13/13 where 12/13 was right — the leftovers
+    happened to line up — then 0/13 on the next file. Every current caller
+    passes a set, so it was latent; the contract is invisible at the call site,
+    which is why it is made impossible at the definition instead.
+    """
+    keys = list(stage2.CONFORMANCE_SCENARIOS)
+    names = ["test_{}_is_handled".format(key) for key in keys]
+
+    assert stage2._scenarios_named_by(iter(names)) == keys
+    assert stage2._scenarios_named_by(name for name in names) == keys

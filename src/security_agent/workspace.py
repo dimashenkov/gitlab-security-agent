@@ -518,6 +518,124 @@ class Workspace:
             )
         return target
 
+    def hidden_by_rules(self) -> Tuple[List[str], List[str]]:
+        """(hidden by an exclude rule, left out by `--path`), deletions too.
+
+        `changed_files` and `changed_objects` both apply the two filters as
+        they read, so a path a rule covers is gone before anything can record
+        that a rule covered it. `out_of_scope` was filled from
+        `all_changed_files`, which is `--diff-filter=ACMRT` — so a *deletion*
+        a rule hid appeared in no field of `Coverage` at all, and
+        `Coverage.excluded` was declared, serialised and never assigned by
+        anybody. Measured and recorded on 2026-09-09, built the same day.
+
+        The argument for recording it is the one `out_of_scope`'s own
+        docstring already makes: a scoped review that reports "no findings"
+        without saying what it did not look at is the same sentence as a full
+        review that found nothing. An operator who excludes `vendor/` has said
+        not to *review* it; nothing in that says the artifact should be unable
+        to mention that a file there was deleted.
+
+        Order matters and matches `changed_files`: `is_excluded` is asked
+        first, so a path that is both excluded and out of scope is reported
+        once, as excluded. Two lists that overlap would be counted twice by
+        anybody who added them.
+        """
+        saved_excludes, saved_scope = self.excludes, self.scope
+        self.excludes, self.scope = (), ()
+        try:
+            every = [obj.path for obj in self.changed_objects()]
+        except WorkspaceError:
+            # A line in a report, not a gate. A git invocation that fails here
+            # must not take down a review that has already been done — the
+            # same rule `inventory_notes` follows.
+            return [], []
+        finally:
+            self.excludes, self.scope = saved_excludes, saved_scope
+        excluded = [path for path in every if self.is_excluded(path)]
+        out_of_scope = [path for path in every
+                        if not self.is_excluded(path)
+                        and not self.in_scope(path)]
+        return excluded, out_of_scope
+
+    def refuse_untrusted_attributes(self) -> None:
+        """Refuse to run when an attributes file outranks the pinned source.
+
+        `--attr-source` pins where git reads the *tree's* `.gitattributes`, and
+        that closes the route a merge request can reach: a `*.py -diff` line
+        committed beside the weakness made every changed file look binary, so
+        the diff the model read was `Binary files … differ`, `search` returned
+        zero, and the finding was filed pre-existing and never verified.
+
+        `$GIT_DIR/info/attributes` is not in the tree and `--attr-source` does
+        not cover it. Git consults it with higher precedence than the tree, so
+        one line there reproduces the whole effect. Named by Codex on
+        2026-09-07 as the part that was not closed, and built 2026-09-09.
+
+        It is **not** reachable through a merge request — nothing a contributor
+        pushes lands in `$GIT_DIR` — so this is not a hole in the product's
+        threat model. It is a statement about the runner: the job wants a fresh
+        git directory, and if it has not got one, this review cannot say what
+        it read. Refusing is the honest answer and it exits 2, "the check did
+        not run", rather than 0.
+
+        **Only the attributes that can do it.** The first version refused any
+        file with a non-blank line in it, so a comment, or an ordinary
+        `export-ignore`, exited 2 on a repository nothing was wrong with.
+        Codex, 2026-09-09: immediately reachable in a legitimate developer or
+        CI checkout. That is the gate-that-fires-on-nothing this file's own
+        comments warn about, written two paragraphs under one of them — and a
+        gate that fires on nothing is deleted rather than obeyed, which costs
+        the real route as well.
+
+        So the line has to set an attribute that changes what git calls
+        diffable: `diff` in any spelling, `text`, or the `binary` macro, which
+        expands to `-diff -text`. Comments, blanks and everything else pass.
+
+        Empty is allowed for the same reason. A zero-byte file sets no
+        attribute at all.
+        """
+        # **Asked of git, not assembled.** `--absolute-git-dir` in a linked
+        # worktree is that worktree's own administrative directory, while git
+        # resolves shared paths like `info/attributes` through the *common*
+        # directory — so a harmful file there still reached git while this
+        # guard read a path that does not exist and returned quietly. Codex,
+        # 2026-09-09. `--git-path` answers where git will actually look, which
+        # is the only question this check is asking.
+        try:
+            located = self.git("rev-parse", "--path-format=absolute",
+                               "--git-path", "info/attributes").strip()
+        except WorkspaceError:
+            # Not a repository, or git cannot answer. That is somebody else's
+            # error to report, and reporting it here as "untrusted attributes"
+            # would send the reader looking for a file that does not exist.
+            return
+        if not located:
+            return
+        path = Path(located)
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise WorkspaceError(
+                "{} exists and could not be read ({}). It outranks the pinned "
+                "attribute source, so what git will call binary cannot be "
+                "established, and neither can what this review read."
+                .format(path, exc)) from exc
+        setting = _first_diff_attribute(body)
+        if setting is None:
+            return
+        raise WorkspaceError(
+            "{} sets a diff attribute for this repository — {!r} — and it "
+            "outranks the pinned attribute source. Such a line can make every "
+            "changed file look binary: the diff becomes 'Binary files … "
+            "differ', searches return nothing, and findings are filed as "
+            "pre-existing without being verified. Nothing a merge request can "
+            "push reaches this file — it is the runner's own state. Give the "
+            "job a fresh git directory, or remove that line, and run again."
+            .format(path, setting))
+
     def repo_path(self, relative: str) -> str:
         """Normalise a path from the model for addressing the git tree.
 
@@ -1457,7 +1575,46 @@ class Workspace:
             ("git", "-C", str(self.root), "cat-file", "-t", "{}:{}".format(rev, rel)),
             capture_output=True, text=True, check=False, env=_git_env(),
         )
-        if kind.returncode != 0 or kind.stdout.strip() != "blob":
+        # **"The path is not there" and "git refused" were one value, and the
+        # consequence fell on the model.** Both became `None`, `_blob_at` turned
+        # that into `FileNotAtRevision`, and a real `critical` was rejected as
+        # `unknown-path` with the reviewer told "do not report this finding
+        # again" — over a git failure. The terminal prints one hard-coded
+        # reason for every rejection, so the only trace in the job log blamed
+        # the model. Found 2026-09-09.
+        #
+        # Measured rather than assumed, because the two are distinguishable and
+        # only in stderr:
+        #
+        #     HEAD:nope.py       rc=128  fatal: path 'nope.py' does not exist
+        #     HEAD:untracked.py  rc=128  fatal: path '…' exists on disk, but
+        #                                not in 'HEAD'
+        #     nosuchrev:app.py   rc=128  fatal: invalid object name
+        #     HEAD:app.py        rc=0    blob
+        #
+        # The first two are answers about the file — it is not in the revision,
+        # which is exactly what this method is asked. The third is this tool
+        # failing to look, and it exits 2 rather than accusing anybody.
+        #
+        # The second was found by the suite one minute after the first version
+        # of this went in: it refused an untracked file as a git failure, which
+        # would turn "you are reading the disk, not the revision" — a real and
+        # deliberate refusal — into "the check did not run".
+        #
+        # Checked against a shallow clone, because every GitLab runner makes
+        # one: a real blob answers, a path that never existed answers `None`,
+        # and a revision the clone does not carry refuses — which is right, and
+        # is the whole distinction. That last case is guarded upstream anyway;
+        # `_resolve_range` raises on a base outside the clone before any
+        # citation is checked.
+        if kind.returncode != 0:
+            reason = kind.stderr or ""
+            if "does not exist" in reason or "but not in" in reason:
+                return None
+            raise WorkspaceError(
+                "git could not say what {!r} is at {}: {}".format(
+                    rel, rev, (kind.stderr or "").strip() or "no message"))
+        if kind.stdout.strip() != "blob":
             return None
 
         proc = subprocess.run(
@@ -1465,7 +1622,14 @@ class Workspace:
             capture_output=True, text=True, check=False, env=_git_env(),
         )
         if proc.returncode != 0:
-            return None
+            # It was a blob one call ago. Anything failing now is the tool, not
+            # the file — the object cannot have stopped existing in between,
+            # and reporting it as absent would blame the change for a broken
+            # repository.
+            raise WorkspaceError(
+                "git could not size {!r} at {}, having just called it a blob: "
+                "{}".format(rel, rev,
+                            (proc.stderr or "").strip() or "no message"))
         try:
             return int(proc.stdout.strip())
         except ValueError:
@@ -1737,6 +1901,26 @@ class Workspace:
         # qualifier: the same defect, two lines lower. Found by writing the
         # test for the fix rather than by reading it.
         self.last_search_truncated = False
+        # **What the caller may record as read, taken from the records rather
+        # than from the rendered answer.** `tools._paths_in_search` scanned the
+        # body for `path:digits:`, and the body of a no-match answer begins
+        # with the pattern echoed back — so
+        # `search_code(pattern="zzzznotpresent:1:")` matched nothing anywhere
+        # and recorded an exposure for a "file" named
+        # `no matches for 'zzzznotpresent`. Measured 2026-09-07, repaired
+        # 2026-09-09.
+        #
+        # The cost is not a wrong list. `exposures` is the record of what
+        # reached the reviewer, and `gate._reviewed_nothing` is exactly
+        # `not outcome.exposures` — so a run whose only tool call was a
+        # no-match search with a colon-and-digits pattern looked like a run
+        # that had read something, and walked past the branch that refuses a
+        # review which opened nothing.
+        #
+        # Cleared here for the same reason `last_search_truncated` is: this
+        # method returns early in three places, and a value written only at the
+        # successful exit is the previous search's answer.
+        self.last_search_paths: Tuple[str, ...] = ()
         if not pattern.strip():
             raise WorkspaceError("pattern must not be empty")
         max_results = max(1, min(max_results, 300))
@@ -1791,7 +1975,11 @@ class Workspace:
         # 2026-09-07, and measured on a built repository rather than reasoned
         # about. The defect is older than this change: `total = len(hits)` has
         # counted context since context was added.
-        total = sum(1 for _, matched in records if matched)
+        total = sum(1 for _, matched, _path in records if matched)
+        # Every record's file, matched or context: a context line is in the
+        # conversation exactly as a matched one is, and `exposures` records
+        # what reached the reviewer rather than what interested it. Order
+        # preserved, duplicates dropped, so the list reads as the answer does.
         if total == 0:
             # `truncated` before the count. A search that ran out of time
             # before keeping a single line kept zero lines, and the zero branch
@@ -1850,7 +2038,7 @@ class Workspace:
         end = len(records)
         kept = 0
         used = 0
-        for position, (line, matched) in enumerate(records):
+        for position, (line, matched, _path) in enumerate(records):
             if used + len(line) + 1 > MAX_OUTPUT_CHARS or (
                     matched and kept == max_results):
                 end = position
@@ -1863,7 +2051,13 @@ class Workspace:
         # which is what the note below subtracts from. The two used to be
         # computed at different times over different things, and that is the
         # whole of the defect.
-        body = "\n".join(line for line, _ in shown)
+        body = "\n".join(line for line, _matched, _path in shown)
+        # **The paths of the lines actually shown**, set here rather than
+        # over every record read: `max_results` and the character ceiling
+        # both cut, and a file whose only lines were dropped never reached
+        # the reviewer. `exposures` records what reached it.
+        self.last_search_paths = tuple(
+            dict.fromkeys(path for _line, _matched, path in shown))
         # **Three different facts, and a search can be all three at once.**
         # These were mutually exclusive branches, with `truncated` first, and
         # that hid the one the reader most needs: measured on this repository,
@@ -1951,7 +2145,11 @@ class Workspace:
         """Run `git grep` and stop reading at the ceiling.
 
         Returns (kept records, whether more were left unread). A record is
-        `(rendered line, whether that line matched)`. Excluded paths are
+        `(rendered line, whether that line matched, the file it came from)`.
+        The path is carried rather than parsed back out of the rendered
+        line: `tools._paths_in_search` did that, and the body of a no-match
+        answer echoes the pattern, so a search for `zzzz:1:` recorded a file
+        that does not exist as having been read. Excluded paths are
         filtered as the lines arrive, so an excluded directory cannot fill the
         budget with output that would have been discarded anyway.
 
@@ -2041,7 +2239,8 @@ class Workspace:
                 number = record.line.decode("ascii")
                 text = _window_around(record, self._decode_record)
                 hits.append(("{}:{}:{}".format(path, number, text),
-                             record.column is not None or not with_context))
+                             record.column is not None or not with_context,
+                             path))
                 size += len(path) + len(number) + len(text) + 3
                 # Twice the rendered ceiling: enough that `max_results` and the
                 # character trim still have something to choose from, bounded
@@ -2242,6 +2441,66 @@ def _parse_numstat(raw: str):
 MODE_SUBMODULE = "160000"
 MODE_SYMLINK = "120000"
 MODE_ABSENT = "000000"
+
+
+# The attributes that decide whether git shows a file's contents. `binary` is
+# a macro for `-diff -text`, and `diff` may be set, unset, unspecified or
+# pointed at a driver — every spelling of it changes what a review can read.
+# Nothing else in an attributes file can, which is why the list is short and
+# why refusing on anything outside it was a gate that fired on nothing.
+_DIFF_ATTRIBUTES = frozenset({"diff", "text"})
+
+# `binary` is git's own macro and expands to `-diff -text` — but **only when it
+# is set**. `-binary`, `!binary` and `binary=anything` do not invoke the macro
+# and hide nothing, and the first version of this reduced every token to its
+# name before testing it, so all three exited 2 on a checkout nothing was wrong
+# with. Codex, 2026-09-09. The macro is therefore matched as the bare word.
+_BINARY_MACRO = "binary"
+
+
+def _first_diff_attribute(body: str) -> Optional[str]:
+    """The first line of an attributes file that changes what git will show.
+
+    `None` when no line does. Comments and blanks are skipped, the leading
+    pattern is dropped, and each remaining token is reduced to its attribute
+    name: `-diff`, `!diff` and `diff=driver` are all `diff`.
+
+    Written 2026-09-09 after the first version of `refuse_untrusted_attributes`
+    refused any non-blank file at all — so a comment, or an ordinary
+    `* export-ignore`, exited 2 on a repository nothing was wrong with.
+
+    Eleven shapes were measured against git itself and none is missed: a plain
+    `-diff`, a macro defined and used in the same file, tabs, trailing space, a
+    comment before a harmful line, and the harmless ones that used to be
+    refused.
+
+    **The macro shape is measured and the pin closes it.** A `[attr]` macro
+    defined in the *tree's* `.gitattributes` and only *used* here — `*.py
+    hidden` — puts no dangerous token in this file, so this predicate lets it
+    through, and that is correct: run through `Workspace.diff`, which pins
+    `--attr-source` to the empty tree, the macro is undefined and the diff
+    comes back readable. The same macro **defined and used in this file** does
+    hide it, and is refused, because the definition carries `-diff`.
+
+    Established on the second attempt. The first harness ran a hand-rolled
+    `git diff --attr-source` with `check=False` and read only stdout, so a git
+    that refused the flag returned an empty string and "the diff is hidden" was
+    true for every case including the control — a measurement with no control
+    is what let a claim of a gap be made and then withdrawn. The second uses
+    the product's own reader and a case where nothing is set anywhere.
+    """
+    for line in (body or "").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        tokens = stripped.split()[1:]
+        for token in tokens:
+            if token == _BINARY_MACRO:
+                return stripped
+            name = token.lstrip("-!").split("=", 1)[0]
+            if name in _DIFF_ATTRIBUTES:
+                return stripped
+    return None
 
 
 def _parse_raw(raw: str):

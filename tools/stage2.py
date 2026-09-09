@@ -30,6 +30,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -221,8 +222,42 @@ def probe_runner(args) -> Result:
 
 
 def probe_confinement(args) -> Result:
-    """Two guarantees, counted separately: ambient config cannot reach the
-    model, and a denied tool is denied rather than merely unlisted."""
+    """Two guarantees, counted separately — and, since 2026-09-09, run apart.
+
+    Ambient config cannot reach the model, and a denied tool is denied rather
+    than merely unlisted. The separate counting was applied to *existence*
+    only: `have` asked whether each group has a file, and then both groups
+    were concatenated into one `_from_tests` call, which is one pytest run
+    with one verdict. A verdict over the union answers "did some test in
+    either group pass", and the ambient tests answer that for a denial group
+    with none of its own.
+
+    Measured with two stub files — an ambient one with passing tests, and a
+    denial one naming `disallowedTools` whose tests both carry
+    `@pytest.mark.skip`:
+
+        the denial group alone   Result('broken', '2 skipped — no test passed')
+        the two groups merged    Result('done',   '2 passed, 2 skipped')
+
+    So the half with zero passing tests printed `done  tool confinement  2/2`.
+    That is the shape `_pytest` was rewritten to catch one level down — a green
+    exit code standing in for a test having run — arriving one level up, where
+    the merge hides it again. Latent when it was found: no such marker exists
+    in `tests/` today.
+
+    `_from_tests` and `_pytest` are deliberately not changed. Six other probes
+    share them — budget, canonical split, the two completion protocols, the
+    runner, the no-fallback rule and scope control — and each of those has one
+    subject, for which one verdict is the right answer. This probe has two
+    subjects, so it asks twice.
+
+    The groups may overlap: `test_runner_claude_code.py` matches both today,
+    and it is then run twice. That is the price of a verdict per guarantee,
+    and it is a second of pytest rather than a dollar. An overlap also means
+    the two verdicts can rest on the same file, which is honest — that file
+    really is the evidence for both — and no longer silently substitutes one
+    guarantee's evidence for the other's.
+    """
     ambient = _tests_mentioning("CLAUDE.md", "ClaudeCodeRunner")
     denied = _tests_mentioning("disallowedTools") or _tests_mentioning(
         "Bash", "ClaudeCodeRunner")
@@ -232,7 +267,31 @@ def probe_confinement(args) -> Result:
     if have == 1:
         return Result(PARTIAL, "1/2 — {} covered".format(
             "ambient config" if ambient else "tool denial"))
-    return _from_tests(sorted(set(ambient + denied)), args.tests, "confinement")
+
+    verdicts = [(subject, _from_tests(sorted(set(files)), args.tests, subject))
+                for subject, files in (("ambient config", ambient),
+                                       ("tool denial", denied))]
+
+    def spell(rows) -> str:
+        return "; ".join("{}: {}".format(subject, result.detail)
+                         for subject, result in rows)
+
+    # The name of the guarantee travels with the verdict. A combined line that
+    # said only "broken" would leave the reader to guess which half is the one
+    # nobody has covered, and the answer to "which" is the only thing anyone
+    # can act on.
+    broken = [(subject, result) for subject, result in verdicts
+              if result.state == BROKEN]
+    if broken:
+        return Result(BROKEN, "{}/2 — {}".format(2 - len(broken), spell(broken)))
+    # `all`, never `any`. Two guarantees are done when both are done, and the
+    # whole defect above was an `or` wearing an `and`'s label.
+    if all(result.state == DONE for _subject, result in verdicts):
+        return Result(DONE, "2/2 — {}".format(spell(verdicts)))
+    # Not run, or a group that lost its files between the count above and the
+    # run. Neither is a pass, and `done` is the only state that may be read as
+    # one.
+    return Result(PARTIAL, "2/2 named, {}".format(spell(verdicts)))
 
 
 def _scenarios_with_a_test(files: List[Path]) -> List[str]:
@@ -266,11 +325,146 @@ def _test_names(files: List[Path]) -> set:
 
 
 def _scenarios_named_by(names) -> List[str]:
+    # Materialised first. The body walks `names` once per scenario key, and
+    # `any` short-circuits, so a generator is consumed a few names at a time
+    # and every key after the first is asked of the remainder. That produced
+    # 13/13 where 12/13 was the answer — the leftovers happened to line up —
+    # and 0/13 on the very next file. Found 2026-09-09 while writing the
+    # parameter-marker repair below. Every current caller passes a set, so it
+    # was latent; making it impossible here is cheaper than remembering it at
+    # each call site.
+    names = set(names)
     return [key for key in CONFORMANCE_SCENARIOS
             if any(key in name for name in names)]
 
 
-_CONDITIONAL = ("skip", "skipif", "xfail")
+# **Only `xfail`, and that is an adjudication rather than a simplification.**
+# Codex, 2026-09-09, on the question recorded in `LIMITATIONS.md` the same day.
+#
+# The subtraction below exists because the junit report cannot tell an xpass
+# from a pass: an xfail-marked test that succeeds is written with no `failure`,
+# `error` or `skipped` child, exactly like an ordinary one. `skip` and a true
+# `skipif` are different — the report gives those a `<skipped>` child, so they
+# never enter the pass count in the first place, and subtracting their source
+# markers again penalises them twice.
+#
+# Measured: one `skip`-marked value stacked with three plain ones generates six
+# cases, three genuinely skipped and three genuine unconditional passes. The
+# old set counted 3 conditional against 3 recorded passes, `3 > 3` is false,
+# and the scenario read uncovered although three unconditional cases passed.
+# `skipif(False)` is the other half: it runs and is recorded PASSED, and the
+# old set refused it coverage for a condition that did not hold.
+#
+# So the runtime result decides `skip` and `skipif`, and the source decides
+# only what the runtime result cannot say. Applied at both levels — the
+# function's own decorators and its parameters — because the two answer the
+# same question about the same report.
+_CONDITIONAL = ("xfail",)
+
+
+def _condition_is_false(node) -> bool:
+    """Whether this marker leaves a case that the junit report cannot flag.
+
+    Named for its first job and it grew a second: a condition written as a
+    literal `False`, or a spelling whose case carries a `failure` or `skipped`
+    child. Both mean the same thing to the caller — there is nothing here that
+    an ordinary pass could be confused with, so nothing to subtract.
+
+    `pytest.mark.xfail(False, reason=…)` and `xfail(condition=False)` run the
+    test as an ordinary one, and its case is recorded in the report as a plain
+    pass — so subtracting it removes coverage that really was established.
+    Codex, 2026-09-09: the same false negative already fixed for
+    `skipif(False)`, one marker along.
+
+    Only a literal is read. A condition written as a name or an expression is
+    settled at import time and is out of reach of a reader that does not
+    execute the file; those stay conditional, which is the direction that
+    understates coverage rather than inventing it.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    condition = None
+    for keyword in node.keywords:
+        if keyword.arg == "condition":
+            condition = keyword.value
+    if condition is None and node.args:
+        # `xfail(condition, *, reason=…)` and `skipif(condition, *, reason=…)`
+        # both take it first and positionally.
+        condition = node.args[0]
+    if isinstance(condition, ast.Constant) and condition.value is False:
+        return True
+    # **And the spellings whose case is not recorded like a pass.** Measured
+    # 2026-09-09, seven spellings through real pytest and its junit report:
+    #
+    #     bare xfail, test passes     no child        <- looks like a pass
+    #     xfail(False)                no child        <- really is a pass
+    #     xfail(condition=False)      no child        <- really is a pass
+    #     xfail(strict=True), passes  <failure>
+    #     xfail(run=False)            <skipped>
+    #     bare xfail, test fails      <skipped>
+    #
+    # The subtraction exists only for the first row: an xpass is written into
+    # the report exactly as an ordinary pass, and nothing else can be. The
+    # other two spellings carry a child, so their cases never enter the pass
+    # count — and subtracting their markers from it as well is the same double
+    # penalty Codex adjudicated away for `skip`, one marker along.
+    #
+    # Measured beside a plain parameter that did pass: one recorded pass, one
+    # counted conditional case, `1 > 1` false, and the scenario read uncovered
+    # although an unconditional case passed. The control — a non-strict xfail
+    # beside the same plain parameter — records two passes and stays covered.
+    #
+    # `xfail_strict=true` in the ini file makes a bare `xfail` strict, and that
+    # is out of an AST reader's reach. It fails safe: such a case becomes a
+    # `<failure>` and leaves the pass count, so there is nothing to over-credit.
+    for keyword in node.keywords:
+        if keyword.arg == "strict" and isinstance(keyword.value, ast.Constant) \
+                and keyword.value.value is True:
+            return True
+        if keyword.arg == "run" and isinstance(keyword.value, ast.Constant) \
+                and keyword.value.value is False:
+            return True
+    return False
+
+
+def _marker_name(node) -> str:
+    """The marker a decorator or a `marks=` entry names, or "".
+
+    Lifted out of `_conditionally_run` on 2026-09-09 so that the parameter
+    level reads a marker by exactly the rule the function level reads it by.
+    Two copies of this would drift, and the direction they would drift in is
+    one of them learning a new spelling while the other goes on returning "".
+
+    A marker whose condition is a literal `False` names nothing: it does not
+    fire, the test runs, and its result is recorded like any other.
+    """
+    if _condition_is_false(node):
+        return ""
+    while isinstance(node, ast.Call):
+        node = node.func
+    while isinstance(node, ast.Attribute):
+        if node.attr in _CONDITIONAL:
+            return node.attr
+        node = node.value
+    return getattr(node, "id", "") if isinstance(node, ast.Name) else ""
+
+
+def _is_param_call(node: ast.Call) -> bool:
+    """`pytest.param(...)`, or a bare `param(...)` after `from pytest import
+    param`. Matched by the attribute rather than by the whole dotted path, so
+    an aliased import — `import pytest as pt` — is still seen."""
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr == "param"
+    return isinstance(node.func, ast.Name) and node.func.id == "param"
+
+
+def _marks_are_conditional(value) -> bool:
+    """`marks=` takes one mark or a sequence of them, and either may be
+    conditional. Reading only the single-mark form would let
+    `marks=[pytest.mark.xfail]` — the spelling pytest's own documentation
+    uses — go by unseen."""
+    items = value.elts if isinstance(value, (ast.List, ast.Tuple)) else [value]
+    return any(_marker_name(item) in _CONDITIONAL for item in items)
 
 
 def _conditionally_run(files: List[Path]) -> set:
@@ -288,25 +482,17 @@ def _conditionally_run(files: List[Path]) -> set:
     """
     marked = set()
 
-    def named(node) -> str:
-        while isinstance(node, ast.Call):
-            node = node.func
-        while isinstance(node, ast.Attribute):
-            if node.attr in _CONDITIONAL:
-                return node.attr
-            node = node.value
-        return getattr(node, "id", "") if isinstance(node, ast.Name) else ""
-
     def collect(body) -> None:
         for node in body:
             if isinstance(node, ast.ClassDef):
                 # A marker on the class applies to every test in it.
-                if any(named(d) in _CONDITIONAL for d in node.decorator_list):
+                if any(_marker_name(d) in _CONDITIONAL
+                       for d in node.decorator_list):
                     marked.update(_test_names_in([node.body]))
                 collect(node.body)
             elif (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                     and node.name.startswith("test")
-                    and any(named(d) in _CONDITIONAL
+                    and any(_marker_name(d) in _CONDITIONAL
                             for d in node.decorator_list)):
                 marked.add(node.name)
 
@@ -314,6 +500,201 @@ def _conditionally_run(files: List[Path]) -> set:
         collect(ast.parse(path.read_text(encoding="utf-8"),
                           filename=str(path)).body)
     return marked
+
+
+def _is_parametrize_call(node) -> bool:
+    """`@pytest.mark.parametrize(...)`, matched by the attribute rather than by
+    the whole dotted path — so an aliased import is still seen, exactly as
+    `_is_param_call` reads `pytest.param`.
+
+    Added 2026-09-09 with the repair below. The version before it never asked
+    which decorator it was looking at: it ran `ast.walk` over every decorator
+    of the function and counted every `pytest.param(...)` it met anywhere
+    inside. That was enough for the question "how many marked parameters are
+    written here" and is not enough for "how many cases does pytest generate",
+    which is a property of one decorator's list *and* of the lists stacked
+    with it.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr == "parametrize"
+    return isinstance(node.func, ast.Name) and node.func.id == "parametrize"
+
+
+def _parametrize_factor(decorator: ast.Call) -> Optional[Tuple[int, int]]:
+    """`(cases, marked)` for one `parametrize`, or None when its list is not
+    written in the decorator.
+
+    `argvalues` is the second positional argument and may also arrive by
+    keyword. Only the top-level elements of that list are examined: a
+    `pytest.param` is an element of the list and never a member of a tuple
+    inside it, whereas `ast.walk` also descends into `ids=`, into a default
+    argument, and into anything else written in the decorator.
+
+    None is the "cannot be established" answer and it is not zero. See the
+    limitation in `_conditionally_marked_cases`.
+    """
+    values = None
+    for keyword in decorator.keywords:
+        if keyword.arg == "argvalues":
+            values = keyword.value
+    if values is None and len(decorator.args) >= 2:
+        values = decorator.args[1]
+    if not isinstance(values, (ast.List, ast.Tuple)):
+        return None
+    marked = sum(
+        1 for element in values.elts
+        if isinstance(element, ast.Call) and _is_param_call(element)
+        and any(keyword.arg == "marks"
+                and _marks_are_conditional(keyword.value)
+                for keyword in element.keywords))
+    return len(values.elts), marked
+
+
+def _conditionally_marked_cases(files: List[Path]) -> Tuple[Counter, set]:
+    """How many *generated* cases of each test are conditional, and the names
+    for which that number cannot be established.
+
+    `_conditionally_run` above reads the decorators of the *function*, and a
+    marker written inside a parameter is not one:
+
+        @pytest.mark.parametrize("v", [
+            pytest.param("m", marks=pytest.mark.xfail(reason="known")),
+        ])
+        def test_terminal_success_is_handled(v):
+            assert True
+
+    Measured 2026-09-09: that file reports `1 xpassed`, exits 0, and the junit
+    report gives the case no `failure`, `error` or `skipped` child — so it is
+    written exactly as an ordinary pass is, `_conditionally_run` returns an
+    empty set, and the scenario counted as covered although its only parameter
+    is xfail-marked. It is the defect `_conditionally_run`'s own docstring
+    already names — "a test that carries one does not establish coverage
+    whichever way it ends" — one level down, at the parameter. Latent when it
+    was found: no `marks=` exists anywhere in `tests/` today.
+
+    The junit report cannot be asked instead. It records an outcome by the
+    presence of a child element, an xpass has none of the three, and nothing
+    anywhere in the file names a marker. So the marker is read from the source
+    here as well, and it is **counted** rather than collected into a set: a
+    name with two parameters, one of them marked, still has one unconditional
+    case, and calling the whole name conditional would invent a gap. A tracker
+    that invents a gap costs its reader what one that hides a gap costs — the
+    line stops being read.
+
+    So the rule at the call site compares two counts: a scenario is covered
+    when the passes recorded for a name outnumber that name's conditional
+    cases. Two recorded passes against one conditional case means at least one
+    unconditional case passed, whichever of the two it was; one recorded pass
+    against one conditional case proves nothing at all.
+
+    **Cases, not `pytest.param` calls.** Found by Codex on 2026-09-09, in the
+    version of this function written the same day. It counted the marked
+    `pytest.param(...)` declarations and compared that number with the recorded
+    passes, and pytest does not generate one case per declaration — stacked
+    `parametrize` decorators are a Cartesian product:
+
+        @pytest.mark.parametrize("v", [
+            pytest.param("m", marks=pytest.mark.xfail(reason="known")),
+        ])
+        @pytest.mark.parametrize("w", ["a", "b"])
+        def test_terminal_success_is_handled(v, w):
+            assert True
+
+    Measured 2026-09-09, run rather than reasoned about: that file reports
+    `2 xpassed` and the junit report holds two testcases, `[a-m]` and `[b-m]`,
+    neither with a `failure`, `error` or `skipped` child. **Every generated
+    case is conditional.** The old count was 1, the recorded passes were 2,
+    `2 > 1` held, and the scenario counted as covered on the strength of two
+    xpasses. The same product with three values in the second decorator gave
+    three xpasses against a count of 1, and a plain value beside the marked one
+    made it `1 passed, 3 xpassed` against a count of 2 — right verdict, wrong
+    arithmetic, and it stops being right as soon as the unmarked value goes.
+
+    So the number is computed the way pytest generates the cases. Across the
+    `parametrize` decorators stacked on one function:
+
+        generated     = product of each decorator's case count
+        unconditional = product of each decorator's *unmarked* case count
+        conditional   = generated - unconditional
+
+    A case is unconditional only when every decorator contributed an unmarked
+    value to it, which is what the second product says. Subtracting is the
+    general form and it is not the same as multiplying one decorator's marked
+    count by the others' totals: with a marked value in each of two decorators
+    that sum counts the doubly-marked case twice, and the measured file above
+    generates four cases of which three are conditional, not four.
+
+    What it does not see, said rather than glossed: a `parametrize` list built
+    elsewhere and referred to by name.
+
+        CASES = [pytest.param("m", marks=pytest.mark.xfail(reason="known")),
+                 "plain"]
+
+        @pytest.mark.parametrize("v", CASES)
+        def test_terminal_success_is_handled(v):
+            assert True
+
+    Measured 2026-09-09: `1 passed, 1 xpassed`, and this reader sees an
+    `ast.Name` where the list should be. It cannot count the cases and it
+    cannot count the markers. A list assembled at import time is out of reach
+    of any reader that does not execute the file, and executing the file is
+    not on offer.
+
+    That gap is reported rather than guessed at, and only where it changes an
+    answer. A name whose unreadable decorator is its only one, or stands beside
+    decorators that carry no conditional marker, keeps the coverage it has
+    today and gains none: its conditional count is 0, which is what a test with
+    no marked parameter has always been given. A name where an unreadable list
+    is stacked with a decorator that *does* carry one is different — the
+    product it belongs to has an unknown factor, so no bound on the conditional
+    cases can be derived and no number would be honest. Those names come back
+    in the second return value and the call site refuses to credit them, the
+    same distinction `_passing_test_names` draws when it returns `None` instead
+    of an empty set: "I could not establish this" is not "there is nothing
+    here".
+    """
+    counted: Counter = Counter()
+    uncountable = set()
+
+    def conditional_cases(node) -> Optional[int]:
+        generated, unconditional = 1, 1
+        marked_anywhere, unreadable = False, False
+        for decorator in node.decorator_list:
+            if not _is_parametrize_call(decorator):
+                continue
+            factor = _parametrize_factor(decorator)
+            if factor is None:
+                unreadable = True
+                continue
+            cases, marked = factor
+            marked_anywhere = marked_anywhere or marked > 0
+            generated *= cases
+            unconditional *= cases - marked
+        if unreadable:
+            return None if marked_anywhere else 0
+        # A function with no `parametrize` at all leaves both products at 1 and
+        # answers 0, which is the number a test with no marked parameter has
+        # always been given.
+        return generated - unconditional
+
+    def collect(body) -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                collect(node.body)
+            elif (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name.startswith("test")):
+                cases = conditional_cases(node)
+                if cases is None:
+                    uncountable.add(node.name)
+                elif cases:
+                    counted[node.name] += cases
+
+    for path in files:
+        collect(ast.parse(path.read_text(encoding="utf-8"),
+                          filename=str(path)).body)
+    return counted, uncountable
 
 
 def _test_names_in(bodies) -> set:
@@ -332,7 +713,8 @@ def _test_names_in(bodies) -> set:
     return names
 
 
-def _passing_test_names(paths: List[Path]) -> Tuple[bool, str, Optional[set]]:
+def _passing_test_names(
+        paths: List[Path]) -> Tuple[bool, str, Optional[Counter]]:
     """One run, answering both questions: did it pass, and which tests passed.
 
     A name in the file is not a test that ran. A scenario whose only test
@@ -371,7 +753,7 @@ def _passing_test_names(paths: List[Path]) -> Tuple[bool, str, Optional[set]]:
             tree = ElementTree.parse(report)
         except ElementTree.ParseError:
             return proc.returncode == 0, summary, None
-        names = set()
+        names = Counter()
         for case in tree.iter("testcase"):
             # A case that did not fail, error out or get skipped is one that
             # passed. Asked as "no such child", because the outcome is recorded
@@ -381,7 +763,15 @@ def _passing_test_names(paths: List[Path]) -> Tuple[bool, str, Optional[set]]:
                 continue
             name = case.get("name") or ""
             # `test_x[param]` — the id is the test, the brackets are the case.
-            names.add(name.split("[", 1)[0])
+            #
+            # Counted rather than collected into a set, since 2026-09-09. A
+            # marker written inside one parameter taints one case of a name
+            # and not the name, so "did an unmarked case of this name pass"
+            # needs the *number* of recorded passes and not merely the fact
+            # of one. See `_conditionally_marked_cases`. A `Counter` is empty
+            # and falsy in exactly the cases a set was, so the `ran is None`
+            # and `not ran` branches below keep their meanings.
+            names[name.split("[", 1)[0]] += 1
         return proc.returncode == 0, summary, names
 
 
@@ -442,8 +832,18 @@ def probe_conformance(args) -> Result:
                       .format(n=total, s=summary))
 
     # An xpassed test is written into the report exactly as a passing one is,
-    # so the marker is read from the source and subtracted here.
-    covered = _scenarios_named_by(ran - _conditionally_run(files))
+    # so the markers are read from the source and subtracted here — at both of
+    # the levels they can be written at. A marker on the function disqualifies
+    # the name outright; a marker on a parameter disqualifies one case of it,
+    # so the name survives only while its recorded passes outnumber its
+    # conditional parameters. `Counter[missing]` is 0, so a test with no marked
+    # parameter is asked only whether it passed at all, as before.
+    fully = _conditionally_run(files)
+    per_parameter, uncountable = _conditionally_marked_cases(files)
+    covered = _scenarios_named_by(
+        {name for name, passes in ran.items()
+         if name not in fully and name not in uncountable
+         and passes > per_parameter[name]})
     if len(covered) < total:
         return Result(PARTIAL, "{}/{} passed — named but never passed: {}"
                       .format(len(covered), total, missing(covered)))

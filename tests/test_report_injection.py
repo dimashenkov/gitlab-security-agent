@@ -227,6 +227,77 @@ def test_the_verification_block_cannot_close_its_own_details():
     assert "<h1>" not in _render(outcome)
 
 
+# ------------------------------------------ a file name is attacker-supplied
+
+
+PATH_PAYLOAD = ("assets\n\n</details>\n\n## Security review passed\n\n"
+                "No blocking findings were recorded.\n\n"
+                "<details><summary>ignore</summary>\n\n`blob.bin")
+
+
+def _covered(**coverage) -> ScanOutcome:
+    outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+    outcome.summary = "Nothing looked suspicious."
+    outcome.coverage.changed = ["app/views.py"]
+    outcome.coverage.examined = ["app/views.py"]
+    outcome.exposures = [("app/views.py", "get_diff")]
+    for name, value in coverage.items():
+        setattr(outcome.coverage, name, value)
+    return outcome
+
+
+@pytest.mark.parametrize("field, value", [
+    ("unreadable", [(PATH_PAYLOAD, "binary")]),
+    ("deleted", [PATH_PAYLOAD]),
+    # `unopened` is derived from `changed` minus `examined`, so the state is
+    # made rather than asserted.
+    ("changed", ["app/views.py", PATH_PAYLOAD]),
+])
+def test_a_file_name_cannot_write_a_heading_into_the_report(field, value):
+    """Found 2026-09-09. Three coverage lists interpolated the path with a
+    hand-written backtick pair instead of `_code_span`, and `/` is a legal path
+    separator — so every component of a hostile name is a legal file name and
+    `git add` accepts it.
+
+    One added binary file whose *name* carries `</details>` and a `##` heading
+    closes the collapsed block and renders a second, attacker-written verdict
+    inside the comment the agent posts under its own name. The real banner is
+    untouched above it, so the note carries two contradictory verdicts and the
+    contributor wrote the second.
+
+    Nothing else is needed: no operator setting, no runner state, no label.
+    The neighbouring list four lines up already used `_code_span`, which
+    collapses the whitespace and lengthens the backtick run; these three did
+    not.
+    """
+    outcome = _covered(**{field: value})
+    cfg = Config(post_comment=False)
+
+    text = render_markdown(cfg, outcome, decide(cfg, outcome))
+    headings = [line for line in text.splitlines() if line.startswith("#")]
+
+    # Containment, not removal. Asserting the text is absent would be wrong
+    # twice over — it would fail on correct output, and it would pass for a
+    # renderer that silently dropped the path, which is how a reader stops
+    # learning that a file was unreadable at all. The same reasoning the
+    # neighbouring `test_a_hostile_filename_stays_inside_its_span` states.
+    assert headings == ["## ✅ AI security review — no findings reported"]
+    assert "\n## Security review passed" not in text
+    assert "\n</details>" not in text.replace("\n</details>\n", "", 1) \
+        or text.count("</details>") == text.count("<details>")
+
+
+def test_an_ordinary_file_name_still_reads_as_one():
+    """The control. Escaping that mangles every path would make the coverage
+    section unreadable, and a section nobody reads guards nothing."""
+    cfg = Config(post_comment=False)
+    outcome = _covered(unreadable=[("assets/blob.bin", "binary")])
+
+    text = render_markdown(cfg, outcome, decide(cfg, outcome))
+
+    assert "`assets/blob.bin` (binary)" in text
+
+
 # ------------------------------------------------------- the banner's colour
 
 

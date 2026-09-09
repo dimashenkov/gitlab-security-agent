@@ -145,6 +145,7 @@ def recorded_outcomes(root: Path = MEASUREMENTS) -> dict:
     read as an outcome of the case as it stands. Closing that needs a case
     digest in the measurement rows, which the artifacts do not carry.
     """
+    stop_rule.SKIPPED.clear()
     seen = collections.defaultdict(set)
     for path in result_files(root):
         try:
@@ -170,7 +171,9 @@ def recorded_outcomes(root: Path = MEASUREMENTS) -> dict:
             # invisible: JavaScript has one eligible case and a singleton is
             # selected either way. In a language with two it would have added a
             # case, and a suite case is a paid run on every future round.
-            if not stop_rule.is_product_row(row):
+            why = stop_rule.why_not_product_row(row)
+            if why is not None:
+                stop_rule.SKIPPED[why] = stop_rule.SKIPPED.get(why, 0) + 1
                 continue
             seen[case_id].add("pass" if verdict else "fail")
 
@@ -411,6 +414,14 @@ def main() -> int:
         return 1
 
     print(render(suite), end="")
+    # Rows on disk that did not count toward a label. The suite is a claim
+    # about how this model behaves, and a row skipped in silence is a claim
+    # narrower than it looks. Not part of `render`, because the manifest is
+    # compared byte for byte by `--check` and this is about the run rather
+    # than about the suite.
+    line = stop_rule.skipped_line()
+    if line:
+        print("\n# {}".format(line))
     return 0
 
 

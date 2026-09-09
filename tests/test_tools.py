@@ -404,6 +404,38 @@ class TestExposureIsNotTheSameAsOpening:
         # Exposed, and not opened. The two lists answer different questions.
         assert "app/views.py" not in session.files_examined
 
+    def test_a_search_that_matched_nothing_exposes_nothing(self, ws):
+        """Measured 2026-09-07, repaired 2026-09-09.
+
+        The exposures were read out of the search's own rendered answer by
+        scanning it for `path:digits:` — and a no-match answer begins with the
+        pattern echoed back. So this pattern, which occurs in no file anywhere,
+        recorded a "file" called `no matches for 'zzzznotpresent` as having
+        reached the model.
+
+        The cost was not a wrong list. `gate._reviewed_nothing` is exactly
+        `not outcome.exposures`, so a run whose only tool call was this search
+        looked like a run that had read something, and walked past the branch
+        that refuses a review which opened nothing.
+        """
+        session = Session()
+        result = dispatch(ws, session, "search_code",
+                          {"pattern": "zzzznotpresent:1:"})
+
+        assert "no matches" in result.content
+        assert session.exposures == []
+
+    def test_a_pattern_shaped_like_a_result_line_exposes_only_real_files(
+            self, ws):
+        """The control. A pattern that does occur still records the file it
+        occurred in, so the test above cannot be passed by a search tool that
+        records nothing at all."""
+        session = Session()
+        dispatch(ws, session, "search_code", {"pattern": "get_user"})
+
+        assert [path for path, channel in session.exposures
+                if channel == "search_code"] == ["app/views.py"]
+
     def test_the_same_file_through_two_channels_is_two_records(self):
         """The channel is the point: it says how the model came to see it."""
         session = Session()

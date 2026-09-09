@@ -68,7 +68,7 @@ from artifact import (
 from artifact import is_target as _is_target
 
 from security_agent.config import MODEL_PRICING
-from security_agent.models import Usage
+from security_agent.models import Usage, review_performed
 
 # The class of spending a corpus review is. `run_queue.py` and `experiment.py`
 # do not bill on their own — they drive this file, one by subprocess and one by
@@ -567,7 +567,28 @@ def hits_target(payload: dict, case: dict, excused=()):
     Matched on category and file rather than on wording: the same weakness gets
     described differently every run, and grading on prose would measure
     phrasing.
+
+    **And `complete` alone was not enough.** The same defect came back by a
+    route where the exit code is 0: `_nothing_to_review` built an outcome with
+    no `stop_reason`, so the artifact said `completed` and `complete: true`
+    with no findings, and a run that examined nothing scored as a **miss**.
+    Three routes reach it — excludes hiding every file, a `--path` leaving
+    every file out, and a merge request labelled to skip the review.
+    Adjudicated by Codex on 2026-09-08, built 2026-09-09.
+
+    `review_status` is read rather than inferred, and anything but `performed`
+    is `None`. A skip is an operational disposition and not a fourth truth
+    value: the run really did complete, so calling it incomplete would be a
+    second wrong answer in place of the first.
+
+    An artifact with no `review_status` at all predates the field, and reading
+    that absence as `performed` was the first repair and was wrong — see
+    `models.review_performed`, which answers from what the run left behind
+    instead. The old skip artifact scored `False`, a miss, over a run that had
+    looked at nothing.
     """
+    if not review_performed(payload):
+        return None
     if not payload.get("complete", False):
         return None
     return any(_is_target(f, case)

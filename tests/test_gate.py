@@ -460,6 +460,93 @@ def test_a_deletion_only_change_that_nobody_read_is_not_a_pass(config):
     assert "without opening any part of the change" in decision.reason
 
 
+def test_a_repo_mode_review_that_opened_nothing_is_not_a_pass(config):
+    """The same hole, in the mode that runs on an ordinary branch pipeline.
+
+    `coverage.changed` is filled only on the diff path — both runners guard it
+    with `mode == "diff"` — so in repo mode `_readable_change` was `False`,
+    `_partial` was `False`, and this branch could not fire at all. Measured
+    2026-09-09: exit 0 and "✅ no findings reported" over a whole repository
+    nobody opened, where the identical run in diff mode exits 2.
+
+    Not a corner: `Config.resolve_mode` returns `repo` whenever the mode is
+    `auto` and there is no merge-request id, which is every ordinary branch
+    pipeline and every GitHub `push`. Every hole closed on the diff path had a
+    twin here.
+    """
+    outcome = ScanOutcome(mode="repo", summary="Nothing looked suspicious.",
+                          stop_reason=STOP_COMPLETED, finished_explicitly=True)
+    outcome.reported = []
+    outcome.exposures = []
+    outcome.coverage = Coverage(changed=[], examined=[],
+                                whole_diff_delivered=True)
+
+    decision = decide(config, outcome)
+
+    assert decision.exit_code == EXIT_ERROR
+    assert "without opening any part of the change" in decision.reason
+
+
+def test_an_exposure_outside_the_change_is_not_proof_the_change_was_read(
+        config):
+    """`_reviewed_nothing` was `not outcome.exposures` — an emptiness question
+    where the question is membership.
+
+    Measured 2026-09-09: two changed files, and the only bytes that reached the
+    reviewer came from a `search_code` that matched files outside the change.
+    Exit 0, "✅ no findings reported", over a change of which nothing was
+    delivered.
+
+    No attacker is needed. The reviewer orients with a search, the matches land
+    in unchanged files, it judges the change trivial and signs off without ever
+    calling `get_diff`.
+    """
+    outcome = ScanOutcome(mode="diff", summary="Nothing looked suspicious.",
+                          stop_reason=STOP_COMPLETED, finished_explicitly=True)
+    outcome.reported = []
+    outcome.exposures = [("README.md", "search_code"),
+                         ("docs/x.md", "search_code")]
+    outcome.coverage = Coverage(changed=["app/views.py", "app/models.py"],
+                                examined=[], whole_diff_delivered=True)
+
+    decision = decide(config, outcome)
+
+    assert decision.exit_code == EXIT_ERROR
+    assert "without opening any part of the change" in decision.reason
+
+
+def test_one_exposure_inside_the_change_is_enough(config):
+    """The control. This predicate is the sanity check that the reviewer got
+    something to read — whether it read *enough* is the completeness question,
+    answered separately and more strictly. A membership test that demanded
+    every changed file would be that other question, and would fail every
+    review that read a whole-change diff."""
+    outcome = ScanOutcome(mode="diff", summary="Nothing looked suspicious.",
+                          stop_reason=STOP_COMPLETED, finished_explicitly=True)
+    outcome.reported = []
+    outcome.exposures = [("README.md", "search_code"),
+                         ("app/views.py", "get_diff")]
+    outcome.coverage = Coverage(changed=["app/views.py", "app/models.py"],
+                                examined=[], whole_diff_delivered=True)
+
+    assert decide(config, outcome).exit_code == EXIT_OK
+
+
+def test_a_deleted_file_counts_as_part_of_the_change_for_exposure(config):
+    """A deletion cannot be opened, but its removed lines are in the diff and
+    `get_diff` records an exposure for it. It belongs to what had to be
+    accounted for."""
+    outcome = ScanOutcome(mode="diff", summary="Nothing looked suspicious.",
+                          stop_reason=STOP_COMPLETED, finished_explicitly=True)
+    outcome.reported = []
+    outcome.exposures = [("auth/guard.py", "get_diff")]
+    outcome.coverage = Coverage(changed=[], examined=[],
+                                deleted=["auth/guard.py"],
+                                whole_diff_delivered=True)
+
+    assert decide(config, outcome).exit_code == EXIT_OK
+
+
 def test_a_review_that_opened_nothing_because_nothing_changed_still_passes(
         config):
     """The control. An empty change has nothing to open, and refusing it would

@@ -33,9 +33,20 @@ TARGET = {"category": "injection", "file": "src/app/views.py",
           "severity": "high", "title": "Command injection in the target"}
 
 
+# What a run that actually reviewed something leaves behind. Stated once,
+# because a payload claiming a completed review while recording no turn, no
+# tool call and no exposure is shaped exactly like what `_nothing_to_review`
+# writes — and since 2026-09-09 it is read as one: a run nobody performed
+# rather than a reviewer that looked and found nothing. A fixture without it
+# builds a shape production emits only on the path this scorer must refuse.
+REVIEWED = {"turns": 1, "tool_calls": [{"tool": "get_diff"}],
+            "exposures": [["src/app/views.py", "get_diff"]]}
+
+
 def payload(*findings, complete=True, stop_reason="completed") -> dict:
     return {"complete": complete, "stop_reason": stop_reason,
-            "findings": list(findings), "verdict": {"exit_code": 0}}
+            "findings": list(findings), "verdict": {"exit_code": 0},
+            "coverage": REVIEWED}
 
 
 # ------------------------------------------------- the three-valued answer
@@ -268,7 +279,8 @@ def test_the_stored_row_keeps_the_citation_a_ruling_is_made_from(
     usage = dict.fromkeys(("input_tokens", "output_tokens",
                            "cache_read_tokens", "cache_write_tokens"), 0)
     payload = {"complete": True, "usage": usage, "findings": [LESSER_FINDING],
-               "verdict": {"exit_code": 0, "blocking_fingerprints": []}}
+               "verdict": {"exit_code": 0, "blocking_fingerprints": []},
+               "coverage": REVIEWED}
     monkeypatch.setattr(pair_corpus, "build_repo",
                         lambda *a, **k: (tmp_path, "base", "head"))
     monkeypatch.setattr(pair_corpus, "review", lambda *a, **k: {
@@ -296,7 +308,8 @@ def test_a_finding_ruled_incidental_no_longer_fails_the_pair():
     """
     from pair_corpus import hits_target
 
-    payload = {"complete": True, "findings": [LESSER_FINDING]}
+    payload = {"complete": True, "findings": [LESSER_FINDING],
+               "coverage": REVIEWED}
 
     assert hits_target(payload, TRAVERSAL_CASE) is True
     assert hits_target(payload, TRAVERSAL_CASE,
@@ -310,7 +323,8 @@ def test_a_ruling_excuses_one_finding_and_not_its_neighbours():
     neighbourhood is a ruling about the wrong thing."""
     from pair_corpus import hits_target
 
-    payload = {"complete": True, "findings": [LESSER_FINDING, REAL_FINDING]}
+    payload = {"complete": True, "findings": [LESSER_FINDING, REAL_FINDING],
+               "coverage": REVIEWED}
 
     assert hits_target(payload, TRAVERSAL_CASE,
                        excused=["aa11bb22cc33dd44"]) is True
@@ -374,7 +388,8 @@ def test_a_ruling_reaches_the_stored_row_and_not_only_the_score():
     from pair_corpus import hits_target
 
     payload = {"complete": True, "verdict": {"blocking_fingerprints": []},
-               "findings": [LESSER_FINDING]}
+               "findings": [LESSER_FINDING],
+               "coverage": REVIEWED}
     excused = ["aa11bb22cc33dd44"]
 
     assert hits_target(payload, TRAVERSAL_CASE, excused=excused) is False
@@ -388,7 +403,8 @@ def test_excusing_one_finding_does_not_blind_the_row_to_the_one_beside_it():
     from artifact import signature
 
     payload = {"complete": True, "verdict": {"blocking_fingerprints": []},
-               "findings": [LESSER_FINDING, REAL_FINDING]}
+               "findings": [LESSER_FINDING, REAL_FINDING],
+               "coverage": REVIEWED}
 
     row = signature(payload, TRAVERSAL_CASE, excused=["aa11bb22cc33dd44"])
     assert row["target"]["fingerprint"] == "ffee0099aabbccdd"
@@ -407,7 +423,8 @@ def test_the_runner_stores_the_row_it_scored_with(tmp_path, monkeypatch):
     usage = dict.fromkeys(("input_tokens", "output_tokens",
                            "cache_read_tokens", "cache_write_tokens"), 0)
     payload = {"complete": True, "usage": usage, "findings": [LESSER_FINDING],
-               "verdict": {"exit_code": 0, "blocking_fingerprints": []}}
+               "verdict": {"exit_code": 0, "blocking_fingerprints": []},
+               "coverage": REVIEWED}
     monkeypatch.setattr(pair_corpus, "build_repo",
                         lambda *a, **k: (tmp_path, "base", "head"))
     monkeypatch.setattr(pair_corpus, "review", lambda *a, **k: {
@@ -434,7 +451,8 @@ def test_a_safe_finding_nobody_ruled_on_still_fails_the_pair():
     that flags everything."""
     from pair_corpus import hits_target
 
-    payload = {"complete": True, "findings": [LESSER_FINDING]}
+    payload = {"complete": True, "findings": [LESSER_FINDING],
+               "coverage": REVIEWED}
 
     assert hits_target(payload, TRAVERSAL_CASE, excused=[]) is True
     assert hits_target(payload, TRAVERSAL_CASE, excused=["somethingelse"]) is True

@@ -13,6 +13,7 @@ from typing import Callable, List
 from .config import Config
 from .models import (
     CONFIDENCE_ORDER,
+    REVIEW_PERFORMED,
     SEVERITY_ORDER,
     STOP_EXPLANATIONS,
     STOP_INCONCLUSIVE,
@@ -160,10 +161,52 @@ def _readable_change(outcome: ScanOutcome) -> bool:
     deleted file cannot be opened: it belongs to what had to be *accounted
     for*, which is the question this predicate asks, and not to what had to be
     read.
+
+    **And a whole-repository review has something to open by definition.**
+    `coverage.changed` is filled only on the diff path — `agent.py` and
+    `runner_claude_code.py` both guard it with `mode == "diff"` — so in repo
+    mode this returned `False`, `_partial` was `False`, and the branch that
+    refuses a review which opened nothing could not fire at all. Measured
+    2026-09-09: `mode="repo"`, no exposures, `finish_review` on the first turn,
+    `exit 0` and "✅ no findings reported". The identical run in diff mode
+    exits 2.
+
+    That is not a corner. `Config.resolve_mode` returns `repo` whenever the
+    mode is `auto` and there is no merge-request id — which is every ordinary
+    branch pipeline, and on GitHub every `push` event. So the job that gates
+    the merge runs in repo mode on a large share of installations, and every
+    hole closed on the diff path had a twin here that was open.
+
+    `False` about a whole tree means "there was nothing anybody could have
+    opened", and about a repository that is never true.
+
+    **Adjudicated, and closed.** The repair turns 15 of this repository's own
+    tests red — the exit-code tests, the artifact test, the suppression tests,
+    the verification handoff — because every one of them drives a fake model
+    that replies once and calls no tool, which is exactly the state this branch
+    refuses in diff mode. So the question was not mechanical: *is a repo-mode
+    review that made no tool call a pass?*
+
+    Codex, 2026-09-09: *"Repo mode with zero exposures must not pass. Repo mode
+    is a claim about an entire repository, so a completed response without
+    receiving repository content is not a review. The 15 failing tests are
+    stale fixtures. Do not preserve an unsafe product contract to accommodate
+    mocks."*
+
+    The fixtures were given a reviewer that reads something.
     """
+    if outcome.mode != "diff":
+        return True
+    # **Both lists, filtered the same way.** `unreadable` was subtracted from
+    # `changed` and not from `deleted`, and `inventory_notes` can put one path
+    # in both — a deleted binary, a removed submodule. So a binary-only
+    # deletion counted as a readable change, and a completed review with no
+    # exposure was refused for failing to open something that cannot be
+    # opened. Codex, 2026-09-09. A *textual* deletion stays reviewable: its
+    # removed lines are in the diff, and it is not in `unreadable`.
     unreadable = {path for path, _ in outcome.coverage.unreadable}
-    return bool((set(outcome.coverage.changed) - unreadable)
-                or outcome.coverage.deleted)
+    return bool((set(outcome.coverage.changed)
+                 | set(outcome.coverage.deleted)) - unreadable)
 
 
 def _reviewed_nothing(outcome: ScanOutcome) -> bool:
@@ -215,8 +258,29 @@ def _reviewed_nothing(outcome: ScanOutcome) -> bool:
     `finish_review`, the profile and the budget answer separately and more
     strictly. This is the sanity check underneath them — the one that says the
     MCP server came up and the reviewer got something to read.
+
+    **Of the change, not of anything.** `not outcome.exposures` asks an
+    emptiness question where the question is membership, so bytes from files
+    *outside* the change satisfied it. Measured 2026-09-09: two changed files,
+    the only exposures a `search_code` that matched `README.md` and
+    `docs/x.md`, and the merge request comment read "✅ no findings reported"
+    over a change of which nothing was delivered.
+
+    No attacker is needed. The reviewer orients with a search, the matches land
+    in unchanged files, it judges the change trivial and calls `finish_review`
+    without ever calling `get_diff` — a cheaper model's failure mode, which is
+    the shape this repository has just spent a trial measuring.
+
+    A deleted file counts as part of the change: its removed lines are in the
+    diff, and `get_diff` records an exposure for it. When neither list is
+    populated the membership question has no answer, so the emptiness question
+    is asked instead — that is the repo-mode case, and `_readable_change`
+    carries it.
     """
-    return not outcome.exposures
+    accountable = set(outcome.coverage.changed) | set(outcome.coverage.deleted)
+    if not accountable:
+        return not outcome.exposures
+    return not any(path in accountable for path, _channel in outcome.exposures)
 
 
 def _partial(outcome: ScanOutcome) -> bool:
@@ -469,7 +533,16 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
     # the gate unsatisfiable for a repository of images. Opening nothing is the
     # *expected* conduct when there is nothing to open; what is not acceptable
     # is calling the result a pass, and the forgivable branch below does that.
-    if (_reviewed_nothing(outcome)
+    # **A run that did not perform a review is not a review that opened
+    # nothing.** The two non-performed dispositions — a label waiver and a
+    # change with nothing reviewable — reach here with no exposures by design,
+    # and widening `_readable_change` to cover repo mode made this branch fire
+    # on them: the skip label exited 2 instead of 0, which is the escape hatch
+    # turned into a block, and the first of the seven things Codex's own
+    # adjudication said the `review_status` repair must not break. Caught by
+    # the suite on 2026-09-09, one edit after it was introduced.
+    if (outcome.review_status == REVIEW_PERFORMED
+            and _reviewed_nothing(outcome)
             and not _nothing_was_readable(outcome)
             and (_partial(outcome) or _readable_change(outcome))):
         detail = " ({})".format(outcome.stop_detail) if outcome.stop_detail else ""

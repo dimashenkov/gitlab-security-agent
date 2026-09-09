@@ -1994,6 +1994,198 @@ class TestTheReviewedTreeDoesNotDescribeItself:
         head = git("rev-parse", "HEAD").strip()
         return Workspace(root=tmp_path, diff_base=base, diff_head=head)
 
+    def test_an_attributes_file_outside_the_tree_refuses_the_run(
+            self, tmp_path):
+        """The part that was not closed, named by Codex on 2026-09-07 and
+        built 2026-09-09.
+
+        `--attr-source` pins where git reads the *tree's* `.gitattributes`.
+        `$GIT_DIR/info/attributes` is not in the tree, outranks it, and
+        reproduces the whole effect from one line: every changed file looks
+        binary, the diff becomes "Binary files … differ", searches return
+        nothing, and the finding is filed pre-existing and never verified.
+
+        Nothing a merge request pushes reaches that file — this is the
+        runner's own state, and the refusal is a refusal to *claim*. It gives
+        `WorkspaceError`, which the CLI turns into exit 2: the check did not
+        run, which is a different answer from "nothing was found".
+        """
+        ws = self.repo(tmp_path)
+        info = tmp_path / ".git" / "info"
+        info.mkdir(parents=True, exist_ok=True)
+        (info / "attributes").write_text("*.py -diff\n", encoding="utf-8")
+
+        with pytest.raises(WorkspaceError) as caught:
+            ws.refuse_untrusted_attributes()
+
+        assert "outranks the pinned attribute source" in str(caught.value)
+        assert "fresh git directory" in str(caught.value)
+
+    def test_no_attributes_file_outside_the_tree_is_no_objection(
+            self, tmp_path):
+        """The control, or the check above passes on a workspace that refuses
+        every repository."""
+        self.repo(tmp_path).refuse_untrusted_attributes()
+
+    def test_an_empty_attributes_file_is_no_objection(self, tmp_path):
+        """A zero-byte file sets no attribute. A gate that fires on nothing is
+        one somebody switches off, and then it guards nothing at all."""
+        ws = self.repo(tmp_path)
+        info = tmp_path / ".git" / "info"
+        info.mkdir(parents=True, exist_ok=True)
+        (info / "attributes").write_text("\n  \n", encoding="utf-8")
+
+        ws.refuse_untrusted_attributes()
+
+    @pytest.mark.parametrize("body", [
+        "# a comment and nothing else\n",
+        "*.tar export-ignore\n",
+        "*.sh eol=lf\n",
+        "# leading comment\n\n*.md linguist-documentation\n",
+        "*.png filter=lfs merge=lfs\n",
+        # Codex, 2026-09-09: `binary` is git's own macro and expands to
+        # `-diff -text` **only when it is set**. These three do not invoke it
+        # and hide nothing, and the first version of the parser reduced every
+        # token to its name before testing it — so all three exited 2 on a
+        # checkout nothing was wrong with.
+        "*.py -binary\n",
+        "*.py !binary\n",
+        "*.py binary=maybe\n",
+    ])
+    def test_an_attributes_file_that_cannot_hide_a_diff_is_no_objection(
+            self, tmp_path, body):
+        """Codex, 2026-09-09, against the first version of this check.
+
+        It refused any file with a non-blank line in it, so a comment — or an
+        ordinary `export-ignore` — exited 2 on a repository nothing was wrong
+        with, in a developer or CI checkout where such files are normal. That
+        is the gate-that-fires-on-nothing this file's own comments warn about,
+        written two paragraphs under one of them, and such a gate is deleted
+        rather than obeyed — which costs the real route as well.
+        """
+        ws = self.repo(tmp_path)
+        info = tmp_path / ".git" / "info"
+        info.mkdir(parents=True, exist_ok=True)
+        (info / "attributes").write_text(body, encoding="utf-8")
+
+        ws.refuse_untrusted_attributes()
+
+    @pytest.mark.parametrize("body, expected", [
+        ("*.py -diff\n", "*.py -diff"),
+        ("*.py !diff\n", "*.py !diff"),
+        ("*.py diff=nothing\n", "*.py diff=nothing"),
+        ("*.py binary\n", "*.py binary"),
+        ("*.py text\n", "*.py text"),
+        ("*.py -text\n", "*.py -text"),
+        ("# a comment\n*.tar export-ignore\n*.py -diff\n", "*.py -diff"),
+    ])
+    def test_every_spelling_that_can_hide_a_diff_is_refused(
+            self, tmp_path, body, expected):
+        """`binary` is a macro for `-diff -text`, and `diff` may be set, unset,
+        unspecified or pointed at a driver. Each changes what a review can
+        read, so each is refused — and the refusal quotes the line, because a
+        reader told only that "attributes are set" has to find it themselves.
+        """
+        ws = self.repo(tmp_path)
+        info = tmp_path / ".git" / "info"
+        info.mkdir(parents=True, exist_ok=True)
+        (info / "attributes").write_text(body, encoding="utf-8")
+
+        with pytest.raises(WorkspaceError) as caught:
+            ws.refuse_untrusted_attributes()
+
+        assert repr(expected) in str(caught.value)
+
+    def test_a_git_failure_is_not_reported_as_a_missing_file(self, tmp_path):
+        """Found 2026-09-09. `_blob_size` ran `cat-file` with `check=False` and
+        turned every non-zero return into `None`, which `_blob_at` turns into
+        `FileNotAtRevision` — so one unreadable object made a real `critical`
+        get rejected as `unknown-path`, the reviewer was told "do not report
+        this finding again", and the run exited 0.
+
+        `terminal._dropped` prints one hard-coded reason for every rejection,
+        so the only trace in the job log blamed the model for a git failure.
+
+        The two are distinguishable and only in stderr, measured rather than
+        assumed: a path that is not in the revision says "does not exist" or
+        "exists on disk, but not in", and everything else is this tool failing
+        to look.
+        """
+        ws = self.repo(tmp_path)
+
+        # A revision git cannot resolve: not an answer about any file.
+        with pytest.raises(WorkspaceError) as caught:
+            ws._blob_size("nosuchrevision", "app.py")
+        assert "could not say what" in str(caught.value)
+
+    def test_a_path_absent_from_the_revision_is_still_an_answer(self, tmp_path):
+        """The control, and the reason the refusal reads stderr rather than the
+        return code: both cases exit 128, and only one of them is a failure."""
+        ws = self.repo(tmp_path)
+
+        assert ws._blob_size("HEAD", "never-existed.py") is None
+
+    def test_a_linked_worktree_reads_the_shared_attributes_file(self, tmp_path):
+        """Codex, 2026-09-09. `--absolute-git-dir` in a linked worktree is that
+        worktree's own administrative directory, and git resolves shared paths
+        such as `info/attributes` through the **common** directory — so the
+        harmful file was still reaching git while this guard read a path that
+        does not exist and returned quietly.
+
+        `--git-path` asks git where it will look, which is the only question
+        this check has.
+        """
+        import subprocess
+        self.repo(tmp_path)
+        linked = tmp_path.parent / (tmp_path.name + "-linked")
+        subprocess.run(["git", "-C", str(tmp_path), "worktree", "add", "-q",
+                        "-b", "side", str(linked)],
+                       check=True, capture_output=True)
+        info = tmp_path / ".git" / "info"
+        info.mkdir(parents=True, exist_ok=True)
+        (info / "attributes").write_text("*.py -diff\n", encoding="utf-8")
+
+        ws = Workspace(root=linked, excludes=())
+
+        with pytest.raises(WorkspaceError) as caught:
+            ws.refuse_untrusted_attributes()
+        assert "*.py -diff" in str(caught.value)
+
+    def test_a_macro_defined_in_the_tree_and_used_outside_it_is_closed(
+            self, tmp_path):
+        """The shape the predicate lets through, and why that is right.
+
+        `[attr]hidden -diff -text` in the tree's `.gitattributes` with
+        `*.py hidden` in `$GIT_DIR/info/attributes` puts no dangerous token in
+        the file `refuse_untrusted_attributes` reads. Measured 2026-09-09
+        through the product's own reader: the pinned `--attr-source` leaves the
+        macro undefined and the diff comes back readable, so there is nothing
+        to refuse.
+
+        The first attempt to establish this used a hand-rolled `git diff` with
+        `check=False` and read only stdout — a git that refused the flag gave
+        an empty string, and "the diff is hidden" was true for every case
+        including the control. A measurement with no control is what let a gap
+        be claimed and then withdrawn; this one carries its control below.
+        """
+        ws = self.repo(tmp_path, "[attr]hidden -diff -text\n")
+        info = tmp_path / ".git" / "info"
+        info.mkdir(parents=True, exist_ok=True)
+        (info / "attributes").write_text("*.py hidden\n", encoding="utf-8")
+
+        # Nothing to refuse: no line here names a diff attribute.
+        ws.refuse_untrusted_attributes()
+        # And git does not apply it, so the change is readable.
+        assert "os.system" in ws.diff()
+
+        # The control. The same macro *defined* in the untrusted file does
+        # hide it, and is refused — the definition carries `-diff`.
+        (info / "attributes").write_text(
+            "[attr]hidden -diff -text\n*.py hidden\n", encoding="utf-8")
+        with pytest.raises(WorkspaceError):
+            ws.refuse_untrusted_attributes()
+        assert "os.system" not in ws.diff()
+
     def test_a_file_marked_undiffable_is_still_attributed(self, tmp_path):
         """The defect. The changed line has to be attributable, or the finding
         on it is filed as code the change did not touch."""

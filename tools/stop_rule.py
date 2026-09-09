@@ -92,6 +92,29 @@ PRODUCT_MODEL = "claude-opus-5"
 # nothing saying why.
 PROVIDER_HELPER_FAMILIES = ("claude-haiku-",)
 
+# Why rows were skipped on the last pass, and how many for each reason. Filled
+# by `latest_rows` and by `sentinel.recorded_outcomes`, cleared at the start of
+# each; read by both command lines so a skipped row is visible rather than
+# merely absent.
+#
+# A refusal nobody can see is a refusal nobody will diagnose: both readers fell
+# back to an older measurement and the failure looked like headline numbers
+# quietly moving. Recorded in `LIMITATIONS.md` on 2026-09-09 and built the
+# same day.
+SKIPPED: Dict[str, int] = {}
+
+
+def skipped_line() -> str:
+    """One line naming what the last pass did not read, or empty if it read
+    everything. Empty means nothing was skipped — not that nobody looked."""
+    if not SKIPPED:
+        return ""
+    return "{} row(s) did not answer for {}: {}".format(
+        sum(SKIPPED.values()), PRODUCT_MODEL,
+        "; ".join("{} {}".format(n, why)
+                  for why, n in sorted(SKIPPED.items(),
+                                       key=lambda kv: (-kv[1], kv[0]))))
+
 
 def _is_helper(name: str) -> bool:
     """A name in a helper family, followed by a version and nothing else.
@@ -218,19 +241,38 @@ def is_product_row(row: dict) -> bool:
     safe member and an unsafe one; anything else is not a pair and cannot say
     it was measured by this model.
     """
+    return why_not_product_row(row) is None
+
+
+def why_not_product_row(row: dict) -> Optional[str]:
+    """Why this row does not answer for the product, or `None` if it does.
+
+    The boolean above is this, read as a yes or no. It is split out because a
+    row that is skipped and nothing said about it is a row whose absence is
+    invisible: `latest_rows` and `sentinel.recorded_outcomes` both fell back to
+    an older measurement, and the failure looked like headline numbers quietly
+    moving. Recorded in `LIMITATIONS.md` on 2026-09-09 and built the same day.
+
+    The reason is a short phrase and not a sentence about one row, because the
+    callers count reasons rather than printing one line per skipped row —
+    fifty-two rows from one experiment arm should say "52 reviewed by another
+    model", not fifty-two lines.
+    """
     if "members" not in row:
-        return True
+        return None
     members = row.get("members")
-    if not isinstance(members, dict) or set(members) != {"safe", "unsafe"}:
-        return False
+    if not isinstance(members, dict):
+        return "`members` is not an object"
+    if set(members) != {"safe", "unsafe"}:
+        return "not a pair of a safe and an unsafe member"
     for block in members.values():
         if not isinstance(block, dict):
-            return False
+            return "a member is not an object"
         prov = block.get("provenance")
         if not isinstance(prov, dict):
-            return False
+            return "a member records no readable provenance"
         if prov.get("model_requested") != PRODUCT_MODEL:
-            return False
+            return "asked for {}".format(prov.get("model_requested"))
         # **What was asked for is not what answered.** Codex, 2026-09-09: a row
         # asking for Opus and served Sonnet carries `model_substituted: true`
         # and `models_served: ["claude-sonnet-5"]`, and reading only
@@ -256,12 +298,16 @@ def is_product_row(row: dict) -> bool:
         # and the product's headline numbers. Requiring the known is not the
         # same as trusting that the unknown cannot occur.
         answered = reviewed(prov)
-        if answered is None or PRODUCT_MODEL not in answered:
-            return False
-        if any(not _is_helper(name)
-               for name in answered - {PRODUCT_MODEL}):
-            return False
-    return True
+        if answered is None:
+            return "a member's model list cannot be read"
+        if PRODUCT_MODEL not in answered:
+            return "reviewed by {}".format(
+                ", ".join(sorted(answered)) or "nothing")
+        strangers = sorted(name for name in answered - {PRODUCT_MODEL}
+                           if not _is_helper(name))
+        if strangers:
+            return "also reviewed by {}".format(", ".join(strangers))
+    return None
 
 
 def latest_rows() -> Dict[str, dict]:
@@ -305,6 +351,7 @@ def latest_rows() -> Dict[str, dict]:
     evidence that Opus produced it — and it ends when those rows are
     re-measured.
     """
+    SKIPPED.clear()
     best: Dict[str, Tuple[Optional[object], dict]] = {}
     for path in glob.glob(str(ROOT / "measurements" / "**" / "*.json"),
                           recursive=True):
@@ -323,7 +370,9 @@ def latest_rows() -> Dict[str, dict]:
             case_id = row.get("case_id")
             if not case_id:
                 continue
-            if not is_product_row(row):
+            why = why_not_product_row(row)
+            if why is not None:
+                SKIPPED[why] = SKIPPED.get(why, 0) + 1
                 continue
             when = instant(row.get("ran_at"))
             held = best.get(case_id)
@@ -507,6 +556,16 @@ def main(argv=None) -> int:
     # may be computed through those rulings. A prohibition written down and
     # stepped over in the same change is worse than one never written.
     print(render(counts, decision, reasons))
+
+    # What was on disk and did not count. Printed under the verdict rather than
+    # withheld: a row skipped for its reviewer used to leave no trace, so an
+    # older measurement answered in its place and the only visible effect was
+    # the numbers moving. Silence here means every row was read, which is a
+    # different statement from silence about whether anybody looked.
+    line = skipped_line()
+    if line:
+        print()
+        print("  {}".format(line))
 
     if unreadable is not None:
         # The verdict stands. The rulings feed the second reading and the

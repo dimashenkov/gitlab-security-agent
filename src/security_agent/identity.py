@@ -26,6 +26,8 @@ import hashlib
 import json
 from typing import Any, Dict
 
+from .models import review_performed
+
 
 def review_identity(cfg: Any, revision: Any, provenance: Any,
                     suppressions: str = "") -> Dict[str, Any]:
@@ -161,6 +163,25 @@ def reusable(previous: Dict[str, Any], current: Dict[str, Any]) -> bool:
     stops being reusable and the next run is paid for. That is the direction to
     fail in: the cost of being wrong here is a stale all-clear.
     """
+    # **Anything but `performed` is never reusable as a clean review.** Named
+    # in Codex's adjudication of 2026-09-08 as a thing the repair must not
+    # break, and built with it on 2026-09-09. A skipped or nothing-reviewable
+    # run is `complete: true` and exits 0 by design, so `complete` alone would
+    # have let a labelled skip serve as the stored answer for the next run —
+    # which is the stale all-clear this whole function exists against, arriving
+    # by the one route where nothing looked at all.
+    #
+    # Absent means `performed`: every artifact written before the field existed
+    # was one, because the routes that do not perform a review are exactly what
+    # the field was added to name.
+    # Absence is answered by `models.review_performed`, not by a default. Note
+    # what this line does *not* fix: the `exposures` check below already
+    # refused every old skip artifact, because a skip records none. So the
+    # wrong default was unreachable here and is corrected anyway — one
+    # definition of "was a review performed", in one place, rather than a
+    # second copy that only happens to be shadowed by the guard under it.
+    if not review_performed(previous):
+        return False
     if not previous.get("complete"):
         return False
     if not block(previous, "coverage").get("exposures"):

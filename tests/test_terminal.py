@@ -13,6 +13,7 @@ import pytest
 from security_agent import terminal
 from security_agent.gate import Decision
 from security_agent.models import (
+    VERDICT_UNCERTAIN,
     Candidate,
     Finding,
     RejectedClaim,
@@ -575,6 +576,95 @@ class TestBothRenderersReadTheSameNumbers:
         assert "0 of 3 findings completed" in markdown
         assert "3 with verification off" in row
         assert "3 with SECURITY_SCAN_VERIFY=false" in markdown
+
+
+class TestARunThatReviewedNothingGetsNoGreenSentence:
+    """The third time this renderer has been left behind by a repair.
+
+    `report._header` was given the two non-performed dispositions on
+    2026-09-09; the terminal was not, so a skipped run and a real clean review
+    printed the same green "No findings reported.", colour code and all. Only
+    the banner word differed, and a banner word is what a reader skims.
+
+    `review_status` is asked rather than inferred: `decision.partial` is false
+    for both non-performed states by design, because a label waiver that
+    blocked the merge would be an escape hatch nobody can use.
+    """
+
+    def rendered(self, status):
+        outcome = make_outcome([])
+        outcome.review_status = status
+        return terminal.render(
+            outcome, Decision(exit_code=0, reason="ok", partial=False))
+
+    @pytest.mark.parametrize("status", ["skipped", "nothing_reviewable"])
+    def test_a_run_that_did_not_review_says_so(self, status):
+        text = self.rendered(status)
+
+        assert "No review was performed" in text
+        assert "not a statement about the code" in text
+        assert "No findings reported." not in text
+
+    def test_a_real_clean_review_still_gets_it(self):
+        """The control. A sentence withheld from every run is a sentence
+        nobody believes when it appears."""
+        assert "No findings reported." in self.rendered("performed")
+
+
+class TestADeadVerifierSeatIsNotOneThatAgreed:
+    """Every failed verification call records `verdict=uncertain` with an
+    `error` — `verify.py` does it in two places — so when the panel landed on
+    `uncertain` a seat that never answered entered the numerator. A three-seat
+    panel with one connection failure printed "left uncertain by 2 of 3
+    independent verifiers", which is what it also printed when all three really
+    answered. Found 2026-09-09.
+
+    The failures are named rather than dropped, and the denominator stays at
+    the seats the panel reserved: a panel that lost a seat is a weaker panel,
+    and printing `2/2` would make three verifiers of which one died read as a
+    two-seat panel that worked.
+    """
+
+    def rendered(self, votes):
+        candidate = Candidate(finding=make_finding())
+        candidate.verdict = VERDICT_UNCERTAIN
+        candidate.votes = votes
+        text = terminal.render(
+            make_outcome([candidate]),
+            Decision(exit_code=0, reason="ok", partial=False))
+        # Whitespace-collapsed: the `Checked` field is wrapped to the terminal
+        # width, so a sentence near the end of it is split across lines and a
+        # substring test would be asserting about the wrapping.
+        return " ".join(text.split())
+
+    def test_a_failed_call_is_not_counted_as_a_verifier(self):
+        text = self.rendered([
+            Vote(verdict=VERDICT_UNCERTAIN, reasoning="cannot tell"),
+            Vote(verdict=VERDICT_UNCERTAIN, reasoning="cannot tell"),
+            Vote(verdict=VERDICT_UNCERTAIN, reasoning="",
+                 error="verification call failed: connection"),
+        ])
+
+        # `2 of 3`, not `2 of 2`. Codex refused the first version of this on
+        # 2026-09-09: publishing only the seats that answered says a complete
+        # two-person panel agreed, where the truth is two of three reserved
+        # seats with the quorum degraded. `panel.py` defines the panel as the
+        # reserved seats, and a renderer that redefines it is a second
+        # definition of one thing.
+        assert "2 of 3 independent verifiers" in text
+        assert "1 verifier call failed" in text
+
+    def test_a_panel_that_all_answered_reads_as_before(self):
+        """The control, and it is the reason the denominator is the seats that
+        answered rather than the seats reserved."""
+        text = self.rendered([
+            Vote(verdict=VERDICT_UNCERTAIN, reasoning="cannot tell"),
+            Vote(verdict=VERDICT_UNCERTAIN, reasoning="cannot tell"),
+            Vote(verdict=VERDICT_UNCERTAIN, reasoning="cannot tell"),
+        ])
+
+        assert "3 of 3 independent verifiers" in text
+        assert "call failed" not in text
 
 
 class TestTheBannerFollowsTheGateNotTheStopReason:

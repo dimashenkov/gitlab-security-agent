@@ -311,3 +311,74 @@ def test_the_shipped_claims_are_the_rulings_own_words():
         checked += 1
     assert checked == 3, "three legacy identities checked, not {}".format(
         checked)
+
+
+# --------------------------------------------------------------------------
+# One ruling has to carry the whole entry
+#
+# Each declared field was tested against its own set gathered from every ruling
+# for the case — four existence tests over a union, none of which asked whether
+# the *same* row satisfied the others. So an entry could be assembled out of
+# two different rulings and still resolve.
+#
+# Measured 2026-09-09 against the shipped file: `rs-8rw6-p7m8-63jp-snap` is the
+# one alarm with two safe rulings, and an entry carrying the 2026-09-02 row's
+# fingerprint together with the 2026-08-24 row's claim produced no problems at
+# all, while the same entry with an invented claim was refused. A name
+# assembled from two rulings is a name no ruling gave.
+# --------------------------------------------------------------------------
+
+TWO_RULINGS = [
+    {"case_id": "case-pair", "member": "safe", "adjudicated_on": "2026-08-24",
+     "fingerprint": None, "file": "pair.rs", "claim": "the older wording"},
+    {"case_id": "case-pair", "member": "safe", "adjudicated_on": "2026-09-02",
+     "fingerprint": "eeee5555", "file": "pair.rs",
+     "claim": "the revised wording, which says more"},
+]
+
+
+def pair_entry(**over):
+    """One entry, wholly backed by the later of the two rulings."""
+    entry = {"finding_id": "pair-thing", "case_id": "case-pair",
+             "member": "safe", "file": "pair.rs",
+             "fingerprint": "eeee5555",
+             "identity_basis": "file_and_claim",
+             "claim": "the revised wording, which says more",
+             "same_finding_as": "revision",
+             "decided_by": "assistant", "decided_on": "2026-09-09",
+             "rationale": "one finding stated twice",
+             "evidence_refs": ["corpus-real/adjudications.yml"]}
+    entry.update(over)
+    return entry
+
+
+def test_an_entry_assembled_from_two_rulings_is_refused():
+    """The fingerprint from the later row, the claim from the earlier one.
+
+    Every field is somewhere in the case's rulings and every per-field check
+    passed; no single ruling carries them together, so the identity is one no
+    ruling gave.
+    """
+    outcome = ai.resolve({"case-pair"}, TWO_RULINGS, identities(findings=[
+        pair_entry(claim="the older wording")]))
+
+    assert any("assembled from more than one ruling" in p
+               for p in outcome["problems"]), outcome["problems"]
+
+
+def test_an_entry_backed_by_one_whole_ruling_resolves():
+    """The control. Same fixture, same two rulings, and the claim taken from
+    the row that also carries the fingerprint."""
+    outcome = ai.resolve({"case-pair"}, TWO_RULINGS,
+                         identities(findings=[pair_entry()]))
+
+    assert outcome["problems"] == []
+    assert outcome["resolved"]["case-pair"] == "pair-thing"
+
+
+def test_the_earlier_ruling_taken_whole_also_resolves():
+    """Which of the two is the backing is not fixed — only that it is one."""
+    outcome = ai.resolve({"case-pair"}, TWO_RULINGS, identities(findings=[
+        pair_entry(fingerprint=None, claim="the older wording")]))
+
+    assert outcome["problems"] == []

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -954,8 +953,23 @@ def _handle_search_code(ws: Workspace, session: Session, args: Dict[str, Any]) -
         "search {!r}: {}".format(pattern, counted),
         # The files the matches came from. Nobody asked for these by name, and
         # their lines are now in the conversation.
+        #
+        # **From the records the search kept, not from its rendered answer.**
+        # `_paths_in_search` scanned the body for `path:digits:`, and a
+        # no-match answer begins with the pattern echoed back — so
+        # `search_code(pattern="zzzznotpresent:1:")` matched nothing anywhere
+        # and recorded an exposure for a "file" named
+        # `no matches for 'zzzznotpresent`. Measured 2026-09-07, repaired
+        # 2026-09-09.
+        #
+        # The cost was not a wrong list. `gate._reviewed_nothing` is exactly
+        # `not outcome.exposures`, so a run whose only tool call was such a
+        # search looked like a run that had read something and walked past the
+        # branch that refuses a review which opened nothing — the same shape
+        # as the deletion the gate could not see, and derived the same way,
+        # from prose rather than from the thing itself.
         exposures=tuple((touched, "search_code")
-                        for touched in _paths_in_search(body)),
+                        for touched in ws.last_search_paths),
     )
 
 
@@ -1395,12 +1409,16 @@ def _paths_in_diff(body: str) -> List[str]:
     return list(dict.fromkeys(found))
 
 
-_SEARCH_PATH = re.compile(r"^([^\s:][^:]*):\d+:", re.M)
-
-
-def _paths_in_search(body: str) -> List[str]:
-    """The files a search result quoted lines from."""
-    return list(dict.fromkeys(_SEARCH_PATH.findall(body or "")))
+# `_SEARCH_PATH` and `_paths_in_search` stood here until 2026-09-09. They read
+# the files a search had quoted out of its own rendered answer, which is a
+# claim about what was inspected derived from prose. `Workspace.search` now
+# carries the path on every record it keeps and publishes
+# `last_search_paths`, so there is nothing left to parse — and nothing left for
+# a pattern shaped like `path:1:` to impersonate.
+#
+# Deleted rather than left unused: an unused parser that answers the same
+# question differently is the second spelling this repository keeps finding, and
+# the next reader would have had two to choose from.
 
 
 def dispatch(ws: Workspace, session: Session, name: str, args: Dict[str, Any]) -> ToolResult:

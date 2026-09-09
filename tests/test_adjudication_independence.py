@@ -125,8 +125,17 @@ class TestARefutedFindingInTheBrokenMemberEarnsNoCredit:
         (case_dir / "unsafe").mkdir()
         usage = dict.fromkeys(("input_tokens", "output_tokens",
                                "cache_read_tokens", "cache_write_tokens"), 0)
+        # The coverage block is not decoration. A payload claiming a completed
+        # review while recording no turn, no tool call and no exposure is
+        # shaped exactly like what `_nothing_to_review` writes, and since
+        # 2026-09-09 the scorer reads it as one — a run nobody performed rather
+        # than a reviewer that looked and found nothing.
         payload = {"complete": True, "usage": usage,
                    "findings": [LESSER_FINDING],
+                   "coverage": {"turns": 1,
+                                "tool_calls": [{"tool": "get_diff"}],
+                                "exposures": [["src/app/views.py",
+                                               "get_diff"]]},
                    "verdict": {"exit_code": 0, "blocking_fingerprints": []}}
         monkeypatch.setattr(pair_corpus, "build_repo",
                             lambda *a, **k: (tmp_path, "base", "head"))

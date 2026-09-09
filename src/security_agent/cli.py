@@ -128,13 +128,29 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         # a review that found nothing. Exactly the defect `_nothing_to_review`
         # was written for on the empty-diff path, on a path that never got the
         # same treatment.
-        return _nothing_to_review(cfg, args, mode, _skipped_summary(args.skip_label))
+        # `skipped`, not `nothing_reviewable`. Reviewable code existed here and
+        # a person decided not to review it; the other two routes are the tool
+        # finding nothing to look at. Merging them loses the only fact an
+        # operator reading the artifact later would want back.
+        from .models import REVIEW_SKIPPED
+        return _nothing_to_review(cfg, args, mode,
+                                  _skipped_summary(args.skip_label),
+                                  status=REVIEW_SKIPPED)
 
     base, head = _resolve_range(cfg, root, mode, args)
     workspace = Workspace(root=root, excludes=cfg.excludes, diff_base=base,
                           default_context_lines=cfg.diff_context_lines,
                           diff_head=head, scope=cfg.scope,
                           diff_ceiling=cfg.diff_ceiling_bytes)
+
+    # Before anything is read: is there an attributes file outranking the
+    # pinned source? One `-diff` line in `$GIT_DIR/info/attributes` makes every
+    # changed file look binary, and then the diff, the searches and the
+    # attribution are all answering about a repository nobody can see. It is
+    # the runner's own state rather than anything a merge request can push, so
+    # this is a refusal to *claim* rather than a defence against a contributor.
+    # Raises `WorkspaceError`, which `main` turns into exit 2.
+    workspace.refuse_untrusted_attributes()
 
     # Before anything else about the change is decided: can it rewrite the
     # rules it is judged by?
@@ -426,7 +442,7 @@ def _folded(name: str, title: str):
 
 
 def _nothing_to_review(cfg: Config, args: argparse.Namespace, mode: str,
-                       summary: str) -> int:
+                       summary: str, status: str = "") -> int:
     """A run that examined nothing, written down like every other run.
 
     Three things reach here: a change whose every file the excludes hid, one
@@ -440,13 +456,28 @@ def _nothing_to_review(cfg: Config, args: argparse.Namespace, mode: str,
     The caller supplies the sentence because only the caller knows which of the
     three happened. It used to be written here, one sentence for all of them,
     and it named the excludes — see `_nothing_reviewable_summary`.
+
+    **And it supplies the disposition, for the same reason.** The artifact used
+    to say `stop_reason: completed` and `complete: true` here, because that is
+    what a `ScanOutcome` says when nobody tells it otherwise — so
+    `pair_corpus.hits_target`, which reads exactly those two fields, scored an
+    unsafe case as a *miss* over a run that had examined nothing. Adjudicated
+    by Codex on 2026-09-08, built 2026-09-09.
+
+    The two non-performed states are not one case. Excludes, scope and an empty
+    range are `nothing_reviewable`: the tool considered the input and the
+    reviewable set was empty. A label waiver is `skipped`: reviewable code
+    existed and review was deliberately not performed. They share a top-level
+    disposition and stay distinguishable, because the second is a decision
+    somebody made and the first is a fact about the change.
     """
     from .agent import _provenance
     from .gate import decide
-    from .models import ScanOutcome
+    from .models import REVIEW_NOTHING_REVIEWABLE, ScanOutcome
     from .report import ReportError, render_markdown, write_artifacts
 
-    outcome = ScanOutcome(mode=mode, model=cfg.model)
+    outcome = ScanOutcome(mode=mode, model=cfg.model,
+                          review_status=status or REVIEW_NOTHING_REVIEWABLE)
     outcome.provenance = _provenance(cfg)
     outcome.summary = summary
     decision = decide(cfg, outcome)

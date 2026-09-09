@@ -183,9 +183,12 @@ class SecurityAgent:
             outcome.coverage.changed = [path for path, _ in self.ws.changed_files()]
             (outcome.coverage.unreadable,
              outcome.coverage.deleted) = inventory_notes(self.ws)
-            if getattr(self.ws, "scope", ()):
-                outcome.coverage.out_of_scope = self.ws.out_of_scope(
-                    [path for path, _ in self.ws.all_changed_files()])
+            # What a rule hid, deletions included. `changed_objects` applies
+            # both filters as it reads, so an excluded *deletion* used to
+            # appear in no field of `Coverage` at all, and `excluded` was
+            # declared, serialised and assigned by nobody. 2026-09-09.
+            (outcome.coverage.excluded,
+             outcome.coverage.out_of_scope) = self.ws.hidden_by_rules()
         deadline = time.monotonic() + self.cfg.max_runtime_seconds
         # Raised once, and kept raised. A review that needed the room on one
         # turn will very likely need it again, and paying for a truncated

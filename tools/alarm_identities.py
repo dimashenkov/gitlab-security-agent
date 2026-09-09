@@ -56,6 +56,29 @@ class IdentityError(Exception):
 SUPERSESSION = ("revision", "not_same", "unclear")
 
 
+def _ruling_misses(entry: Dict[str, Any], row: Dict[str, Any],
+                   field: Optional[str]) -> List[str]:
+    """Which of the entry's declared fields this **one** ruling does not carry.
+
+    Empty means this row alone backs the whole entry. `field` is the source
+    field named by `identity_basis`, or `None` when the entry rests on its
+    fingerprint and states no basis.
+    """
+    misses = []
+    if entry.get("member") != row.get("member"):
+        misses.append("member")
+    if entry.get("file") != row.get("file"):
+        misses.append("file")
+    if entry.get("fingerprint") and entry["fingerprint"] != row.get(
+            "fingerprint"):
+        misses.append("fingerprint")
+    if field is not None:
+        stated = (entry.get("claim") or "").strip()
+        if not stated or not _same_text(stated, (row.get(field) or "").strip()):
+            misses.append("claim")
+    return misses
+
+
 def _entry_matches_rulings(entry: Dict[str, Any],
                            rows: List[Dict[str, Any]]) -> List[str]:
     """Does this record describe rulings that are actually there?"""
@@ -65,45 +88,76 @@ def _entry_matches_rulings(entry: Dict[str, Any],
         return ["finding {!r} declares an identity for {!r} and no safe-member "
                 "ruling exists for it".format(ident, entry.get("case_id"))]
 
-    # The rulings handed here are already filtered to the safe member, so an
-    # entry declaring `member: unsafe` would never be contradicted by them —
-    # the field would be recorded and never read. Codex, 2026-09-04.
-    members = {r.get("member") for r in rows}
-    if entry.get("member") not in members:
-        out.append(
-            "finding {!r} names member {!r} and the ruling(s) are for {}".format(
-                ident, entry.get("member"),
-                ", ".join(repr(m) for m in sorted(members, key=str))))
-
-    files = {r.get("file") for r in rows}
-    if entry.get("file") not in files:
-        out.append(
-            "finding {!r} names file {!r} and the ruling(s) name {}".format(
-                ident, entry.get("file"),
-                ", ".join(repr(f) for f in sorted(files, key=str))))
-
-    if entry.get("fingerprint"):
-        prints = {r.get("fingerprint") for r in rows}
-        if entry["fingerprint"] not in prints:
-            out.append(
-                "finding {!r} names fingerprint {!r} and no ruling carries "
-                "it".format(ident, entry["fingerprint"]))
-
     # A claim taken from `claim` must be in `claim`; one taken from
     # `why_malformed` must be there. The basis says which field, so the field
     # is where it is checked — otherwise `identity_basis` records a provenance
     # nobody verifies.
     basis = entry.get("identity_basis")
-    if basis in ("file_and_claim", "file_and_why_malformed"):
+    field = None
+    if basis in IDENTITY_BASES:
         field = "claim" if basis == "file_and_claim" else "why_malformed"
-        stated = (entry.get("claim") or "").strip()
-        sources = [(r.get(field) or "").strip() for r in rows]
-        if not stated:
+        if not (entry.get("claim") or "").strip():
             out.append("finding {!r} states no claim to check".format(ident))
-        elif not any(_same_text(stated, source) for source in sources):
-            out.append(
-                "finding {!r} takes its identity from `{}` and its claim is "
-                "not that field's text in any ruling".format(ident, field))
+
+    # **One ruling has to carry the whole entry.** Each declared field used to
+    # be tested against its own set gathered from every ruling for the case —
+    # `members`, `files`, `prints`, `sources` — four existence tests over a
+    # union, none of which asked whether the *same* row satisfied the others.
+    # An entry could therefore be assembled out of two different rulings and
+    # resolve.
+    #
+    # Measured 2026-09-09 against the shipped file: `rs-8rw6-p7m8-63jp-snap` is
+    # the one alarm with two safe rulings, and an entry carrying the 2026-09-02
+    # row's fingerprint `06bf0112168101e4` together with the 2026-08-24 row's
+    # claim "Computed fields are re-added after permission reduction" produced
+    # no problems at all and entered the D-013 denominator, while the same
+    # entry with an invented claim was refused. A name assembled from two
+    # rulings is a name no ruling gave.
+    #
+    # `same_finding_as` stays a cross-row check below: a supersession link
+    # legitimately spans two rulings. What may not span two is the set of
+    # fields backing one name.
+    misses = [_ruling_misses(entry, row, field) for row in rows]
+    whole = [m for m in misses if not m]
+    # `unmet` is what *no* ruling carries, which is exactly the old per-field
+    # condition — so every refusal it produced is produced still, in the same
+    # words, and the new sentence fires only in the gap the old code left.
+    unmet = set() if whole else set.intersection(*(set(m) for m in misses))
+
+    # The rulings handed here are already filtered to the safe member, so an
+    # entry declaring `member: unsafe` would never be contradicted by them —
+    # the field would be recorded and never read. Codex, 2026-09-04.
+    if "member" in unmet:
+        members = {r.get("member") for r in rows}
+        out.append(
+            "finding {!r} names member {!r} and the ruling(s) are for {}".format(
+                ident, entry.get("member"),
+                ", ".join(repr(m) for m in sorted(members, key=str))))
+
+    if "file" in unmet:
+        files = {r.get("file") for r in rows}
+        out.append(
+            "finding {!r} names file {!r} and the ruling(s) name {}".format(
+                ident, entry.get("file"),
+                ", ".join(repr(f) for f in sorted(files, key=str))))
+
+    if "fingerprint" in unmet:
+        out.append(
+            "finding {!r} names fingerprint {!r} and no ruling carries "
+            "it".format(ident, entry["fingerprint"]))
+
+    if "claim" in unmet and (entry.get("claim") or "").strip():
+        out.append(
+            "finding {!r} takes its identity from `{}` and its claim is "
+            "not that field's text in any ruling".format(ident, field))
+
+    if not whole and not unmet:
+        spread = sorted(set().union(*(set(m) for m in misses)))
+        out.append(
+            "finding {!r} is assembled from more than one ruling: each of {} "
+            "appears somewhere in the {} rulings for {!r}, and no single "
+            "ruling carries them together".format(
+                ident, ", ".join(spread), len(rows), entry.get("case_id")))
 
     if entry.get("same_finding_as") and len(rows) < 2:
         out.append(

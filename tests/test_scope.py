@@ -148,6 +148,80 @@ def test_a_rename_out_of_the_reviewed_set_shows_both_ends(repo):
                      "app/views.py": "moved_from"}
 
 
+class TestWhatARuleHidIsRecorded:
+    """`Coverage.excluded` was declared, serialised, and assigned by nobody;
+    `out_of_scope` was filled from `all_changed_files`, which is
+    `--diff-filter=ACMRT`. So a *deletion* an exclude rule or a `--path` hid
+    appeared in **no field of `Coverage` at all** — the run proceeded on its
+    merits, exited 0 or 1, and nothing anywhere said a file had been removed.
+
+    The argument is the one `out_of_scope`'s own docstring already makes: a
+    scoped review reporting "no findings" without saying what it did not look
+    at is the same sentence as a full review that found nothing. Recorded
+    2026-09-09, built the same day.
+    """
+
+    def test_a_deleted_file_an_exclude_rule_hid_is_named(self, repo):
+        root, _base = repo
+        subprocess.run(["git", "-C", str(root), "rm", "-q", "vendor/lib.py"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "remove"],
+                       check=True, capture_output=True)
+
+        ws = Workspace(root=root, excludes=("*/vendor/*", "vendor/*"),
+                       diff_base="HEAD~1", diff_head="HEAD")
+        excluded, out_of_scope = ws.hidden_by_rules()
+
+        assert excluded == ["vendor/lib.py"]
+        assert out_of_scope == []
+        # And it is gone from every list the filters build, which is the
+        # reason a separate reader is needed at all.
+        assert ws.changed_files() == []
+        assert [obj.path for obj in ws.changed_objects()] == []
+
+    def test_a_deleted_file_the_scope_left_out_is_named_separately(self, repo):
+        """The two rules are the operator's and they are set in different
+        places. A report that mixes them costs a debugging session."""
+        root, _base = repo
+        subprocess.run(["git", "-C", str(root), "rm", "-q", "app/views.py"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "remove"],
+                       check=True, capture_output=True)
+
+        ws = Workspace(root=root, excludes=(), diff_base="HEAD~1",
+                       diff_head="HEAD", scope=("docs",))
+        excluded, out_of_scope = ws.hidden_by_rules()
+
+        assert excluded == []
+        assert out_of_scope == ["app/views.py"]
+
+    def test_a_path_both_rules_cover_is_reported_once(self, repo):
+        """Two lists that overlap are counted twice by anybody who adds them.
+        `is_excluded` is asked first, matching `changed_files`."""
+        root, _base = repo
+        subprocess.run(["git", "-C", str(root), "rm", "-q", "vendor/lib.py"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "remove"],
+                       check=True, capture_output=True)
+
+        ws = Workspace(root=root, excludes=("vendor/*",), diff_base="HEAD~1",
+                       diff_head="HEAD", scope=("docs",))
+        excluded, out_of_scope = ws.hidden_by_rules()
+
+        assert excluded == ["vendor/lib.py"]
+        assert out_of_scope == []
+
+    def test_a_change_no_rule_touches_names_nothing(self, repo):
+        """The control. A field that fills up on an ordinary change is a field
+        readers learn to ignore."""
+        root, base = repo
+
+        ws = Workspace(root=root, excludes=(), diff_base=base,
+                       diff_head="HEAD")
+
+        assert ws.hidden_by_rules() == ([], [])
+
+
 def test_a_rename_into_the_reviewed_set_reports_its_old_path_too(repo):
     """And the caller must not read that as a removal.
 

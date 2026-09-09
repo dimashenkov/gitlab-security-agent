@@ -148,6 +148,87 @@ def test_the_whole_one_answers():
                                      "unsafe": {"provenance": dict(prov)}}})
 
 
+class TestASkippedRowIsVisible:
+    """A refusal nobody can see is a refusal nobody will diagnose.
+
+    Both readers simply skipped a row that did not answer for the product, so
+    an older measurement answered in its place and the only visible effect was
+    the headline numbers moving. Recorded in `LIMITATIONS.md` on 2026-09-09 and
+    built the same day.
+
+    The reason is a short phrase and the counts are per reason, because
+    fifty-two rows from one experiment arm should say "52 asked for
+    claude-sonnet-5" rather than printing fifty-two lines.
+    """
+
+    def test_the_reason_names_the_model_that_was_asked_for(self, tmp_path,
+                                                           monkeypatch):
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, when="2026-08-01T09:00:00+00:00"),
+            dict(row("a", recall=False, when="2026-09-09T12:00:00+00:00"),
+                 members={"safe": reviewed_by("claude-sonnet-5"),
+                          "unsafe": reviewed_by("claude-sonnet-5")}),
+        ]))
+
+        stop_rule.latest_rows()
+
+        assert stop_rule.SKIPPED == {"asked for claude-sonnet-5": 1}
+        assert "1 row(s) did not answer for claude-opus-5" \
+            in stop_rule.skipped_line()
+        assert "asked for claude-sonnet-5" in stop_rule.skipped_line()
+
+    def test_a_pass_that_skipped_nothing_says_nothing(self, tmp_path,
+                                                      monkeypatch):
+        """Silence means every row was read. It must not also be what a reader
+        sees when nobody looked, which is why the line is built from a dict
+        cleared on the way in rather than appended to across calls."""
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            row("a", recall=True, when="2026-08-01T09:00:00+00:00"),
+        ]))
+
+        stop_rule.latest_rows()
+
+        assert stop_rule.SKIPPED == {}
+        assert stop_rule.skipped_line() == ""
+
+    def test_the_count_is_cleared_between_passes(self, tmp_path, monkeypatch):
+        """A count that accumulates across calls reports the previous run's
+        rows as this one's — the same defect as a stale truncation flag."""
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [
+            dict(row("a", recall=False, when="2026-09-09T12:00:00+00:00"),
+                 members={"safe": reviewed_by("claude-sonnet-5"),
+                          "unsafe": reviewed_by("claude-sonnet-5")}),
+        ]))
+        stop_rule.latest_rows()
+        assert sum(stop_rule.SKIPPED.values()) == 1
+
+        stop_rule.latest_rows()
+
+        assert sum(stop_rule.SKIPPED.values()) == 1
+
+    @pytest.mark.parametrize("members, expected", [
+        ({"safe": reviewed_by("claude-opus-5")},
+         "not a pair of a safe and an unsafe member"),
+        ({"safe": reviewed_by("claude-opus-5"), "unsafe": "x"},
+         "a member is not an object"),
+        ({"safe": reviewed_by("claude-opus-5"),
+          "unsafe": {"provenance": "x"}},
+         "a member records no readable provenance"),
+        ({"safe": reviewed_by("claude-opus-5"),
+          "unsafe": {"provenance": {"model_requested": "claude-opus-5",
+                                    "models_served": ["claude-opus-5",
+                                                      "claude-sonnet-5"],
+                                    "models_verified": []}}},
+         "also reviewed by claude-sonnet-5"),
+    ])
+    def test_each_refusal_says_which_one_it_is(self, members, expected):
+        """Six ways to fail and one message would send every reader looking in
+        the wrong place — the mistake `_nothing_reviewable_summary` was split
+        into four readings to undo."""
+        assert stop_rule.why_not_product_row(
+            {"case_id": "a", "members": members}) == expected
+
+
 class TestWhichRowAnswers:
     def test_a_later_row_supersedes_an_earlier_one(self, tmp_path, monkeypatch):
         monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [

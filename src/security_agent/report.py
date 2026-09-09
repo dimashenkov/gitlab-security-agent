@@ -20,6 +20,8 @@ from .config import Config
 from .gate import Decision, truncation_remedy
 from .identity import review_identity
 from .models import (
+    REVIEW_NOTHING_REVIEWABLE,
+    REVIEW_SKIPPED,
     SEVERITY_EMOJI,
     STOP_EXPLANATIONS,
     VERDICT_CONFIRMED,
@@ -237,6 +239,21 @@ def _header(cfg: Config, outcome: ScanOutcome, decision: Decision) -> List[str]:
             "",
             "Each of these would have blocked if the verifier had confirmed it.",
         ]
+    # **A review that did not happen does not get the green tick.** Codex found
+    # this without being asked, on 2026-09-08: the terminal already said
+    # `NOT REVIEWED` and the markdown immediately under it rendered
+    # "✅ AI security review — no findings reported", which is the one line a
+    # merge request preview shows. Built 2026-09-09.
+    #
+    # Two sentences and not one, because the two states are not one event: the
+    # tool finding nothing to look at, and somebody deciding it should not
+    # look. The body already carries the detail; this is the heading a reader
+    # stops at.
+    if outcome.review_status == REVIEW_SKIPPED:
+        return ["## ⚪ AI security review — not run, this change carries the "
+                "skip label"]
+    if outcome.review_status == REVIEW_NOTHING_REVIEWABLE:
+        return ["## ⚪ AI security review — nothing to review"]
     # "no findings reported", never "no vulnerabilities". The agent read what
     # it read and said nothing about the rest.
     return ["## ✅ AI security review — no findings reported"]
@@ -540,8 +557,19 @@ def _finding(cfg: Config, candidate: Candidate,
     if candidate.verdict == VERDICT_UNCERTAIN:
         tags.append("unverified chain")
     if candidate.votes:
-        agreeing = sum(1 for v in candidate.votes if v.verdict == candidate.verdict)
+        # The denominator is the seats that answered. A failed verification
+        # call records `verdict=uncertain` with an `error`, so a dead seat used
+        # to count as one that agreed whenever the panel landed on `uncertain`.
+        # Found 2026-09-09; the same defect one renderer along, in `terminal`.
+        answering = [v for v in candidate.votes if not getattr(v, "error", "")]
+        agreeing = sum(1 for v in answering if v.verdict == candidate.verdict)
+        # Reserved seats in the denominator, answering seats in the numerator.
+        # `2/2` would say a complete panel agreed; the panel was three.
         tags.append("verified {}/{}".format(agreeing, len(candidate.votes)))
+        failed = len(candidate.votes) - len(answering)
+        if failed:
+            tags.append("{} verifier call{} failed".format(
+                failed, "" if failed == 1 else "s"))
 
     lines = [
         "### {} `{}` · {} — {}".format(
@@ -755,7 +783,7 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
                 len([f for f in cov.changed if f in set(cov.examined)]),
                 len(cov.changed),
                 "" if cov.complete else " — not opened: " + ", ".join(
-                    "`{}`".format(f) for f in cov.unopened[:8])),
+                    _code_span(f) for f in cov.unopened[:8])),
             "",
         ]
     if cov.deleted:
@@ -767,7 +795,7 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
         lines += [
             "**Deleted ({}):** {}".format(
                 len(cov.deleted),
-                ", ".join("`{}`".format(path) for path in cov.deleted[:8])),
+                ", ".join(_code_span(path) for path in cov.deleted[:8])),
             "",
         ]
     if cov.unreadable:
@@ -783,7 +811,7 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
         lines += [
             "**No source lines to read ({}):** {}".format(
                 len(cov.unreadable),
-                ", ".join("`{}` ({})".format(path, why)
+                ", ".join("{} ({})".format(_code_span(path), why)
                           for path, why in cov.unreadable[:8])),
             "",
         ]
@@ -928,6 +956,13 @@ def build_json(cfg: Config, outcome: ScanOutcome, decision: Decision) -> Dict[st
         # exactly the case this product must not render as a clean review.
         "finished_explicitly": outcome.finished_explicitly,
         "unresolved": list(outcome.unresolved),
+        # A third question, and the one nothing here could answer until
+        # 2026-09-09: was a review performed at all? `stop_reason` says how one
+        # ended and `complete` says whether it reached its expected end. A run
+        # that examined nothing recorded `completed` and `complete: true`, so
+        # `pair_corpus.hits_target` — which reads exactly those two fields —
+        # scored an unsafe case as a miss when nobody had looked at it.
+        "review_status": outcome.review_status,
         "stop_reason": outcome.stop_reason,
         "stop_detail": outcome.stop_detail,
         "trace_markdown": outcome.trace_markdown,
