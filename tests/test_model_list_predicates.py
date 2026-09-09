@@ -141,3 +141,53 @@ def test_a_tuple_is_not_a_shape_any_artifact_carries():
     two of the four to accept something nothing produces."""
     assert accepts_name_list(("a",)) and accepts_model_list(("a",))
     assert not accepts_reference(("a",)) and not accepts_names(("a",))
+
+
+AMBIGUOUS_SHAPES = [
+    # (provenance, is it unanswerable)
+    ({"model_requested": "claude-opus-5",
+      "models_served": ["claude-opus-5"],
+      "models_verified": ["claude-opus-5"]}, True),
+    ({"model_requested": "claude-opus-5",
+      "models_served": ["claude-opus-5"],
+      "models_reviewed": ["claude-opus-5"],
+      "models_verified": ["claude-opus-5"]}, False),
+    ({"model_requested": "claude-opus-5",
+      "models_served": ["claude-opus-5", "claude-haiku-4-5-20251001"],
+      "models_verified": ["claude-haiku-4-5-20251001"]}, False),
+    ({"model_requested": "claude-opus-5",
+      "models_served": [], "models_verified": []}, False),
+    ({"model_requested": "claude-opus-5",
+      "models_served": ["claude-opus-5"],
+      "models_verified": ["claude-opus-5"],
+      "provenance_ambiguous": True}, True),
+]
+
+
+@pytest.mark.parametrize("prov,unanswerable", AMBIGUOUS_SHAPES)
+def test_both_spellings_of_unanswerable_provenance_agree(prov, unanswerable):
+    """A fifth pair, added 2026-09-09 for the same reason as the four above.
+
+    `Provenance.provenance_ambiguous` is the writer's rule and
+    `stop_rule._cannot_say_who_reviewed` is the reader's, in files that cannot
+    import one another. The reader's first version asked only for the
+    serialised flag — which a legacy artifact cannot carry — so the two
+    disagreed about the one shape the rule exists for, and the corpus admitted
+    it. Pinned here rather than trusted to two docstrings.
+    """
+    src = Path(__file__).resolve().parents[1] / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    from security_agent.models import Provenance
+
+    writer = Provenance(
+        model_requested=prov["model_requested"],
+        models_served=list(prov.get("models_served", [])),
+        models_reviewed=list(prov.get("models_reviewed", [])),
+        models_verified=list(prov.get("models_verified", [])))
+
+    assert stop_rule._cannot_say_who_reviewed(prov) is unanswerable
+    # The writer has no serialised flag to read, so the explicit-flag shape is
+    # the reader's alone; every other shape must come out the same.
+    if "provenance_ambiguous" not in prov:
+        assert writer.provenance_ambiguous is unanswerable

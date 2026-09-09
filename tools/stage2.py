@@ -40,6 +40,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import stop_rule
 from artifact import (
     case_digest,
     instant,
@@ -898,6 +899,22 @@ def probe_scope(args) -> Result:
     return _from_tests([path], args.tests, "scope control")
 
 
+def settles_a_verdict(row: dict) -> bool:
+    """Whether this row may settle what the *product* did with a case.
+
+    The production stream is a place, and after 2026-09-09 a run of another
+    model can land inside it: `run_queue.result_path` writes a non-product run
+    to `queue/<case>.<model>.json`, which every glob of that directory finds.
+    Codex the same day: such a row became the case's settled answer while the
+    accounting correctly said no product run existed, so the tracker reported
+    a pass and an outstanding purchase for one case at once.
+
+    A row that names no model at all is refused too. It cannot establish that
+    the product answered, and this is the reader that decides what did.
+    """
+    return stop_rule.identified_model(row) == stop_rule.PRODUCT_MODEL
+
+
 def result_files() -> list:
     """The **production stream**: batches at the top level, and the queue.
 
@@ -924,7 +941,7 @@ def result_files() -> list:
         (ROOT / "measurements" / "queue").glob("*.json"))
 
 
-def paid_result_files() -> list:
+def paid_result_files(stream=None) -> list:
     """Every file a paid run has written, in all four places it writes them.
 
     For the questions about money and about what was bought, where an
@@ -933,9 +950,28 @@ def paid_result_files() -> list:
     a reader that cannot see the file could never say so.
     """
     measurements = ROOT / "measurements"
-    return sorted(set(result_files())
+    # `stream` is passed in by a caller that has already listed it, so the two
+    # views come from one snapshot. Codex, 2026-09-09:
+    # `measured_outside_the_stream` listed the stream, then called this, which
+    # listed it again — and a queue result landing between the two was read by
+    # the second listing while the first had not marked its path as inside, so
+    # the case was reported as needing adoption with its row already in the
+    # stream. The same race `check_accounted.walk` was changed to close, one
+    # tool along.
+    return sorted(set(result_files() if stream is None else stream)
                   | set(measurements.glob("experiment-*/pass-*/*.json"))
-                  | set(measurements.glob("round-*/*.json")))
+                  | set(measurements.glob("round-*/*.json"))
+                  # `queue/<model>/<case>.json` — a run of another model.
+                  # Deliberately not in `result_files`, which is the
+                  # production stream, and necessarily here, which is what was
+                  # bought.
+                  | set(measurements.glob("queue/by-model/*/*.json"))
+                  # And the same under a round, where `QUEUE` is rebound
+                  # to `round-N/`. Codex, 2026-09-09: the path was added
+                  # to `check_accounted` and not here, so one paid
+                  # artifact existed for one accounting reader and not
+                  # for the other three.
+                  | set(measurements.glob("round-*/by-model/*/*.json")))
 
 
 def rows_in(body) -> list:
@@ -1073,8 +1109,10 @@ def _pair_passed(row: dict, case_id: str) -> bool:
     return found and not persists
 
 
-def measured_outside_the_stream(current: Dict[str, set]) -> set:
-    """Cases a paid run has a usable row for, in none of which is a verdict.
+def measured_outside_the_stream(current: Dict[str, set],
+                                product_only: bool = True,
+                                stream=None, paid=None) -> set:
+    """Cases a paid run **of this product** has a usable row for, and no verdict.
 
     Two questions, and folding them into one costs money either way. "What is
     this case's answer" has to come from the production stream. "Do we still
@@ -1086,11 +1124,39 @@ def measured_outside_the_stream(current: Dict[str, set]) -> set:
 
     Not a verdict, and deliberately not returned as one: what to do with such a
     row is a decision, and it stays visible until somebody makes it.
+
+    **And measured by this model.** The line this feeds says "measured outside
+    the stream and not adopted", which is an invitation to adopt the row as
+    this stage's answer. A row from another model cannot be adopted as one: it
+    is that model's behaviour, bought and real, but not this product's result.
+    Before 2026-09-09 the filter was absent, so the 52 rows the Sonnet trial
+    wrote on 2026-09-08 were each offered here for adoption. Pass
+    `product_only=False` to ask the complementary question — which cases some
+    *other* model measured — so that those rows are named rather than dropped.
     """
-    stream = {path.resolve() for path in result_files()}
+    # **Only when asking about the product.** A product row inside the stream
+    # is the verdict, not something waiting to be adopted — that is what this
+    # exclusion is for. A *foreign* row inside the stream is still foreign,
+    # and skipping it by location was how the one place it can now appear —
+    # `queue/<case>.<model>.json` — went unreported in both directions at
+    # once. Codex, 2026-09-09.
+    # `stream` is the caller's listing when it has one, so `probe_use`'s three
+    # calculations come from one snapshot. Codex, 2026-09-09: it listed once
+    # for the verdicts and twice more here, and a product row written between
+    # the first and the rest left the case out of `run`, out of `unadopted`
+    # (the later listing sees it inside the stream) and out of the foreign
+    # pass, so a completed paid row appeared in no line of the report at all.
+    in_stream = result_files() if stream is None else stream
+    inside = {path.resolve() for path in in_stream} if product_only else set()
     seen = set()
-    for path in paid_result_files():
-        if path.resolve() in stream:
+    # **And the paid listing too.** Codex, 2026-09-09: freezing `stream` alone
+    # left `paid_result_files` globbing the experiment and round directories
+    # afresh on every call, so a product experiment row arriving between
+    # `probe_use`'s two calls was missed by the first and excluded by the
+    # second, and appeared in no line of the report — the race this parameter
+    # was added to close, still open one glob along.
+    for path in (paid_result_files(in_stream) if paid is None else paid):
+        if path.resolve() in inside:
             continue
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
@@ -1101,6 +1167,15 @@ def measured_outside_the_stream(current: Dict[str, set]) -> set:
             if not isinstance(case_id, str) or not case_id:
                 continue
             if row.get("incomplete") or not isinstance(row.get("pair_success"), bool):
+                continue
+            named = stop_rule.identified_model(row)
+            if product_only:
+                if named != stop_rule.PRODUCT_MODEL:
+                    continue
+            elif named in (stop_rule.PRODUCT_MODEL, stop_rule.UNIDENTIFIED):
+                # A row that names no model is not another model's. Codex,
+                # 2026-09-09: read as the negation of the product test, this
+                # branch claimed a malformed row as a foreign measurement.
                 continue
             if row.get("case_digest") in current.get(case_id, ()):
                 seen.add(case_id)
@@ -1173,7 +1248,14 @@ def probe_use(args) -> Result:
                for name in cases}
     verdicts: Dict[str, set] = {}
     undated: Dict[str, int] = {}
-    for path in result_files():
+    # One listing for all three calculations below. Codex, 2026-09-09: this
+    # loop listed the stream, and the two `measured_outside_the_stream` calls
+    # listed it again — so a paid product row written between them fell out of
+    # `run`, out of `unadopted` and out of the foreign line at once, and
+    # appeared nowhere in the report.
+    stream = result_files()
+    paid = paid_result_files(stream)
+    for path in stream:
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
@@ -1181,6 +1263,8 @@ def probe_use(args) -> Result:
         for row in rows_in(body):
             case_id = row.get("case_id")
             if not isinstance(case_id, str) or not case_id:
+                continue
+            if not settles_a_verdict(row):
                 continue
             if row.get("incomplete"):
                 # A run that did not finish is not a result. Recording it as a
@@ -1223,9 +1307,18 @@ def probe_use(args) -> Result:
     # difference between "nobody has paid for this" and "somebody paid and
     # nothing adopted the result" is a dollar, and the tracker is what the
     # owner reads to decide what to buy next.
-    unadopted = sorted(measured_outside_the_stream(
-        {name: current[name] for name in cases}) - set(run))
+    outside = {name: current[name] for name in cases}
+    unadopted = sorted(measured_outside_the_stream(outside, stream=stream,
+                                                  paid=paid) - set(run))
+    # Named, not folded in. Such a row cannot be adopted as this stage's
+    # answer, and dropping it silently is how a paid row stops being visible.
+    foreign = sorted(measured_outside_the_stream(outside, product_only=False,
+                                                 stream=stream, paid=paid)
+                     - set(run) - set(unadopted))
     beside = " (+{} snapshot)".format(snapshots) if snapshots else ""
+    if foreign:
+        beside = ", {} measured only by another model: {}{}".format(
+            len(foreign), ", ".join(foreign[:2]), beside)
     if unadopted:
         beside = ", {} measured outside the stream and not adopted: {}{}".format(
             len(unadopted), ", ".join(unadopted[:2]), beside)
@@ -1325,6 +1418,11 @@ def _failing_cases() -> list:
             continue
         for row in rows_in(body):
             if row.get("incomplete"):
+                continue
+            if not settles_a_verdict(row):
+                # The other verdict reader of this stream, and the same rule.
+                # Two spellings would let one of the two probes report a
+                # failure the other cannot see.
                 continue
             case_id = row.get("case_id")
             if not isinstance(case_id, str) or not case_id:

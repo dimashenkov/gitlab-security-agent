@@ -1200,6 +1200,53 @@ class TestATrimmedDiffSaysWhereItWasCut:
         assert "SECURITY_SCAN_DIFF_CEILING_BYTES is the remedy" in byte_note
         assert "git deadline" not in byte_note
 
+    def _repo_with(self, root, files):
+        """A one-commit change touching `files`, a dict of name to bytes."""
+        env = {"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.com",
+               "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.com",
+               "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(root)}
+
+        def git(*args):
+            subprocess.run(("git", "-C", str(root), *args), check=True,
+                           capture_output=True, env=env)
+
+        git("init", "-q", "-b", "main")
+        (root / "README.md").write_text("start\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "base")
+        base = subprocess.run(("git", "-C", str(root), "rev-parse", "HEAD"),
+                              capture_output=True, text=True, env=env,
+                              check=True).stdout.strip()
+        for name, blob in files.items():
+            (root / name).write_bytes(blob)
+        (root / "README.md").write_text("start\nchanged\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "change")
+        return Workspace(root=root, excludes=(), diff_base=base,
+                         diff_head="HEAD")
+
+    def test_a_source_file_git_will_not_print_is_not_a_whole_delivery(
+            self, tmp_path):
+        """Three ways a diff is not the whole change, and this one leaves the
+        body looking complete: no cut marker, every readable file entire, and
+        a file Node will execute that never appeared. Codex, 2026-09-09."""
+        ws = self._repo_with(tmp_path, {"auth.js": b"var a = 1;\x00 hidden\n"})
+        session = Session()
+        dispatch(ws, Session(), "get_diff", {}).apply(session)
+
+        assert session.whole_diff_delivered is False
+
+    def test_an_image_still_is(self, tmp_path):
+        """The control, and the reason the classification exists. An
+        asset-only change delivered whole must not report as never shown, or
+        every merge request that adds a logo comes out incomplete."""
+        ws = self._repo_with(tmp_path,
+                             {"logo.png": b"\x89PNG\r\n\x1a\n\x00ohno"})
+        session = Session()
+        dispatch(ws, Session(), "get_diff", {}).apply(session)
+
+        assert session.whole_diff_delivered is True
+
     def test_a_mid_file_cut_leaves_the_run_recorded_incomplete(self, tmp_path):
         """The note says the review is incomplete; the accounting has to agree,
         or the sentence is a claim nothing checks — which is the class this

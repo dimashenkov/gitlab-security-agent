@@ -48,6 +48,144 @@ def artifact(identity_value, complete=True, exit_code=1, exposures=None) -> dict
                          if exposures is None else exposures}}
 
 
+class TestTheBuildIsIdentifiedByItsCode:
+    """`agent_version` has read `0.1.0` since the first commit.
+
+    Every change to the reviewer, the gate, the prompts' loading, the
+    aggregation — all of it kept the same implementation identity, so an
+    artifact written by a build with a known defect claimed the same reviewer
+    as the build that repaired it, and the key let it be reused. A number a
+    person has to remember to raise is wrong exactly when it matters: after a
+    change nobody thought was worth a release.
+
+    Codex, 2026-09-09: *"Use an automatically changing build/source digest or
+    immutable release identifier. A manually remembered version bump recreates
+    the same failure."*
+    """
+
+    def test_the_digest_changes_when_a_module_changes(self, tmp_path,
+                                                      monkeypatch):
+        import hashlib
+
+        from security_agent import source_digest
+
+        # Hashed the way the function hashes: name, then bytes, per file.
+        # Asserting the value rather than re-running it against an edited
+        # package, which would mean writing into the repository.
+        def digest_of(files):
+            running = hashlib.sha256()
+            for name in sorted(files):
+                running.update(name.encode("utf-8"))
+                running.update(b"\0")
+                running.update(files[name])
+                running.update(b"\0")
+            return running.hexdigest()[:16]
+
+        one = digest_of({"gate.py": b"def decide(): return 0\n"})
+        two = digest_of({"gate.py": b"def decide(): return 1\n"})
+        assert one != two
+        # And a deleted module moves it even when nothing left was touched,
+        # which is why the name is hashed and not only the bytes.
+        assert digest_of({"gate.py": b"x", "verify.py": b""}) != \
+            digest_of({"gate.py": b"x"})
+        # The real one is a digest and not the version string.
+        assert source_digest() != "0.1.0"
+        assert len(source_digest()) == 16
+
+    def test_a_sourceless_installation_falls_back_and_does_not_hash_nothing(
+            self, monkeypatch, tmp_path):
+        """`glob` returning nothing raises nothing, so the loop completed and
+        the function returned the SHA-256 of no input — one constant value,
+        identical for every sourceless build, which is exactly the collapse
+        `__version__` was found guilty of. The docstring claimed it fell back
+        and it did not. Codex, 2026-09-09.
+        """
+        import security_agent
+
+        security_agent.source_digest.cache_clear()
+        empty = tmp_path / "security_agent" / "__init__.py"
+        empty.parent.mkdir()
+        empty.write_text("", encoding="utf-8")
+        # A package directory holding no `.py` file to glob: point `__file__`
+        # at a name inside a directory that has none.
+        monkeypatch.setattr(security_agent, "__file__",
+                            str(tmp_path / "nosource" / "__init__.py"))
+        (tmp_path / "nosource").mkdir()
+        try:
+            assert security_agent.source_digest() == security_agent.__version__
+        finally:
+            security_agent.source_digest.cache_clear()
+
+    def test_the_key_moves_with_it(self):
+        before = identity(prov={"agent_source_sha": "aaaaaaaaaaaaaaaa"})
+        after = identity(prov={"agent_source_sha": "bbbbbbbbbbbbbbbb"})
+        assert digest(before) != digest(after)
+
+    def test_an_artifact_written_before_this_existed_is_still_readable(self):
+        """The control. An empty digest must not crash the key or make every
+        old artifact unique — it makes them match each other, which is what
+        they were."""
+        old_one = identity(prov={"agent_source_sha": ""})
+        old_two = identity(prov={"agent_source_sha": ""})
+        assert digest(old_one) == digest(old_two)
+
+
+class TestEveryBehaviouralSettingIsInTheKey:
+    """The identity kept its own hand-written list of what matters.
+
+    `config.BEHAVIOURAL` is the repository's answer to "does this setting
+    change what the review does", and a test in `test_config.py` fails when a
+    new `Config` field is in neither list. The identity was not reading it —
+    it named a dozen settings by hand — so `max_turns`, `max_runtime_seconds`,
+    `profile`, the task budget, the context limits and the provider were all
+    outside the key. Two runs at 60 turns and at 6 shared an identity, and the
+    short one's artifact was reusable as the answer for the long one.
+
+    Codex, 2026-09-09, sustaining the finding: the identity must carry the
+    *resolved, effective* budget, "not a hand-selected subset of raw
+    settings".
+    """
+
+    def test_nothing_behavioural_is_missing(self):
+        from security_agent.config import BEHAVIOURAL
+        from security_agent.identity import CARRIED_ELSEWHERE
+
+        present = set(identity()["settings"])
+        missing = BEHAVIOURAL - present - set(CARRIED_ELSEWHERE)
+
+        assert not missing, (
+            "these settings change the review and are outside its identity, "
+            "so a change to one silently reuses the other's result: {}"
+            .format(sorted(missing)))
+
+    def test_the_exemptions_are_real_field_names(self):
+        """A renamed field would leave its exemption behind, and an exemption
+        matching nothing is a setting quietly outside the key with a comment
+        claiming otherwise."""
+        from security_agent.config import BEHAVIOURAL
+        from security_agent.identity import CARRIED_ELSEWHERE
+
+        assert set(CARRIED_ELSEWHERE) <= BEHAVIOURAL
+
+    def test_a_shorter_turn_limit_is_a_different_review(self):
+        """The concrete case. Not asserted through the list above, because a
+        list can be satisfied by a field that nothing reads."""
+        from security_agent.config import Config
+
+        short = Config()
+        short.max_turns = 6
+        assert digest(identity(short)) != digest(identity(Config()))
+
+    def test_where_the_artifact_lands_is_not(self):
+        """The control. `output_dir` is in `NOT_BEHAVIOURAL`, and a key that
+        moved with it would make every experiment run unreusable."""
+        from security_agent.config import Config
+
+        elsewhere = Config()
+        elsewhere.output_dir = "/tmp/somewhere-else"
+        assert digest(identity(elsewhere)) == digest(identity(Config()))
+
+
 # ------------------------------------------------------------ what it covers
 
 

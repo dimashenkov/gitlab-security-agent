@@ -798,7 +798,31 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
                 ", ".join(_code_span(path) for path in cov.deleted[:8])),
             "",
         ]
-    if cov.unreadable:
+    withheld = set(getattr(cov, "unreadable_source", ()) or ())
+    if withheld:
+        # **First, and under its own heading.** Codex, 2026-09-09. These paths
+        # were sitting in the list below, described as having "no source lines
+        # to read" — a sentence that is true of a mode header and false of a
+        # `.js` file. Git decides `binary` from the bytes, so one NUL byte
+        # anywhere in the first 8000 puts a running source file in that list,
+        # where a reader scanning past renames and images would never look
+        # twice at it.
+        #
+        # The one entry a reader has to act on cannot be the one filed under
+        # the heading that says no action is needed.
+        lines += [
+            "**Source that could not be read ({}):** {}".format(
+                len(withheld),
+                ", ".join(_code_span(path) for path in sorted(withheld)[:8])),
+            "",
+            "These are source files git will not print — it treats them as "
+            "binary, which one NUL byte is enough to do. They were changed and "
+            "nobody was shown them.",
+            "",
+        ]
+    disclosed = [(path, why) for path, why in cov.unreadable
+                 if path not in withheld]
+    if disclosed:
         # Beside the coverage line and not folded into it. "2 of 5 changed
         # files opened" reads as a thin review when three of the five had no
         # line in them to open — and a mode change is still worth a reader's
@@ -810,9 +834,23 @@ def _coverage_section(cfg: Config, outcome: ScanOutcome, decision: Decision) -> 
         # exactly the entries it was listing.
         lines += [
             "**No source lines to read ({}):** {}".format(
-                len(cov.unreadable),
+                len(disclosed),
                 ", ".join("{} ({})".format(_code_span(path), why)
-                          for path, why in cov.unreadable[:8])),
+                          for path, why in disclosed[:8])),
+            "",
+        ]
+    if getattr(cov, "excluded", None):
+        # **The rule that hid them, named where a person reads.** `--path`
+        # scope gets a warning block ending "This is not a review of the
+        # change"; the exclude rules got nothing, and `DEFAULT_EXCLUDES` —
+        # `*/vendor/*`, `*/dist/*`, `*.map`, `*.min.js`, `*.snap` — needs no
+        # operator to be in force. So a change to a vendored dependency was
+        # reviewed by nobody, reported by nothing, and came out with the green
+        # heading. It reached the JSON and neither human channel.
+        lines += [
+            "**Excluded by rule ({}):** {}".format(
+                len(cov.excluded),
+                ", ".join(_code_span(path) for path in cov.excluded[:8])),
             "",
         ]
     # Every rejection reason, and the sum is the place that goes wrong: a

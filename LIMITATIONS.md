@@ -260,7 +260,7 @@ affected by pinning the source. It is not reachable through a merge request,
 but it is part of the runner's trust: the job wants a fresh git directory, or a
 check that the file is absent. Named by Codex, not built.
 
-## A search that matched nothing still recorded a file as read — open
+## A search that matched nothing still recorded a file as read — fixed
 
 `search_code` records which files a result quoted by regex-scanning the rendered
 answer for `path:digits:`, and the answer begins with the pattern echoed back.
@@ -275,11 +275,16 @@ with a colon-and-digits pattern would look like a run that read something. It is
 the shape this repository hunts: a claim about what was inspected, derived from
 prose rather than from the thing inspected.
 
-The fix is to build the exposures from the parsed records instead of from the
-rendered text, and a no-match answer must record none. It is not done here: it
-lives in `tools.py::_paths_in_search`, outside the files this change was scoped
-to, and it is not a defect of the parser rewrite — it predates it. Named here
-rather than carried in somebody's head.
+Fixed 2026-09-09, as this paragraph said it should be: the exposures are built
+from the records `Workspace.search` keeps rather than from the rendered text,
+and a no-match answer records none. `search` publishes `last_search_paths`,
+taken from the lines actually *shown* — so a file whose only lines the
+`max_results` cut or the character ceiling dropped is not recorded either.
+
+`_paths_in_search` and its regex are deleted rather than left unused: a parser
+that answers the same question differently is the second spelling this
+repository keeps finding, and the next reader would have had two to choose
+from.
 
 ## A reused artifact with no verdict was reused as a pass — fixed
 
@@ -1497,43 +1502,627 @@ count, so subtracting its marker again was the double penalty; a
 `skipif(False)` runs, is recorded as a plain pass, and now counts. The source
 is read only for what the report cannot say.
 
-## Three readers still ask "was it bought", never "was *this* model measured"
+## Three readers took another model's row for the product's — fixed
 
 Found 2026-09-09, when the Sonnet trial's 52 rows landed under `measurements/`.
-Four readers took another model's rows for the product's; three are repaired
-and this is the fourth case, left standing on purpose.
+Four readers took another model's rows for the product's; the first three were
+repaired that morning and these three the same afternoon.
 
-`stop_rule.latest_rows` and `sentinel.recorded_outcomes` now share
+`stop_rule.latest_rows` and `sentinel.recorded_outcomes` already shared
 `stop_rule.is_product_row`: a row carrying `members` has to name
 `claude-opus-5` in **every** member, and a row with no `members` key predates
-the field and is read. These three do not:
+the field and is read. These three did not, and each failed differently:
 
-| Reader | What it does with a foreign row |
-|---|---|
-| `run_queue.already_run` | returns `True` and skips buying the Opus measurement |
-| `check_accounted.executed` | files the case `unadopted` rather than `unrun` |
-| `stage2.measured_outside_the_stream` | reports product work as already measured |
+| Reader | What it did with a foreign row | Now |
+|---|---|---|
+| `run_queue.already_run` | returned `True` and skipped buying the measurement that was wanted | asks `why_not_row_for` against `queue_model()`, on **both** its paths — the queue's own file and the walk of every batch |
+| `check_accounted.executed` | filed the case `unadopted` rather than `unrun` | counts product rows only; the foreign cases are collected in `account`'s own walk, under `FOREIGN`, and printed beside the tally |
+| `stage2.measured_outside_the_stream` | offered the row for adoption as this stage's answer | takes `product_only`, and `probe_use` prints the foreign cases on their own line |
 
-**The trigger is one row**: a scorable row for a case that has *no* Opus
+**The trigger was one row**: a scorable row for a case that has *no* Opus
 result, produced by another model, at the current case digest. None exists
 today — every case the Sonnet arm touched already carries an Opus row, which is
-why `executed()` returns 78 either way and the live baskets do not move. The
-guard is a coincidence of the corpus, not a mechanism.
+why `executed()` returns 78 either way and the live baskets did not move. The
+guard was a coincidence of the corpus, not a mechanism, and that is why this
+was repaired rather than watched.
 
-The consequence is the expensive direction: all three would tell the owner not
-to buy a measurement that has never been made.
+The consequence was the expensive direction: all three would have told the
+owner not to buy a measurement that has never been made.
 
-**Not repaired by copying the filter**, and that is the reason it is written
-down instead of fixed. These readers' question is "was this bought", and a run
-on another model is a real charge — `run_queue`'s own docstring records the
-double payment that cost about a dollar twice. Dropping the row here restores
-that defect. The repair is to record *which model* beside the case, so the
-readers can answer both questions; that is a change to what the queue and the
-accounting store, not a line in a glob.
+**Not repaired by dropping the row.** These readers' question is "was this
+bought", and a run on another model is a real charge — `run_queue`'s own
+docstring records the double payment that cost about a dollar twice. So the
+foreign rows are *named*, not filtered into silence: `check_accounted` prints
+`N case(s) measured only by another model`, and `stage2` prints `N measured
+only by another model`. Both lines are empty today and the tests build the row
+that fills them.
 
 Codex, 2026-09-09: *"All three ask whether any paid measurement exists, not
 whether this product was measured. They should share a per-member reviewer-
-identity predicate, with an explicit legacy policy."*
+identity predicate, with an explicit legacy policy."* The predicate is
+`stop_rule.why_not_row_for` and the legacy policy is the one it already had: a
+row with no `members` key predates the field and is read.
+
+**Two rounds of objection, and the second changed the design.** Codex first
+ruled that the filter restored the double-payment defect and that
+`already_run` must accept any bought row. That rests on reading a Sonnet row
+and an Opus row as two payments for one answer; they are one payment each for
+two answers, and if the only row is foreign then this product's measurement of
+that case does not exist and nothing would ever buy it. Put back with that
+argument, the adjudication came out: *"The counter-argument holds for product
+coverage: a Sonnet result is not an Opus measurement, so it must not settle
+the Opus corpus debt. Under the old behavior, no mechanism would buy the
+missing Opus result."*
+
+And with it a narrower defect that was real and mine: the first version asked
+for `claude-opus-5` **by name** in all three readers. Codex: *"run
+`tools/run_queue.py` with `SECURITY_SCAN_MODEL=claude-sonnet-5` … restart the
+queue with the same environment, model, case, and corpus version … the case is
+queued and purchased again, overwriting the first Sonnet result. That is a
+second payment for the same answer."* So the two questions are split by
+reader, which is the shape the repair now has:
+
+* `check_accounted` and `stage2` ask about the **product**, with the fixed
+  name. What the project owes is measured against the model it ships, and an
+  exported variable must not move those numbers.
+* `run_queue.already_run` asks about **the model this invocation is buying**,
+  resolved by `stop_rule.queue_model` the way `Config` resolves it.
+
+Two more came out of the rounds after that, both from the same repair:
+
+* **The queue file was model-agnostic.** `already_run` refused a foreign row
+  correctly, but `run_one` wrote every model to `QUEUE/<case>.json`. Codex:
+  *"Alternating models repeats the duplicate purchase indefinitely."* Sonnet,
+  then Opus over the top of it, then Sonnet again because the Sonnet row no
+  longer existed. `run_queue.result_path` now keeps the bare name for the
+  product — every file on disk carries it and every reader globs `queue/*.json`,
+  so renaming them would rewrite the record to fix a path — and returns
+  `<case>.<model>.json` for anything else. A model name holding a path
+  separator is refused rather than sanitised, because a sanitised name is a
+  different name and would then look like a different model.
+* **The foreign line ignored `--construction`.** It was computed in `main`
+  over every case while the headline above it was filtered, so
+  `--construction regression` could name a *snapshot* case as still owed a run
+  — and exit 0 while saying so. It is now collected inside `account`'s own
+  walk, under the key `FOREIGN`, which also removes the second snapshot of the
+  tree. That key is deliberately not one of the six outcomes: a case named
+  there is already counted in `unrun`, so `BUCKETS` is what sums, in the tool
+  and in the property test both.
+
+* **The legacy rule was a presumption about the product, applied to every
+  model.** A row with no `members` key predates the field, and every such row
+  was bought with Opus — which is why reading it is right, and why it is a
+  fact about the product rather than about whichever model is being asked
+  about. Codex: *"The legacy compatibility rule is valid only for the fixed
+  product-model readers… It cannot establish the identity of an arbitrary
+  queue model."* A legacy Opus row satisfied a Sonnet queue, so the case was
+  never measured with Sonnet and nothing would ever ask again. Such a row now
+  answers for `PRODUCT_MODEL` and refuses for anything else.
+
+* **"Not the product's" was read as "another model's".** The foreign set was
+  the boolean negation of the product test, and that test says `False` both
+  for a row Sonnet produced and for one recording no provenance at all —
+  Codex's example is `{"members": {"safe": {}, "unsafe": {}}}`. So a malformed
+  row was reported as another model's measurement: a claim about a model, made
+  from a row that names none. `stop_rule.identified_model` now gives three
+  answers — the product, a named other model, or `UNIDENTIFIED` — and both
+  readers ask it rather than negating a boolean. This is the repository's own
+  recurring defect, found inside the change written to repair a version of it.
+
+* **And the repair opened a door of its own.** `result_path` writes a
+  non-product run to `queue/<case>.<model>.json` — inside the production
+  stream, which `check_accounted.standings` and `stage2.result_files` both
+  glob. So a Sonnet row became the case's settled answer while the accounting
+  correctly said no product run existed: the tool reported the case as `pass`
+  *and* as still owed a run, in one breath, and could exit 0. Worse in the
+  other direction too — `measured_outside_the_stream` skipped it as already
+  *in* the stream, so it was not reported as foreign either. Wrong twice from
+  one row. Codex, 2026-09-09. The stream is a **place**; a verdict is about
+  the **product**, and the two are now asked separately:
+  `stage2.settles_a_verdict` is the one spelling, both verdict loops call it,
+  `standings` applies the same rule, and the stream exclusion in
+  `measured_outside_the_stream` holds only for the product question. Every
+  earlier foreign fixture sat under `experiment-*/pass-*/`, outside both
+  globs, which is exactly why none of them reached this.
+
+* **And a comment that promised one walk while the code made two.**
+  `account()` asked `executed()` and then `measured_by_other_models()`, two
+  snapshots of a directory a running queue writes into. A product result
+  landing between them put its case in `unrun` *and* in `FOREIGN`: the tool
+  saying a case was still owed a run it had just been given, and exiting 1 on
+  it. `bought_by_model()` is one walk keyed by what
+  `stop_rule.identified_model` names — `UNIDENTIFIED` a key of its own, not
+  folded into either answer — and `account` takes both sets from it. Codex,
+  2026-09-09, and the comment claiming one walk was already in the file.
+
+* **And it reached into the rounds.** `run_queue --round N` rebinds the queue
+  directory, so `result_path` writes a foreign run to
+  `round-N/<case>.<model>.json`. A round freezes the provider, the profile,
+  the order and four digests — and `round.py`'s own docstring has always
+  listed the model among them, while the manifest neither recorded it nor
+  enforced it. Codex, 2026-09-09: freeze a round, run it with
+  `SECURITY_SCAN_MODEL=claude-sonnet-5`, and the queue accepted it; run it
+  again with the product and every case was bought a second time, because the
+  bare name it looks for was not there. Then `compare` read both models' rows
+  and took the latest by timestamp, reporting Sonnet against Opus as the
+  product moving on its own — **the number every gate threshold sits above.**
+
+  Repaired in the three places the failure has: the manifest freezes
+  `stop_rule.queue_model()`; the queue refuses a mismatch **before anything is
+  bought**, and a test replaces `run_one` with something that fails if it is
+  ever reached; and `compare` counts only rows from the frozen model and
+  prints how many it set aside, because a row that is dropped in silence
+  reports a round as thinner than it is. A manifest frozen before the field
+  existed names no model, and then the product is what it meant — every round
+  so far was bought with it.
+
+* **And one that predates all of it**, found in round 10 because the model
+  work had put attention on the same function. `freeze` records
+  `case_digest` and `legacy_case_digest` for every case and `compare` read
+  neither. Edit a member between the freeze and the paid run, and the new row
+  answers a different question from the baseline it is counted against; when
+  the two verdicts happen to agree, the tool prints a stability measurement
+  over two different inputs and exits 0. `check_accounted.about_this_version`
+  and `stage2` have applied exactly this check to the same rows for weeks —
+  this reader had not learnt it. Both spellings of the digest are accepted,
+  and a manifest that records none is compared as before, because refusing
+  every row in an old round would turn it into one that measured nothing.
+
+  Seven of this file's own tests went red the minute the check was added:
+  every fixture wrote rows with no `case_digest`, which `pair_corpus` has
+  never emitted. They were given the digest the round freezes rather than the
+  check being weakened — the same call as on 2026-09-09 in the product, where
+  fifteen fixtures drove a reviewer that opened no file.
+
+  And the repair for that one needed its own other half, found the round
+  after: `compare` refusing the row did nothing to stop the queue **buying**
+  it. Codex, 2026-09-09: edit a member after the freeze and the case was
+  purchased normally, its row recorded the new digest, and `compare` then
+  reported it as "not yet run" and could exit 2 having measured nothing — the
+  money spent on a row thrown away at the other end. `run_queue --round`
+  refuses a changed digest before `run_one` can spend, on the same rule
+  `compare` applies, so the two ends agree about which rounds are checkable.
+
+  And once the digest check existed, the round after found the hole it could
+  be walked around: `protocol.order` decides what is bought and `cases`
+  carries the digests `compare` reads, and nothing checked that the two name
+  the same set. A case in `order` and not in `cases` was bought with no digest
+  check and then ignored by the comparison — money spent on a row nothing
+  looks at, while the case the comparison does look at is reported as never
+  run. A repeated id in `order` bought one case twice, because `queued` is
+  computed once. `freeze` builds both lists from one list, so a genuine
+  manifest passes; the refusal is for a hand-edited one and for a future
+  `freeze` that lets them drift.
+
+  And the model repair had the same hole one step earlier. Freezing the round
+  under `SECURITY_SCAN_MODEL=claude-sonnet-5` froze *Sonnet*, so the run
+  matched and the comparison was still wrong: `baselines()` comes from
+  `check_accounted.verdicts()`, which is the product's answers and nothing
+  else. The pass printed "0 agreed, 1 flipped" and exited 0 over Sonnet
+  against an Opus baseline — Codex, 2026-09-09, the cross-model comparison the
+  round before had been repaired to prevent, arriving through the freeze
+  instead of through the run. **A round is a measurement of the product**, so
+  `freeze` refuses to run under any other model and names
+  `tools/experiment.py` as the thing that compares two of them. The manifest
+  records `PRODUCT_MODEL` rather than the resolved value, because after the
+  refusal the two are equal and the constant says which fact is being written
+  down.
+
+  The one-walk repair itself needed a second pass. Folding `executed` and
+  `measured_by_other_models` together left `standings` walking separately, so
+  the race survived in a third place: a queue result landing between them
+  filed the case as `unadopted` while its row was already in the stream, and
+  the tool told the owner to publish a row into the place it was already in,
+  exiting 1. `walk()` now reads every file once and tags each row with whether
+  it is in the production stream, and all three views derive from that one
+  list. The test counts calls to `walk`, which is the question; counting calls
+  to `bought_by_model` was what let the third walk hide.
+
+  And `walk()` had the race inside itself: it listed the production stream
+  twice, once for the membership set and once to choose what to read, so a
+  queue result appearing between the two was read and tagged as *outside* the
+  stream — ignored by `standings`, counted by `bought_by_model`, and the case
+  came out `unadopted` with its result already in the stream. The same race,
+  one level down, where counting calls to `walk` cannot see it. The test now
+  counts the listings too.
+
+  The name itself was then wrong, found six rounds later:
+  `<case>.<model>.json` does not uniquely encode the pair. A product run of a
+  case literally called `a-case.claude-sonnet-5` and a Sonnet run of `a-case`
+  both land on `a-case.claude-sonnet-5.json` — one overwrites the other, and
+  on restart `already_run` reads the file, rejects the `case_id` inside it and
+  buys the case again. The defect the qualified name was introduced to
+  prevent, back through an ambiguity in the name. Case ids are directory names
+  and nothing forbids a dot in one. It is a **directory** now,
+  under a reserved segment: `queue/by-model/<model>/<case>.json`. It cannot be
+  ambiguous, and it takes a foreign run out of the production stream by
+  construction, since every reader of that stream globs `queue/*.json`.
+
+  The reserved segment took one more round. Placed straight in the queue, a
+  model directory shares that namespace with the queue's own files, and
+  `SECURITY_SCAN_MODEL` takes any non-empty string —
+  `SECURITY_SCAN_MODEL=log.jsonl`, or `manifest.json`, or the name of an
+  existing result, made `mkdir` run beneath a file and the run died before it
+  started. `by-model` is not a case id, so nothing the queue writes can land
+  on it.
+
+  Moving the write then had to move the readers, found the round after that:
+  `check_accounted`, `stage2`, `sentinel`, `window_recut` and `round.compare`
+  all globbed `queue/*.json` and nothing else, so a foreign run was resumable
+  by the queue and **invisible to every tally at once** — the case stayed
+  `unrun` *and* was absent from the foreign line. The production stream keeps
+  its narrow glob, because a foreign row is not the product's verdict; every
+  reader of *what was bought* gained `queue/*/*.json`, and `round.compare`
+  gained `*/*.json` so the rows it sets aside are counted rather than never
+  seen. The tests concealed it by still building the obsolete suffix layout —
+  a shape `result_path` no longer emits — and were moved to the real one.
+
+  The naming repair also created a migration, found the round after: a Sonnet
+  result written by an earlier version sits under the old universal
+  `<case>.json`, and a reader looking only at the path *this* invocation would
+  write missed it — the case bought again over a valid, current-digest row
+  sitting right there. Two rounds later the same sentence was still only half
+  true: the search had grown two name patterns and was still keyed on the
+  name, under a comment claiming it read the row. It now opens **every** file
+  the queue holds and lets `case_id` decide, so any layout the queue has ever
+  written is found — `<case>.json`, `<model>/<case>.json`, and the
+  `<case>.<model>.json` that existed between them. A file name is a place to
+  look rather than an answer, and now that is what the code does rather than
+  what a comment says. A file that exists and
+  answers for no model still stops the fall-through to the batches, so a row
+  from elsewhere cannot stand in for the queue's own unfinished one.
+
+  And the guard added with that search was over-broad, found the round after:
+  returning `False` as soon as *a* file for the case existed meant an Opus
+  queue row hid a valid current Sonnet row in a batch, and Sonnet was bought
+  again. The question is whether this model's measurement exists **anywhere**,
+  so a queue file that answers for another model — or for none, because the
+  run did not finish — says nothing about it. The original branch returned
+  early too and the guard preserved that shape; the shape was wrong.
+
+  The same double-listing was in `stage2` and predates all of this:
+  `measured_outside_the_stream` listed the stream to build the membership set,
+  then called `paid_result_files`, which listed it again. A queue result
+  landing between the two was read by the second listing while the first had
+  not marked its path as inside, so the case was reported as needing adoption
+  with its row already in the stream. `paid_result_files` now takes the
+  listing its caller has already made. The test counts the listings, which is
+  the only thing that can see it.
+
+  And the sentinel for the third answer was drawn from the value space it is
+  meant to sit outside of: it was the literal string `"unidentified"`, and
+  `SECURITY_SCAN_MODEL` takes any non-empty name. A real measurement bought
+  with `SECURITY_SCAN_MODEL=unidentified` returned a value the readers could
+  not tell from the sentinel, and its paid row was discarded as unreadable
+  rather than reported as another model's work. It is a unique object now.
+
+  And `probe_use` listed the stream three times — once for the verdicts and
+  once inside each of its two `measured_outside_the_stream` calls. A paid
+  product row written between the first and the rest fell out of `run` (the
+  first listing had not seen it), out of `unadopted` (the later listing sees
+  it *inside* the stream) and out of the foreign line (it is the product's),
+  so a completed measurement somebody had paid for appeared in no line of the
+  report at all. One listing is threaded through all three. The three places
+  this race was found — `check_accounted.account`, `check_accounted.walk`,
+  `stage2` twice — are the same mistake at four depths: **a directory listed
+  twice is two directories.**
+
+  And the digest check itself had two states where it needed three.
+  `frozen_digests.get(case_id)` answers `None` both for a case the manifest
+  does not name and for a frozen case recorded before digests existed, and the
+  falsey test let the first through — into the collection, where the reporting
+  loop, which walks the manifest, never looks at it again. A paid row for a
+  case outside the round vanished without a word, **under a comment claiming
+  it was named**. Absence read as agreement, inside the line written to stop
+  absence being read as agreement.
+
+  Freezing that listing then had to be done twice, because the first repair
+  froze only the production stream and `paid_result_files` went on globbing
+  the experiment and round directories afresh on every call. A product
+  *experiment* row arriving between the two calls appeared in no report line —
+  the race the parameter was added to close, still open one glob along. Both
+  listings are captured once now, and the test counts both.
+
+  And closing `freeze` did nothing about a manifest already on disk. One
+  naming another model — hand-edited, or written by an earlier revision of
+  this same change — was obeyed by both consumers: it matched a Sonnet
+  environment, the round was bought with Sonnet, and `compare` put those rows
+  against the Opus baselines `baselines()` draws from the product's own
+  verdicts. "0 agreed, 1 flipped", exit 0, one model reported as the other
+  moving on its own. Both readers now refuse an explicit model that is not the
+  product's; absence still means the product, because every round frozen
+  before the field existed was bought with it.
+
+  And one more that predates all of it, found because the queue was under
+  attention: `run_one` read whatever file stood at the target path after the
+  subprocess, without asking whether *this* run had written it. `already_run`
+  reschedules a case whose code changed since its last queue result, and the
+  old artifact stays on disk — so if `pair_corpus` died before writing, the
+  previous run's row was read, classified, and the failed attempt counted as a
+  completed measurement. **"Did not check" read as "checked", inside the queue
+  built to avoid exactly that.**
+
+  Three rounds went into it, and each repair was answered by the next:
+
+  1. The file's modification stamp, compared before and after. Codex: the
+     writer used `Path.write_text`, which truncates before writing, so a
+     killed run destroyed the previous paid artifact **and** moved the stamp,
+     so the guard did not fire. `pair_corpus.write_results` now writes a
+     temporary file and `os.replace`s it, which is atomic.
+  2. The stamp alone, then. Codex: `write_results` replaces the target, and on
+     a filesystem with coarse timestamps two writes land in one tick — so a
+     complete, paid result read as `no-artifact`, the expensive direction.
+  3. The inode beside the stamp. Codex: the refusal branch deletes the file,
+     because a refused pair has measured nothing and leaving it would make
+     `already_run` skip the case for ever — and by then the target had already
+     been replaced, so what it deleted was the **earlier paid measurement**.
+
+  The answer was to stop asking. The child is pointed at a path beside the
+  target and never at it: the file is this run's, it is `os.replace`d over the
+  target only when it is a result, and the previous artifact is untouched
+  until a complete new one goes over it. Three questions closed by removing
+  the thing that raised them.
+
+  A fourth round then took the name: `<case>.json.attempt` is *deterministic*,
+  so two queues running the same case share it and can unlink, read or promote
+  each other's file — one completes a valid result, the other replaces it with
+  a refusal before the first reads it, the first deletes the refusal, the
+  second finds nothing, and a paid measurement is gone with the case still
+  queued. `mkstemp` in the target's own directory now, so the promotion is
+  still a rename on one filesystem, and the emptiness of the file it creates
+  is read as "the child wrote nothing" rather than its existence being read as
+  "it did".
+
+  And the digest that guards a round covers the members and **not the answer
+  key** — deliberately, because a corrected category must not throw away
+  evidence about the same code. Codex, 2026-09-09: that exclusion is right for
+  a row and wrong for a round, where what a pass *means* is one of the frozen
+  conditions. Edit only a frozen case's `case.yml` and both the queue and
+  `compare` accepted the row, so a flip caused by the key moving was reported
+  as the product moving, with exit 0. `artifact.answer_key_digest` hashes the
+  whole manifest text — not the fields it happens to name today, because the
+  list of scoring fields has grown twice — and both ends check it. A round
+  frozen before the field existed is not checked rather than refused, the same
+  rule the other digests use.
+
+`queue_model` deliberately reads an empty `SECURITY_SCAN_MODEL` as Opus, which
+is the opposite of this repository's usual rule that an empty value is a
+variable somebody set. `config._env` returns the default for an empty value,
+so a run started that way buys Opus; the queue has to answer what the run will
+*do*. The first version returned the empty string and argued for it in its own
+docstring — the test compares against `Config` rather than against the
+argument, which is how the disagreement surfaced.
+
+Each of the four defect tests was run with the predicate answering `True` for
+every row — the reader as it stood before this — and each failed. The four
+control tests beside them passed, so the filter rejects foreign rows rather
+than everything. The two tests for the queue's own model were run the same way
+against `queue_model` answering the fixed name, and both failed.
+
+**One gap is left open on purpose**, in the next section: `already_run` and
+`check_accounted.executed` still glob fewer directories than `stage2` and
+`sentinel` do.
+
+## `already_run` still cannot see experiments or rounds
+
+Found 2026-09-09. `run_queue --round N` rebinds `QUEUE` to
+`measurements/round-N/` and writes every result there. The readers that walk
+the measurement tree did not walk the same tree:
+
+| Reader | Directories it globs |
+|---|---|
+| `stage2.paid_result_files` | batches, `queue/`, `queue/by-model/`, `experiment-*/pass-*/`, `round-*/` |
+| `sentinel.result_files` | the same |
+| `check_accounted.walk` | the same, **since this change** |
+| `run_queue.already_run` | its own `QUEUE` — **neither `experiment-*` nor another round** |
+
+`check_accounted.executed` was the third reader caught globbing fewer places
+than the results are written to, and Codex raised it as blocking on the change
+that rewrote that walk, so it was closed there: a case measured only inside a
+round read as `unrun` and the owner was told to buy it again — the exact
+defect `executed` exists to prevent, one directory over, at about a dollar a
+time.
+
+**`already_run` is left as it stands, and the question is not a glob.** Under
+`--round N` it reads that round's own directory, which is what makes a round
+repeatable; outside one it reads the queue and the batches. Whether it *should*
+see an experiment row is a real question with two defensible answers, and
+`check_accounted` deliberately keeps experiment rows out of `verdicts` for a
+reason that was paid for: an experiment freezes its own prompts, scorer and
+answer key, so its row proves a case was run and not what its answer is.
+Skipping a queued case on one may be right, or may be the same "adopted
+without a decision" mistake one directory along. It needs adjudicating before
+the glob widens; widening it first is how the previous version of this
+sentence became a defect.
+
+**No live trigger today.** `measurements/round-1/` holds one file,
+`ABANDONED.md`, and no results at all.
+
+## Six questions that were decisions, not repairs — adjudicated and applied
+
+Found 2026-09-09 by six narrow-mandate subagent hunts, each measured against
+the running code. They were held here rather than repaired because each had a
+defensible answer in more than one direction, and deciding one in passing is
+how a gate acquires a rule nobody chose. Codex ruled on all six the same day
+and every ruling is in the code; the paragraphs below say what was wrong, what
+was decided, and — where the decision has a price — what it costs.
+
+**A NUL byte made a source file unreadable, and the gate passed.** Git decides
+`binary` from *content*, which the pinned `--attr-source` cannot touch, so one
+NUL in a comment turned a running `.js` into "Binary files … differ".
+`_readable_change` subtracted the file and `_reviewed_nothing`'s `accountable`
+did not, so one *other* readable file satisfied the gate for the whole change.
+Measured: two-file merge request, `auth.js` with one NUL and a `check()` that
+returns `true` unconditionally, plus a README edit — exit 0, "No security
+findings", `whole_diff_delivered: true`. The obvious repair, *any* unreadable
+changed file makes the run partial, would block a merge for adding a PNG.
+
+Ruled: three states, not two. *"A binary change to a recognised source path,
+executable file, or otherwise source-classified object makes coverage partial.
+A PNG remains a disclosed non-source change and does not block merely for
+being binary."* The classification is one property on `ChangedObject`, and
+`_partial`, `_readable_change`, `whole_diff_delivered` and the report all read
+that one. The report gives it its own heading — the entry a reader has to act
+on cannot sit under the one that says no action is needed.
+
+The first implementation built only the first of the ruling's three clauses,
+and Codex found both gaps the same day. `bin/server` at mode `100755` was an
+asset — the file the machine *runs*, classified by its lack of an extension —
+and `.env` was one too, because a leading dot is not a suffix and the guard
+`dot > 0` rejected the canonical name while `config.env` matched. Both now
+classify as source; a submodule and a symlink do not, though git writes their
+modes in the same field.
+
+**The list was pointing the wrong way, and it took three rounds to see it.**
+The first two versions asked "is this name on a list of *source* extensions",
+and Codex refused both on one ground: *"every omission restores the exact
+bypass the check was introduced to prevent."* `Login.vue` with a NUL byte in a
+template string was invisible, and so were `.svelte`, `.dart`, `.clj`, `.sol`
+and every language nobody had added yet — a silent "no findings" over source
+no reviewer received.
+
+So the table now names the **assets**, and everything else is source. The
+omissions fall the other way: a format missing from `ASSET_SUFFIXES` is
+reported rather than hidden, which is a visible false alarm with
+`SECURITY_SCAN_FAIL_ON_INCOMPLETE` behind it and a line in that table as the
+permanent fix. **The price is real and is accepted here:** a changed
+`docs/readme.txt` that git calls binary — it has a NUL byte in it — now makes
+the review incomplete. That is rare, it is odd when it happens, and it is a
+message rather than a silence.
+
+`.jar` and `.war` are in the asset table and Codex named them questionable. A
+swapped jar is a supply-chain change; it is also unreadable to any reviewer at
+any setting, so calling it withheld source would fail every dependency update
+forever. **What is not built:** a separate rule for a changed archive — a
+required justification, a checksum comparison, a manifest diff. This paragraph
+is the record that the case was seen and left, not overlooked. `.svg` sits in
+the same table on the same reasoning and is the weaker case, since an SVG can
+carry a script element and git rarely calls one binary.
+
+## An executable with a compiled-output suffix — adjudicated: the name wins
+
+Codex, 2026-09-09, on the inverted rule: `bin/updater.exe` added at mode
+`100755` comes out a disclosed asset, because `.exe` is in the asset table and
+the table is asked before anything else. Its ruling was disjunctive — *"a
+recognised source path, executable file, or otherwise source-classified
+object"* — so an executable is meant to be accounted for whatever its name.
+
+Two readings, and both have a cost that is paid by somebody:
+
+* **The mode wins.** Every changed `.exe`, `.so`, `.dylib` or `.jar` carrying
+  the executable bit makes the review incomplete. Nobody can read any of them
+  at any setting, so the gate blocks on a fact no reviewer can act on, and a
+  gate that cannot be satisfied gets deleted rather than obeyed — which is the
+  reasoning the three-state ruling itself rests on.
+* **The name wins**, which is what the code does today. A committed
+  `updater.exe` is reported under "No source lines to read" and does not
+  block. A swapped binary is then disclosed rather than refused.
+
+Codex chose the second, 2026-09-09: *"The executable bit says the object may
+be launched; it does not make its contents reviewable source… Option A accepts
+a permanent false-incompleteness failure: legitimate binary updates block with
+no action capable of completing the review. That violates the rule that an
+unsatisfiable gate is deleted. Option B accepts that a malicious binary
+replacement can pass this source-coverage gate after being disclosed. That is
+a real supply-chain limitation, but it is honestly classified: detecting it
+requires a separate binary-integrity or provenance control, not pretending the
+source reviewer could have read it."*
+
+**So this is what the product does not do, stated plainly:** a merge request
+that replaces a committed binary — an `.exe`, a `.so`, a `.jar` — is listed in
+the report and does not block. Nothing here reads it, and nothing here claims
+to. A team that needs that needs a binary-integrity control, which is a
+different product.
+
+The half of the finding that is *not* in question was fixed: `.bin` and `.dat`
+are out of the asset table, because those two suffixes name no format at all
+and `scripts/bootstrap.bin` at mode `100755` is as likely to be a shell script
+as a blob. Codex: *"filename suffixes do not prove that a file is compiled
+output."* The residue is only the suffixes that unambiguously name compiled or
+rendered output, and it is here rather than decided in passing.
+
+`tests/test_workspace.py` asserts the adjudicated answer with the reasoning
+beside it, and it took two attempts to get the assertion honest: the first
+version asserted that every asset stays an asset at mode `100755` as though it
+were obvious, and Codex ruled that it encoded a defect rather than protecting a
+fix. The difference is not the assertion — it is that the assertion now names a
+ruling and the failure that ruling accepts.
+
+A second round on that repair found two more, both in the executable rule.
+It asked the two endpoints *together* and refused the object when either was a
+symlink — so git's type change `120000 -> 100755`, a symlink replaced by a
+real executable, came out an asset. And it asked the bit *before* the name
+tables, so `docs/logo.png` committed at mode `100755` — an accidental `chmod
++x`, and common — became withheld source and an image-only merge request came
+out incomplete. A gate that blocks for adding a logo gets deleted rather than
+obeyed, which is the failure the three-state ruling exists to avoid. The bit
+is now the last question, and `ASSET_SUFFIXES` names the content types it may
+not promote.
+
+The executable rule is gone with them: with the default now "source unless it
+is a recognised asset", `bin/server` is source without anybody asking about
+its mode, and a property whose docstring explains a decision it no longer
+takes part in is the shape this repository keeps being caught by.
+
+**One identity, two readers.** Deduplication compared the first anchor;
+suppression compared the whole anchor set. Both directions were live: one
+weakness quoted from a different line twice became two candidates and bought
+two verifier panels; an accepted risk written from one finding silenced a
+*different* one sharing an anchor.
+
+Ruled for the suppression side: *"Suppression must match the one canonical
+fingerprint printed for acceptance, not any shared anchor. False negatives
+cost another explicit suppression entry; false positives hide a different
+weakness."* Dedup stays conservative — duplicate findings and extra verifier
+calls are preferable to merging distinct weaknesses whose evidence overlaps.
+The price is written up separately below.
+
+**`agreed_confidence` took the upper median.** With an even number of
+observations one reply carried on its own, upward but not downward — and the
+docstring claimed "one outlier moves nothing". Ruled: the claimed confidence
+is the tie-break observation, added when the count is even, and the median is
+then taken. One changed reply plus one unchanged reply moves nothing in either
+direction; two agreeing replies move it in either direction.
+
+**A one-seat panel could delete a critical.** `verify_votes` defaults to 1 and
+escalated to three only when the finding could block — false under
+`SECURITY_SCAN_FAIL_ON=none`, in an ungated category, and for a pre-existing
+finding. One verifier then refuted a critical and it landed in the collapsed
+"Refuted" block, in the mode `_verify_floor`'s own docstring calls the one
+"where the report is the whole product". Ruled: *"Gate configuration controls
+the exit code, not whether the report may erase a critical on one opinion."*
+The protection sits in `_votes_for` independently of `_could_become_blocking`.
+
+**`review_identity` omitted every ceiling that decides how much was looked
+at.** Measured: a `normal` run and a `deep` run over the same commits hashed
+to the same digest `fb7cb1edda3dbf6d`, so `--reuse` answered the deep review
+with the shallow one's exit code. Ruled: the identity must carry the resolved,
+effective budget, *"not a hand-selected subset of raw settings"*. It is
+derived from `config.BEHAVIOURAL` now — the list a test already forces to be
+complete — with the exemptions named and checked. Beside it, `agent_version`
+had read `0.1.0` across 88 commits to `src/`; `source_digest()` hashes the
+package's own files, so the key moves when the code does.
+
+**The verifier's model entered the reviewer's list.** `review_models` was the
+difference of two lists, which cannot express one model doing both jobs: the
+list came back empty, the run read as having had no reviewer, and a rule put
+the requested model back — recording "not substituted" about a run nothing
+vouches for. Ruled: *"Store roles independently… For old artifacts whose
+overlapping lists make the reviewer unknowable, report the provenance as
+ambiguous and refuse corpus admission rather than inferring 'not
+substituted.'"* `models_reviewed` is written as it happens, `models_served`
+stays as a compatibility aggregate, and `provenance_ambiguous` is a published
+field that `stop_rule.why_not_row_for` refuses on.
+
+The first implementation of that refusal read the serialised flag and nothing
+else — and a legacy artifact, the only kind this path exists for, cannot carry
+the flag at all. So the one shape it was written to refuse was the one shape
+that walked past it, and the comment beside the line said the opposite in so
+many words. Absence read as agreement, inside the line added to stop a
+different reading of absence. Found by Codex the same day and fixed: the
+reader recomputes the rule when the field is absent, and
+`tests/test_model_list_predicates.py` now pins the reader's spelling against
+the writer's over the same shapes.
 
 ## A single file whose diff is over 120,000 characters can never be read whole
 
@@ -1576,3 +2165,48 @@ message can say which move will work, only which one might. Carrying the cause
 through `Coverage` would let both say the true thing for the run in hand; it
 is not built, and this paragraph is the record that it is missing rather than
 overlooked.
+
+
+## The forge context is behavioural and is outside the review's identity
+
+`briefing` puts the merge request's title, description and source branch in
+front of the model, so two runs over one commit with different merge request
+prose are not the same review. `config.BEHAVIOURAL` names `gitlab` for exactly
+that reason.
+
+`review_identity` leaves it out, and the reason is that the same object also
+carries the job url and the pipeline's own commit sha, which differ on every
+run of an unchanged pipeline. Folding it in whole would make every identity
+unique and silently end reuse — the artifact would never be reusable and
+nobody would be told why. Folding in a chosen part of it is the hand-picking
+that Codex's ruling of 2026-09-09 was about, and choosing which part is a
+decision with its own argument.
+
+So `identity.CARRIED_ELSEWHERE` names it with an empty string, the completeness
+test in `tests/test_identity.py` passes because the exemption is explicit, and
+this paragraph is the record that the exemption is a judgement rather than an
+oversight. **What can go wrong:** a merge request whose description is edited
+to say "this is a refactor, ignore the auth change" keys the same as the run
+before the edit, so a cached artifact answers for prose the model never saw.
+
+## An accepted risk can stop matching when the model requotes
+
+`suppress.Rule.matches` compares the ignore file's value against the finding's
+one canonical fingerprint, and the fingerprint is built from the first
+distinctive line the model quotes. Measured: across four identical runs of one
+case, three quoted a call and the fourth started a line later at the expression
+inside it. The entry written from one of those runs does not match the other.
+
+Until 2026-09-09 the rule matched *any* anchor the finding carried, which
+survived that drift and cost something worse: two different weaknesses in one
+file and category that quote one line in common share an anchor, so an entry
+accepting the first silenced the second — permanently, and looking exactly like
+a clean report. Codex ruled the trade the other way: *"False negatives cost
+another explicit suppression entry; false positives hide a different
+weakness."*
+
+**What it costs the operator:** a blocked merge that was already accepted can
+block again, and the remedy is a second line in the ignore file with the new
+fingerprint the report prints. **What is not built:** an identity stable across
+requoting. Codex named the shape — it needs more than "a line both quotes" —
+and nothing here attempts it.

@@ -49,6 +49,41 @@ def render(**overrides) -> str:
     return render_markdown(cfg, outcome, decide(cfg, outcome))
 
 
+def test_a_file_hidden_by_an_exclude_rule_is_named_in_the_comment():
+    """`coverage.excluded` reached the JSON and neither human channel.
+
+    `--path` scope gets a warning block ending "This is not a review of the
+    change". The exclude rules got nothing — and `DEFAULT_EXCLUDES`
+    (`*/vendor/*`, `*/dist/*`, `*.map`, `*.min.js`, `*.snap`) needs no
+    operator to be in force. So a change to a vendored dependency was reviewed
+    by nobody, reported by nothing, and came out under the green heading.
+    """
+    outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+    outcome.coverage.changed = ["app/views.py"]
+    outcome.coverage.examined = ["app/views.py"]
+    outcome.coverage.excluded = ["vendor/acme/auth.php", "dist/bundle.js"]
+    outcome.exposures = [("app/views.py", "read_file")]
+    cfg = Config(post_comment=False)
+
+    markdown = render_markdown(cfg, outcome, decide(cfg, outcome))
+
+    assert "vendor/acme/auth.php" in markdown
+    assert "Excluded by rule" in markdown
+
+
+def test_a_change_with_nothing_excluded_says_nothing():
+    """The control. A line that prints whatever the rules did names nothing,
+    and this one is in the block a reader opens to check coverage."""
+    outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+    outcome.coverage.changed = ["app/views.py"]
+    outcome.coverage.examined = ["app/views.py"]
+    outcome.exposures = [("app/views.py", "read_file")]
+    cfg = Config(post_comment=False)
+
+    assert "Excluded by rule" not in render_markdown(
+        cfg, outcome, decide(cfg, outcome))
+
+
 # ------------------------------------------------------------------- fences
 
 

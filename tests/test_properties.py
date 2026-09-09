@@ -492,10 +492,14 @@ def test_every_case_lands_in_exactly_one_bucket(tmp_path, monkeypatch, specs):
     monkeypatch.setattr(check_accounted, "ROOT", world)
 
     buckets = check_accounted.account()
-    placed = [case_id for names in buckets.values() for case_id in names]
+    # Through `BUCKETS`, not `.values()`: the dict also carries the
+    # `measured_by_another_model` list, which names cases already counted in
+    # `unrun` and would make the corpus look larger than it is.
+    placed = [case_id for name in check_accounted.BUCKETS
+              for case_id in buckets[name]]
     assert sorted(placed) == sorted(ids)
     assert len(placed) == len(set(placed))
-    assert sum(len(v) for v in buckets.values()) == len(ids)
+    assert sum(len(buckets[name]) for name in check_accounted.BUCKETS) == len(ids)
 
 
 @given(specs=st.lists(CASE_SPEC, min_size=1, max_size=4))

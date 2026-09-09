@@ -2370,6 +2370,25 @@ _STATUS_NAMES = {
 }
 
 
+def unreadable_source_paths(ws: "Workspace") -> List[str]:
+    """Changed paths that are source and that nobody could be shown.
+
+    Kept apart from `inventory_notes`'s `unreadable`, which is every object
+    with no reviewable text — a rename, a mode change, a submodule pointer, a
+    real image. Those are disclosed and block nothing. This is the third
+    state: a `.js` or a `.py` git calls binary because of one NUL byte, where
+    "no findings" would be said about a file the review never saw.
+
+    Swallowed to an empty list on the same terms as its neighbour: a git
+    invocation that fails must not take down a review already done.
+    """
+    try:
+        objects = ws.changed_objects()
+    except WorkspaceError:
+        return []
+    return [obj.path for obj in objects if obj.unreadable_source]
+
+
 def inventory_notes(ws: "Workspace") -> Tuple[List[Tuple[str, str]], List[str]]:
     """What the report needs from the inventory: the unreadable, and the deleted.
 
@@ -2580,6 +2599,16 @@ class ChangedObject:
     def symlink(self) -> bool:
         return MODE_SYMLINK in (self.old_mode, self.new_mode)
 
+    # There was an `executable` property here, added on 2026-09-09 because
+    # the ruling named executable files and removed the same day because the
+    # rule it fed was replaced. It asked whether either endpoint's mode ended
+    # in `755`, and `looks_like_source` used it to promote a name neither
+    # table knew. With the default now "source unless it is a recognised
+    # asset", `bin/server` is source without being asked about its mode, and
+    # the property answered nothing that changed an outcome. It is gone rather
+    # than kept unused: a property whose docstring explains a decision it no
+    # longer takes part in is the shape this repository keeps being caught by.
+
     @property
     def mode_changed(self) -> bool:
         """The permissions moved, whatever else did.
@@ -2609,6 +2638,182 @@ class ChangedObject:
         if self.binary or self.submodule:
             return False
         return bool(self.added or self.removed)
+
+    # Paths whose content is source whatever git says about it. Git decides
+    # `binary` from the bytes — a NUL in the first 8000 — so one such byte in
+    # a comment turns a JavaScript file into "Binary files … differ", and a
+    # reviewer is shown nothing while the gate counts the file as accounted
+    # for. Codex, 2026-09-09, ruling on that: three states, not two.
+    #
+    # By extension and by name, because that is what a person calls source.
+    # The list is deliberately not exhaustive and does not need to be: a
+    # source path this does not name behaves as it did before, and one it
+    # does name can no longer be hidden by a byte.
+    SOURCE_SUFFIXES = frozenset({
+        ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".rb",
+        ".php", ".java", ".kt", ".scala", ".cs", ".c", ".h", ".cc", ".cpp",
+        ".hpp", ".rs", ".swift", ".m", ".mm", ".sh", ".bash", ".zsh", ".pl",
+        ".pm", ".ex", ".exs", ".erl", ".lua", ".r", ".sql", ".graphql",
+        ".proto", ".tf", ".yml", ".yaml", ".json", ".toml", ".ini", ".cfg",
+        ".env", ".conf", ".gradle", ".cmake", ".mk", ".bzl",
+    })
+    SOURCE_NAMES = frozenset({
+        "Dockerfile", "Makefile", "Jenkinsfile", "Gemfile", "Rakefile",
+        "Procfile", "CMakeLists.txt", "BUILD", "WORKSPACE",
+    })
+
+    # **The list that decides, and it is the list of what is *not* source.**
+    #
+    # The first two attempts named source instead, and Codex refused both on
+    # the same ground: *"The comment that the list 'does not need to be'
+    # exhaustive is false for a completeness check: every omission restores
+    # the exact bypass the check was introduced to prevent."* `Login.vue` with
+    # one NUL byte was invisible, and so were `.svelte`, `.dart`, `.clj`,
+    # `.sol` and every extension nobody had thought of yet — a silent "no
+    # findings" over source no reviewer received, which is the failure this
+    # product exists to prevent.
+    #
+    # Naming the assets instead makes the omissions fall the other way: a
+    # format missing from this list is *reported* rather than hidden, and a
+    # report naming one file too many is a visible, forgivable false alarm
+    # with a documented move behind it. An omission in the other list was
+    # silent and permanent.
+    #
+    # What belongs here is anything **no reviewer could read at any setting**:
+    # rendered content, compressed archives, compiled output, binary data
+    # formats. That is the ruling's "disclosed non-source change" — a PNG
+    # blocks nothing not because images are safe, but because there is no text
+    # being kept from anybody.
+    #
+    # `.jar` and `.war` are here and Codex named them questionable. They are
+    # compiled deployables and a swapped one is a supply-chain change — and no
+    # reviewer can read one either way, so calling it withheld source would
+    # fail every dependency update forever. `LIMITATIONS.md` carries that as a
+    # case seen and left, not overlooked.
+    #
+    # **`.bin` and `.dat` were here and were taken out.** Codex, 2026-09-09:
+    # *"filename suffixes do not prove that a file is compiled output"* —
+    # `scripts/bootstrap.bin` at mode `100755` is as likely to be a shell
+    # script, and this table said it was an asset. Every other entry names a
+    # format; those two name nothing, so they belong on the default side
+    # where an unrecognised name is accounted for rather than excused.
+    #
+    # The list is checked for the false-alarm direction as well, because
+    # inverting the default made every omission here a merge that comes out
+    # incomplete. `.avif` and `.heic` were missing on the first pass and would
+    # have blocked an ordinary image replacement — Codex found them, and the
+    # packaging, translation and model-weight rows went in from the same
+    # question asked of the whole table.
+    ASSET_SUFFIXES = frozenset({
+        # rendered and drawn
+        ".png", ".jpg", ".jpeg", ".jfif", ".gif", ".webp", ".avif", ".heic",
+        ".heif", ".bmp", ".ico", ".tiff", ".tif", ".svg", ".pdf", ".psd",
+        ".ai", ".sketch", ".eps",
+        # played
+        ".mp3", ".mp4", ".wav", ".ogg", ".webm", ".mov", ".avi", ".flac",
+        ".m4a", ".m4v", ".mkv", ".aac", ".wma",
+        # typeset
+        ".woff", ".woff2", ".ttf", ".ttc", ".otf", ".eot",
+        # compressed
+        ".zip", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".tar",
+        ".zst", ".lz4", ".br",
+        # compiled or linked output, and the debug files beside it
+        ".jar", ".war", ".ear", ".exe", ".dll", ".so", ".dylib", ".a", ".o",
+        ".obj", ".lib", ".class", ".pyc", ".pyo", ".wasm", ".elf", ".node",
+        ".ko", ".pdb", ".map", ".dsym",
+        # packaged for installation
+        ".apk", ".ipa", ".aab", ".whl", ".egg", ".deb", ".rpm", ".msi",
+        ".nupkg", ".gem",
+        # compiled translations
+        ".mo", ".qm",
+        # data a person reads through a program
+        ".csv", ".tsv", ".parquet", ".avro", ".orc", ".arrow", ".npy",
+        ".npz", ".pkl", ".db", ".sqlite", ".sqlite3", ".mdb",
+        ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt", ".rtf", ".odt",
+        # model weights
+        ".h5", ".onnx", ".pt", ".pth", ".safetensors", ".pb", ".tflite",
+        # images of machines
+        ".iso", ".dmg", ".img", ".vmdk", ".qcow2",
+    })
+
+    @property
+    def looks_like_source(self) -> bool:
+        """Whether this path is source, whatever git made of its bytes.
+
+        The third state. A PNG that git calls binary is an
+        *intentionally non-source object* and blocks nothing; a `.js` that git
+        calls binary is **source nobody could read**, and a review that says
+        "no findings" over it is saying it about a file it never saw.
+
+        **The default is source, and only `ASSET_SUFFIXES` gets out of it.**
+        Two earlier versions asked the opposite question — is this name on a
+        list of source extensions — and Codex refused both: *"every omission
+        restores the exact bypass the check was introduced to prevent."*
+        `Login.vue` with one NUL byte was invisible, and so was every language
+        nobody had added yet. A completeness check cannot be built on a list
+        of what it knows about, because the thing it exists to catch is what
+        nobody thought of.
+
+        Asked in this order, and the order is the whole design: a recognised
+        asset is not source whatever else is true of it, and everything else
+        is. `SOURCE_SUFFIXES` and `SOURCE_NAMES` survive as a fast, readable
+        statement of the common case; removing them would not change one
+        answer, and they are checked first so that a name in both — there are
+        none today — resolves as source.
+        """
+        name = self.path.rsplit("/", 1)[-1]
+        if name in self.SOURCE_NAMES:
+            return True
+        # `dot > 0` and not `dot >= 0`, because a leading dot is a hidden file
+        # and not an extension — `.gitignore` is not a `.gitignore` file. The
+        # consequence Codex found is that a name which is *only* a dotted
+        # suffix never matched: `config.env` was recognised and the canonical
+        # `.env` was not. So the whole name is tried as well.
+        if name.lower() in self.SOURCE_SUFFIXES:
+            return True
+        dot = name.rfind(".")
+        suffix = name[dot:].lower() if dot > 0 else ""
+        if suffix in self.SOURCE_SUFFIXES:
+            return True
+        return suffix not in self.ASSET_SUFFIXES
+
+    @property
+    def unreadable_source(self) -> bool:
+        """Source this run could not be shown. Coverage is partial when true.
+
+        Not `has_reviewable_text`'s complement: a rename with no edit, a mode
+        change and a submodule pointer are all unreadable and none of them is
+        source hidden from a reviewer. This is the one that makes a review
+        incomplete.
+        """
+        # A symlink is excluded for the same reason as a submodule, and it
+        # became reachable when the default flipped to "source": a symlink's
+        # whole content is one target path, and git prints it. It is
+        # *disclosed*, and this state is for what was withheld. `bin/link`
+        # otherwise came out withheld source on a name no table knew.
+        #
+        # `_is_only_a_pointer` and not `submodule or symlink`, because those
+        # two ask whether *either* endpoint is one. Git's type change
+        # `120000 -> 100755` has a symlink on one side and a real executable
+        # on the other, and excluding it would lose the file the machine now
+        # runs — the defect Codex found in the previous version of this rule,
+        # arriving again one property along.
+        return bool(self.binary and not self._is_only_a_pointer()
+                    and self.looks_like_source)
+
+    def _is_only_a_pointer(self) -> bool:
+        """Was this a submodule or a symlink on every side it existed?
+
+        Both are records of *where something else is*, and git prints them
+        whole: two commit ids, or one target path. Neither is source withheld
+        from a reviewer. But a change with a pointer on one side and a real
+        file on the other is a real file arriving or leaving, and the file is
+        what this question is about.
+        """
+        pointers = (MODE_SUBMODULE, MODE_SYMLINK)
+        present = [mode for mode in (self.old_mode, self.new_mode)
+                   if mode and mode != MODE_ABSENT]
+        return bool(present) and all(mode in pointers for mode in present)
 
     def why_unreadable(self) -> str:
         """Why no source line of this object can be put in front of a reviewer.

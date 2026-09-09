@@ -420,6 +420,57 @@ class TestProvenanceIsRecorded:
         assert outcome.provenance.review_models == ["claude-opus-5"]
         assert "claude-haiku-4-5-20251001" in outcome.provenance.models_served
 
+    def test_one_model_doing_both_jobs_is_recorded_and_not_deduced(
+            self, cfg, ws):
+        """Subtraction cannot express this shape and never could.
+
+        Run the reviewer and the verifier on one model and
+        `models_served - models_verified` is empty, so the run read as having
+        had no reviewer — and a rule put the requested model back, which is a
+        guess dressed as a record. Codex, 2026-09-09: roles are stored, not
+        recovered.
+        """
+        client = FakeClient([FakeResponse([text("done")],
+                                          stop_reason="end_turn")])
+        outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")
+        outcome.provenance.note_served("claude-opus-5", verifying=True)
+        prov = outcome.provenance
+
+        assert prov.models_reviewed == ["claude-opus-5"]
+        assert prov.models_verified == ["claude-opus-5"]
+        assert prov.review_models == ["claude-opus-5"]
+        # And the artifact says it can answer, so a corpus may admit it.
+        assert prov.provenance_ambiguous is False
+        assert prov.to_dict()["provenance_ambiguous"] is False
+
+    def test_an_old_artifact_of_that_shape_says_it_cannot_answer(self):
+        """The same shape written before roles were stored. The reviewer is
+        either that model or a name nobody wrote down, and the old rule
+        answered "the requested one" — which is `model_substituted: false`
+        about a run nothing vouches for."""
+        from security_agent.models import Provenance
+
+        old = Provenance(model_requested="claude-opus-5",
+                         models_served=["claude-opus-5"],
+                         models_verified=["claude-opus-5"])
+
+        assert old.provenance_ambiguous is True
+
+    def test_an_old_artifact_whose_lists_separate_still_answers(self):
+        """The control. Most artifacts written before the field have a
+        verifier distinct from the reviewer, subtraction recovers them, and
+        calling those ambiguous would refuse the corpus to catch a shape they
+        do not have."""
+        from security_agent.models import Provenance
+
+        old = Provenance(model_requested="claude-opus-5",
+                         models_served=["claude-opus-5",
+                                        "claude-haiku-4-5-20251001"],
+                         models_verified=["claude-haiku-4-5-20251001"])
+
+        assert old.provenance_ambiguous is False
+        assert old.review_models == ["claude-opus-5"]
+
     def test_it_reaches_the_artifact_and_the_report(self, cfg, ws):
         client = FakeClient([FakeResponse([text("done")], stop_reason="end_turn")])
         outcome = SecurityAgent(cfg, ws, client=client).run("repo", "go")

@@ -43,7 +43,7 @@ def review_identity(cfg: Any, revision: Any, provenance: Any,
     accepted still lists the findings that entry silences, and one produced
     before an entry expired still hides what it used to.
     """
-    return {
+    identity = {
         # What was read. Both, not just head: the same commit reviewed against
         # a different base is a different diff and a different review.
         "base_sha": getattr(revision, "base_sha", "") or "",
@@ -51,6 +51,13 @@ def review_identity(cfg: Any, revision: Any, provenance: Any,
         "mode": getattr(revision, "mode", "") or "",
         # What read it.
         "agent_version": getattr(provenance, "agent_version", "") or "",
+        # **The field that actually moves.** `agent_version` has read `0.1.0`
+        # since the first commit, so it distinguished nothing: an artifact from
+        # any earlier build claimed the same reviewer as today's, and the key
+        # let it be reused. Codex, 2026-09-09. Empty for an artifact written
+        # before this existed, which keeps those readable and — correctly —
+        # keeps them matching each other and nothing new.
+        "agent_source_sha": getattr(provenance, "agent_source_sha", "") or "",
         "model_requested": getattr(provenance, "model_requested", "") or "",
         "system_prompt_sha": getattr(provenance, "system_prompt_sha", "") or "",
         "verifier_prompt_sha": getattr(provenance, "verifier_prompt_sha", "") or "",
@@ -113,6 +120,75 @@ def review_identity(cfg: Any, revision: Any, provenance: Any,
             "scope": sorted(getattr(cfg, "scope", ()) or ()),
         },
     }
+    identity["settings"].update(_budget(cfg))
+    return identity
+
+
+# Behavioural settings that are in the identity under another name, or
+# deliberately outside it. Every other name in `config.BEHAVIOURAL` has to
+# appear in `settings`, and `tests/test_identity.py` fails when one does not —
+# a hand-written list of what matters is what let a whole class of limit go
+# unrecorded, and a second hand-written list would only move the problem.
+CARRIED_ELSEWHERE = {
+    # In the identity already, under the name that says it is the *requested*
+    # model rather than the served one.
+    "model": "model_requested",
+    # `revision.mode` is the resolved value; `cfg.mode` can still say `auto`.
+    "mode": "mode",
+    # The file's *content* is what matters and its path is not it. The
+    # `suppressions` digest carries it, frozen at the evaluation date.
+    "ignore_file": "settings.suppressions",
+    # **Deliberately outside, and this is the one judgement here.** `briefing`
+    # puts the merge request's title, description and branch in front of the
+    # model, so the forge context is behavioural — but the same object also
+    # carries the job url and the pipeline's own commit, which differ on every
+    # run of an unchanged pipeline. Folding it in whole would make every
+    # identity unique and silently end reuse; folding in a chosen part of it is
+    # the hand-picking this repair exists to stop. Recorded in `LIMITATIONS.md`
+    # as an open question rather than settled in passing.
+    "gitlab": "",
+}
+
+
+def _budget(cfg: Any) -> Dict[str, Any]:
+    """Every setting that can shorten or change the review, as resolved.
+
+    Codex, 2026-09-09: *"`review_identity` must contain the resolved,
+    effective review budget, not a hand-selected subset of raw settings. That
+    includes the active profile and every limit capable of shortening or
+    changing the review: turn, runtime, response/output, task, tool-call, and
+    hard/soft context limits and modes, plus the runner/provider where its
+    behavior differs."*
+
+    Read from `config.BEHAVIOURAL` rather than typed out again. The defect was
+    not that somebody forgot `max_turns`; it was that the identity kept its own
+    list of what matters, beside a list that a test already forces to be
+    complete — and two such lists drift in one direction only. A setting added
+    to `Config` has to be classified today, and by being classified it lands
+    here.
+
+    Two runs at 60 turns and at 6 were not the same review, and until this they
+    shared a key: the short one's artifact could be reused as the answer to the
+    long one's question, and the reader had no field to look at.
+    """
+    from .config import BEHAVIOURAL
+
+    resolvers = {
+        # Unset, it falls back to the reviewer's model, so the raw value is
+        # `""` for every run whatever the reviewer is.
+        "verify_model": lambda c: (getattr(c, "verifier_model", "")
+                                   or getattr(c, "verify_model", "")),
+    }
+    out: Dict[str, Any] = {}
+    for name in sorted(BEHAVIOURAL - set(CARRIED_ELSEWHERE)):
+        if name in resolvers:
+            out[name] = resolvers[name](cfg)
+            continue
+        value = getattr(cfg, name, None)
+        if isinstance(value, (list, tuple, set, frozenset)):
+            value = sorted(value)
+        out[name] = value
+    return out
 
 
 def digest(identity: Dict[str, Any]) -> str:

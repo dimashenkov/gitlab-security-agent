@@ -39,7 +39,11 @@ from .models import (
 )
 from .tools import Session, dispatch, load_finding_schema, tool_definitions
 from .transport import TransportFailure, split_capability_error, stream_message
-from .workspace import Workspace, inventory_notes
+from .workspace import (
+    Workspace,
+    inventory_notes,
+    unreadable_source_paths,
+)
 
 log = logging.getLogger(__name__)
 
@@ -183,6 +187,12 @@ class SecurityAgent:
             outcome.coverage.changed = [path for path, _ in self.ws.changed_files()]
             (outcome.coverage.unreadable,
              outcome.coverage.deleted) = inventory_notes(self.ws)
+            # Source the review could not be shown, kept apart from the
+            # unreadable list above: a rename or a real image is disclosed
+            # and blocks nothing, while a `.js` git calls binary over one
+            # NUL byte is a file "no findings" would be said about unseen.
+            outcome.coverage.unreadable_source = unreadable_source_paths(
+                self.ws)
             # What a rule hid, deletions included. `changed_objects` applies
             # both filters as it reads, so an excluded *deletion* used to
             # appear in no field of `Coverage` at all, and `excluded` was
@@ -521,7 +531,7 @@ def _provenance(cfg: Config) -> Provenance:
     substituted" in the artifact next to the verdict, rather than leaving a
     reviewer to wonder why the same code was judged differently.
     """
-    from . import __version__
+    from . import __version__, source_digest
 
     prompts = cfg.resolved_prompt_dir()
     return Provenance(
@@ -538,6 +548,7 @@ def _provenance(cfg: Config) -> Provenance:
         verifier_prompt_sha=_sha(prompts / "verifier.md"),
         schema_sha=_sha(prompts / "findings.schema.json"),
         agent_version=__version__,
+        agent_source_sha=source_digest(),
     )
 
 

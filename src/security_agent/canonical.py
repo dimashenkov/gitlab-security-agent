@@ -68,7 +68,14 @@ TELEMETRY_PATHS: Tuple[str, ...] = (
     # detail (a dated variant, a fallback) that identity deliberately excludes.
     "model",
     "provenance.models_served",
+    "provenance.models_reviewed",
     "provenance.models_verified",
+    # Not a claim about the review either: it says whether *this artifact* can
+    # answer who reviewed, which is a property of when the file was written.
+    # Two runners on one commit write it identically anyway; an old artifact
+    # compared against a new one would differ here for a reason about the
+    # recording, not about what either concluded.
+    "provenance.provenance_ambiguous",
     "provenance.model_substituted",
     "provenance.verifier_substituted",
     # The diagnostic under the stop reason. `stop_reason` itself is canonical:

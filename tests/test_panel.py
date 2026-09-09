@@ -58,6 +58,86 @@ def empty_seat(reason="the verifier was stopped at its deadline"):
     return Vote(verdict=VERDICT_UNCERTAIN, reasoning="", error=reason)
 
 
+
+def test_a_settled_panel_does_not_say_it_could_not_settle():
+    """The sentence printed whenever *any* seat errored, whatever the verdict.
+
+    Two verifiers refuting and one seat failing printed "the panel could not
+    settle this and the finding stands as reported" — under a finding `cli.py`
+    had just moved out of the report. The same shape on the confirming side
+    put it under a *blocking* verdict two verifiers actually reached, inviting
+    the author to overrule it. The real tally, two of two, never appeared.
+    """
+    from security_agent.models import Vote
+    from security_agent.verify import _reason
+
+    votes = [Vote(verdict="refuted", reasoning="every caller validates first"),
+             Vote(verdict="refuted", reasoning="checked")]
+    reason = _reason(votes, "refuted", seats=3)
+
+    assert "could not settle" not in reason, reason
+    # The tally, over the seats reserved, with the failure named beside it.
+    assert "2/3 verifier(s) agreed" in reason
+    assert "1 never reported" in reason
+
+
+def test_a_panel_nobody_answered_still_says_so():
+    """The control. When no seat reported, the verdict really is what the
+    claim arrived as, and that has to be said."""
+    from security_agent.verify import _reason
+
+    reason = _reason([], "confirmed", seats=3)
+
+    assert "no verifier reported" in reason
+    assert "the finding stands as reported" in reason
+
+
+
+class TestTheMedianMovesTheSameWayInBothDirections:
+    """An even panel has no middle, and `[a, b][1]` quietly picked the upper.
+
+    So one verifier correcting a `low` claim up to `high`, with the second
+    seat silent, carried on its own — while one verifier correcting `high`
+    down to `low`, with the second seat silent, did not. The docstring said
+    "one outlier moves nothing"; it was true only downward, and the direction
+    that moved is the one that lifts a finding over the gate.
+
+    Codex, 2026-09-09: the claim itself is the tie-break observation, because
+    it is what the panel was asked about and silence already counts as
+    agreement with it.
+    """
+
+    def _panel(self, claimed, *corrections):
+        from security_agent.models import Vote
+        from security_agent.panel import agreed_confidence
+        votes = [Vote(verdict="confirmed", reasoning="",
+                      corrected_confidence=correction)
+                 for correction in corrections]
+        return agreed_confidence(votes, claimed)
+
+    def test_one_reply_alone_cannot_raise_it(self):
+        assert self._panel("low", "high", "") == "low"
+
+    def test_one_reply_alone_cannot_lower_it(self):
+        """The half that already worked. Both are asserted because the defect
+        was the *difference* between them, and a test of one direction cannot
+        see that."""
+        assert self._panel("high", "low", "") == "high"
+
+    def test_two_agreeing_replies_raise_it(self):
+        assert self._panel("low", "high", "high") == "high"
+
+    def test_two_agreeing_replies_lower_it(self):
+        assert self._panel("high", "low", "low") == "low"
+
+    def test_an_odd_panel_is_untouched(self):
+        """The control: the tie-break is added only when there is a tie. A
+        three-seat panel already has a middle, and appending the claim to it
+        would let the claim outvote a majority."""
+        assert self._panel("low", "high", "high", "") == "high"
+        assert self._panel("high", "low", "low", "") == "low"
+
+
 class TestALoneSurvivorDecidesNothing:
     """Two of three sessions die. The third must not become the panel."""
 

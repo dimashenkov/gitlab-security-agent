@@ -622,6 +622,194 @@ class TestTheOneFigure:
         assert "1 record(s) failed" in out
         assert "could not be read rather than because there were none" in out
 
+    def test_a_round_s_own_log_is_read(self, tmp_path, capsys, monkeypatch):
+        """`run_queue --round N` rebinds the log to
+        `measurements/round-N/log.jsonl`, and this tool named one path.
+
+        A whole round's rows were invisible to the one command that answers
+        "what has this cost" — 52 pairs in a file it never opened.
+        """
+        import json as _json
+
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        monkeypatch.setattr(spend, "QUEUE_LOG", "measurements/queue/log.jsonl")
+        monkeypatch.setattr(spend, "VENDOR_GLOBS", ())
+        directory = tmp_path / "measurements" / "round-2"
+        directory.mkdir(parents=True)
+        (directory / "log.jsonl").write_text(_json.dumps({
+            "kind": "review", "case_id": "a-case", "member": "safe",
+            "notional_api_cost": 0.5, "auth_method": "claude.ai",
+            "auth_subscription": "max"}) + "\n", encoding="utf-8")
+
+        spend.main(["--breakdown", "--source", "queue"])
+        out = capsys.readouterr().out
+
+        # The row was read: one call, seen and placed against a subscription.
+        # Without the round glob the counter saw nothing at all.
+        assert "(1 of them)" in out, out
+        assert "no vendor calls" not in out
+
+    def test_a_run_that_made_no_call_is_not_a_missing_price(self, tmp_path,
+                                                            capsys,
+                                                            monkeypatch):
+        """The artifact records `usage.requests` and this tool never read it.
+
+        So all eight of today's unpriced runs — every one `requests: 0` with
+        `stop_reason: error` — were reported as "recorded no cost at all",
+        which reads as a price nobody wrote down and made the whole figure a
+        floor. It cost nothing because nothing was asked of anybody, and the
+        field that says so is in the same file.
+        """
+        import json as _json
+
+        monkeypatch.setattr(spend, "VENDOR_GLOBS", ())
+        body = {"generated_at": "2026-08-30T12:00:00+00:00",
+                "provenance": {"provider": "claude-cli",
+                               "model_requested": "claude-opus-5"},
+                "usage": {"requests": 0, "input_tokens": 0,
+                          "output_tokens": 0},
+                "findings": []}
+        path = tmp_path / "findings.json"
+        path.write_text(_json.dumps(body), encoding="utf-8")
+
+        spend.main([str(path)])
+        headline = capsys.readouterr().out.splitlines()[0]
+
+        assert "made no provider call at all" in headline, headline
+        assert "recorded no cost at all" not in headline
+
+    def test_a_run_with_no_requests_field_is_still_a_missing_price(
+            self, tmp_path, capsys, monkeypatch):
+        """The control, and the third state. A run that records no `requests`
+        key at all has said nothing about whether it called anybody, and
+        reading that absence as zero would be the mistake this file is
+        about."""
+        import json as _json
+
+        monkeypatch.setattr(spend, "VENDOR_GLOBS", ())
+        body = {"generated_at": "2026-08-30T12:00:00+00:00",
+                "provenance": {"provider": "claude-cli",
+                               "model_requested": "claude-opus-5"},
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "findings": []}
+        path = tmp_path / "findings.json"
+        path.write_text(_json.dumps(body), encoding="utf-8")
+
+        spend.main([str(path)])
+        headline = capsys.readouterr().out.splitlines()[0]
+
+        assert "recorded no cost at all" in headline, headline
+        assert "made no provider call" not in headline
+
+    def test_one_file_named_twice_is_one_call(self, tmp_path, capsys,
+                                              monkeypatch):
+        """`tools/spend.py PATH PATH` printed `$10.00 charged, from 2 metered
+        call(s)` for one $5.00 call — flatly, no `≥`, no qualification, exit 0.
+
+        A hard link, or `a/../a/x.json` beside `a/x.json`, does the same. The
+        duplicate warning that exists only fires when a file literally named
+        `rows.json` is present, so nothing caught it. Identity is the inode,
+        not the path text.
+        """
+        monkeypatch.setattr(spend, "VENDOR_GLOBS", ())
+        one = artifact(tmp_path, "a.json", cost=5.0,
+                       provider="anthropic-api", subscription=None)
+
+        assert spend.main([str(one), str(one)]) == 0
+        out = capsys.readouterr().out
+        assert "$5.00" in out, out
+        assert "$10.00" not in out
+
+        # And the same file reached by a second path spelling.
+        indirect = tmp_path / "sub" / ".." / "a.json"
+        (tmp_path / "sub").mkdir()
+        spend.main([str(one), str(indirect)])
+        assert "$5.00" in capsys.readouterr().out
+
+    def test_two_different_files_still_add_up(self, tmp_path, capsys,
+                                              monkeypatch):
+        """The control. Without it the deduplication above could drop every
+        file after the first and the total would be silently short."""
+        monkeypatch.setattr(spend, "VENDOR_GLOBS", ())
+        first = artifact(tmp_path, "a.json", cost=5.0,
+                         provider="anthropic-api", subscription=None)
+        second = artifact(tmp_path, "b.json", cost=3.0,
+                          provider="anthropic-api", subscription=None)
+
+        spend.main([str(first), str(second)])
+        assert "$8.00" in capsys.readouterr().out
+
+    def test_a_healthy_round_log_does_not_hide_a_broken_queue_log(
+            self, tmp_path, capsys, monkeypatch):
+        """`QUEUE_SKIPPED` is a module global that `queue_rows` resets on entry
+        and sets on exit, and `main` read it once after the loop.
+
+        So with more than one log only the *last* one's count survived: a
+        healthy round log erased the unparseable lines in the queue's own, and
+        the headline printed `$0.00 charged` with exit 0 — the sentence this
+        file exists never to print while anything is unestablished.
+
+        The two tests written when the round logs were added covered one log
+        each and never both. This is the combination they carried between
+        them.
+        """
+        import json as _json
+
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        monkeypatch.setattr(spend, "VENDOR_GLOBS", ())
+        clean = _json.dumps({
+            "kind": "review", "started_at": "2026-09-09T10:00:00+00:00",
+            "case_id": "c1", "member": "safe", "auth_method": "claude.ai",
+            "auth_subscription": "max", "usage_reported": True,
+            "notional_api_cost": 1.0}) + "\n"
+
+        queue = tmp_path / "measurements" / "queue"
+        queue.mkdir(parents=True)
+        (queue / "log.jsonl").write_text(
+            clean + "{ this line does not parse\n{ nor this one\n",
+            encoding="utf-8")
+        rounds = tmp_path / "measurements" / "round-7"
+        rounds.mkdir(parents=True)
+        (rounds / "log.jsonl").write_text(clean, encoding="utf-8")
+
+        assert spend.main(["--breakdown", "--source", "queue"]) == 2
+        out = capsys.readouterr().out
+        assert "$0.00 charged" not in out
+        assert "2 line(s) of the queue log did not parse" in out
+
+    def test_an_unreadable_log_beside_a_healthy_one_still_says_so(
+            self, tmp_path, capsys, monkeypatch):
+        """The `-1` sentinel means "could not be read at all" and has to
+        survive being mixed with a number: a log nobody could open is not
+        fewer bad lines than a log with two."""
+        import json as _json
+        import os
+
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        monkeypatch.setattr(spend, "VENDOR_GLOBS", ())
+        clean = _json.dumps({
+            "kind": "review", "started_at": "2026-09-09T10:00:00+00:00",
+            "case_id": "c1", "member": "safe", "auth_method": "claude.ai",
+            "auth_subscription": "max", "usage_reported": True,
+            "notional_api_cost": 1.0}) + "\n"
+
+        queue = tmp_path / "measurements" / "queue"
+        queue.mkdir(parents=True)
+        broken = queue / "log.jsonl"
+        broken.write_text(clean, encoding="utf-8")
+        os.chmod(broken, 0o000)
+        rounds = tmp_path / "measurements" / "round-7"
+        rounds.mkdir(parents=True)
+        (rounds / "log.jsonl").write_text(clean, encoding="utf-8")
+
+        try:
+            assert spend.main(["--breakdown", "--source", "queue"]) == 2
+            out = capsys.readouterr().out
+            assert "$0.00 charged" not in out
+            assert "could not be read at all" in out
+        finally:
+            os.chmod(broken, 0o644)
+
     def test_an_entirely_empty_breakdown_says_so_plainly(
             self, tmp_path, capsys, monkeypatch):
         """No reviews, no metered calls, and nothing that failed. `--source

@@ -69,16 +69,31 @@ class Rule:
 
     def matches(self, candidate: Candidate) -> bool:
         if self.fingerprint:
-            # Against every identity the finding could have been recorded
-            # under, not just the one it happens to print today. A finding is
-            # fingerprinted from a line of the code it quotes, and two runs do
-            # not always start the quote in the same place — measured: three
-            # runs of one case quoted a call, a fourth started a line later at
-            # the expression inside it. Matching only the printed value meant an
-            # accepted risk expired the first time the model chose differently,
-            # and the merge it had been accepted for blocked again with no
-            # explanation.
-            return self.fingerprint in candidate.finding.fingerprints
+            # **The one value that was printed, and no other.** This asked
+            # whether the entry matched *any* anchor the finding carries, so
+            # that an accepted risk survived a run that started its quote a
+            # line earlier — measured drift, and a real cost.
+            #
+            # The other direction is worse and it is not symmetric. Two
+            # different weaknesses in one file and category that happen to
+            # quote one line in common — a call site touched by both — share an
+            # anchor, and an entry written for the first then silences the
+            # second. That failure is silent, permanent and looks exactly like
+            # a clean report.
+            #
+            # Codex, 2026-09-09: *"Suppression must match the one canonical
+            # fingerprint printed for acceptance, not any shared anchor. False
+            # negatives cost another explicit suppression entry; false
+            # positives hide a different weakness."* The whole set stays in
+            # the artifact and stays what dedup and the identity record are
+            # built from; it is no longer what an ignore file is read against.
+            #
+            # The drift is not repaired by this and is not pretended away: an
+            # entry can stop matching, the report prints the new value, and a
+            # second line in the ignore file is the remedy. A stable identity
+            # across runs needs more than "a line both quotes" — Codex, same
+            # ruling — and `LIMITATIONS.md` carries it.
+            return self.fingerprint == candidate.finding.fingerprint
         # A path/category rule must constrain something, or it would silence the
         # entire report. `load` rejects empty rules, so reaching here means at
         # least one of the two is set.

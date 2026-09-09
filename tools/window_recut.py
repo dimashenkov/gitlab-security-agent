@@ -80,6 +80,12 @@ def result_files():
     """
     return sorted(set(glob.glob("measurements/*.json")
                       + glob.glob("measurements/queue/*.json")
+                      # `queue/<model>/<case>.json`, a run of another model.
+                      # It consumed a window like any other.
+                      + glob.glob("measurements/queue/by-model/*/*.json")
+                      # The same under a round. It consumed a window
+                      # like any other paid run.
+                      + glob.glob("measurements/round-*/by-model/*/*.json")
                       + glob.glob("measurements/experiment-*/pass-*/*.json")
                       + glob.glob("measurements/round-*/*.json")))
 

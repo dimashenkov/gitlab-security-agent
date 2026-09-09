@@ -43,6 +43,50 @@ def world(tmp_path, rows):
     return tmp_path
 
 
+
+def test_the_unidentified_answer_is_not_a_model_name():
+    """Codex, 2026-09-09. The sentinel was the literal `"unidentified"`.
+
+    `SECURITY_SCAN_MODEL` takes any non-empty name, so a real measurement
+    bought with `SECURITY_SCAN_MODEL=unidentified` returned a value the
+    readers could not tell from the sentinel — and its paid row was discarded
+    as unreadable rather than reported as another model's work. A sentinel
+    drawn from the value space it is meant to sit outside of.
+    """
+    import check_accounted
+
+    block = {"provenance": {"model_requested": "unidentified",
+                            "models_served": ["unidentified"],
+                            "models_verified": []}}
+    # **Through `json.loads`, the way every row the readers see arrives.**
+    # Built from Python literals the name is interned, so it *is* the module
+    # constant and an identity check catches the defect by accident; off disk
+    # it is a fresh object and the same check passes with the defect live. A
+    # test that discriminates by string interning is a test about CPython.
+    row = json.loads(json.dumps(
+        {"case_id": "a-case",
+         "members": {"safe": block, "unsafe": dict(block)}}))
+
+    # The row is a coherent measurement of a model called "unidentified", and
+    # the predicate says so.
+    assert stop_rule.why_not_row_for(row, "unidentified") is None
+    assert stop_rule.identified_model(row) == "unidentified"
+
+    # And the readers treat it as that model's work rather than as unreadable.
+    # That is the claim, and an identity check is not it: they compare with
+    # `==`. Asserted through the reader that decides what is still owed.
+    assert check_accounted._foreign(
+        {stop_rule.identified_model(row): {"a-case"}}) == {"a-case"}
+
+    # The sentinel is still what a row naming nothing gets, and it is not a
+    # string at all — which is what makes the collision impossible rather than
+    # merely unlikely.
+    assert not isinstance(stop_rule.UNIDENTIFIED, str)
+    assert stop_rule.identified_model(json.loads(
+        '{"case_id": "a-case", "members": {"safe": {}, "unsafe": {}}}'
+    )) is stop_rule.UNIDENTIFIED
+
+
 class TestTheVerdictHasNoPassBranch:
     """The rule can say `stop`, `no catastrophe`, or `cannot say`.
 
@@ -227,6 +271,97 @@ class TestASkippedRowIsVisible:
         into four readings to undo."""
         assert stop_rule.why_not_product_row(
             {"case_id": "a", "members": members}) == expected
+
+
+class TestARowThatCannotSayWhoReviewedItIsRefused:
+    """The old rule recovered the reviewer by subtracting the verifiers.
+
+    Subtraction cannot express one model doing both jobs, so a row where every
+    served name is also a verifier's came back empty — and the rule then put
+    the *requested* model back. That is the reading "not substituted" about a
+    run whose reviewer nothing states, and it let such a row into the corpus
+    the product's headline numbers are counted from.
+
+    Codex, 2026-09-09: *"For old artifacts whose overlapping lists make the
+    reviewer unknowable, report the provenance as ambiguous and refuse corpus
+    admission rather than inferring 'not substituted.'"*
+    """
+
+    def _pair(self, prov):
+        return {"case_id": "a", "unsafe_recall": True,
+                "safe_false_positive": False,
+                "ran_at": "2026-08-28T12:00:00+00:00",
+                "members": {"safe": {"provenance": dict(prov)},
+                            "unsafe": {"provenance": dict(prov)}}}
+
+    def test_an_ambiguous_member_keeps_the_row_out(self):
+        prov = {"model_requested": stop_rule.PRODUCT_MODEL,
+                "models_served": [stop_rule.PRODUCT_MODEL],
+                "models_verified": [stop_rule.PRODUCT_MODEL],
+                "provenance_ambiguous": True}
+
+        why = stop_rule.why_not_row_for(self._pair(prov),
+                                        stop_rule.PRODUCT_MODEL)
+
+        assert why == "cannot say which model reviewed it"
+
+    def test_the_same_row_with_the_role_recorded_is_admitted(self):
+        """The control, and it is the same shape: one model did both jobs.
+        A run that *says* so is a perfectly good measurement, and refusing it
+        would throw away every single-model run."""
+        prov = {"model_requested": stop_rule.PRODUCT_MODEL,
+                "models_served": [stop_rule.PRODUCT_MODEL],
+                "models_reviewed": [stop_rule.PRODUCT_MODEL],
+                "models_verified": [stop_rule.PRODUCT_MODEL],
+                "provenance_ambiguous": False}
+
+        assert stop_rule.why_not_row_for(self._pair(prov),
+                                         stop_rule.PRODUCT_MODEL) is None
+
+    def test_the_legacy_shape_is_refused_without_the_field(self):
+        """The first version of this check read `provenance_ambiguous is
+        True`, and a legacy artifact cannot carry that field at all — so the
+        one shape the check was written to refuse was the one shape that
+        walked past it, and the comment beside it said the opposite. Codex,
+        2026-09-09. Absence read as agreement, inside the line added to stop a
+        different reading of absence.
+        """
+        prov = {"model_requested": stop_rule.PRODUCT_MODEL,
+                "models_served": [stop_rule.PRODUCT_MODEL],
+                "models_verified": [stop_rule.PRODUCT_MODEL]}
+
+        why = stop_rule.why_not_row_for(self._pair(prov),
+                                        stop_rule.PRODUCT_MODEL)
+
+        assert why == "cannot say which model reviewed it"
+
+    def test_a_row_from_before_the_field_is_not_ambiguous_by_omission(self):
+        """The control. Most old rows separate cleanly and the subtraction
+        still answers for them; refusing every row that lacks the field would
+        discard the corpus to catch a shape it does not have."""
+        prov = {"model_requested": stop_rule.PRODUCT_MODEL,
+                "models_served": [stop_rule.PRODUCT_MODEL],
+                "models_verified": []}
+
+        assert stop_rule.why_not_row_for(self._pair(prov),
+                                         stop_rule.PRODUCT_MODEL) is None
+
+    def test_a_row_that_records_no_serving_keeps_its_own_older_answer(self):
+        """The second control, and it is about which refusal fires.
+
+        A member with an empty `models_served` was already refused, by the
+        rule that the product must be among what reviewed — "reviewed by
+        nothing". That is a different statement from "cannot say", and both
+        are true answers to different questions: one says nothing reviewed
+        it, the other says the record cannot tell. Folding the second over
+        the first would lose a distinction the artifact does carry.
+        """
+        prov = {"model_requested": stop_rule.PRODUCT_MODEL,
+                "models_served": [], "models_verified": []}
+
+        assert stop_rule.why_not_row_for(self._pair(prov),
+                                         stop_rule.PRODUCT_MODEL) \
+            == "reviewed by nothing"
 
 
 class TestWhichRowAnswers:

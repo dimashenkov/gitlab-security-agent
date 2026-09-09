@@ -74,6 +74,39 @@ class TestVoteCounts:
         config.verify_votes = 3
         assert _votes_for(config, make_candidate(severity="medium")) == 3
 
+    def test_a_critical_keeps_its_panel_when_nothing_can_block(self, config):
+        """Three routes reach one seat for a critical, and each is a setting
+        about the *exit code*.
+
+        `fail_threshold=None`, an ungated category, and a pre-existing finding
+        under `gate_pre_existing=false` all make `_could_become_blocking`
+        false — so the panel collapsed to one verifier, and one `uncertain`
+        reply or one errored session deleted a critical from the report a
+        person reads. Turning the gate off is asking not to be blocked, not
+        asking to be left uninformed. Codex, 2026-09-09.
+        """
+        config.verify_votes = 1
+
+        config.fail_on = "none"
+        assert _votes_for(config, make_candidate(severity="critical")) == 3
+
+        config.fail_on = "high"
+        config.ungated_categories = ("injection",)
+        assert _votes_for(config, make_candidate(severity="critical")) == 3
+
+        config.ungated_categories = ()
+        config.gate_pre_existing = False
+        pre_existing = make_candidate(severity="critical")
+        pre_existing.in_changed_lines = False
+        assert _votes_for(config, pre_existing) == 3
+
+    def test_a_low_finding_under_the_same_settings_does_not(self, config):
+        """The control. Without it the rule above could be "everything gets
+        three seats", which is a bill rather than a protection."""
+        config.verify_votes = 1
+        config.fail_on = "none"
+        assert _votes_for(config, make_candidate(severity="low")) == 1
+
     def test_capped_at_five(self, config):
         config.verify_votes = 5
         assert _votes_for(config, make_candidate(severity="critical")) == 5

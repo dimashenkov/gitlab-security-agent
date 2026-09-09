@@ -38,6 +38,7 @@ from .workspace import (
     FileTooLarge,
     Workspace,
     WorkspaceError,
+    unreadable_source_paths,
 )
 
 log = logging.getLogger(__name__)
@@ -206,6 +207,23 @@ class ToolResult:
             session.diff_truncated = True
         if self.whole_diff:
             session.whole_diff_delivered = True
+
+
+def _whole_change_delivered(ws: Workspace, path: str, truncated: bool) -> bool:
+    """Did this result carry the whole change, entire?
+
+    Three ways it did not, and the third was invisible until 2026-09-09: the
+    reviewer asked for one file, the body was cut at a ceiling, or the change
+    contains source that git refuses to print. The third leaves a body that
+    looks complete — every readable file whole, no cut marker — while a file
+    that Node will execute never appeared in it.
+
+    Written once because the two claim sites had drifted before on the first
+    two ways, and a flag that means "delivered whole" in one branch and
+    something weaker in the other is worse than no flag.
+    """
+    return bool(not path and not truncated
+                and not unreadable_source_paths(ws))
 
 
 Handler = Callable[[Workspace, Session, Dict[str, Any]], ToolResult]
@@ -741,12 +759,21 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
             + _read_cut_note(ws),
             "empty diff",
             diff_truncated=ws.last_diff_truncated,
-            # A whole change with no diff body is a change with no text in it —
-            # binary files, a rename, a mode bit. There is nothing being kept
+            # A whole change with no diff body is a change with no text in it
+            # — a rename, a mode bit, an image. There is nothing being kept
             # from the reviewer, and calling that "the change was never shown"
-            # would report every binary-only merge request as unread. The
+            # would report every asset-only merge request as unread. The
             # inventory already names those files and why they cannot be read.
-            whole_diff=bool(not path and not ws.last_diff_truncated),
+            #
+            # **Unless the thing with no text is source.** Codex, 2026-09-09.
+            # Git decides `binary` from the bytes, so a `.js` with one NUL in
+            # it is "Binary files … differ" and runs anyway. That file is not
+            # disclosed-and-unreadable; it is source withheld, and a claim
+            # that the whole change was delivered is false while it is in the
+            # change. `_whole_change_delivered` is the one place that split is
+            # spelt, so this branch and the one below cannot drift.
+            whole_diff=_whole_change_delivered(ws, path,
+                                               ws.last_diff_truncated),
         )
     cut = _trim_diff(body)
     body, trimmed = cut.body, cut.trimmed
@@ -841,8 +868,10 @@ def _handle_get_diff(ws: Workspace, session: Session, args: Dict[str, Any]) -> T
         diff_truncated=truncated_change,
         # The same two cuts, asked of the whole change rather than of this
         # result: a body that is missing files, or a body that is missing the
-        # rest of one file, is not the change shown entire.
-        whole_diff=bool(not path and not truncated_change),
+        # rest of one file, is not the change shown entire. A third way, and
+        # it leaves the body looking complete: a source file git will not
+        # print. See `_whole_change_delivered`.
+        whole_diff=_whole_change_delivered(ws, path, truncated_change),
     )
 
 
@@ -1256,6 +1285,24 @@ def _handle_report_finding(ws: Workspace, session: Session, args: Dict[str, Any]
     attributed = ("deleted" if from_a_deleted_file
                   else attribution(rel_path, located, span, changed))
 
+    # **The first anchor only, and that is a live disagreement**, not a
+    # settled rule. `suppress.py:81` matches an accepted risk against *every*
+    # anchor; this matches one. Both directions of the mismatch are real and
+    # were measured on 2026-09-09:
+    #
+    #   split  — one weakness quoted from a different line twice in one run
+    #            arrives as two candidates: two verifier panels bought, and
+    #            the merge request shows it twice with two "accept this risk"
+    #            lines.
+    #   merge  — an accepted risk written from one finding silences a
+    #            *different* one that happens to share an anchor line.
+    #
+    # Widening this to the whole set closes the first and opens the second
+    # here as well, and `Finding.fingerprints` argues against exactly that in
+    # its own words: "an identity that fails to match costs a repeated
+    # suppression entry, one that matches too much hides a weakness." So it is
+    # left as it stands and recorded in `LIMITATIONS.md` for adjudication
+    # rather than decided in passing.
     duplicate = next(
         (c for c in session.candidates if c.fingerprint == finding.fingerprint), None
     )

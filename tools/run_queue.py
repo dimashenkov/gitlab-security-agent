@@ -51,17 +51,23 @@ Until then they are candidate correlates, not measurements of quota.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 
 import yaml
+
+import pair_corpus
+import stop_rule
+from artifact import answer_key_digest, case_digest, legacy_case_digest
 from check_accounted import about_this_version, scorable
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +76,10 @@ QUEUE = ROOT / "measurements" / "queue"
 # rather than left to its default. Mapped in `tools/spend_gate.py`.
 SPEND_CLASS = "run_queue"
 LOG = QUEUE / "log.jsonl"
+# Where a run of a model other than the product goes:
+# `queue/by-model/<model>/<case>.json`. A reserved segment, so a model name
+# can never collide with `log.jsonl`, `manifest.json` or a case result file.
+BY_MODEL = "by-model"
 
 # The refusal, and the reset it names. Matched on the sentence rather than on a
 # status code because the CLI reports it as an ordinary error: exit 1 with the
@@ -107,8 +117,19 @@ def malformed() -> set:
     except (OSError, ValueError):
         return set()
     rows = body if isinstance(body, list) else body.get("adjudications") or []
-    return {r.get("case_id") for r in rows
-            if isinstance(r, dict) and r.get("case_is_malformed")}
+    # **`is True`, and a reason.** The same terms `artifact.malformed_cases`
+    # and `check_accounted.rulings` use — whose docstring names this exact
+    # defect, because it was repaired at two of the three sites and not here.
+    # `case_is_malformed: "false"` is truthy, and a `true` with no reason is a
+    # ruling nobody wrote down; either one dropped the case from every sweep
+    # for ever while the accounting kept reporting it as not run. And a ruling
+    # with no `case_id` put `None` in the set, inflating the printed count by
+    # one.
+    return {r["case_id"] for r in rows
+            if isinstance(r, dict) and r.get("case_id")
+            and r.get("case_is_malformed") is True
+            and isinstance(r.get("why_malformed"), str)
+            and r["why_malformed"].strip()}
 
 
 def cases(args) -> List[str]:
@@ -156,9 +177,56 @@ def already_run(case_id: str, repeat: bool = False) -> bool:
     nothing at all, because every case is recorded from the first pass — the
     skip that makes the queue resumable is the same skip that makes it unable
     to repeat.
+
+    **And recorded about the model this run is buying.** A row from another
+    model is a real charge — that is why `spend` and `stage2`'s billing probe
+    count it — but it is not this run's answer, so skipping the case on it
+    buys nothing and loses the measurement that was wanted. Nothing here would
+    ever go back and buy it: `already_run` would keep saying yes.
+
+    **Which model, though, is the environment's, not a constant.** Codex,
+    2026-09-09, on the version that asked for Opus by name: a queue started
+    with `SECURITY_SCAN_MODEL=claude-sonnet-5` writes Sonnet rows into
+    `QUEUE/<case>.json`, and on restart with the same environment, case and
+    corpus version this reader answered `False` on its own finished row. The
+    case was queued and bought a second time for the same answer, overwriting
+    the first — a real double payment, introduced by the line that was meant
+    to prevent one. `stop_rule.queue_model` resolves it the way `Config` does.
+
+    The trial's own 52 rows never reached here, and the first version of this
+    docstring said they did. They are under `measurements/experiment-*/pass-*/`
+    and this reader globs neither that nor `round-*/`, which is a separate gap
+    recorded in `LIMITATIONS.md`. The reachable path is the exported variable
+    above.
+
+    `why_not_row_for` is the one spelling of the question, shared with
+    `stop_rule.latest_rows`, `sentinel.recorded_outcomes`, `check_accounted`
+    and `stage2` — those four ask it with the product's fixed name, because
+    what the project owes is measured against the model it ships and an
+    exported variable must not move those numbers. A row with no `members` key
+    predates the field and is read.
     """
-    own = QUEUE / (case_id + ".json")
-    if own.is_file():
+    # **Every file the queue holds for this case, not the one path this
+    # invocation would write.** Codex, 2026-09-09: `result_path` gives a
+    # non-product run a model-qualified name, so a Sonnet result written under
+    # the old universal `<case>.json` became invisible the moment the naming
+    # changed — the case bought again over a valid, current-digest row sitting
+    # right there. Which model a row belongs to is decided by reading it, and
+    # a file name is a place to look rather than an answer, so the search is
+    # by content and the migration needs nothing.
+    wanted = stop_rule.queue_model()
+    # **Every file the queue holds, and the row inside decides.** Codex,
+    # 2026-09-09: the search was still keyed on the file name — first the one
+    # path this invocation would write, then two name patterns — while the
+    # comment beside it claimed the opposite. Any layout the queue has ever
+    # written, or ever will, is read here: `<case>.json` from before models
+    # were distinguished, `<model>/<case>.json` now, and the
+    # `<case>.<model>.json` that existed in between. A file name is a place to
+    # look; `case_id` is in the row.
+    for own in sorted(set(QUEUE.glob("*.json"))
+                      | set(QUEUE.glob(BY_MODEL + "/*/*.json"))):
+        if own.name == "manifest.json" or own.name == "log.jsonl":
+            continue
         # The file existing is not the same as the case having been measured.
         # A pair whose review stopped early leaves a row saying so, and reading
         # its presence as "done" is this project's founding error — "did not
@@ -167,21 +235,33 @@ def already_run(case_id: str, repeat: bool = False) -> bool:
         try:
             rows = json.loads(own.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return False
+            continue
         # The same three questions as the batch branch below, and this branch
         # asked none of them: not whether the row is about *this* case, not
         # whether it is about today's version of it, not whether it carries a
         # result. A case edited after its queue file was written would have
         # been skipped for ever through the shorter path — the defect this
         # function was just fixed for, still live on the more direct route.
-        return any(scorable(r) and r["case_id"] == case_id
-                   and about_this_version(case_id, r)
-                   for r in (rows if isinstance(rows, list) else []))
+        if any(scorable(r) and r["case_id"] == case_id
+               and about_this_version(case_id, r)
+               and stop_rule.why_not_row_for(r, wanted) is None
+               for r in (rows if isinstance(rows, list) else [])):
+            return True
+    # **And no early `False` when a file merely exists.** Codex, 2026-09-09,
+    # against the guard the line above used to hold: a queue file carrying an
+    # Opus row stopped the search before the batches, so a valid current
+    # Sonnet row in a batch was never seen and Sonnet was bought again. The
+    # question is whether *this model's* measurement of the case exists
+    # anywhere, and a queue file that answers for some other model — or for
+    # none, because the run did not finish — says nothing about that. It is
+    # one more place to look, not an authority. The original branch returned
+    # early too and the guard preserved that shape; the shape was wrong.
     if repeat:
         # Nothing outside this round counts. A previous answer is what the
         # round exists to compare against, so it must not prevent the run that
         # produces the second one.
         return False
+    wanted = stop_rule.queue_model()
     for path in (ROOT / "measurements").glob("*.json"):
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
@@ -190,7 +270,8 @@ def already_run(case_id: str, repeat: bool = False) -> bool:
         rows = body if isinstance(body, list) else body.get("results") or []
         for row in rows if isinstance(rows, list) else ():
             if scorable(row) and row["case_id"] == case_id \
-                    and about_this_version(case_id, row):
+                    and about_this_version(case_id, row) \
+                    and stop_rule.why_not_row_for(row, wanted) is None:
                 return True
     return False
 
@@ -289,7 +370,7 @@ def sleep_until(target: datetime) -> None:
         time.sleep(min(60.0, remaining))
 
 
-def wait_for_fresh_window(args) -> None:
+def wait_for_fresh_window(args, eligible, spent) -> None:
     """Start at the top of a window rather than in the tail of a spent one.
 
     One probe: ask for a case the queue is not going to run anyway. If the
@@ -301,13 +382,30 @@ def wait_for_fresh_window(args) -> None:
     this buys is that an overnight run does not spend its first hours asleep
     for a window that had minutes left in it.
     """
-    probe = argparse.Namespace(**vars(args))
-    probe.case, probe.language, probe.construction = [], None, None
-    remaining = [c for c in cases(probe) if not already_run(c)]
+    # **The run's own list, not the whole corpus.** The first version cleared
+    # `case`, `language` and `construction` before asking `cases()`, so
+    # `--language go` bought a C# pair — the alphabetically first case of the
+    # corpus — and `--round N` bought a case its manifest does not name,
+    # after every frozen condition had been enforced. `repeat` too, because a
+    # round asks a different question of `already_run`.
+    #
+    # The probe is a real, paid pair. It has to be one of the pairs the run
+    # was going to buy anyway, or it is an extra purchase wearing the name of
+    # a check.
+    repeat = getattr(args, "round", None) is not None
+    remaining = [c for c in eligible if not already_run(c, repeat)]
     if not remaining:
         return
     _payload, kind, detail = run_one(remaining[0], args)
     if kind != "refused":
+        # **Counted only when something was bought.** Codex, 2026-09-09: a
+        # refusal costs twelve seconds and no tokens, and recording it as
+        # spent removed the case from the queue and ate the whole of
+        # `--pairs 1` — so the command slept out the reset and then exited
+        # successfully without ever measuring the one case it was asked for.
+        # The probe exists to find a spent window; finding one must not
+        # consume the allowance it was checking for.
+        spent.append(remaining[0])
         return
     now = datetime.now().astimezone()
     when = reset_at(str(detail), now) or (now + BLIND_WAIT)
@@ -399,39 +497,283 @@ def raw_rows(payload: list, started_at: str, finished_at: str) -> list:
     return rows
 
 
+def result_path(case_id: str) -> Path:
+    """Where this invocation's result for `case_id` goes.
+
+    **One file per case *and model*, not per case.** Codex, 2026-09-09,
+    against the version that kept the bare name for every model: `already_run`
+    correctly refuses a row from another model, but `run_one` overwrote the
+    sole artifact, so alternating `SECURITY_SCAN_MODEL` between two models
+    bought each of them again on every switch — Sonnet, then Opus over the top
+    of it, then Sonnet again because the Sonnet row no longer existed. The
+    filter that stopped one duplicate purchase created another, and it repeats
+    indefinitely.
+
+    The product keeps the bare `<case>.json`. That is not cosmetic: every file
+    already on disk is the product's, every reader globs `queue/*.json`, and
+    renaming them would rewrite the record to fix a path. Any other model gets
+    a **directory**, `queue/<model>/<case>.json`.
+
+    **A directory, not a suffix.** Codex, 2026-09-09, against the first
+    version, which wrote `<case>.<model>.json`: that name does not uniquely
+    encode the pair. A product run of a case literally called
+    `a-case.claude-sonnet-5` and a Sonnet run of `a-case` both land on
+    `a-case.claude-sonnet-5.json`, so one overwrites the other; on restart
+    `already_run` reads the file, rejects the `case_id` inside it, and buys
+    the case again — the very defect the qualified name was introduced to
+    prevent, back through an ambiguity in the name. Case ids are directory
+    names and nothing forbids a dot in one.
+
+    **Under a reserved segment, `queue/by-model/<model>/<case>.json`.** Codex,
+    2026-09-09, against `queue/<model>/<case>.json`: a model directory placed
+    directly in the queue shares that namespace with the queue's own files,
+    and `SECURITY_SCAN_MODEL` takes any non-empty string. `log.jsonl`,
+    `manifest.json` or the name of an existing result all make `mkdir` run
+    beneath a file, and the run dies before it starts. `by-model` is not a
+    case id — every one of those is `<lang>-<four>-<four>-<four>` — so nothing
+    the queue writes can land on it.
+
+    A separator in the model name is refused rather than sanitised: a
+    sanitised name is a different name, and it would then look like a
+    different model.
+    """
+    model = stop_rule.queue_model()
+    if model == stop_rule.PRODUCT_MODEL:
+        return QUEUE / (case_id + ".json")
+    if ("/" in model or os.sep in model or model.startswith(".")
+            or model in (os.curdir, os.pardir)):
+        raise SystemExit(
+            "SECURITY_SCAN_MODEL={!r} cannot be a directory name".format(model))
+    return QUEUE / BY_MODEL / model / (case_id + ".json")
+
+
+class ClaimUnavailable(Exception):
+    """The claim could not be taken, and not because another queue holds it.
+
+    A read-only directory, a `.claim` path occupied by a directory, a
+    filesystem with no `flock`. Told apart from a held case because they are
+    different answers: one means wait for the other queue, the other means
+    something is wrong here and nothing about this case has been established.
+    """
+
+
+def _claim_path(target: Path) -> Path:
+    return target.with_name(target.name + ".claim")
+
+
+def _take_claim(target: Path):
+    """Reserve this case, or `None` if another queue holds it.
+
+    **An advisory lock held on an open descriptor**, not a file whose presence
+    means something. Codex, 2026-09-09, twice:
+
+    * Unique attempt paths stopped two queues corrupting each other's
+      temporary files and did nothing about the purchase — both evaluate
+      `already_run`, both see no result, both buy the same pair, and the later
+      promotion silently discards the earlier paid one. Four reviews for two,
+      one thrown away.
+    * The first repair was a claim *file* with an age at which it could be
+      taken over, and that age is a guess about a live process. A queue past
+      the ceiling had its claim removed by a second, then finished and
+      unlinked the second's claim on its way out, and a third took the case
+      while the second was still running. The takeover put back exactly the
+      double purchase it was there to prevent.
+
+    `flock` removes the question rather than answering it: the kernel releases
+    the lock when the process ends, however it ends, so there is no age to
+    guess and nothing to take over. The file is left behind on purpose — it is
+    a lock, not a record, and unlinking it is what created the defect above.
+
+    Advisory and per-filesystem: this is `measurements/`, a local directory
+    that one machine writes. A queue run against a network filesystem that
+    does not carry `flock` would not be serialised, and would be back to the
+    defect this closes.
+    """
+    path = _claim_path(target)
+    try:
+        handle = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as exc:
+        # **Not "somebody holds it".** A read-only directory, a `.claim` path
+        # occupied by a directory, a filesystem that cannot lock — each was
+        # answered with the sentence about another queue, and the window
+        # ledger then recorded `held_elsewhere` as a fact. "I could not check"
+        # read as an answer, which is the one confusion this project exists to
+        # refuse.
+        raise ClaimUnavailable(
+            "the claim file for {} cannot be opened: {}".format(
+                target.name, exc)) from None
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        # The one case that really is another queue.
+        os.close(handle)
+        return None
+    except OSError as exc:
+        os.close(handle)
+        raise ClaimUnavailable(
+            "the claim for {} cannot be locked: {}".format(
+                target.name, exc)) from None
+    # For a person reading the directory, not for any decision here.
+    try:
+        os.ftruncate(handle, 0)
+        os.write(handle, json.dumps({
+            "pid": os.getpid(),
+            "at": datetime.now(timezone.utc).isoformat()}).encode("utf-8"))
+    except OSError:
+        pass
+    return handle
+
+
+def _release_claim(handle) -> None:
+    """Drop the lock. The file stays; the lock is what meant anything."""
+    try:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        os.close(handle)
+    except OSError:
+        pass
+
+
 def run_one(case_id: str, args) -> tuple:
-    """`(payload, kind, detail)`. The payload is kept unless it was refused."""
-    target = QUEUE / (case_id + ".json")
-    QUEUE.mkdir(parents=True, exist_ok=True)
-    # Its own class, not `pair_corpus`'s. A queue measurement and a direct
-    # corpus run reach the same `review` and can be ordered differently, so
-    # the reason for spending travels with the caller that has it. Codex,
-    # 2026-09-05.
-    command = [sys.executable, "-u", str(ROOT / "tools" / "pair_corpus.py"),
-               str(ROOT / "corpus-real"), "--provider", args.provider,
-               "--profile", args.profile, "-c", "2",
-               "--spend-class", SPEND_CLASS,
-               "--case", case_id, "--json", str(target)]
-    proc = subprocess.run(command, cwd=ROOT, check=False)
-    if not target.is_file():
-        # Three, like every other return here. Two of them unpacked into a
-        # three-name assignment and this line raised `ValueError` — on the one
-        # path where `pair_corpus` wrote nothing at all, which is exactly the
-        # path a broken CLI takes. `no-artifact` rather than `unknown`: what is
-        # known is that no session document exists, and whether the call was
-        # submitted before it died is not.
-        return None, "no-artifact", "pair_corpus wrote no result file"
-    payload = json.loads(target.read_text(encoding="utf-8"))
-    kind, detail = classify(payload)
-    if kind == "refused":
-        # Not kept. A refused pair has measured nothing, and leaving the file
-        # behind would make `already_run` skip it for ever.
-        target.unlink()
-    # The return code is deliberately not read. `pair_corpus` exits non-zero
-    # when a pair fails to discriminate, which is a result and not an error;
-    # what matters here is whether the row says the account was refused.
-    del proc
-    return payload, kind, detail
+    """`(payload, kind, detail)`. The payload is kept unless it was refused.
+
+    **The child writes beside the target, not to it.** Two rounds of review
+    went into that, both from Codex on 2026-09-09. Writing to the target
+    meant, first, that a crashed run left the *previous* row in place and
+    `run_one` read it as this run's result — "did not check" as "checked",
+    inside the queue built to avoid it. A modification stamp told them apart,
+    then a stamp and an inode. And then the refusal branch, which deletes the
+    file because a refused pair has measured nothing, was deleting the earlier
+    measurement instead: by then the target had already been replaced.
+
+    An attempt path removes both questions rather than answering them. The
+    file exists only if this run wrote it; it becomes the case's result only
+    when it is one; and the previous artifact is never touched until an
+    `os.replace` puts a complete new one over it.
+    """
+    target = result_path(case_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # **A ruled-out case never reaches the child.** `pair_corpus.load_cases`
+    # drops it and `pair_corpus.main` then exits "no such case" before writing
+    # anything — so the queue saw an empty attempt, called it `no-artifact`,
+    # printed "no session document was written", and stopped the whole
+    # unattended run at that case with a message asserting a provider failure
+    # that did not happen. The ruling is applied on a sweep and not to a named
+    # case or a frozen round's list, which is where this arrives from.
+    if case_id in malformed():
+        return None, "ruled-out", (
+            "a ruling in adjudications.yml says this case cannot measure "
+            "anything, so nothing was bought for it")
+    try:
+        claim = _take_claim(target)
+    except ClaimUnavailable as exc:
+        # `unknown`, which stops the queue. Not `held`, which moves past — the
+        # case would be deferred for ever against a condition no other queue
+        # is going to clear.
+        return None, "unknown", str(exc)
+    if claim is None:
+        return None, "held", (
+            "another queue holds {}; it is being measured elsewhere".format(
+                case_id))
+    # **Unique to this invocation.** Codex, 2026-09-09: a deterministic
+    # `<case>.json.attempt` is shared by two queues running the same case, and
+    # they can unlink, read or promote each other's file. One completes a
+    # valid result; the other replaces it with a refusal before the first
+    # reads it; the first reads the refusal and deletes it, the second finds
+    # nothing, and a paid measurement is gone with the case still queued. The
+    # reverse order promotes one invocation's result and tells the other it
+    # succeeded. `mkstemp` in the target's own directory, so the promotion
+    # stays a rename on one filesystem.
+    handle, attempt_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=target.name + ".", suffix=".attempt")
+    os.close(handle)
+    attempt = Path(attempt_name)
+    # **And the mode the finished artifact should carry, now.** Codex,
+    # 2026-09-09: `mkstemp` creates at `0600`, `write_results` preserves the
+    # mode of the file it replaces — which is this attempt, not the target —
+    # and the promotion then carried `0600` onto the result. Two repairs, each
+    # right alone, composing into the defect the second one was for. Setting
+    # it here means the mode travels with the file through both renames, and
+    # a mode somebody set on the target by hand is what it is read from.
+    os.chmod(attempt, pair_corpus.intended_mode(target))
+    promoted = False
+    try:
+        # **Asked again, under the claim.** The list was built before this run
+        # started, and the queue that held the case may have finished it in
+        # between. Without this the claim would only serialise the two
+        # purchases rather than prevent the second.
+        # `repeat` from the caller's own flag, not `False`. Codex,
+        # 2026-09-09: a frozen round queues a case *because* `repeat=True`
+        # ignores the production baseline, and this re-check asked with
+        # `False` — so it found that baseline and answered "already", and the
+        # round could not re-measure precisely the cases its stability
+        # denominator is made of. The mechanism, disabled by the guard added
+        # to protect it.
+        if already_run(case_id, repeat=getattr(args, "round", None) is not None):
+            return None, "already", "measured while this run was waiting"
+        # Its own class, not `pair_corpus`'s. A queue measurement and a direct
+        # corpus run reach the same `review` and can be ordered differently,
+        # so the reason for spending travels with the caller that has it.
+        # Codex, 2026-09-05.
+        command = [sys.executable, "-u", str(ROOT / "tools" / "pair_corpus.py"),
+                   str(ROOT / "corpus-real"), "--provider", args.provider,
+                   "--profile", args.profile, "-c", "2",
+                   "--spend-class", SPEND_CLASS,
+                   "--case", case_id, "--json", str(attempt)]
+        proc = subprocess.run(command, cwd=ROOT, check=False)
+        # `mkstemp` created the file, so its *existence* says nothing. Empty
+        # is what a child that wrote nothing leaves, and it is the same answer
+        # as no file at all.
+        if not attempt.is_file() or attempt.stat().st_size == 0:
+            # Three, like every other return here. Two of them unpacked into a
+            # three-name assignment and this line raised `ValueError` — on the
+            # one path where `pair_corpus` wrote nothing at all, which is
+            # exactly the path a broken CLI takes. `no-artifact` rather than
+            # `unknown`: what is known is that no session document exists, and
+            # whether the call was submitted before it died is not.
+            return None, "no-artifact", "pair_corpus wrote no result file"
+        try:
+            payload = json.loads(attempt.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            # `pair_corpus.write_results` replaces the path atomically, so
+            # this should not be reachable through it. It is here because the
+            # queue crashing on an unreadable file is the worst of the three
+            # answers: the run is over either way, and a traceback abandons
+            # the rest of the corpus. Codex, 2026-09-09.
+            return None, "no-artifact", (
+                "the result file cannot be read: {}".format(exc))
+        kind, detail = classify(payload)
+        if kind != "refused":
+            # Promoted only now, and atomically. A refused pair has measured
+            # nothing, and promoting it would make `already_run` skip the case
+            # for ever — so it simply is not promoted, and the earlier
+            # artifact, which somebody paid for, is never touched.
+            #
+            # **`promoted` is set first.** It guards the `finally`, and setting
+            # it after the rename leaves a window in which an exception from
+            # `os.replace` — a sticky-bit directory, an ACL, the target
+            # occupied by a directory — sends the cleanup at the payload this
+            # run has just paid for. The flag says "this attempt is no longer
+            # mine to delete", which is true from the moment the rename is
+            # attempted: either it moved, or it is in a state nothing here
+            # should be tidying up blind.
+            promoted = True
+            os.replace(str(attempt), str(target))
+        # The return code is deliberately not read. `pair_corpus` exits
+        # non-zero when a pair fails to discriminate, which is a result and
+        # not an error; what matters here is whether the row says the account
+        # was refused.
+        del proc
+        return payload, kind, detail
+    finally:
+        if not promoted:
+            try:
+                attempt.unlink()
+            except OSError:
+                pass
+        _release_claim(claim)
 
 
 def main() -> int:
@@ -511,6 +853,46 @@ def main() -> int:
         # afterwards would have called the difference between them the product
         # moving on its own. Frozen means frozen.
         protocol = frozen.get("protocol", {})
+        # **The model, before anything is bought.** Codex, 2026-09-09: the
+        # model was the one frozen condition that was neither written down nor
+        # enforced, so a round frozen for the product ran happily under
+        # `SECURITY_SCAN_MODEL=claude-sonnet-5` — and `round.compare` then
+        # reported Sonnet against Opus as the product moving on its own, which
+        # is the number every gate threshold sits above. A manifest frozen
+        # before the field existed names no model, and then the product is
+        # what it meant: every round so far was bought with it.
+        # **And the manifest is not authoritative about which model.** Codex,
+        # 2026-09-09: closing `freeze` stopped new manifests naming another
+        # model and did nothing about one already on disk — hand-edited, or
+        # written by an earlier revision of this very change. Such a manifest
+        # matched a Sonnet environment, the round was bought with Sonnet, and
+        # `compare` put those rows against the Opus baselines `baselines()`
+        # draws from the product's own verdicts: "0 agreed, 1 flipped", exit
+        # 0, one model reported as the other moving on its own. A round is a
+        # measurement of the product wherever the claim is written down.
+        #
+        # Absence still means the product, because every round frozen before
+        # the field existed was bought with it.
+        named = protocol.get("model")
+        if named is not None and named != stop_rule.PRODUCT_MODEL:
+            sys.exit(
+                "round {} has a manifest naming model {!r}. A round is a "
+                "measurement of {} — its baselines are the product's own "
+                "verdicts — so a pass bought from another model would be "
+                "compared against them and the difference reported as the "
+                "product moving on its own. Re-freeze the round, or use "
+                "tools/experiment.py, which is what compares two models."
+                .format(args.round, named, stop_rule.PRODUCT_MODEL))
+        frozen_model = named or stop_rule.PRODUCT_MODEL
+        running_model = stop_rule.queue_model()
+        if running_model != frozen_model:
+            sys.exit(
+                "round {} froze model {!r} and this run would buy {!r}. "
+                "Unset SECURITY_SCAN_MODEL, or re-freeze as a new experiment "
+                "if the change is deliberate — a pass bought from a different "
+                "model is not a repetition of the other one, and comparing "
+                "them measures the models rather than the product."
+                .format(args.round, frozen_model, running_model))
         for chosen, name in ((args.provider, "provider"),
                              (args.profile, "profile")):
             want = protocol.get(name)
@@ -521,13 +903,106 @@ def main() -> int:
                     "other one; re-freeze as a new experiment if the change is "
                     "deliberate.".format(args.round, name, want, chosen))
 
+        # **And the cases themselves, before anything is bought.** Codex,
+        # 2026-09-09: `round.compare` now refuses a row about a different
+        # version of its case — correctly — but nothing stopped the queue
+        # buying it first. Edit a member after the freeze and the case was
+        # purchased normally, its row recorded the new digest, and `compare`
+        # then reported it as "not yet run" and could exit 2 having measured
+        # nothing. The money was spent on a row thrown away at the other end.
+        #
+        # A manifest from before `freeze` stored digests records none, and
+        # such a case is not checked rather than refused — the same rule
+        # `compare` applies, so the two ends agree about which rounds are
+        # checkable at all.
+        # **And the two lists have to be the same list.** Codex, 2026-09-09:
+        # the manifest carries `protocol.order`, which decides what is bought,
+        # and `cases`, which carries the digests and is what `compare` reads.
+        # Nothing checked that they agree, so a case named in `order` and
+        # absent from `cases` was bought without any digest check and then
+        # ignored by `compare` — money spent on a row the comparison never
+        # looks at, while the case it does look at is reported as never run.
+        # A repeated id in `order` bought the same case twice for the same
+        # reason: `queued` is computed once, before anything is written.
+        #
+        # `freeze` builds both from one list, so a genuine manifest passes.
+        # This refuses a hand-edited one, and a future `freeze` that lets them
+        # drift.
+        named = [entry.get("case_id") for entry in (frozen.get("cases") or [])
+                 if isinstance(entry, dict) and entry.get("case_id")]
+        if sorted(order) != sorted(named) or len(set(order)) != len(order):
+            sys.exit(
+                "round {} has a manifest whose order and case list disagree: "
+                "{} in the order, {} in the cases. What gets bought and what "
+                "gets compared are then two different sets, and a case bought "
+                "outside the case list is never checked against a frozen "
+                "digest nor read by `round.py compare`. Re-freeze the round."
+                .format(args.round, len(order), len(named)))
+
+        changed = []
+        for entry in frozen.get("cases") or []:
+            if not isinstance(entry, dict) or not entry.get("case_id"):
+                continue
+            wanted = {d for d in (entry.get("case_digest"),
+                                  entry.get("legacy_case_digest")) if d}
+            frozen_key = entry.get("answer_key_digest")
+            if not wanted and not frozen_key:
+                # A manifest from before either field existed. Nothing to
+                # check rather than nothing to refuse.
+                continue
+            directory = ROOT / "corpus-real" / entry["case_id"]
+            if not directory.is_dir():
+                changed.append("{}: the case is no longer in the corpus"
+                               .format(entry["case_id"]))
+                continue
+            # **Asked even when the members carry no digest.** The first
+            # version returned early on an empty `wanted`, so an entry with a
+            # frozen key and no `case_digest` skipped this check entirely —
+            # `compare` refused the round afterwards and the pairs had already
+            # been bought. The two ends of one rule disagreeing, and this end
+            # is the one that spends.
+            if frozen_key and answer_key_digest(directory) != frozen_key:
+                # The members are untouched and what a pass *means* is not.
+                # Codex, 2026-09-09: `case_digest` covers the members only, so
+                # editing the expectation alone was bought and then scored
+                # against the new key, and the flip read as instability.
+                changed.append("{}: its answer key changed since the freeze"
+                               .format(entry["case_id"]))
+                continue
+            if not wanted:
+                continue
+            now = {case_digest(directory), legacy_case_digest(directory)}
+            if not (now & wanted):
+                changed.append("{}: frozen at {}, now {}".format(
+                    entry["case_id"], sorted(wanted)[0],
+                    case_digest(directory)))
+        if changed:
+            sys.exit(
+                "round {} was frozen over cases that have changed since:\n  {}"
+                "\nA pass bought over edited code answers a different question "
+                "from the baseline it would be compared against, and "
+                "`round.py compare` would throw those rows away — after they "
+                "were paid for. Re-freeze as a new round if the change is "
+                "deliberate.".format(args.round, "\n  ".join(changed)))
+
         # Refused here, not recommended here. The first version printed
         # "verify before spending" and then spent: every frozen condition
         # except the provider and the profile was a suggestion, and the whole
         # point of freezing them is that a pass run under changed conditions is
         # not a repetition of the other one.
         eligible = list(order)
-    queued = [c for c in eligible if not already_run(c, repeat)]
+    # **Each case once.** Codex, 2026-09-09: `--case` is `action="append"`, so
+    # naming one twice put it in `eligible` twice — and `queued` is computed
+    # here, once, before anything runs. The first run wrote a valid result and
+    # the second entry was still in the list, so `already_run` was never asked
+    # again: the identical pair was bought a second time and the first
+    # artifact overwritten. The frozen-round manifest gained a duplicate check
+    # two rounds earlier and this path, the ordinary one, did not.
+    #
+    # Order is preserved, because for a frozen round it is the experiment's
+    # order and `dict.fromkeys` keeps first appearance.
+    unique = list(dict.fromkeys(eligible))
+    queued = [c for c in unique if not already_run(c, repeat)]
     # Reported, not applied. `cases()` drops these on a sweep and the count is
     # printed here so a saved window is visible rather than implicit — the
     # first version of this line filtered a second time and claimed a flag
@@ -535,18 +1010,32 @@ def main() -> int:
     ruled_out = 0 if args.case else len(malformed())
     print("{} case(s) queued, {} already recorded, {} ruled unable to measure "
           "anything and not swept".format(
-              len(queued), len(eligible) - len(queued), ruled_out), flush=True)
+              # **Against the deduplicated list.** Codex, 2026-09-09: the
+              # difference was taken from `eligible`, so the duplicate the
+              # line above removes was counted as a case "already recorded" —
+              # a claim that a measurement exists, made about a repetition
+              # that never was one. The whole point of this tool is not to say
+              # that.
+              len(queued), len(unique) - len(queued), ruled_out), flush=True)
     if args.dry_run or not queued:
         for case_id in queued:
             print("  " + case_id, flush=True)
         return 0
 
     mode = "attended" if args.pairs is not None else "unattended"
+    # What the probe bought, if it bought anything. Its pair is a pair: it
+    # consumed the window and it is on the bill, so it comes off `queued` and
+    # counts towards `--pairs`. The first version left it out of both, so
+    # `--pairs 1` bought two and the case was then bought a second time.
+    probe_spent: List[str] = []
     if args.wait_for_reset:
-        wait_for_fresh_window(args)
+        wait_for_fresh_window(args, queued, probe_spent)
+        for case_id in probe_spent:
+            if case_id in queued:
+                queued.remove(case_id)
+    done = len(probe_spent)
     window = datetime.now(timezone.utc).isoformat(timespec="seconds")
     waits = 0
-    done = 0
     # How this window ended, written when it does. A window stopped early is
     # not a measurement of the limit — it says only that the limit was above
     # that number — and a window that ran to refusal is. Mixing the two is how
@@ -567,6 +1056,9 @@ def main() -> int:
     # stopping at the first sign of trouble and never finding out.
     since_progress = 0
 
+    # How many cases in a row came back held. A full lap means every case
+    # left belongs to another queue and this one has nothing to do.
+    held_in_a_row = 0
     while queued:
         if args.pairs is not None and done >= args.pairs:
             termination = "stopped_early"
@@ -587,6 +1079,67 @@ def main() -> int:
         payload, kind, detail = run_one(case_id, args)
         elapsed = round(time.monotonic() - started, 1)
 
+        if kind == "ruled-out":
+            # Moved past, like `already`: nothing is wrong, nothing was
+            # bought, and the case is not owed a run. Recorded so the reason
+            # is visible rather than the case simply disappearing.
+            note({"case_id": case_id, "window": window, "outcome": kind,
+                  "started_at": started_at, "finished_at":
+                      datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "detail": str(detail)[:200], "wall_seconds": elapsed})
+            print("  {}: {}".format(case_id, detail), flush=True)
+            held_in_a_row = 0
+            queued.pop(0)
+            continue
+
+        if kind == "held":
+            # **Deferred, not dropped.** Codex, 2026-09-09: popping it meant
+            # this queue reported completion over a case nobody measured — the
+            # lock owner may crash, be refused, or write nothing, and a frozen
+            # round could finish "successfully" with a result missing. "Did
+            # not check" reported as "checked", which is the whole of what
+            # this project exists to catch, in the branch added to prevent a
+            # double purchase.
+            note({"case_id": case_id, "window": window, "outcome": kind,
+                  "started_at": started_at, "finished_at":
+                      datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "detail": str(detail)[:200], "wall_seconds": elapsed})
+            print("  {}: {}".format(case_id, detail), flush=True)
+            queued.append(queued.pop(0))
+            held_in_a_row += 1
+            if held_in_a_row >= len(queued):
+                # A whole lap and every case is held. Waiting here would be a
+                # spin, and finishing would be the lie above, so it stops and
+                # says which cases nobody has a result for.
+                print("\n{} case(s) are held by another queue and none could "
+                      "be run: {}.\nNothing here says they were measured — "
+                      "another queue has them, and this one has nothing left "
+                      "to do.".format(len(queued), ", ".join(sorted(queued))),
+                      flush=True)
+                close_window(window, "held_elsewhere", done, len(queued), mode)
+                return 5
+            continue
+
+        held_in_a_row = 0
+        if kind == "already":
+            # Not a result and not a failure: another queue has the case, or
+            # finished it while this one was working through the list. Moved
+            # past rather than stopped on — nothing is wrong, and nothing was
+            # bought. Recorded so that a person reading the log later can see
+            # a second queue was running, which is a thing this project has
+            # been bitten by.
+            note({"case_id": case_id, "window": window, "outcome": kind,
+                  "started_at": started_at, "finished_at":
+                      datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "detail": str(detail)[:200], "wall_seconds": elapsed})
+            # Popped, because this one *is* a result: the case was measured
+            # while this run was working through its list, and the row is on
+            # disk. Only `held` is deferred — nobody has a result for that
+            # one yet.
+            print("  {}: {}".format(case_id, detail), flush=True)
+            queued.pop(0)
+            continue
+
         if kind in ("unknown", "no-artifact"):
             # Neither slept on nor moved past. The refusal is matched on a
             # sentence the provider can reword, so an ending this cannot name
@@ -596,19 +1149,38 @@ def main() -> int:
                   "started_at": started_at, "finished_at":
                       datetime.now(timezone.utc).isoformat(timespec="seconds"),
                   "detail": str(detail)[:200], "wall_seconds": elapsed})
+            # **And the pair itself, when there was one.** An `unknown` is a
+            # *paid* pair: one member can complete and the other error out, so
+            # the payload exists and is promoted. The refused and success
+            # branches both write `kind: "review"` rows and this one did not,
+            # so `spend.py --source queue` — which filters on exactly that
+            # field — could not see it. A purchase off the bill.
+            if payload:
+                for entry in raw_rows(payload, started_at,
+                                      datetime.now(timezone.utc)
+                                      .isoformat(timespec="seconds")):
+                    note(dict(entry, window=window, outcome=kind))
             # Both stop, for the same reason and not the same evidence.
             # `unknown` may be a refusal in new words. `no-artifact` may have
             # submitted work before dying, so advancing would launch another
             # pair while the account or the process path may still be unwell —
             # and nothing it left behind says how far it got. Carrying on is a
             # decision that needs evidence neither of them provides.
-            print("\nstopped at {}: {}.\n  {}\n\n{} case(s) left. The result "
-                  "file, if any, is left in place for a person to look at "
-                  "rather than resumed past.".format(
+            # Which of the two, said exactly. `unknown` promoted a payload
+            # and it is at the case's own path; `no-artifact` means nothing
+            # was written and the attempt is gone, so telling the operator to
+            # go and look at a file is telling them to look at nothing. The
+            # first version said "the result file, if any" for both.
+            where = ("the result is at {}, left for a person to look at "
+                     "rather than resumed past".format(
+                         result_path(case_id).relative_to(ROOT))
+                     if kind == "unknown" else
+                     "nothing was written, so there is no file to look at")
+            print("\nstopped at {}: {}.\n  {}\n\n{} case(s) left. {}.".format(
                       case_id,
                       "the ending could not be classified" if kind == "unknown"
                       else "no session document was written",
-                      str(detail)[:160], len(queued)), flush=True)
+                      str(detail)[:160], len(queued), where), flush=True)
             close_window(window, "interrupted", done, len(queued), mode)
             return 3
 

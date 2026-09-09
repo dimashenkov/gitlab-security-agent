@@ -40,6 +40,7 @@ import json
 import statistics
 from collections import defaultdict
 from datetime import datetime, timezone
+import glob
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -63,6 +64,15 @@ DEFAULT_GLOBS = (".security-scan/**/findings.json", "journal/**/findings.json",
 # appear in both and nothing keys them together — summing them would inflate
 # the one number this tool exists to state carefully.
 QUEUE_LOG = "measurements/queue/log.jsonl"
+# And the same log under a round: `run_queue --round N` rebinds both the queue
+# directory and its log to `measurements/round-N/`. A whole round's rows were
+# invisible to the one command that answers "what has this cost", because this
+# constant named one path and nothing looked for the others.
+# The rounds only. The queue's own log is `QUEUE_LOG` above and is read
+# through that name, so a caller — or a test — that repoints it still moves
+# what this reads. A second copy of the same path here would be one more place
+# for the two to drift.
+ROUND_LOGS = "measurements/round-*/log.jsonl"
 # Set by `queue_rows`: lines it could not parse, or -1 for a log it
 # could not read at all.
 QUEUE_SKIPPED = 0
@@ -148,7 +158,27 @@ def read_runs(paths: Iterable[Path]) -> tuple:
     """
     out: List[Dict[str, Any]] = []
     bad = 0
+    # **Each file once, by identity.** `tools/spend.py PATH PATH` read the
+    # same artifact twice and printed `$10.00 charged, from 2 metered call(s)`
+    # for one $5.00 call — flatly, with no `≥` and no qualification, exit 0.
+    # A hard link or two paths to one file does the same. `_rows_and_artifacts
+    # _together` only warns when a file literally named `rows.json` is
+    # present, so nothing caught it.
+    #
+    # By inode rather than by path text: `a/../a/x.json` and `a/x.json` are
+    # one file and compare unequal as strings, and the whole point of this
+    # tool is that a number nobody can trace is worse than no number.
+    seen_files = set()
     for path in paths:
+        try:
+            fingerprint = path.stat()
+            identity = (fingerprint.st_dev, fingerprint.st_ino)
+        except OSError:
+            identity = None
+        if identity is not None:
+            if identity in seen_files:
+                continue
+            seen_files.add(identity)
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -371,6 +401,17 @@ def unreported_stages(row: Dict[str, Any]) -> int:
     usage = row.get("usage")
     value = usage.get("unreported_stages") if isinstance(usage, dict) else None
     return value if isinstance(value, int) else 0
+
+
+def queue_logs(root: Path) -> list:
+    """Every log the queue writes, in the two places it writes them.
+
+    `--round N` rebinds `LOG` to `measurements/round-N/log.jsonl`, so a round
+    bought 52 pairs into a file this tool never opened.
+    """
+    out = [root / QUEUE_LOG]
+    out.extend(sorted(Path(p) for p in glob.glob(str(root / ROUND_LOGS))))
+    return out
 
 
 def queue_rows(path: Path) -> List[Dict[str, Any]]:
@@ -781,7 +822,7 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
     # answer and the other does not, and folding them makes every note a
     # refusal.
     notes: List[str] = []
-    subscription = unestablished = silent = 0
+    subscription = unestablished = silent = made_no_call = 0
 
     for row in rows:
         cost = cost_of(row)
@@ -813,7 +854,21 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
         # assign, and that stops it. "Absent, not $0.00" is this file's oldest
         # rule, and the distinction is which of the two sentences is owed.
         if recorded == ABSENT:
-            silent += 1
+            # **A run that made no provider call is not a run whose price is
+            # missing.** The artifact records `usage.requests`, and this tool
+            # never read it — so all eight of today's unpriced runs, every one
+            # of them `requests: 0` with `stop_reason: error`, are reported as
+            # "recorded no cost at all", which reads as a price nobody wrote
+            # down. The field that separates them is in the same file.
+            #
+            # `is None` and not falsiness: a run that recorded no `requests`
+            # key is a third thing again, and reading its absence as zero
+            # would be the mistake this whole file is about.
+            requests = (row.get("usage") or {}).get("requests")
+            if isinstance(requests, int) and requests == 0:
+                made_no_call += 1
+            else:
+                silent += 1
         elif recorded == UNREADABLE:
             malformed.append(
                 "a review records {!r} where a cost belongs".format(
@@ -823,6 +878,9 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
         else:
             unestablished += 1
 
+    # Named apart in the line below, because "it cost nothing because it did
+    # nothing" and "nobody wrote the price down" send a reader to two
+    # different places.
     vendor_unestablished: Dict[str, int] = defaultdict(int)
     vendor_unpriced: List[str] = []
     for key, call in sorted(vendor["calls"].items()):
@@ -939,7 +997,12 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
         # actually spent. The diagnostic three lines below cannot repair an
         # inequality in the headline, so the headline stops claiming one.
         bound = "≥ " if silent and not may_double_count else ""
-        print("Spend: {}{} charged{}{}{}{}".format(
+        # Seven placeholders for seven clauses. The `made_no_call` clause was
+        # added without one, and `str.format` drops a surplus argument in
+        # silence — so the *duplicate* warning, which is last, stopped
+        # printing. A qualification lost to an argument count, in the line
+        # this whole file exists to qualify.
+        print("Spend: {}{} charged{}{}{}{}{}".format(
             bound, money(sum(charged)),
             ", from {} metered call(s)".format(len(charged)) if charged
             else " — nothing metered was recorded",
@@ -947,6 +1010,12 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
                 subscription) if subscription else "",
             "; a floor, not the answer — {} run(s) recorded no cost at all"
             .format(silent) if silent and not may_double_count else "",
+            # A run that made no provider call is not a hole in the figure:
+            # it cost nothing because nothing was asked of anybody. Named so
+            # that the sentence above stops carrying it, and so a reader is
+            # not sent looking for a price that was never owed.
+            "; {} run(s) made no provider call at all".format(made_no_call)
+            if made_no_call else "",
             # **Said whether or not anything else is missing.** The eight
             # states of this line were printed side by side rather than
             # reasoned about, and one of them was wrong: with metered runs, no
@@ -961,9 +1030,16 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
              "would be counted twice")
             if may_double_count else ""))
     else:
+        # The no-call runs are named here too. They were named on the other
+        # headline and not on this one, which is the "two ends of one rule"
+        # shape this repository keeps finding — and this is the branch that
+        # prints `$0.00 charged`, the strongest claim the tool makes, so a
+        # qualification missing here is missing where it matters most.
         print("Spend: $0.00 charged — every call the counter saw runs on a "
-              "flat subscription{}".format(
-                  " ({} of them)".format(subscription) if subscription else ""))
+              "flat subscription{}{}".format(
+                  " ({} of them)".format(subscription) if subscription else "",
+                  "; {} run(s) made no provider call at all".format(
+                      made_no_call) if made_no_call else ""))
 
     # The scope and the instant, because a bare figure quoted in a report is
     # about *something* as of *some time*, and two identical reports written on
@@ -1097,9 +1173,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.source == "queue":
-        rows = queue_rows(ROOT / QUEUE_LOG)
+        # **Accumulated, not read once at the end.** `queue_rows` resets
+        # `QUEUE_SKIPPED` on entry and sets it on exit, so with more than one
+        # log only the *last* one's count survived — a healthy round log
+        # erased the unparseable lines in the queue's own, and the headline
+        # then printed `$0.00 charged`, the sentence this file exists to never
+        # print while anything is unestablished. Introduced the same afternoon
+        # the round logs were added, and the two tests written for it covered
+        # one log each and never both.
+        #
+        # `-1` means "could not be read at all" and must survive being mixed
+        # with a number: a log nobody could open is not fewer bad lines than a
+        # log with two.
+        rows = []
+        skipped = 0
+        for log in queue_logs(ROOT):
+            rows.extend(queue_rows(log))
+            if QUEUE_SKIPPED < 0 or skipped < 0:
+                skipped = -1
+            else:
+                skipped += QUEUE_SKIPPED
         unreadable = 0
-        skipped = QUEUE_SKIPPED
         # The queue log is one source and holds no artifacts, so the question
         # below does not arise on this path.
         beside: List[Path] = []
@@ -1217,7 +1311,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("\nVendor calls, counted apart and never added to the above: "
               "{} call(s) recorded, {} record(s) this tool could not key."
               .format(len(vendor["calls"]), len(vendor["problems"])))
-    if args.source == "artifacts" and queue_rows(ROOT / QUEUE_LOG):
+    if args.source == "artifacts" and any(
+            queue_rows(log) for log in queue_logs(ROOT)):
         print("\nThe queue log holds review rows this source does not: "
               "tools/spend.py --source queue. Not added to the above — a "
               "review can appear in both and nothing keys them together.")

@@ -52,6 +52,89 @@ def payload(*findings, complete=True, stop_reason="completed") -> dict:
 # ------------------------------------------------- the three-valued answer
 
 
+
+def test_a_killed_write_does_not_destroy_the_previous_result(tmp_path):
+    """Codex, 2026-09-09, against the mtime guard in `run_queue`.
+
+    `Path.write_text` opens the path and truncates it before a byte is
+    written, so a run killed mid-write leaves a partial file where a previous
+    *paid* measurement stood — destroyed, and unparseable to every reader.
+    The queue's freshness check does not save it: the stamp moved.
+    """
+    import json as _json
+
+    import pair_corpus
+
+    target = tmp_path / "a-case.json"
+    paid = [{"case_id": "a-case", "pair_success": True}]
+    pair_corpus.write_results(target, paid)
+
+    class Unserialisable:
+        pass
+
+    # `json.dump` fails partway, which is what a kill during the write looks
+    # like to the file: some bytes out, then nothing.
+    import pytest as _pytest
+
+    with _pytest.raises(TypeError):
+        pair_corpus.write_results(target, [{"case_id": "a-case",
+                                            "bad": Unserialisable()}])
+
+    assert _json.loads(target.read_text(encoding="utf-8")) == paid
+    # And no debris beside it. A `.partial` left behind is a file the next
+    # reader has to decide about.
+    assert [p.name for p in tmp_path.iterdir()] == ["a-case.json"]
+
+
+def test_the_artifact_is_readable_by_anybody_who_could_read_the_old_one(
+        tmp_path):
+    """Codex, 2026-09-09. `mkstemp` creates at `0600` and `os.replace`
+    carries that to the result path.
+
+    `Path.write_text` left the process umask — normally `0644` — and preserved
+    an existing file's mode. On a shared runner the next job runs as another
+    account, cannot read the artifact, and `already_run` reads the `OSError`
+    as "no measurement" and buys the case again. A permission bit turning into
+    a purchase.
+    """
+    import os
+    import stat as _stat
+
+    import pair_corpus
+
+    # A new file: what an ordinary create would have given it.
+    fresh = tmp_path / "new.json"
+    pair_corpus.write_results(fresh, [{"case_id": "a-case"}])
+    current = os.umask(0)
+    os.umask(current)
+    assert _stat.S_IMODE(fresh.stat().st_mode) == 0o666 & ~current
+
+    # And replacing one keeps the mode it had, so something set by hand
+    # survives the next run.
+    existing = tmp_path / "old.json"
+    pair_corpus.write_results(existing, [{"case_id": "a-case"}])
+    os.chmod(existing, 0o640)
+    pair_corpus.write_results(existing, [{"case_id": "a-case", "again": True}])
+    assert _stat.S_IMODE(existing.stat().st_mode) == 0o640
+
+
+def test_a_completed_write_replaces_the_previous_result(tmp_path):
+    """The control. Without it the test above passes over a `write_results`
+    that never writes anything at all."""
+    import json as _json
+
+    import pair_corpus
+
+    target = tmp_path / "a-case.json"
+    pair_corpus.write_results(target, [{"case_id": "a-case",
+                                        "pair_success": False}])
+    pair_corpus.write_results(target, [{"case_id": "a-case",
+                                        "pair_success": True}])
+
+    assert _json.loads(target.read_text(encoding="utf-8")) == [
+        {"case_id": "a-case", "pair_success": True}]
+
+
 def test_a_completed_run_that_found_the_target_says_so():
     assert hits_target(payload(TARGET), CASE) is True
 

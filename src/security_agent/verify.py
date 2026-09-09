@@ -26,6 +26,7 @@ from .evidence import ATTRIBUTED_DELETED, excerpt
 from .models import (
     VERDICT_CONFIRMED,
     VERDICT_REFUTED,
+    SEVERITY_ORDER,
     VERDICT_UNCERTAIN,
     Candidate,
     Usage,
@@ -458,6 +459,27 @@ def _votes_for(cfg: Config, candidate: Candidate) -> int:
     votes = cfg.verify_votes
     if _could_become_blocking(cfg, candidate):
         votes = max(votes, 3)
+    if severity_rank(candidate.severity) >= severity_rank(SEVERITY_ORDER[-1]):
+        # **A critical is never erased on one opinion, whatever the gate is
+        # set to.** Every clause of `_could_become_blocking` is about the exit
+        # code: no threshold, an ungated category, a pre-existing finding
+        # under `gate_pre_existing=false`. Each of them returns `False` for a
+        # critical, and the finding then got one seat — so a single verifier
+        # saying `uncertain`, or one errored session, removed a critical from
+        # the report a person reads.
+        #
+        # The two questions are not the same one. Gate configuration decides
+        # whether the pipeline fails; it does not decide whether the most
+        # severe class of finding may be deleted by one reply. An operator who
+        # turns the gate off is asking not to be blocked, not to be left
+        # uninformed.
+        #
+        # Codex, 2026-09-09: *"Every critical finding must receive at least
+        # three seats regardless of `fail_on`, category gating, or whether it
+        # can block… The severe-finding protection therefore belongs
+        # independently in `_votes_for`; it must not depend solely on
+        # `_could_become_blocking()`."*
+        votes = max(votes, 3)
     if votes % 2 == 0:
         # An even panel has no majority to appeal to. Whatever tie-break is
         # written for it decides the gate on its own, which is the failure this
@@ -765,18 +787,27 @@ def _reason(votes: List[Vote], verdict: str, seats: int = 0) -> str:
     if search:
         head = "{} Searched: {}".format(head, search).strip()
     empty = max(0, seats - len(votes))
-    if empty:
-        # Named before anything else, because it changes how the rest reads.
-        # With seats empty the verdict may be what the claim arrived as rather
-        # than what anybody concluded, and the reasoning below it is one
-        # verifier's opinion and not the panel's.
-        missing = ("{} of {} verifier(s) never reported, so the panel could "
-                   "not settle this and the finding stands as reported"
-                   .format(empty, seats))
+    if empty and not votes:
+        # **Only when nobody answered.** The sentence says the panel could not
+        # settle it and the finding stands as reported, and it was printed
+        # whenever *any* seat errored — including when the seats that did
+        # answer reached a verdict and the finding did not stand at all. Two
+        # verifiers refuting and one seat failing printed "the panel could not
+        # settle this and the finding stands", under a finding `cli.py` had
+        # just moved out of the report; the same shape on the confirming side
+        # put it under a *blocking* verdict two verifiers actually reached,
+        # inviting the author to overrule it. The real tally never appeared.
+        missing = ("no verifier reported, so the panel could not settle this "
+                   "and the finding stands as reported")
         return "{} — {}".format(missing, head) if head else missing
-    if len(votes) > 1:
+    if len(votes) > 1 or empty:
+        # The tally, and the seats that never answered beside it. A panel of
+        # three that heard two is not a panel of two: the denominator is what
+        # was reserved, and the failures are named rather than subtracted.
         tally = "{}/{} verifier(s) agreed".format(
-            sum(1 for v in votes if v.verdict == verdict), len(votes))
+            sum(1 for v in votes if v.verdict == verdict), seats)
+        if empty:
+            tally = "{} ({} never reported)".format(tally, empty)
         return "{} — {}".format(tally, head) if head else tally
     return head
 

@@ -37,6 +37,7 @@ import ast
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -59,6 +60,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import spend_gate
 from artifact import (
+    answer_key_digest,
     case_digest,
     load_adjudications,
     malformed_cases,
@@ -649,6 +651,13 @@ def run_case(case: dict, keep_dir: Optional[Path] = None,
               # numbers comparable" and the wrong one here: it would let an edit
               # to one case invalidate the results of the other forty-six.
               "case_digest": case_digest(case["_dir"]),
+              # The key this row was scored against. `case_digest` covers the
+              # members only, on purpose, so nothing recorded before today
+              # says what a pass *meant* when it was written — and a round
+              # comparing an old baseline against a new run cannot tell a
+              # product change from a key change. Codex, 2026-09-09. Written
+              # from here on so that it becomes answerable.
+              "answer_key_digest": answer_key_digest(case["_dir"]),
               # When this ran, so a later run of the same case supersedes an
               # earlier one. Without it the tracker had no order to take the
               # latest by — filename order is not run order and modification
@@ -1024,6 +1033,68 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def intended_mode(target: Path) -> int:
+    """The mode the finished artifact should carry.
+
+    The file being replaced, when there is one, so a mode somebody set by hand
+    survives the next run. Otherwise what an ordinary create would have given
+    it: `0o666` less the umask, which is what `Path.write_text` produced
+    before the write became atomic.
+    """
+    try:
+        return stat.S_IMODE(target.stat().st_mode)
+    except OSError:
+        pass
+    # There is no way to read the umask without setting it, and no other
+    # thread is running here — this is a command-line tool between two
+    # subprocess calls.
+    current = os.umask(0)
+    os.umask(current)
+    return 0o666 & ~current
+
+
+def write_results(target: Path, results) -> None:
+    """Write the run's results to `target`, replacing it only when complete.
+
+    **Not `target.write_text`.** Codex, 2026-09-09: that opens the path and
+    truncates it before a byte is written, so a run killed mid-write leaves a
+    partial file where a *previous* paid measurement stood — destroyed, and
+    unparseable to every reader of it. `run_queue` compares the modification
+    stamp to tell a fresh artifact from a stale one, and a truncated file
+    passes that test: the stamp moved.
+
+    A temporary file in the same directory, then `os.replace`, which is atomic
+    on one filesystem. Either the old file is there whole or the new one is;
+    no reader ever sees half. The temporary is removed if the write fails, so
+    a dead run leaves no debris beside the artifact it did not replace.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(
+        dir=str(target.parent), prefix=target.name + ".", suffix=".partial")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            json.dump(results, out, indent=2)
+            out.flush()
+            os.fsync(out.fileno())
+        # **The mode, before the rename carries it over.** Codex, 2026-09-09:
+        # `mkstemp` creates at `0600` and `os.replace` transfers that to the
+        # result path, where `Path.write_text` had left the process umask —
+        # normally `0644` — and preserved an existing file's mode. On a shared
+        # runner the next job runs as another account, cannot read the file,
+        # and `already_run` reads the `OSError` as "no measurement" and buys
+        # the case again. A permission bit turning into a purchase.
+        os.chmod(temporary, intended_mode(target))
+        os.replace(temporary, str(target))
+    except BaseException:
+        # `BaseException`, so a `KeyboardInterrupt` between the two also tidies
+        # up — that is the interruption this exists for.
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
 def main() -> int:
     args = _build_parser().parse_args()
 
@@ -1076,7 +1147,7 @@ def main() -> int:
     # Written before the report. A crash while formatting would otherwise throw
     # away runs already paid for.
     if args.json:
-        Path(args.json).write_text(json.dumps(results, indent=2))
+        write_results(Path(args.json), results)
         print("\nraw results written to {}".format(args.json))
     report(results, adjudications)
     return 0

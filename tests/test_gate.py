@@ -158,6 +158,100 @@ class TestBlockingSelection:
         assert "below medium confidence" in joined
 
 
+class TestSourceNobodyCouldRead:
+    """Three states, not two. Codex, 2026-09-09.
+
+    Git decides `binary` from the bytes — a NUL in the first 8000 — so one
+    such byte in a comment turns a `.js` into "Binary files … differ". A
+    reviewer is shown nothing, `_readable_change` subtracts the file, and
+    `_reviewed_nothing`'s `accountable` does not — so one *other* readable
+    file satisfied the gate for the whole change: exit 0, "No security
+    findings", over a file nobody saw. The second half of the `.gitattributes`
+    bypass, reached without `.gitattributes`.
+    """
+
+    def test_a_source_file_git_will_not_show_makes_the_review_incomplete(
+            self, config):
+        outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+        outcome.coverage.changed = ["README.md"]
+        outcome.coverage.examined = ["README.md"]
+        outcome.coverage.unreadable_source = ["auth.js"]
+        outcome.exposures = [("README.md", "get_diff")]
+
+        decision = decide(config, outcome)
+
+        assert decision.exit_code == EXIT_ERROR, decision.reason
+        assert decision.partial is True
+        # The path, because the remedy is to look at the file rather than to
+        # change a setting.
+        assert "auth.js" in decision.reason
+        assert "one NUL byte" in decision.reason
+
+    def test_an_image_is_a_disclosed_non_source_change_and_blocks_nothing(
+            self, config):
+        """The control, and the reason the ruling is three states rather than
+        "any unreadable file". Adding a PNG must not block a merge, or the
+        gate gets deleted rather than obeyed."""
+        outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+        outcome.coverage.changed = ["README.md"]
+        outcome.coverage.examined = ["README.md"]
+        outcome.coverage.unreadable = [("logo.png", "binary")]
+        outcome.exposures = [("README.md", "get_diff")]
+
+        assert decide(config, outcome).exit_code == EXIT_OK
+
+    def test_it_is_forgivable_like_any_other_partial_review(self, config):
+        """The same documented flag as every other incomplete review. A team
+        that has looked at the file and decided may let it through."""
+        config.fail_on_incomplete = False
+        outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+        outcome.coverage.changed = ["README.md"]
+        outcome.coverage.examined = ["README.md"]
+        outcome.coverage.unreadable_source = ["auth.js"]
+        outcome.exposures = [("README.md", "get_diff")]
+
+        assert decide(config, outcome).exit_code == EXIT_OK
+
+
+class TestWithheldSourceIsNamedWhereAPersonReads:
+    """The report filed it under the heading that says no action is needed.
+
+    `auth.js (binary)` sat in "No source lines to read" beside renames, mode
+    changes and images — a sentence that is true of those and false of it. The
+    one entry a reader has to act on cannot be under the heading that tells
+    them not to look. Codex, 2026-09-09.
+    """
+
+    def _section(self, **coverage):
+        from security_agent.config import Config, GitLabContext
+        from security_agent.report import _coverage_section
+        outcome = ScanOutcome(mode="diff", model="claude-opus-5")
+        outcome.coverage.changed = ["README.md"]
+        outcome.coverage.examined = ["README.md"]
+        for name, value in coverage.items():
+            setattr(outcome.coverage, name, value)
+        return "\n".join(_coverage_section(
+            Config(gitlab=GitLabContext()), outcome,
+            decide(Config(gitlab=GitLabContext()), outcome)))
+
+    def test_it_gets_its_own_heading(self):
+        text = self._section(unreadable=[("auth.js", "binary")],
+                             unreadable_source=["auth.js"])
+        assert "Source that could not be read (1)" in text
+        assert "auth.js" in text
+        assert "nobody was shown them" in text
+        # And it is not also filed under the harmless one, which would leave
+        # the reader with two counts of one file and one of them wrong.
+        assert "No source lines to read" not in text
+
+    def test_an_image_stays_where_it_was(self):
+        """The control. A PNG is disclosed and unreadable, and moving it to
+        the alarming heading would train the reader to skip that one too."""
+        text = self._section(unreadable=[("logo.png", "binary")])
+        assert "No source lines to read (1)" in text
+        assert "Source that could not be read" not in text
+
+
 class TestRemovedControlsBlock:
     """Deleting a security control blocks on that alone.
 
@@ -180,6 +274,136 @@ class TestRemovedControlsBlock:
         candidate = make_candidate(severity="low", confidence="low",
                                    removes_control=True)
         assert decide(config, outcome_with(candidate)).exit_code == EXIT_FINDINGS
+
+    def test_the_rule_cannot_pass_silently_when_verification_is_off(
+            self, config):
+        """`removes_control` is set in exactly one place — the verifier panel
+        — and `verify_candidates` returns before it when verification is off.
+
+        So with `SECURITY_SCAN_VERIFY=false` no candidate can carry the flag,
+        the rule above is unreachable, and a change that removes a guard falls
+        to the severity comparison: the report then says it passed for being
+        *below the threshold*, a sentence about a number that never decided
+        anything. A rule that disappears without a word is worse than one
+        never written, because the run looks the same.
+
+        The fixture carries `removes_control=False`, which is what the panel
+        leaves when it never ran — the shape production actually produces.
+        """
+        config.verify = False
+        candidate = make_candidate(severity="low", confidence="high",
+                                   removes_control=False)
+        decision = decide(config, outcome_with(candidate))
+
+        assert decision.exit_code == EXIT_ERROR, decision.reason
+        assert decision.partial is True
+        assert "removed-control rule" in decision.reason
+        # And it is not the *pass* sentence that names the threshold — the
+        # wrong attribution this exists to stop. The refusal may mention the
+        # threshold while explaining what would otherwise have happened.
+        assert "none blocking under the configured policy" not in decision.reason
+
+    def test_a_panel_that_could_not_answer_is_also_unevaluated(self, config):
+        """Verification running is not verification answering.
+
+        When every seat errors, `verify._decide` returns before
+        `removes_control` is assigned at all — so the finding falls to the
+        severity comparison and the report says it passed for being below the
+        threshold. The same sentence about a number that never decided
+        anything, arriving by a different road than the one closed an hour
+        earlier: the first repair asked only whether verification was
+        configured on.
+        """
+        from security_agent.models import Vote
+
+        candidate = make_candidate(severity="low", confidence="high",
+                                   removes_control=False)
+        candidate.votes = [Vote(verdict="uncertain", reasoning="",
+                                error="the verifier never started"),
+                           Vote(verdict="uncertain", reasoning="",
+                                error="transport failure")]
+        decision = decide(config, outcome_with(candidate))
+
+        assert decision.exit_code == EXIT_ERROR, decision.reason
+        assert "removed-control rule" in decision.reason
+
+    def test_a_panel_that_answered_is_not(self, config):
+        """The control. A seat that failed beside seats that answered is a
+        degraded panel, not an absent one — and treating every errored seat as
+        an unevaluated rule would refuse most real runs."""
+        from security_agent.models import Vote
+
+        candidate = make_candidate(severity="low", confidence="high",
+                                   removes_control=False)
+        candidate.votes = [Vote(verdict="confirmed", reasoning="checked"),
+                           Vote(verdict="uncertain", reasoning="",
+                                error="transport failure")]
+
+        assert decide(config, outcome_with(candidate)).exit_code == EXIT_OK
+
+    def test_a_finding_never_sent_to_a_panel_is_not(self, config):
+        """The second control. A candidate with no votes was never sent, and
+        that is `_worth_verifying`'s decision — the product's own judgement
+        that this finding does not need a panel. Reading it as an unevaluated
+        rule made every unverified informational finding an incomplete review,
+        and turned 21 of this file's tests red."""
+        candidate = make_candidate(severity="low", confidence="high",
+                                   removes_control=False)
+
+        assert decide(config, outcome_with(candidate)).exit_code == EXIT_OK
+
+    def test_it_is_forgivable_like_any_other_partial_review(self, config):
+        """Turning verification off is a real configuration a team may choose,
+        and a gate that cannot be satisfied gets deleted rather than obeyed.
+        The one thing that is not negotiable is that it says so."""
+        config.verify = False
+        config.fail_on_incomplete = False
+        candidate = make_candidate(severity="low", confidence="high",
+                                   removes_control=False)
+
+        assert decide(config, outcome_with(candidate)).exit_code == EXIT_OK
+
+    def test_verification_on_is_unaffected(self, config):
+        """The control. Without it the refusal above would fire on every run
+        that reports a finding, and the rule would block everything."""
+        candidate = make_candidate(severity="low", confidence="high",
+                                   removes_control=False)
+        decision = decide(config, outcome_with(candidate))
+
+        assert decision.exit_code == EXIT_OK, decision.reason
+        assert "removed-control rule" not in (decision.reason or "")
+
+    def test_switching_it_off_is_named_beside_what_it_released(self, config):
+        """Its two siblings — `SECURITY_SCAN_UNGATED_CATEGORIES` and
+        `SECURITY_SCAN_GATE_PRE_EXISTING` — both name themselves beside the
+        findings they release. This one did not.
+
+        So a finding that would have blocked for taking a guard away came out
+        under "below the severity threshold", with nothing pointing at the
+        setting that let it through. The report then reads as a bug rather
+        than as policy, which is the whole reason those notes exist.
+        """
+        config.gate_removed_controls = False
+        candidate = make_candidate(severity="low", confidence="high",
+                                   removes_control=True)
+        decision = decide(config, outcome_with(candidate))
+
+        assert decision.exit_code == EXIT_OK
+        assert any("SECURITY_SCAN_GATE_REMOVED_CONTROLS" in note
+                   for note in decision.non_blocking_reasons), \
+            decision.non_blocking_reasons
+
+    def test_the_note_is_absent_when_the_rule_is_on(self, config):
+        """The control. A note that prints whatever the setting is names
+        nothing."""
+        candidate = make_candidate(severity="low", confidence="high",
+                                   removes_control=True)
+        decision = decide(config, outcome_with(candidate))
+
+        assert decision.exit_code == EXIT_FINDINGS
+        assert not any("SECURITY_SCAN_GATE_REMOVED_CONTROLS" in note
+                       for note in decision.non_blocking_reasons), \
+            decision.non_blocking_reasons
 
     def test_it_can_be_switched_off(self, config):
         config.gate_removed_controls = False

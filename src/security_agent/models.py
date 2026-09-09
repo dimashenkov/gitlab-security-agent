@@ -1174,6 +1174,12 @@ class Coverage:
     # limit was given, and the observation is in the artifact where a rule can
     # later be set from it rather than from an expectation.
     whole_diff_delivered: bool = False
+    # Changed paths that are source and that git would not show — a `.js` or
+    # a `.py` it calls binary because of one NUL byte. Apart from `unreadable`
+    # on purpose: that list holds renames, mode changes, submodule pointers
+    # and real images, all of which are disclosed and none of which makes a
+    # review incomplete. This one does. Codex, 2026-09-09.
+    unreadable_source: List[str] = field(default_factory=list)
 
     @property
     def unopened(self) -> List[str]:
@@ -1198,6 +1204,7 @@ class Coverage:
                            for path, why in self.unreadable],
             "deleted": self.deleted,
             "whole_diff_delivered": self.whole_diff_delivered,
+            "unreadable_source": list(self.unreadable_source),
             "unopened": self.unopened,
             "complete": self.complete,
         }
@@ -1255,7 +1262,17 @@ class Provenance:
     # what had happened was the CLI serving part of the *verification* with a
     # smaller model. The first is a reason to throw the numbers away; the
     # second is noise. Nothing in the artifact could tell them apart.
+    #
+    # **Written by role, not recovered by subtraction.** Codex, 2026-09-09:
+    # *"A verifier observation must not be inserted into the reviewer
+    # collection and later recovered by set subtraction. Record explicit
+    # `models_reviewed` and `models_verified` lists; `models_served` may remain
+    # only as a compatibility aggregate."* Subtraction cannot express the one
+    # case that matters — a model that served both jobs — so `review_models`
+    # had a rule for guessing it, and a guess is what this field records
+    # instead of having.
     models_served: List[str] = field(default_factory=list)
+    models_reviewed: List[str] = field(default_factory=list)
     models_verified: List[str] = field(default_factory=list)
     # Which model the *verifier* was asked for. Empty means it follows the
     # reviewer, which is the default. Recorded because "was the verifier the
@@ -1267,6 +1284,11 @@ class Provenance:
     verifier_prompt_sha: str = ""
     schema_sha: str = ""
     agent_version: str = ""
+    # What the code actually was, as opposed to what somebody remembered to
+    # write in `__version__`. See `security_agent.source_digest`; the reason it
+    # is a second field rather than a replacement is that the version is what a
+    # person reads in a report and the digest is what a key compares.
+    agent_source_sha: str = ""
     # How the run was authenticated, when the provider could say — the local
     # runner asks `claude auth status` and records the two fields that decide
     # anything. Never the account's email or organisation, which the same
@@ -1309,23 +1331,57 @@ class Provenance:
             return
         if model not in self.models_served:
             self.models_served.append(model)
-        if verifying and model not in self.models_verified:
-            self.models_verified.append(model)
+        role = self.models_verified if verifying else self.models_reviewed
+        if model not in role:
+            role.append(model)
 
     @property
     def review_models(self) -> List[str]:
         """The models that answered the *review*.
 
-        Verification is excluded by subtraction, which drops a model that did
-        both jobs: run the reviewer and the verifier on one model and the list
-        comes back empty, so the run reads as having had no reviewer at all.
-        The requested model is always one of them when it answered, so it is
-        kept rather than subtracted away.
+        Read from `models_reviewed`, which the run writes as it happens. The
+        subtraction below it is for artifacts written before that field
+        existed, and it is kept only because those artifacts exist: it drops a
+        model that did both jobs, so a run whose reviewer and verifier were the
+        same model came back empty and read as having had no reviewer at all.
+        The requested model was then put back by a rule, which is a guess.
+
+        `provenance_ambiguous` says when that guess is the only thing
+        answering, and readers that admit a row to a corpus consult it rather
+        than the guess.
         """
+        if self.models_reviewed:
+            return list(self.models_reviewed)
         served = [m for m in self.models_served if m not in self.models_verified]
         if self.model_requested in self.models_served and not served:
             return [self.model_requested]
         return served
+
+    @property
+    def provenance_ambiguous(self) -> bool:
+        """Is "which model reviewed this" unanswerable from what was recorded?
+
+        True for an artifact written before roles were stored separately, in
+        the one shape where subtraction cannot recover them: something was
+        served, nothing says what reviewed, and every served name is also a
+        verifier's. The reviewer is then either one of those models or a name
+        that was never written down, and the old rule answered "the requested
+        one" — which is the reading that says *not substituted* about a run
+        nobody can vouch for.
+
+        Codex, 2026-09-09: *"For old artifacts whose overlapping lists make the
+        reviewer unknowable, report the provenance as ambiguous and refuse
+        corpus admission rather than inferring 'not substituted.'"*
+
+        False for a new artifact, and false for an old one whose lists still
+        separate — most of them do. This is not a claim that the run was bad;
+        it is a refusal to state something the record does not say.
+        """
+        if self.models_reviewed:
+            return False
+        if not self.models_served:
+            return False
+        return all(m in set(self.models_verified) for m in self.models_served)
 
     @property
     def model_substituted(self) -> bool:
@@ -1336,6 +1392,13 @@ class Provenance:
         smaller model used for part of the verification does not change that —
         while reading it as substitution would discard a run that is sound.
         `verifier_substituted` asks the other question separately.
+
+        **`False` here means "measured, and it was the right model".** When
+        the record cannot say — `provenance_ambiguous` — this stays `False`
+        because that is what every existing reader expects of a boolean, and
+        the ambiguity is published as its own field rather than folded in. A
+        reader deciding whether a row may enter a corpus asks both; one that
+        asks only this one gets the old answer and no worse.
         """
         return any(m != self.model_requested for m in self.review_models)
 
@@ -1356,7 +1419,9 @@ class Provenance:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "model_requested": self.model_requested,
+            "models_reviewed": list(self.models_reviewed),
             "models_verified": list(self.models_verified),
+            "provenance_ambiguous": self.provenance_ambiguous,
             "verifier_requested": self.verifier_requested,
             "verifier_substituted": self.verifier_substituted,
             "models_served": self.models_served,
@@ -1365,6 +1430,7 @@ class Provenance:
             "verifier_prompt_sha": self.verifier_prompt_sha,
             "schema_sha": self.schema_sha,
             "agent_version": self.agent_version,
+            "agent_source_sha": self.agent_source_sha,
             # Written, because a field the artifact does not carry is a field
             # nothing downstream can read — and these were added for readers
             # that then found nothing. `probe_spend` was rewritten to decide

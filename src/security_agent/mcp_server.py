@@ -749,6 +749,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             prompt_dir=Path(args.prompt_dir) if args.prompt_dir else None,
             max_tool_calls=args.max_tool_calls,
             scope=tuple(args.path or ()),
+            excludes=tuple(args.exclude or ()),
             crash_journal_path=(
                 Path(args.crash_journal) if args.crash_journal else None),
             run_id=args.run_id or "",
@@ -1095,6 +1096,20 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         help="Narrow which changed files the review is answerable for. "
              "Repeatable. It does not narrow what may be read — the same rule "
              "as the CLI's own flag, and for the same reason.")
+    parser.add_argument(
+        # **The child had none of these.** `build_server` has taken an
+        # `excludes` argument since it was written and `main` never passed
+        # one, so on the CLI runner — the path that does the paid reviews —
+        # every exclude rule was decorative: the model diffed, grepped and
+        # opened `vendor/`, `node_modules/` and minified bundles freely, and
+        # a finding filed against one passed the citation check and reached
+        # the gate. The parent meanwhile wrote `coverage.excluded` from its
+        # *own* workspace, so one artifact called the same path both
+        # never-shown and shown.
+        "--exclude", metavar="GLOB", action="append", default=[],
+        help="Hide a path from the review entirely. Repeatable. Unlike "
+             "--path this does narrow what may be read: it is what keeps "
+             "vendored code and minified bundles out of paid context.")
     parser.add_argument(
         "--spend-report", metavar="PATH",
         help="Where to write this session's tool-call count when the client "

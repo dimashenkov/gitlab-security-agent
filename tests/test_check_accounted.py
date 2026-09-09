@@ -35,6 +35,22 @@ import check_accounted  # noqa: E402
 from artifact import case_digest  # noqa: E402
 
 CASE = "xx-test-0000-0000"
+OPUS = "claude-opus-5"
+SONNET = "claude-sonnet-5"
+
+
+def members_reviewed_by(name: str) -> dict:
+    """A pair's `members` block as a real run writes it.
+
+    Both members, each with a provenance naming what was asked for and what
+    answered. `stop_rule.why_not_product_row` requires exactly that shape, so
+    a fixture that skips a member or a `models_served` list builds something
+    production never emits — and then the test passes for a reason it does not
+    name.
+    """
+    block = {"provenance": {"model_requested": name, "models_served": [name],
+                            "models_verified": []}}
+    return {"safe": block, "unsafe": dict(block)}
 
 
 def build_corpus(root: Path) -> str:
@@ -283,13 +299,15 @@ class TestWhatWasBoughtVersusWhatWasDecided:
     `about_this_version` compares neither: it checks `case_digest` alone.
     """
 
-    def experiment_row(self, root, digest, passes):
+    def experiment_row(self, root, digest, passes, model=None):
         directory = root / "measurements" / "experiment-noise" / "pass-a"
         directory.mkdir(parents=True)
+        body = row(digest=digest, passes=passes,
+                   ran_at="2026-09-01T11:00:00+00:00")
+        if model is not None:
+            body["members"] = members_reviewed_by(model)
         (directory / (CASE + ".json")).write_text(
-            json.dumps(row(digest=digest, passes=passes,
-                           ran_at="2026-09-01T11:00:00+00:00")),
-            encoding="utf-8")
+            json.dumps(body), encoding="utf-8")
 
     def test_a_case_measured_only_by_an_experiment_is_not_bought_again(
             self, corpus):
@@ -362,6 +380,316 @@ class TestWhatWasBoughtVersusWhatWasDecided:
 
         assert check_accounted.verdicts() == {}
         assert check_accounted.executed() == set()
+
+    def test_a_row_from_another_model_does_not_settle_this_product_s_debt(
+            self, corpus):
+        """The Sonnet trial's 52 rows, read as this product's measurements.
+
+        `executed` took any scorable row, so a case measured only by the
+        rejected arm moved out of `not run` and into `measured but not
+        adopted` — a bucket nothing asks to be paid for again. The case is
+        still owed a run here, and the trial wrote such rows on 2026-09-08.
+        """
+        root, digest = corpus
+        self.experiment_row(root, digest, passes=True, model=SONNET)
+
+        assert check_accounted.executed() == set()
+        buckets = check_accounted.account()
+        assert CASE in buckets["unrun"]
+        assert CASE not in buckets["unadopted"]
+
+    def test_that_row_is_named_rather_than_dropped(self, corpus, capsys):
+        """It was bought. Filtering it out of `executed` and saying nothing
+        would make a paid row invisible in every tally, which is the other way
+        the count lies."""
+        root, digest = corpus
+        self.experiment_row(root, digest, passes=True, model=SONNET)
+
+        assert check_accounted.measured_by_other_models() == {CASE}
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(sys, "argv", ["check_accounted.py"])
+        try:
+            check_accounted.main()
+        finally:
+            monkeypatch.undo()
+        assert "measured only by another model" in capsys.readouterr().out
+
+    def test_the_product_s_own_row_still_counts(self, corpus):
+        """The control. Without it the two tests above pass over a filter that
+        rejects everything, which is the failure this repository keeps
+        finding."""
+        root, digest = corpus
+        self.experiment_row(root, digest, passes=True, model=OPUS)
+
+        assert check_accounted.executed() == {CASE}
+        assert check_accounted.measured_by_other_models() == set()
+
+    def test_the_baseline_key_is_not_decided_by_a_file_name(self, corpus):
+        """Two rows at one instant, one recording a key and one not.
+
+        The first version kept one row by `when >= held[0]`, so the *file
+        name* decided which key was reported — the "ordering nobody chose and
+        nothing printed" that `_standing`'s own docstring exists to close,
+        rebuilt in the function beside it. And it paired a `pair_success`
+        settled by unanimity with a key taken from an arbitrary single row,
+        then froze that into a manifest nothing rewrites.
+
+        Disagreement is `None`: the standing verdict cannot be attributed to
+        one key, which is exactly the state the caveat is for.
+        """
+        root, digest = corpus
+        when = "2026-09-01T10:00:00+00:00"
+        with_key = row(digest=digest, passes=True, ran_at=when)
+        with_key["answer_key_digest"] = "k" * 16
+        with_key["members"] = members_reviewed_by(OPUS)
+        without = row(digest=digest, passes=True, ran_at=when)
+        without["members"] = members_reviewed_by(OPUS)
+
+        for first, second in (("a.json", "b.json"), ("b.json", "a.json")):
+            for name in ("a.json", "b.json"):
+                (root / "measurements" / name).unlink(missing_ok=True)
+            write_rows(root, first, with_key)
+            write_rows(root, second, without)
+            assert check_accounted.verdicts() == {CASE: True}
+            assert check_accounted.baseline_keys() == {CASE: None}, (
+                first, second)
+
+        # The control: when every row at that instant records the same key,
+        # that key is the answer.
+        for name in ("a.json", "b.json"):
+            (root / "measurements" / name).unlink(missing_ok=True)
+        write_rows(root, "a.json", with_key)
+        write_rows(root, "b.json", dict(with_key))
+        assert check_accounted.baseline_keys() == {CASE: "k" * 16}
+
+    def test_the_two_sets_come_from_one_walk(self, corpus, monkeypatch):
+        """Codex, 2026-09-09. Two walks are two snapshots of a directory a
+        running queue writes into.
+
+        `account()` asked `executed()` and then `measured_by_other_models()`.
+        A product result landing between them left the case out of `measured`
+        and inside `other`, so it went into `unrun` *and* into `FOREIGN` — the
+        tool reporting a case as still owed a run it had just been given, and
+        exiting 1 on it.
+
+        The first repair folded `executed` and `measured_by_other_models`
+        together and left `standings` walking separately, so the race survived
+        in a third place — the case filed as `unadopted` while its row was
+        already in the stream, and the tool telling the owner to publish a row
+        into a place it was already in. Counting the walks is the whole test:
+        one call, one walk, all three views.
+        """
+        root, digest = corpus
+        self.experiment_row(root, digest, passes=True, model=SONNET)
+
+        walks = []
+        real = check_accounted.walk
+        monkeypatch.setattr(check_accounted, "walk",
+                            lambda: (walks.append(1), real())[1])
+
+        # And inside `walk` too: the first version listed the production
+        # stream twice, once for membership and once for iteration, so a row
+        # appearing between them was read and tagged as outside the stream —
+        # the same race, one level down, where counting calls to `walk` cannot
+        # see it. Codex, 2026-09-09.
+        listings = []
+        real_globs = check_accounted._stream_globs
+        monkeypatch.setattr(check_accounted, "_stream_globs",
+                            lambda: (listings.append(1), real_globs())[1])
+
+        buckets = check_accounted.account()
+
+        assert len(walks) == 1
+        assert len(listings) == 1
+        assert CASE in buckets["unrun"]
+        assert buckets[check_accounted.FOREIGN] == [CASE]
+
+    def test_a_case_measured_only_inside_a_round_is_not_bought_again(
+            self, corpus):
+        """Codex, 2026-09-09. `run_queue --round N` rebinds the queue to
+        `round-N/` and writes every result there.
+
+        This walk omitted that directory while `stage2.paid_result_files` and
+        `sentinel.result_files` both read it, so a case measured only inside a
+        round read as `unrun` and the owner was told to buy it again — the
+        exact defect `executed` was written to prevent, one directory over. It
+        cost about a dollar twice before.
+        """
+        root, digest = corpus
+        directory = root / "measurements" / "round-2"
+        directory.mkdir(parents=True)
+        body = row(digest=digest, passes=True,
+                   ran_at="2026-09-01T11:00:00+00:00")
+        body["members"] = members_reviewed_by(OPUS)
+        (directory / (CASE + ".json")).write_text(json.dumps([body]),
+                                                  encoding="utf-8")
+
+        assert check_accounted.executed() == {CASE}
+        buckets = check_accounted.account()
+        assert CASE not in buckets["unrun"]
+        # A round is not the production stream, so it does not settle the
+        # verdict either: the case is bought and waiting for a decision.
+        assert CASE in buckets["unadopted"]
+
+    def test_a_foreign_run_where_the_queue_now_writes_it_is_still_seen(
+            self, corpus, capsys):
+        """Codex, 2026-09-09. The write moved and the readers did not.
+
+        `run_queue.result_path` writes a run of another model to
+        `queue/<model>/<case>.json`. That keeps it out of the production
+        stream by construction, which is right — it is not the product's
+        verdict. But every reader of *what was bought* globbed `queue/*.json`
+        and nothing else, so the row was resumable by the queue and invisible
+        to the accounting at the same time: the case stayed `unrun` and was
+        absent from `FOREIGN` too.
+        """
+        root, digest = corpus
+        directory = root / "measurements" / "queue" / "by-model" / SONNET
+        directory.mkdir(parents=True)
+        body = row(digest=digest, passes=True,
+                   ran_at="2026-09-01T11:00:00+00:00")
+        body["members"] = members_reviewed_by(SONNET)
+        (directory / (CASE + ".json")).write_text(json.dumps([body]),
+                                                  encoding="utf-8")
+
+        # Not the product's answer, and not invisible either.
+        assert check_accounted.verdicts() == {}
+        buckets = check_accounted.account()
+        assert CASE in buckets["unrun"]
+        assert buckets[check_accounted.FOREIGN] == [CASE]
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(sys, "argv", ["check_accounted.py"])
+        try:
+            check_accounted.main()
+        finally:
+            monkeypatch.undo()
+        assert "measured only by another model" in capsys.readouterr().out
+
+    def test_a_foreign_row_in_the_queue_is_not_the_product_s_verdict(
+            self, corpus, capsys):
+        """Codex, 2026-09-09. The path this change itself created.
+
+        `run_queue.result_path` writes a non-product run to
+        `queue/<case>.<model>.json`, and `standings()` globs that directory —
+        so a Sonnet row became the case's settled answer while `executed()`
+        correctly reported no product run. The tool then filed the case as
+        `pass` *and* named it as still owed a run, and could exit 0 saying
+        both. Every earlier foreign fixture sat under `experiment-*/pass-*/`,
+        outside the production stream, so none of them reached this.
+        """
+        root, digest = corpus
+        queue = root / "measurements" / "queue"
+        queue.mkdir()
+        body = row(digest=digest, passes=True,
+                   ran_at="2026-09-01T11:00:00+00:00")
+        body["members"] = members_reviewed_by(SONNET)
+        (queue / (CASE + "." + SONNET + ".json")).write_text(
+            json.dumps([body]), encoding="utf-8")
+
+        assert check_accounted.verdicts() == {}
+        buckets = check_accounted.account()
+        assert buckets["pass"] == []
+        assert CASE in buckets["unrun"]
+        assert buckets[check_accounted.FOREIGN] == [CASE]
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(sys, "argv", ["check_accounted.py"])
+        try:
+            check_accounted.main()
+        finally:
+            monkeypatch.undo()
+        assert "measured only by another model" in capsys.readouterr().out
+
+    def test_the_product_s_own_queue_row_still_settles_it(self, corpus):
+        """The control. Without it the test above passes over a reader that
+        drops every queue row, which would empty the production stream."""
+        root, digest = corpus
+        queue = root / "measurements" / "queue"
+        queue.mkdir()
+        body = row(digest=digest, passes=True,
+                   ran_at="2026-09-01T11:00:00+00:00")
+        body["members"] = members_reviewed_by(OPUS)
+        (queue / (CASE + ".json")).write_text(json.dumps([body]),
+                                              encoding="utf-8")
+
+        assert check_accounted.verdicts() == {CASE: True}
+        assert check_accounted.account()["pass"] == [CASE]
+
+    def test_a_row_that_names_no_model_is_not_another_model_s(self, corpus,
+                                                             capsys):
+        """Codex, 2026-09-09, against the version built on boolean negation.
+
+        `is_product_row` says `False` both for a row Sonnet produced and for
+        one that records no provenance at all. Read as the complementary set,
+        the second became "measured only by another model" — a claim about a
+        model, made from a row that names none. Three answers, not two.
+        """
+        root, digest = corpus
+        self.experiment_row(root, digest, passes=True, model=None)
+        # `members` present and empty of provenance: exactly Codex's example.
+        path = (root / "measurements" / "experiment-noise" / "pass-a"
+                / (CASE + ".json"))
+        body = json.loads(path.read_text(encoding="utf-8"))
+        body["members"] = {"safe": {}, "unsafe": {}}
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        assert check_accounted.executed() == set()
+        assert check_accounted.measured_by_other_models() == set()
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(sys, "argv", ["check_accounted.py"])
+        try:
+            check_accounted.main()
+        finally:
+            monkeypatch.undo()
+        assert "measured only by another model" not in capsys.readouterr().out
+
+    def test_the_foreign_line_respects_the_construction_filter(
+            self, corpus, capsys):
+        """Codex, 2026-09-09, against the version that computed the line in
+        `main`.
+
+        `--construction regression` prints a regression-only tally. The
+        foreign line was computed over every case, so a *snapshot* case
+        measured only by another model was named as still owed a run under a
+        headline that had excluded it — and the tool could exit 0 while
+        saying so. Two questions from one command, answered about two
+        different case sets.
+        """
+        root, _digest = corpus
+        # The corpus case is `construction: regression`. Rewrite it as a
+        # snapshot so the filter below excludes it, then give it a foreign row.
+        manifest = root / "corpus-real" / CASE / "case.yml"
+        body = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+        body["construction"] = "snapshot"
+        manifest.write_text(yaml.safe_dump(body), encoding="utf-8")
+        self.experiment_row(root, case_digest(root / "corpus-real" / CASE),
+                            passes=True, model=SONNET)
+
+        assert check_accounted.account("snapshot")[check_accounted.FOREIGN] \
+            == [CASE]
+        assert check_accounted.account("regression")[check_accounted.FOREIGN] \
+            == []
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(sys, "argv",
+                            ["check_accounted.py", "--construction", "regression"])
+        try:
+            check_accounted.main()
+        finally:
+            monkeypatch.undo()
+        assert "measured only by another model" not in capsys.readouterr().out
+
+    def test_a_row_predating_the_field_is_still_read(self, corpus):
+        """Every row written before `members` existed carries no model name at
+        all. Reading absence as "another model" would throw away the whole
+        history — and `why_not_product_row` returns `None` for it on
+        purpose."""
+        root, digest = corpus
+        self.experiment_row(root, digest, passes=True, model=None)
+
+        assert check_accounted.executed() == {CASE}
 
 
 class TestAFailureThatStaysInTheSet:

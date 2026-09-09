@@ -101,6 +101,19 @@ def blocking_findings(cfg: Config, outcome: ScanOutcome) -> List[Candidate]:
         if candidate.removes_control and cfg.gate_removed_controls:
             blocking.append(candidate)
             continue
+        # **And the flag is only ever set by the verifier panel.** `verify.py`
+        # returns before `_partition` when verification is off, so with
+        # `SECURITY_SCAN_VERIFY=false` no candidate can carry
+        # `removes_control` and the rule above is unreachable — the finding
+        # then falls to the severity comparison and the report says it passed
+        # for being *below the threshold*, which is a sentence about a number
+        # that never decided anything. A rule that disappears without a word
+        # is worse than one that was never written: the run looks the same.
+        #
+        # Not read from a stop reason or a spelling. `_control_unevaluated`
+        # asks the accounting question — could this rule have been evaluated
+        # at all — and `decide` turns that into a said-out-loud incompleteness
+        # rather than a silent pass.
 
         # A value nobody recognises is not a value below the threshold. Both
         # ranks return -1 for an unknown word, and `-1 < minimum` was letting a
@@ -204,7 +217,17 @@ def _readable_change(outcome: ScanOutcome) -> bool:
     # exposure was refused for failing to open something that cannot be
     # opened. Codex, 2026-09-09. A *textual* deletion stays reviewable: its
     # removed lines are in the diff, and it is not in `unreadable`.
-    unreadable = {path for path, _ in outcome.coverage.unreadable}
+    #
+    # **Source is not subtracted.** Codex, 2026-09-09. The exemption above is
+    # for material that is unreadable *and* not source — an image, a rename, a
+    # mode bit — where "nobody opened it" is not a gap. A `.js` git calls
+    # binary is a gap, and subtracting it here said the opposite: a change made
+    # only of withheld source counted as a change with nothing in it to open.
+    # It still ends partial, but through the branch that names the file rather
+    # than through the one that says nothing was readable, so the reader is
+    # told which file was never shown.
+    unreadable = ({path for path, _ in outcome.coverage.unreadable}
+                  - set(outcome.coverage.unreadable_source))
     return bool((set(outcome.coverage.changed)
                  | set(outcome.coverage.deleted)) - unreadable)
 
@@ -319,6 +342,19 @@ def _partial(outcome: ScanOutcome) -> bool:
     return (not outcome.complete
             or outcome.coverage.diff_truncated
             or outcome.coverage.context_refusals > 0
+            # **Source the reviewer could not be shown.** Codex, 2026-09-09:
+            # git decides `binary` from the bytes, so one NUL in a comment
+            # turns a `.js` into "Binary files … differ" — and
+            # `_readable_change` subtracted it while `_reviewed_nothing`'s
+            # `accountable` did not, so one *other* readable file satisfied
+            # the gate for the whole change. Exit 0, "No security findings",
+            # over a file nobody saw. The second half of the `.gitattributes`
+            # bypass, reached without `.gitattributes`.
+            #
+            # A real image is not this: `unreadable_source` asks whether the
+            # path is source, so a PNG stays a disclosed non-source change and
+            # blocks nothing. Three states, which is the ruling.
+            or bool(outcome.coverage.unreadable_source)
             or _nothing_was_readable(outcome))
 
 
@@ -423,6 +459,15 @@ def _why_partial(outcome: ScanOutcome) -> str:
     and the easiest to miss, and a run can carry it *and* have stopped early —
     reporting only the stop reason would send the author to the wrong setting.
     """
+    hidden = outcome.coverage.unreadable_source
+    if hidden:
+        # Named first when there is one, and with the paths: the remedy is
+        # not a setting but a look at the file. A reader told only "the review
+        # is incomplete" has nothing to act on, and the whole point of this
+        # state is that a person can see which file was never shown.
+        return ("{} changed source file(s) could not be read — git treats "
+                "them as binary, which one NUL byte is enough to do: {}"
+                .format(len(hidden), ", ".join(sorted(hidden)[:4])))
     refusals = outcome.coverage.context_refusals
     if refusals:
         also = ("" if outcome.complete else
@@ -579,6 +624,42 @@ def decide(cfg: Config, outcome: ScanOutcome) -> Decision:
         )
 
     blocking = blocking_findings(cfg, outcome)
+
+    # **A rule that could not be evaluated is an incomplete review**, not a
+    # silent pass. `removes_control` is set only inside the verifier panel, so
+    # with verification off the removed-control rule is unreachable and a
+    # change that takes a guard away falls to the severity comparison — where
+    # the report says it passed for being below the threshold, a sentence
+    # about a number that never decided anything.
+    #
+    # Forgivable by the same documented flag as every other partial review:
+    # turning verification off is a real configuration a team may choose, and
+    # a gate that cannot be satisfied gets deleted rather than obeyed. What is
+    # not negotiable is that it says so.
+    # **After the blocking check, and only when nothing blocks.** The
+    # rule matters when it would otherwise change the outcome; a finding
+    # that blocks on its own merits is not made more blocked by a rule
+    # nobody could evaluate, and reporting incompleteness there replaced
+    # `exit 1, this finding blocks` with `exit 2, something could not be
+    # checked` — a different sentence about a run that was answering
+    # correctly. Caught by a conformance test one edit after it was
+    # introduced.
+    if (not blocking and _control_rule_unevaluated(cfg, outcome)
+            and cfg.fail_on_incomplete):
+        return Decision(
+            partial=True,
+            exit_code=EXIT_ERROR,
+            reason=(
+                "Review incomplete — SECURITY_SCAN_GATE_REMOVED_CONTROLS is "
+                "on and verification is off, and the removed-control rule is "
+                "decided only by the verifier panel. A change that removes a "
+                "guard would pass here as though it had been weighed and "
+                "found below the severity threshold. Turn verification on, "
+                "turn the rule off, or set "
+                "SECURITY_SCAN_FAIL_ON_INCOMPLETE=false to allow partial "
+                "reviews through."),
+        )
+
     notes = _non_blocking_notes(cfg, outcome, blocking)
     excluded = policy_excluded(cfg, outcome)
 
@@ -676,6 +757,57 @@ def _levels(candidates: List[Candidate]) -> str:
     )
 
 
+def _control_rule_unevaluated(cfg: Config, outcome: ScanOutcome) -> bool:
+    """Could the removed-control rule have been evaluated on this run at all?
+
+    `removes_control` is set in one place — `verify.py`, inside the panel — and
+    `verify_candidates` returns before it whenever verification is off. So
+    with `SECURITY_SCAN_VERIFY=false` the rule at the top of
+    `blocking_findings` is unreachable, and a change that removes a guard
+    falls through to the severity comparison. The report then says it passed
+    for being *below the threshold*: a sentence about a number that never
+    decided anything, and the same wrong attribution the comment beside that
+    rule was written to prevent, in the other direction.
+
+    Asked of the configuration rather than of the candidates, because "no
+    candidate carried the flag" is exactly what an evaluated rule that found
+    nothing also looks like. The two are different answers and this is the
+    only thing that can tell them apart.
+    """
+    if not cfg.gate_removed_controls or not outcome.reported:
+        return False
+    if not cfg.verify:
+        return True
+    # **And verification running is not verification answering.** Three more
+    # routes reach the gate with the flag never assigned, and the first is the
+    # worst: when every seat errors, `verify._decide` returns before it is set
+    # at all. The finding then falls to the severity comparison and the report
+    # says it passed for being below the threshold — the same sentence about a
+    # number that never decided anything, arriving by a different road than
+    # the one this predicate was written to close an hour earlier.
+    #
+    # Asked of the votes rather than of a list of endings: a candidate with no
+    # *usable* vote had no panel, whether because every seat failed or because
+    # it was past `SECURITY_SCAN_VERIFY_MAX` and stamped without one. A set of
+    # spellings can only be right about the endings somebody thought to add to
+    # it, and this repository has been caught that way four times.
+    # `candidate.votes and …`: a candidate with no votes at all was never
+    # sent to a panel, and that is `_worth_verifying`'s decision — the
+    # product's own judgement that this finding does not need one. A candidate
+    # *sent* and unable to answer is the different thing, and the one this is
+    # about.
+    #
+    # The remaining route — past `SECURITY_SCAN_VERIFY_MAX`, stamped
+    # `confirmed` with no panel — is not caught here and is named in the
+    # candidate's own `verdict_reason` and in `metrics.verification_over_limit`
+    # instead. Recorded in `LIMITATIONS.md` rather than folded in, because
+    # widening this to "no votes" makes every unverified informational finding
+    # an incomplete review.
+    return any(candidate.votes
+               and not [v for v in candidate.votes if not v.error]
+               for candidate in outcome.reported)
+
+
 def _non_blocking_notes(
     cfg: Config, outcome: ScanOutcome, blocking: List[Candidate]
 ) -> List[str]:
@@ -743,6 +875,21 @@ def _non_blocking_notes(
             "{} below {} confidence (including any downgraded during "
             "verification)".format(low_confidence, cfg.min_confidence)
         )
+    # **The removed-control switch, named beside the findings it released.**
+    # Its two siblings above and below both name themselves; this one did
+    # not, so a finding that would have blocked for taking a guard away came
+    # out under "below the severity threshold" with nothing pointing at the
+    # setting that let it through. The report then reads as a bug rather than
+    # as policy, which is the whole reason this function exists.
+    released_controls = [c for c in outcome.reported
+                         if getattr(c, "removes_control", False)
+                         and c not in blocking]
+    if released_controls and not cfg.gate_removed_controls:
+        notes.append(
+            "{} removing an existing security control (set "
+            "SECURITY_SCAN_GATE_REMOVED_CONTROLS=true to gate on these)"
+            .format(len(released_controls)))
+
     if pre_existing and not cfg.gate_pre_existing:
         notes.append(
             "{} pre-existing, not introduced by this change (set "

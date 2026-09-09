@@ -470,4 +470,23 @@ def agreed_confidence(votes: List[Vote], claimed: str) -> str:
     empty_seats = sum(1 for v in votes if v.error)
     proposals = [v.corrected_confidence or claimed for v in confirming]
     proposals.extend([claimed] * empty_seats)
+    # **An even panel has no middle, and picking one end of the pair is a
+    # thumb on the scale.** `[a, b][len // 2]` takes the upper, so with two
+    # observations one correction upward carried on its own while one
+    # correction downward did not. The rule read "one outlier moves nothing"
+    # and was true in one direction only — and the direction it moved in is
+    # the one that raises a finding over the gate.
+    #
+    # The claim is the observation that breaks the tie, because it is what the
+    # panel was asked about: a reviewer who says nothing has agreed with it,
+    # and so has an errored seat by the same reasoning three lines up. Adding
+    # it makes the count odd, so there is a real middle, and both directions
+    # then need two agreeing replies to move.
+    #
+    # Codex, 2026-09-09: *"For an even number of confirming proposals, include
+    # the claimed confidence as the tie-break observation, then take the
+    # median… This makes 'one outlier moves nothing' true and preserves
+    # symmetric movement when a majority actually agrees."*
+    if len(proposals) % 2 == 0:
+        proposals.append(claimed)
     return sorted(proposals, key=confidence_rank)[len(proposals) // 2]

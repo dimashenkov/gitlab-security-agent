@@ -96,7 +96,11 @@ from .models import (
 )
 from .session_document import SessionDocumentError, read_session
 from .tools import Session
-from .workspace import Workspace, inventory_notes
+from .workspace import (
+    Workspace,
+    inventory_notes,
+    unreadable_source_paths,
+)
 
 log = logging.getLogger(__name__)
 
@@ -367,6 +371,10 @@ def build_mcp_config(
     # would get the old behaviour in silence rather than a `TypeError`.
     prompt_dir: Path,
     scope: Sequence[str] = (),
+    # **Required in effect, defaulted for the verifier.** The reviewer must
+    # pass what the operator configured; the verifier reads one file it was
+    # given a citation for and has no diff to narrow.
+    excludes: Sequence[str] = (),
     python: str = "",
     context_lines: int = 12,
     max_context_tokens: int = 0,
@@ -412,6 +420,11 @@ def build_mcp_config(
         arguments += ["--base", base_sha]
     for pattern in scope:
         arguments += ["--path", pattern]
+    for pattern in excludes:
+        # Passed to the child, which is the only workspace the model can
+        # reach. Until this line the rules were applied to the *parent's*
+        # workspace and to nothing the review touched.
+        arguments += ["--exclude", pattern]
 
     return {
         "mcpServers": {
@@ -606,6 +619,11 @@ class ClaudeCodeRunner:
             allowance=self.budget.review,
             handoff=handoff,
             scope=self.cfg.scope,
+            # What the operator configured, reaching the workspace the model
+            # actually has. `coverage.excluded` is written from the parent's
+            # rules; until this line the child's had none, so the artifact
+            # named files as hidden that the review had read.
+            excludes=self.cfg.excludes,
         ), indent=2), encoding="utf-8")
 
         command = build_command(
@@ -684,6 +702,12 @@ class ClaudeCodeRunner:
             outcome.coverage.changed = [p for p, _ in self.ws.changed_files()]
             (outcome.coverage.unreadable,
              outcome.coverage.deleted) = inventory_notes(self.ws)
+            # Source the review could not be shown, kept apart from the
+            # unreadable list above: a rename or a real image is disclosed
+            # and blocks nothing, while a `.js` git calls binary over one
+            # NUL byte is a file "no findings" would be said about unseen.
+            outcome.coverage.unreadable_source = unreadable_source_paths(
+                self.ws)
             # What a rule hid, deletions included. Both runners fill coverage
             # and both had the same gap: `changed_objects` applies the filters
             # as it reads, so an excluded deletion reached no field at all.

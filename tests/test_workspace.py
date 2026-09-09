@@ -5,6 +5,8 @@ an API key and a GitLab token. Containment is not a nicety here, so the escape
 attempts are tested explicitly rather than assumed.
 """
 
+import subprocess
+
 import pytest
 
 from security_agent.tools import Session, dispatch
@@ -20,6 +22,171 @@ from security_agent.workspace import (
 @pytest.fixture
 def ws(git_repo):
     return Workspace(root=git_repo, excludes=("package-lock.json",))
+
+
+
+class TestSourceThatGitCallsBinary:
+    """The third state, between "reviewable text" and "not source at all"."""
+
+    def _object(self, path, binary=True, submodule=False, mode="100644",
+                new_mode=None):
+        from security_agent.workspace import ChangedObject, MODE_SUBMODULE
+        if submodule:
+            mode = MODE_SUBMODULE
+        return ChangedObject(path=path, status="modified", added=0, removed=0,
+                             binary=binary, old_mode=mode,
+                             new_mode=new_mode or mode)
+
+    def test_a_javascript_file_git_calls_binary_is_unreadable_source(self):
+        """One NUL byte in a comment is enough for git to say "Binary files …
+        differ", and Node still runs the file."""
+        assert self._object("app/auth.js").unreadable_source is True
+
+    def test_an_image_is_not(self):
+        """The whole reason the ruling is three states: a PNG is an
+        intentionally non-source object and must block nothing."""
+        assert self._object("docs/logo.png").unreadable_source is False
+
+    def test_a_submodule_pointer_is_not(self):
+        """Two commit ids, readable and security-relevant, and not source
+        anybody was prevented from seeing."""
+        assert self._object("vendor/lib", submodule=True).unreadable_source \
+            is False
+
+    def test_readable_source_is_not(self):
+        """The control. Without it every changed source file would be in this
+        state and every review incomplete."""
+        assert self._object("app/auth.js", binary=False).unreadable_source \
+            is False
+
+    @pytest.mark.parametrize("path", [
+        "src/Login.vue", "app/Card.svelte", "contracts/Token.sol",
+        "lib/core.dart", "job.clj", "build.groovy", "Main.fs",
+    ])
+    def test_a_language_nobody_listed_is_still_source(self, path):
+        """Two earlier versions asked "is this name on a list of source
+        extensions", and Codex refused both on the same ground: *"every
+        omission restores the exact bypass the check was introduced to
+        prevent."*
+
+        `Login.vue` with one NUL byte inside a template string was invisible,
+        and so was every language nobody had added yet. A completeness check
+        cannot rest on a list of what it knows about, because what it exists
+        to catch is what nobody thought of.
+        """
+        assert self._object(path).unreadable_source is True
+
+    def test_a_file_with_no_extension_at_all_is_source(self):
+        """`bin/server`, `data/blob`, `hooks/pre-commit` — nothing in the name
+        says either way, and the default has to be the safe one. An earlier
+        version answered this with the executable bit, which made the answer
+        depend on whether somebody had run `chmod`."""
+        assert self._object("bin/server", mode="100755").unreadable_source \
+            is True
+        assert self._object("data/blob").unreadable_source is True
+
+    def test_a_symlink_that_becomes_a_real_file_is_not_excluded(self):
+        """Git writes a type change as `120000 -> 100755`. Excluding the
+        object because *either* endpoint is a pointer loses the real file that
+        arrived — the defect Codex found in the first repair, and it arrives
+        again one property along if the exclusion asks the same way."""
+        from security_agent.workspace import MODE_SYMLINK
+        assert self._object("bin/run", mode=MODE_SYMLINK,
+                            new_mode="100755").unreadable_source is True
+
+    def test_a_pointer_on_every_side_is_not_withheld_source(self):
+        """The control for the line above. A symlink's whole content is one
+        target path and a submodule's is two commit ids; git prints both. They
+        are disclosed, and this state is for what was withheld."""
+        from security_agent.workspace import MODE_SYMLINK
+        assert self._object("bin/link",
+                            mode=MODE_SYMLINK).unreadable_source is False
+        assert self._object("vendor/lib", submodule=True).unreadable_source \
+            is False
+
+    @pytest.mark.parametrize("path", [
+        "docs/logo.png", "docs/hero.avif", "photos/shot.heic",
+        "assets/font.woff2", "vendor/app.jar", "build/main.o",
+        "data/rows.parquet", "dist/app.wasm", "disk.iso", "locale/app.mo",
+        "dist/app.whl", "models/w.safetensors",
+    ])
+    def test_a_recognised_asset_is_not_withheld_source(self, path):
+        """The other half, and the reason the ruling is three states. Nobody
+        can read any of these at any setting, so calling them withheld source
+        would fail an image-only merge and every dependency update forever —
+        and a gate that cannot be satisfied gets deleted rather than obeyed.
+
+        `.avif` and `.heic` are here because they were missing on the first
+        pass: inverting the default turned every omission from this table into
+        a merge request that comes out incomplete, and an image replacement is
+        as ordinary as a change gets. Codex, 2026-09-09.
+        """
+        assert self._object(path).unreadable_source is False
+
+    def test_an_image_with_an_accidental_executable_bit_is_still_an_image(
+            self):
+        """Narrower than it was, and deliberately.
+
+        This asserted that *every* asset stays an asset at mode `100755`, and
+        Codex ruled that it encoded a defect rather than protecting a fix:
+        `bin/updater.exe` at `100755` is a file the machine runs, and the
+        ruling's clause was disjunctive. The mode-independence that is
+        defensible is for content that is never executed — a PNG is not run by
+        anything, so its executable bit is noise. The compiled-output half of
+        the question is open and is recorded in `LIMITATIONS.md` rather than
+        decided here.
+        """
+        assert self._object("docs/logo.png", mode="000000",
+                            new_mode="100755").unreadable_source is False
+
+    @pytest.mark.parametrize("path", [
+        "bin/updater.exe", "lib/native.so", "lib/native.dylib",
+        "build/app.jar",
+    ])
+    def test_compiled_output_stays_an_asset_even_when_it_is_executable(
+            self, path):
+        """Adjudicated, and the failure it accepts is named here.
+
+        The ruling's clause was disjunctive — "a recognised source path,
+        executable file, or otherwise source-classified object" — so an
+        executable `.exe` arguably has to be accounted for. Asked as a fork,
+        Codex chose the other way, 2026-09-09: *"The executable bit says the
+        object may be launched; it does not make its contents reviewable
+        source… Option A accepts a permanent false-incompleteness failure:
+        legitimate binary updates block with no action capable of completing
+        the review."*
+
+        **What this accepts:** a merge request that swaps a committed binary
+        passes this gate, disclosed and unread. Detecting that needs a
+        binary-integrity control, and pretending the source reviewer could
+        have read the file is not one. `LIMITATIONS.md` carries it.
+        """
+        assert self._object(path, mode="100755").unreadable_source is False
+
+    def test_a_meaningless_suffix_is_not_proof_of_compiled_output(self):
+        """`.bin` and `.dat` were in the asset table and were taken out.
+
+        Codex, 2026-09-09: *"filename suffixes do not prove that a file is
+        compiled output."* Every other entry names a format; those two name
+        nothing, so `scripts/bootstrap.bin` — as likely a shell script as a
+        blob — was excused by its extension.
+        """
+        assert self._object("scripts/bootstrap.bin",
+                            mode="100755").unreadable_source is True
+        assert self._object("data/rows.dat").unreadable_source is True
+
+    def test_a_dotfile_that_is_only_a_suffix_is_recognised(self):
+        """`config.env` matched and `.env` did not — a leading dot is a hidden
+        file rather than an extension, so `rfind(".")` is zero and the guard
+        `dot > 0` rejected the canonical name. It is the file whose unreadable
+        contents matter most."""
+        assert self._object(".env").unreadable_source is True
+
+    def test_a_name_without_a_suffix_is_recognised(self):
+        """`Dockerfile` and `Makefile` are source by name. A path this does
+        not recognise behaves as it did before — the list does not have to be
+        exhaustive to be worth having."""
+        assert self._object("Dockerfile").unreadable_source is True
 
 
 class TestPathContainment:
@@ -2356,3 +2523,65 @@ class TestTheReviewedTreeDoesNotDescribeItself:
         ws = self.repo(tmp_path)
         assert len(ws._empty_tree()) in (40, 64)
         assert all(c in "0123456789abcdef" for c in ws._empty_tree())
+
+
+class TestTheClassificationFiresOnARealRepository:
+    """A `ChangedObject` built by hand proves the rule, not that it runs.
+
+    The classification reads `old_mode` and `new_mode`, and if the workspace
+    left those empty for an ordinary modification the repair would be inert in
+    production while every unit test above passed. `git diff --raw` emits both
+    modes on every row — asserted here rather than assumed, and through the
+    function the runner actually calls.
+    """
+
+    ENV = {"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.com",
+           "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.com",
+           "PATH": "/usr/local/bin:/usr/bin:/bin"}
+
+    def _repo(self, root):
+        env = dict(self.ENV, HOME=str(root))
+
+        def git(*args):
+            return subprocess.run(("git", "-C", str(root), *args), check=True,
+                                  capture_output=True, text=True,
+                                  env=env).stdout
+
+        git("init", "-q", "-b", "main")
+        (root / "README.md").write_text("start\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "base")
+        base = git("rev-parse", "HEAD").strip()
+
+        # An extensionless executable git will call binary: one NUL byte.
+        server = root / "server"
+        server.write_bytes(b"#!/bin/sh\nrun\x00 hidden\n")
+        server.chmod(0o755)
+        # A real image, the control.
+        (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00oh")
+        # A dotfile that is only a suffix.
+        (root / ".env").write_bytes(b"TOKEN=x\x00y\n")
+        (root / "README.md").write_text("start\nx\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "change")
+        return base, git
+
+    def test_the_rule_fires_on_a_real_repository(self, tmp_path):
+        from security_agent.workspace import unreadable_source_paths
+
+        base, git = self._repo(tmp_path)
+        raw = git("diff", "--raw", base, "HEAD")
+        # The modes the classification depends on are in the diff at all.
+        assert "100755" in raw, raw
+
+        ws = Workspace(root=tmp_path, excludes=(), diff_base=base,
+                       diff_head="HEAD")
+        withheld = set(unreadable_source_paths(ws))
+
+        assert "server" in withheld, withheld
+        assert ".env" in withheld, withheld
+        # The controls: an image is a disclosed non-source change and a text
+        # file was delivered. Neither may be in this list, or adding a logo
+        # makes every review incomplete.
+        assert "logo.png" not in withheld, withheld
+        assert "README.md" not in withheld, withheld

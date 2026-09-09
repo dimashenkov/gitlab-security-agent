@@ -202,6 +202,61 @@ class TestFingerprintSurvivesRewording:
         assert a.fingerprint != b.fingerprint
 
 
+class TestOneEntryDoesNotSilenceASecondWeakness:
+    """The ignore file matched *any* anchor a finding carried, and two
+    findings share an anchor as soon as they quote one line in common.
+
+    That is not exotic. Two weaknesses around one call site — a missing
+    authorisation check and an unescaped argument — quote that call, and an
+    entry accepting the first then removes the second from every report.
+    Silent, permanent, and indistinguishable from a clean run.
+
+    Codex, 2026-09-09: *"Suppression must match the one canonical fingerprint
+    printed for acceptance, not any shared anchor. False negatives cost
+    another explicit suppression entry; false positives hide a different
+    weakness."*
+    """
+
+    def _accepting(self, tmp_path, candidate):
+        path = write(tmp_path, (
+            "ignore:\n"
+            "  - fingerprint: {}\n"
+            "    reason: accepted by the team\n").format(candidate.fingerprint))
+        rules, _ = load(path)
+        return rules
+
+    def test_a_second_finding_sharing_one_quoted_line_still_reports(
+            self, tmp_path):
+        accepted = make_candidate(
+            file="api.py", category="authz",
+            evidence="run_query(user_sql)\n    log.info('done')")
+        # Same file, same category, quotes the same call — and a different
+        # weakness, anchored on a line the first one never quoted.
+        other = make_candidate(
+            file="api.py", category="authz",
+            evidence="escape(user_sql)\n    run_query(user_sql)")
+        assert accepted.fingerprint != other.fingerprint
+        assert set(accepted.finding.anchors) & set(other.finding.anchors)
+
+        kept, suppressed = apply([accepted, other],
+                                 self._accepting(tmp_path, accepted))
+
+        assert [c.fingerprint for c in kept] == [other.fingerprint]
+        assert [c.fingerprint for c in suppressed] == [accepted.fingerprint]
+
+    def test_the_accepted_one_is_still_accepted(self, tmp_path):
+        """The control. A rule that matched nothing would satisfy the test
+        above and delete the escape hatch entirely."""
+        accepted = make_candidate(file="api.py", category="authz",
+                                  evidence="run_query(user_sql)")
+
+        kept, suppressed = apply([accepted],
+                                 self._accepting(tmp_path, accepted))
+
+        assert kept == []
+        assert len(suppressed) == 1
+
+
 class TestASuppressionCannotExcuseItsOwnChange:
     """A merge request must not introduce a weakness and the entry excusing it.
 

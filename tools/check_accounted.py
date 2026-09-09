@@ -50,6 +50,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import stop_rule
 from artifact import (
     NO_MEMBERS,
     case_digest,
@@ -234,7 +235,7 @@ def scorable(row) -> bool:
             and isinstance(row.get("pair_success"), bool))
 
 
-def standings() -> dict:
+def standings(rows=None) -> dict:
     """The latest recorded answer per case, `None` where there is none, from every batch and the queue.
 
     Two rows for one case are ordered by `ran_at`. When neither carries one the
@@ -257,25 +258,30 @@ def standings() -> dict:
     had checked against what the limitation actually says.
     """
     seen = {}
-    for path in (glob.glob(str(ROOT / "measurements" / "*.json"))
-                 + glob.glob(str(ROOT / "measurements" / "queue" / "*.json"))):
-        try:
-            body = json.loads(Path(path).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+    for inside, row in (walk() if rows is None else rows):
+        # The production stream only. `walk` tags every row with where it
+        # lives so that one pass over the directory can answer both this
+        # question and "what was bought", which are asked about different
+        # sets of files and must be asked of one snapshot.
+        if not inside:
             continue
-        # A batch file is a list of rows; an experiment writes one row per file,
-        # as an object. Reading only lists dropped every experiment result
-        # silently — the file was opened, parsed, and then iterated as nothing.
-        rows = body if isinstance(body, list) else [body]
-        for row in rows:
-            if not isinstance(row, dict) or not row.get("case_id"):
-                continue
-            if not scorable(row):
-                continue
-            case_id = row["case_id"]
-            if not about_this_version(case_id, row):
-                continue
-            seen.setdefault(case_id, []).append((instant(row.get("ran_at")), row))
+        if not scorable(row):
+            continue
+        case_id = row["case_id"]
+        if not about_this_version(case_id, row):
+            continue
+        # **The stream is a place; the verdict is about the product.**
+        # Codex, 2026-09-09: `run_queue.result_path` now writes a
+        # non-product run to `queue/<case>.<model>.json`, which is inside
+        # this glob, so a Sonnet row became the case's settled answer
+        # while `executed()` correctly said no product run existed. The
+        # tool reported the case as `pass` and as still owed a run, in the
+        # same breath, and could exit 0. A row that names no model at all
+        # is dropped here too: it cannot establish that the product
+        # answered, and this is the reader that decides what did.
+        if stop_rule.identified_model(row) != stop_rule.PRODUCT_MODEL:
+            continue
+        seen.setdefault(case_id, []).append((instant(row.get("ran_at")), row))
 
     out = {}
     for case_id, rows in seen.items():
@@ -287,7 +293,53 @@ def standings() -> dict:
     return out
 
 
-def verdicts() -> dict:
+def baseline_keys(rows=None) -> dict:
+    """The answer key each case's standing row was scored against.
+
+    `None` where the row does not say, which is every row written before
+    2026-09-09 — `case_digest` covers the members only, on purpose, so nothing
+    recorded until then says what a pass *meant* when it was written.
+
+    Kept apart from `verdicts` because it is a different kind of fact: the
+    verdict is what the run found, this is the rule it was judged by. Codex,
+    2026-09-09: a round comparing an old baseline against a new run cannot
+    tell a product change from a change in that rule, and "I cannot establish
+    it" has to be sayable rather than assumed either way.
+    """
+    # **The same rows `_standing` settles on, and the same unanimity.** The
+    # first version kept one row by `when >= held[0]`, so among two rows at
+    # one instant the *file name* decided which key was reported — the
+    # "ordering nobody chose and nothing printed" that `_standing`'s own
+    # docstring exists to close, rebuilt in the function beside it. And it
+    # paired a `pair_success` settled by unanimity with a key taken from an
+    # arbitrary single row, then froze that into a manifest nothing rewrites.
+    seen: dict = {}
+    for inside, row in (walk() if rows is None else rows):
+        if not inside or not scorable(row):
+            continue
+        case_id = row["case_id"]
+        if not about_this_version(case_id, row):
+            continue
+        if stop_rule.identified_model(row) != stop_rule.PRODUCT_MODEL:
+            continue
+        seen.setdefault(case_id, []).append(
+            (instant(row.get("ran_at")), row.get("answer_key_digest")))
+    out = {}
+    for case_id, pairs in seen.items():
+        dated = [(when, key) for when, key in pairs if when is not None]
+        if dated:
+            latest = max(when for when, _key in dated)
+            keys = {key for when, key in dated if when == latest}
+        else:
+            keys = {key for _when, key in pairs}
+        # Disagreement is `None`: the standing verdict cannot be attributed to
+        # one key, which is exactly the state the caveat is for. One row
+        # recording no key is the same answer as two recording different ones.
+        out[case_id] = keys.pop() if len(keys) == 1 else None
+    return out
+
+
+def verdicts(rows=None) -> dict:
     """The cases that have an answer. `None` is not one.
 
     One walk, two views. `standings()` keeps the third state so a caller can
@@ -296,7 +348,7 @@ def verdicts() -> dict:
     Two walks would be two answers to one question, which is how the readers
     of this stream disagreed before.
     """
-    return {case_id: answer for case_id, answer in standings().items()
+    return {case_id: answer for case_id, answer in standings(rows).items()
             if answer is not None}
 
 
@@ -351,8 +403,121 @@ def _standing(rows: list, case: dict):
     return answers == {True}
 
 
+def _stream_globs() -> list:
+    """The production stream: batches at the top level, and the queue."""
+    return (glob.glob(str(ROOT / "measurements" / "*.json"))
+            + glob.glob(str(ROOT / "measurements" / "queue" / "*.json")))
+
+
+def walk() -> list:
+    """Every row under `measurements/`, parsed once, tagged by where it lives.
+
+    `[(in_the_production_stream, row), ...]`. One walk for both views of the
+    same directory, and the reason is a race rather than speed. Codex,
+    2026-09-09, twice: `account()` asked `standings()`, then `executed()`,
+    then `measured_by_other_models()`, and a queue result landing between any
+    two of them made the buckets disagree about the same case — filed as
+    `unadopted` while its row was already in the stream, with the tool telling
+    the owner to publish a row into a place it was already in, and exiting 1.
+    The first repair folded two of the three and this one folds the third.
+
+    An experiment row is tagged `False`, which is what keeps it out of the
+    verdicts: `experiment.py` reads its prompts from a frozen copy and keeps
+    its own scorer, reviewer and answer key, none of which `about_this_version`
+    compares.
+    """
+    # **Captured once.** Codex, 2026-09-09: the first version called
+    # `_stream_globs()` twice — once to build the membership set and once to
+    # choose what to read — so a queue result appearing between the two was
+    # read and tagged `inside=False`. `standings` then ignored it while
+    # `bought_by_model` counted it, and the case came out `unadopted` with its
+    # result already in the stream: the very race this function exists to
+    # close, reintroduced inside it. One list, used for both.
+    in_stream = _stream_globs()
+    stream = {str(Path(path).resolve()) for path in in_stream}
+    out = []
+    for path in sorted(set(in_stream)
+                       | set(glob.glob(str(ROOT / "measurements"
+                                           / "experiment-*" / "pass-*"
+                                           / "*.json")))
+                       # A run of another model, which `run_queue.result_path`
+                       # writes to `queue/<model>/<case>.json`. Outside the
+                       # production stream by construction — which is right,
+                       # it is not the product's verdict — and it still has to
+                       # be *seen*, or a paid row vanishes from every tally.
+                       # Codex, 2026-09-09: the write moved and the readers
+                       # did not, so a foreign run was resumable and invisible
+                       # at the same time.
+                       | set(glob.glob(str(ROOT / "measurements" / "queue"
+                                           / "by-model" / "*" / "*.json")))
+                       # `run_queue --round N` rebinds the queue to
+                       # `round-N/` and writes every result there. Codex,
+                       # 2026-09-09: this walk omitted it while
+                       # `stage2.paid_result_files` and
+                       # `sentinel.result_files` both read it, so a case
+                       # measured only inside a round read as `unrun` and the
+                       # owner was told to buy it a second time — which is
+                       # the exact defect `executed` was written to prevent,
+                       # one directory over. Recorded as a limitation earlier
+                       # today and closed here, because this is now the walk
+                       # it belongs to.
+                       | set(glob.glob(str(ROOT / "measurements" / "round-*"
+                                           / "*.json")))
+                       | set(glob.glob(str(ROOT / "measurements" / "round-*"
+                                           / "by-model" / "*" / "*.json")))):
+        try:
+            body = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        # A batch file is a list of rows; an experiment writes one row per
+        # file, as an object. Reading only lists dropped every experiment
+        # result silently — the file was opened, parsed, and then iterated as
+        # nothing.
+        inside = str(Path(path).resolve()) in stream
+        for row in (body if isinstance(body, list) else [body]):
+            if isinstance(row, dict) and row.get("case_id"):
+                out.append((inside, row))
+    return out
+
+
+def bought_by_model(rows=None) -> dict:
+    """Every case a paid run has scored, grouped by the model that scored it.
+
+    **One walk, and the callers derive their sets from it.** Codex,
+    2026-09-09: `account()` called `executed()` and then
+    `measured_by_other_models()`, two walks and two snapshots of a directory
+    that a running queue writes into. A product result landing between them
+    put its case in `unrun` *and* in `FOREIGN` — the tool saying a case is
+    still owed a run it had just been given, and exiting 1 on it.
+
+    Keyed by what `stop_rule.identified_model` names, so `UNIDENTIFIED` is a
+    key of its own rather than folded into either answer. A row can be the
+    product's, another model's, or unreadable, and collapsing the third into
+    the second is what the round before this one repaired.
+    """
+    out: dict = {}
+    for _inside, row in (walk() if rows is None else rows):
+        if not scorable(row):
+            continue
+        if about_this_version(row["case_id"], row):
+            out.setdefault(stop_rule.identified_model(row),
+                           set()).add(row["case_id"])
+    return out
+
+
+def _foreign(by_model: dict) -> set:
+    """The cases some *named* other model measured.
+
+    `UNIDENTIFIED` is excluded here and nowhere else, so the exclusion has one
+    spelling: a row that names no model is not another model's measurement.
+    """
+    return {case_id for name, cases in by_model.items()
+            for case_id in cases
+            if name not in (stop_rule.PRODUCT_MODEL, stop_rule.UNIDENTIFIED)}
+
+
 def executed() -> set:
-    """Every case some paid run has produced a scorable row for, anywhere.
+    """Every case a paid run **of this product** has scored, anywhere.
 
     A different question from `verdicts`, and separating the two is the point.
     "What is this case's answer" must come from the production stream; "do we
@@ -362,24 +527,45 @@ def executed() -> set:
     lets an experiment overwrite a verdict or asks the owner to pay again for
     a case measured yesterday — and it did the second for two cases before this
     existed, at about a dollar each.
+
+    **A row from another model is not this product's measurement.** It was
+    bought and it is a real charge — `spend.py` counts it, and must — but it
+    answers a question about that model, so a case it covers is still owed a
+    run here. Before 2026-09-09 this function took any scorable row, so the 52
+    rows the Sonnet trial wrote on 2026-09-08 would each have moved a case out
+    of `not run` and into `measured but not adopted`, where nothing asks for it
+    again. Those cases are not lost either: `measured_by_other_models` names
+    them and `main` prints the count.
     """
-    seen = set()
-    for path in (glob.glob(str(ROOT / "measurements" / "*.json"))
-                 + glob.glob(str(ROOT / "measurements" / "queue" / "*.json"))
-                 + glob.glob(str(ROOT / "measurements" / "experiment-*"
-                                  / "pass-*" / "*.json"))):
-        try:
-            body = json.loads(Path(path).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        for row in (body if isinstance(body, list) else [body]):
-            if not isinstance(row, dict) or not row.get("case_id"):
-                continue
-            if not scorable(row):
-                continue
-            if about_this_version(row["case_id"], row):
-                seen.add(row["case_id"])
-    return seen
+    return bought_by_model().get(stop_rule.PRODUCT_MODEL, set())
+
+
+def measured_by_other_models() -> set:
+    """Cases with a scorable row that no run of this product produced.
+
+    Kept apart from `executed` rather than dropped. Silence here is what the
+    repair was for: a trial arm's rows would otherwise either be counted as
+    this product's answer or vanish from every tally, and the second is how a
+    paid row stops being visible at all.
+
+    **A row that names no model is not another model's.** Codex, 2026-09-09:
+    built as the negation of the product test, this set swept in every row
+    whose identity could not be read — `{"members": {"safe": {}, "unsafe":
+    {}}}` and anything else malformed — and the tool then printed "measured
+    only by another model" about a row that names none.
+    """
+    return _foreign(bought_by_model())
+
+
+# The six outcomes, and the whole of the corpus is spread across them. Named
+# so that a summation cannot silently acquire a key that is not an outcome —
+# which is what adding `FOREIGN` to the same dict would otherwise have done.
+BUCKETS = ("pass", "limitation", "invalid", "unaccounted", "unrun",
+           "unadopted", "known_failure")
+
+# A case some other model measured and this product did not. Reported beside
+# the tally, never inside it: such a case is already counted in `unrun`.
+FOREIGN = "measured_by_another_model"
 
 
 def account(construction=None) -> dict:
@@ -390,18 +576,43 @@ def account(construction=None) -> dict:
     # reads of every measurement file — and, worse, two snapshots: a run
     # writing results between them would give `answers` and `standing`
     # different pictures of the same case.
-    standing = standings()
+    # **One walk for all three views.** Codex, 2026-09-09, twice: the first
+    # repair folded `executed` and `measured_by_other_models` together and
+    # left `standings` walking separately, so a queue result landing between
+    # them still made the buckets disagree — the case filed as `unadopted`
+    # while its row was already in the stream, the tool telling the owner to
+    # publish a row into a place it was already in, and exiting 1.
+    rows = walk()
+    standing = standings(rows)
     answers = {case_id: answer for case_id, answer in standing.items()
                if answer is not None}
 
-    measured = executed()
+    by_model = bought_by_model(rows)
+    measured = by_model.get(stop_rule.PRODUCT_MODEL, set())
+    # In the same walk, and with the same construction filter. Codex,
+    # 2026-09-09: computed separately in `main`, this scanned every case while
+    # the headline above it was filtered, so `--construction regression` could
+    # print a regression-only tally and then name a *snapshot* case as still
+    # owed a run — and exit 0 while saying so. It was also a second snapshot
+    # of the tree, which is what folding `verdicts` and `standings` into one
+    # walk was for a few lines above.
+    other = _foreign(by_model) - measured
     buckets = {"pass": [], "limitation": [], "invalid": [], "unaccounted": [],
                "unrun": [], "unadopted": [], "known_failure": []}
+    # Under a key of its own, and **not** an outcome. Every case is in exactly
+    # one of the buckets above and they sum to the corpus; a case named here
+    # is *also* in `unrun`, so treating it as a seventh bucket would report a
+    # corpus larger than it is. `BUCKETS` is the list that sums, and both the
+    # tool and the property test count through it rather than through
+    # `.values()`.
+    buckets[FOREIGN] = []
     for manifest in sorted((ROOT / "corpus-real").glob("*/case.yml")):
         case_id = manifest.parent.name
         body = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
         if construction and body.get("construction") != construction:
             continue
+        if case_id in other:
+            buckets[FOREIGN].append(case_id)
         if case_id in invalid:
             buckets["invalid"].append(case_id)
         elif standing.get(case_id, "absent") is None:
@@ -458,7 +669,7 @@ def main() -> int:
     args = parser.parse_args()
 
     buckets = account(args.construction)
-    total = sum(len(v) for v in buckets.values())
+    total = sum(len(buckets[name]) for name in BUCKETS)
 
     print("{} case(s){}: {} pass, {} known failure(s), {} limitation(s), "
           "{} invalid, {} not run, {} measured but not adopted, "
@@ -468,6 +679,15 @@ def main() -> int:
               len(buckets["limitation"]),
               len(buckets["invalid"]), len(buckets["unrun"]),
               len(buckets["unadopted"]), len(buckets["unaccounted"])))
+
+    # Named, not folded in. These rows were paid for and are not this
+    # product's answer; a case that has only such a row is counted above as
+    # not run, which is what it is. Taken from `account`, so it carries the
+    # same construction filter and the same snapshot of the tree.
+    foreign = sorted(buckets[FOREIGN])
+    if foreign:
+        print("{} case(s) measured only by another model, so still owed a run "
+              "here: {}".format(len(foreign), ", ".join(foreign)))
 
     if buckets["unaccounted"]:
         print("\nfailed, and nothing says why:")

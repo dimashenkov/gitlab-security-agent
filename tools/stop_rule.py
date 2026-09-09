@@ -31,6 +31,7 @@ import argparse
 import glob
 import json
 import math
+import os
 import sys
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -214,6 +215,39 @@ def reviewed(prov: dict) -> Optional[set]:
     return set(reviewing)
 
 
+def _cannot_say_who_reviewed(prov: dict) -> bool:
+    """Is "which model reviewed this" unanswerable from what was recorded?
+
+    The fourth spelling of a rule that lives in `Provenance`, and it is here
+    for the same reason `reviewed` is: this file cannot import `models.py`.
+    The tests pin the two against the same shapes.
+
+    Three cases, and only the third refuses:
+
+    * the artifact says so — `provenance_ambiguous: true`, written by a run
+      that knew;
+    * the artifact records roles — `models_reviewed` is populated, so the
+      question has an answer whatever else is in the file;
+    * neither, and every served name is also a verifier's. Subtraction leaves
+      nothing, the reviewer is either one of those models or a name nobody
+      wrote down, and the old rule answered "the requested one" — which is
+      `model_substituted: false` about a run nothing vouches for.
+
+    A row with no `models_served` at all is not this: it records no serving,
+    which the callers handle by their own rules. Refusing it here would throw
+    away the 27 rows that predate the field.
+    """
+    if prov.get("provenance_ambiguous") is True:
+        return True
+    if _names(prov.get("models_reviewed", [])):
+        return False
+    served = _names(prov.get("models_served", []))
+    verified = _names(prov.get("models_verified", []))
+    if not served or verified is None:
+        return False
+    return all(name in verified for name in served)
+
+
 def is_product_row(row: dict) -> bool:
     """Whether this row is a measurement of the product rather than of some
     other model.
@@ -244,6 +278,118 @@ def is_product_row(row: dict) -> bool:
     return why_not_product_row(row) is None
 
 
+def queue_model() -> str:
+    """The model a run started from this environment would actually buy.
+
+    `Config` resolves it at `src/security_agent/config.py:852` as
+    `_env("SECURITY_SCAN_MODEL", "claude-opus-5")`, and `run_queue` shells out
+    to `pair_corpus.py`, which inherits the environment — so a queue started
+    with that variable exported buys that model and writes its rows into
+    `measurements/queue/<case>.json`.
+
+    Two spellings of one rule drift, and this is the second one, so
+    `tests/test_stop_rule.py` asserts that the two agree. Codex, 2026-09-09,
+    on the version that asked `is_product_row` here instead: restarting a
+    Sonnet queue with the same environment, case and corpus version made
+    `already_run` answer `False` on its own finished row, and the case was
+    bought a second time for the same answer.
+
+    **Empty means Opus here, and that is not the usual reading.** Everywhere
+    else in this repository an empty value is a variable somebody set and must
+    not be read as absent. `config._env` does the opposite — `default if value
+    is None or value.strip() == "" else value.strip()` — so a run started with
+    `SECURITY_SCAN_MODEL=` buys Opus. This function has to answer what the run
+    *will do*, not what the value ought to mean, and answering `""` here would
+    make the queue re-buy every Opus case it had already measured. The first
+    version returned `""` and its own docstring argued for it; the test below
+    compares against `Config` rather than against that argument, which is how
+    the disagreement surfaced.
+    """
+    value = os.environ.get("SECURITY_SCAN_MODEL")
+    if value is None or value.strip() == "":
+        return PRODUCT_MODEL
+    return value.strip()
+
+
+class _Unidentified:
+    """The answer `identified_model` gives when a row names no model.
+
+    **Not a string.** Codex, 2026-09-09: the first version was the literal
+    `"unidentified"`, and `SECURITY_SCAN_MODEL` takes any non-empty name — so
+    a real measurement bought with `SECURITY_SCAN_MODEL=unidentified` returned
+    a value the readers could not tell from the sentinel, and its paid row was
+    discarded as unreadable instead of reported as another model's work. A
+    sentinel drawn from the value space it is meant to sit outside of.
+
+    Not `None` either: `None` is what a caller gets from a missing key, and
+    the two answers must not be spelled the same way.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - for a traceback
+        return "<unidentified model>"
+
+
+UNIDENTIFIED = _Unidentified()
+
+
+def identified_model(row: dict) -> str:
+    """Which model this row is a measurement of, or `UNIDENTIFIED`.
+
+    **Three answers, not two.** Codex, 2026-09-09: `check_accounted` and
+    `stage2` built their "measured by another model" set as the negation of
+    `is_product_row`, and that predicate says `False` both for a row Sonnet
+    produced and for a row like `{"members": {"safe": {}, "unsafe": {}}}`,
+    which records no provenance at all. So a malformed row was reported as
+    another model's measurement — a claim about a model, made from a row that
+    names none. Boolean negation used as the complementary set is the defect
+    this repository hunts everywhere else.
+
+    A row with no `members` key predates the field, and every such row was
+    bought with Opus, so it is the product's.
+    """
+    if "members" not in row:
+        return PRODUCT_MODEL
+    members = row.get("members")
+    if not isinstance(members, dict) or set(members) != {"safe", "unsafe"}:
+        return UNIDENTIFIED
+    names = set()
+    for block in members.values():
+        if not isinstance(block, dict):
+            return UNIDENTIFIED
+        prov = block.get("provenance")
+        if not isinstance(prov, dict):
+            return UNIDENTIFIED
+        name = prov.get("model_requested")
+        if not isinstance(name, str) or not name.strip():
+            return UNIDENTIFIED
+        names.add(name)
+    if len(names) != 1:
+        # The two members asked for different models. That is not a pair
+        # measured by either of them.
+        return UNIDENTIFIED
+    name = names.pop()
+    # And the row has to survive its *own* name: a member asking for Sonnet
+    # but reviewed by something else is not a Sonnet measurement either, and
+    # the whole of that rule already lives in one place.
+    return name if _why_not_row_for(row, name) is None else UNIDENTIFIED
+
+
+def why_not_row_for(row: dict, model: str) -> Optional[str]:
+    """Why this row was not produced by `model`, or `None` if it was.
+
+    `why_not_product_row` is this with `model` fixed to `PRODUCT_MODEL`. The
+    parameter exists for one reader: `run_queue.already_run` asks whether the
+    measurement **this invocation is about to buy** already exists, and that
+    is not always the product's. Every other caller asks about the product and
+    must keep asking with the fixed name — `check_accounted` and `stage2`
+    decide what is owed against the model the project ships, and an exported
+    variable must not move those numbers.
+    """
+    return _why_not_row_for(row, model)
+
+
 def why_not_product_row(row: dict) -> Optional[str]:
     """Why this row does not answer for the product, or `None` if it does.
 
@@ -258,8 +404,29 @@ def why_not_product_row(row: dict) -> Optional[str]:
     fifty-two rows from one experiment arm should say "52 reviewed by another
     model", not fifty-two lines.
     """
+    return _why_not_row_for(row, PRODUCT_MODEL)
+
+
+def _why_not_row_for(row: dict, model: str) -> Optional[str]:
+    """The one body behind both questions above.
+
+    Split out rather than duplicated: two spellings of "was this row produced
+    by that model" drift, and this rule now decides both what the product's
+    numbers are and what the queue pays for.
+    """
     if "members" not in row:
-        return None
+        # **The legacy rule is a presumption that the row is the product's.**
+        # Codex, 2026-09-09: every row written before `members` existed was
+        # bought with Opus, which is why reading it is right — and that is a
+        # fact about the product, not about whatever `model` happens to be.
+        # Asked about Sonnet, such a row establishes nothing, and the version
+        # that returned `None` here let a legacy Opus row satisfy a Sonnet
+        # queue: the case was never measured with Sonnet and nothing would
+        # ever ask again.
+        if model == PRODUCT_MODEL:
+            return None
+        return "predates the model field, so it cannot answer for {}".format(
+            model)
     members = row.get("members")
     if not isinstance(members, dict):
         return "`members` is not an object"
@@ -271,7 +438,7 @@ def why_not_product_row(row: dict) -> Optional[str]:
         prov = block.get("provenance")
         if not isinstance(prov, dict):
             return "a member records no readable provenance"
-        if prov.get("model_requested") != PRODUCT_MODEL:
+        if prov.get("model_requested") != model:
             return "asked for {}".format(prov.get("model_requested"))
         # **What was asked for is not what answered.** Codex, 2026-09-09: a row
         # asking for Opus and served Sonnet carries `model_substituted: true`
@@ -297,13 +464,31 @@ def why_not_product_row(row: dict) -> Optional[str]:
         # forged row has, and this predicate is what stands between such a row
         # and the product's headline numbers. Requiring the known is not the
         # same as trusting that the unknown cannot occur.
+        if _cannot_say_who_reviewed(prov):
+            # **Ambiguous is not "the requested model".** Codex, 2026-09-09.
+            # An artifact written before roles were recorded separately can
+            # hold a shape where every served name is also a verifier's, so
+            # subtraction leaves nothing and the old rule put the requested
+            # model back — reporting "not substituted" about a run whose
+            # reviewer nothing states. The run itself may have been perfect;
+            # the record cannot say, and a corpus is built out of records.
+            #
+            # **And the field's absence is not an answer.** Codex,
+            # 2026-09-09, on the first version of this very check: it read
+            # `prov.get("provenance_ambiguous") is True`, and the artifacts
+            # this path exists for — legacy ones — cannot carry that field at
+            # all. So the shape it was written to refuse was the one shape
+            # that walked past it, and the comment here said the opposite in
+            # so many words. Absence read as agreement, inside the line that
+            # was added to stop a different reading of absence.
+            return "cannot say which model reviewed it"
         answered = reviewed(prov)
         if answered is None:
             return "a member's model list cannot be read"
-        if PRODUCT_MODEL not in answered:
+        if model not in answered:
             return "reviewed by {}".format(
                 ", ".join(sorted(answered)) or "nothing")
-        strangers = sorted(name for name in answered - {PRODUCT_MODEL}
+        strangers = sorted(name for name in answered - {model}
                            if not _is_helper(name))
         if strangers:
             return "also reviewed by {}".format(", ".join(strangers))

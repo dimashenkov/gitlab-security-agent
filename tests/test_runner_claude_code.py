@@ -1076,6 +1076,67 @@ class TestTheHandoffHasMoreThanOneWriter:
         assert budget.review.spent == budget.review.ceiling
 
 
+
+from security_agent.budget import Allowance as _Allowance  # noqa: E402
+from security_agent.runner_claude_code import (  # noqa: E402
+    build_mcp_config,
+)
+
+
+def _handoff(tmp_path):
+    """The four paths `build_mcp_config` writes into the child's argv."""
+    class Handoff:
+        run_id = "r"
+        session_document = tmp_path / "doc.json"
+        crash_journal = tmp_path / "j.jsonl"
+        spend_report = tmp_path / "s.json"
+        config_digest = "d"
+    return Handoff()
+
+
+def test_the_child_is_given_the_exclude_rules(tmp_path):
+    """`build_server` has taken an `excludes` argument since it was written
+    and `mcp_server.main` never passed one.
+
+    So on the CLI runner — the path that does the paid reviews — every
+    exclude rule was decorative: the model diffed, grepped and opened
+    `vendor/`, `node_modules/` and minified bundles freely, a finding filed
+    against one passed the citation check and reached the gate, and the
+    artifact named the same path both never-shown (`coverage.excluded`, from
+    the *parent's* workspace) and shown (`coverage.exposures`, from the
+    child's).
+
+    `DEFAULT_EXCLUDES` needs no operator to be in force, so this was every
+    run.
+    """
+    config = build_mcp_config(
+        repo=tmp_path, base_sha="a" * 40, head_sha="b" * 40,
+        tool_set="reviewer", allowance=_Allowance("review", 10),
+        handoff=_handoff(tmp_path), prompt_dir=tmp_path, scope=("lib",),
+        excludes=("*/vendor/*", "*.min.js"))
+
+    argv = next(iter(config["mcpServers"].values()))["args"]
+    assert "--exclude" in argv, argv
+    pairs = [argv[i + 1] for i, flag in enumerate(argv) if flag == "--exclude"]
+    assert pairs == ["*/vendor/*", "*.min.js"]
+    # And the scope is still its own flag: one narrows what the review is
+    # answerable for, the other narrows what may be read at all.
+    assert argv[argv.index("--path") + 1] == "lib"
+
+
+def test_a_run_with_no_exclude_rules_passes_none(tmp_path):
+    """The control. A flag emitted whatever the configuration says would make
+    the child's rules independent of the operator's again, in the other
+    direction."""
+    config = build_mcp_config(
+        repo=tmp_path, base_sha="a" * 40, head_sha="b" * 40,
+        tool_set="reviewer", allowance=_Allowance("review", 10),
+        handoff=_handoff(tmp_path), prompt_dir=tmp_path)
+
+    argv = next(iter(config["mcpServers"].values()))["args"]
+    assert "--exclude" not in argv
+
+
 def test_the_denied_list_is_not_empty():
     """A list that emptied itself in a refactor would leave the allowlist as
     the only layer, and this file's second-layer tests would still pass."""

@@ -486,6 +486,22 @@ def test_the_notional_figure_stays_out_of_the_total(capsys):
 # ------------------------------------------------- against what is on disk
 
 
+def _batch_rows(path):
+    """The rows of a batch file, or nothing when the file is not one.
+
+    `measurements/*.json` is where `pair_corpus` writes a list of rows. Other
+    things get written beside it — a vendor ledger, a hand-written record —
+    and a reader that iterates whatever it finds walks a dict as its keys.
+    """
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(body, list):
+        return []
+    return [row for row in body if isinstance(row, dict)]
+
+
 def test_no_stored_member_run_is_priced_as_a_free_review():
     """The chain, over the artifacts themselves rather than over a fixture.
 
@@ -507,12 +523,19 @@ def test_no_stored_member_run_is_priced_as_a_free_review():
     finding lists are empty because the review stopped rather than because it
     found nothing.
     """
+    # **A file here that is not a batch is skipped, not iterated.** The glob
+    # is the batch namespace and this walked whatever it found: a dict body
+    # yields its keys, and `"a string".get` is an `AttributeError` out of a
+    # test about pricing. A vendor ledger written beside the batches was
+    # enough to do it. Skipped rather than counted — a file this cannot read
+    # says nothing about pricing, and reading it as zero rows would be the
+    # quieter version of the same mistake.
     members = [
         (path.name, row.get("case_id"), name, body.get("usage"))
         for path in sorted(MEASUREMENTS.glob("*.json"))
-        for row in json.loads(path.read_text(encoding="utf-8"))
+        for row in _batch_rows(path)
         for name, body in (row.get("members") or {}).items()
-        if body.get("stop_reason") == "completed"
+        if isinstance(body, dict) and body.get("stop_reason") == "completed"
     ]
     if not members:
         pytest.skip("no stored batches to read")

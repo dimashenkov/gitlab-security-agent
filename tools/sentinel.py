@@ -79,6 +79,14 @@ def result_files(root: Path = MEASUREMENTS) -> list:
     """
     return (sorted(root.glob("*.json"))
             + sorted((root / "queue").glob("*.json"))
+            # A run of another model: `run_queue.result_path` writes it to
+            # `queue/<model>/<case>.json`. `recorded_outcomes` filters by
+            # model anyway, so nothing foreign can settle anything here — but
+            # a file this never opens is a file whose refusal is never
+            # counted either.
+            + sorted((root / "queue").glob("by-model/*/*.json"))
+            # The same under a round, where `QUEUE` is rebound to it.
+            + sorted(root.glob("round-*/by-model/*/*.json"))
             + sorted(root.glob("experiment-*/pass-*/*.json"))
             + sorted(root.glob("round-*/*.json")))
 

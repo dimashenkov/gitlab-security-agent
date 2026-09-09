@@ -477,6 +477,31 @@ def malformed_cases(root) -> dict:
     return ruled
 
 
+def answer_key_digest(case_dir) -> str:
+    """One hash over the case's **answer key**, which `case_digest` excludes.
+
+    `case_digest` covers the two members — the code the agent saw — and
+    deliberately not `case.yml`, so a corrected category does not throw away
+    results that are still evidence about the same code. That is right for a
+    row, and wrong for a **round**: a round freezes the conditions of a
+    comparison, and what a pass means is one of them. Codex, 2026-09-09: edit
+    only the expectation of a frozen case, and both the queue and `compare`
+    accept the row, so a flip caused by changing the scoring key is reported
+    as the product moving on its own.
+
+    The whole manifest text, not the fields it happens to name today. A key
+    read from a field this does not hash is a key that can change unseen, and
+    the list of scoring fields has grown twice already.
+    """
+    path = Path(case_dir) / "case.yml"
+    try:
+        body = path.read_bytes()
+    except OSError:
+        # No manifest is a state of its own, and not the same as an empty one.
+        return "no-case-yml"
+    return hashlib.sha256(body).hexdigest()[:16]
+
+
 def case_digest(case_dir) -> str:
     """One hash over a single case's two members — the code the agent saw.
 

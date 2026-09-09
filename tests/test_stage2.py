@@ -71,6 +71,9 @@ def batch(root: Path, name: str, rows, mtime: float = 0.0) -> None:
     measurements = root / "measurements"
     measurements.mkdir(exist_ok=True)
     path = measurements / name
+    # `name` may carry a directory now: `run_queue.result_path` writes a run
+    # of another model to `queue/<model>/<case>.json`.
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(rows), encoding="utf-8")
     if mtime:
         os.utime(path, (mtime, mtime))
@@ -673,6 +676,321 @@ def test_a_case_measured_only_by_an_experiment_is_not_reported_unrun(root):
 
     assert "measured outside the stream and not adopted: two" in result.detail
     assert result.state == PARTIAL
+
+
+def _measured_by(name: str) -> dict:
+    """A pair's `members` block as a real run writes it — both members, each
+    with a provenance naming what was asked for and what answered."""
+    block = {"provenance": {"model_requested": name, "models_served": [name],
+                            "models_verified": []}}
+    return {"safe": block, "unsafe": dict(block)}
+
+
+def test_a_row_from_another_model_is_not_offered_for_adoption(root):
+    """The line says "measured outside the stream and not adopted", which is an
+    invitation to adopt the row as this stage's answer.
+
+    A row from another model cannot be adopted as one. It is that model's
+    behaviour — bought and real, which is why the billing probe below still
+    counts it — but not this product's result. The Sonnet trial wrote 52 such
+    rows on 2026-09-08 and this reader offered every one of them.
+    """
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+    experiment_row(root, "two", {"pair_success": True,
+                                 "members": _measured_by("claude-sonnet-5")})
+
+    result = probe_use(Args())
+
+    assert "not adopted: two" not in result.detail
+    # Named, not dropped. A paid row that no tally mentions is the other way
+    # the count lies, and it is the one nobody notices.
+    assert "1 measured only by another model: two" in result.detail
+
+
+def test_the_stream_is_listed_once_for_both_views(root, monkeypatch):
+    """Codex, 2026-09-09. The same race `check_accounted.walk` was changed to
+    close, one tool along.
+
+    `measured_outside_the_stream` listed the stream to build the membership
+    set, then called `paid_result_files`, which listed it again. A queue
+    result landing between the two was read by the second listing while the
+    first had not marked its path as inside, so the case was reported as
+    needing adoption with its row already in the stream.
+    """
+    case(root, "one")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+
+    listings = []
+    real = stage2.result_files
+    monkeypatch.setattr(stage2, "result_files",
+                        lambda: (listings.append(1), real())[1])
+
+    current = {"one": {case_digest(root / "corpus-real" / "one")}}
+    stage2.measured_outside_the_stream(current)
+
+    assert len(listings) == 1
+
+
+def test_the_four_paid_readers_enumerate_the_same_tree(root):
+    """Codex, 2026-09-09, twice — once per directory the writers use.
+
+    `check_accounted.walk`, `stage2.paid_result_files`,
+    `sentinel.result_files` and `window_recut.result_files` all claim to
+    enumerate every paid result. Each time a writer gained a location, the
+    path went into one of them and not the others, and the same artifact then
+    existed for one accounting reader and not the rest. This asserts the claim
+    rather than any single glob, so the next writer that moves is caught by
+    the disagreement instead of by a fourth round of review.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    tools = _Path(__file__).resolve().parents[1] / "tools"
+    if str(tools) not in _sys.path:
+        _sys.path.insert(0, str(tools))
+    import check_accounted
+    import sentinel
+    import window_recut
+
+    # One file in every place a paid run is written, including the two the
+    # queue reaches by rebinding: `queue/by-model/` and, under `--round N`,
+    # `round-N/` and `round-N/by-model/`.
+    case(root, "one")
+    written = []
+    for name in ("b.json", "queue/one.json",
+                 "queue/by-model/claude-sonnet-5/one.json",
+                 "experiment-x/pass-a/one.json",
+                 "round-2/one.json",
+                 "round-2/by-model/claude-sonnet-5/one.json"):
+        batch(root, name, [{"case_id": "one", "pair_success": True}])
+        written.append((root / "measurements" / name).resolve())
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(check_accounted, "ROOT", root)
+    monkeypatch.setattr(sentinel, "ROOT", root)
+    try:
+        seen = {
+            "stage2": {p.resolve() for p in stage2.paid_result_files()},
+            # It takes the directory rather than reading a module constant.
+            "sentinel": {p.resolve() for p
+                         in sentinel.result_files(root / "measurements")},
+        }
+        walked = {p.resolve() for _inside, p in _walk_paths(check_accounted)}
+        seen["check_accounted"] = walked
+        # `window_recut` globs relative paths, so it is asked from the tree.
+        import os
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            seen["window_recut"] = {
+                _Path(p).resolve() for p in window_recut.result_files()}
+        finally:
+            os.chdir(cwd)
+    finally:
+        monkeypatch.undo()
+
+    for name, paths in seen.items():
+        assert set(written) <= paths, (name, sorted(set(written) - paths))
+
+
+def _walk_paths(check_accounted):
+    """The files `check_accounted.walk` opens, as `(inside, path)`.
+
+    `walk` returns rows rather than paths, so the listing is rebuilt from the
+    same globs it uses. Kept beside the test that needs it, and it fails
+    loudly if those globs are renamed rather than passing over a stale copy.
+    """
+    import glob as _glob
+    from pathlib import Path as _Path
+
+    root = check_accounted.ROOT / "measurements"
+    stream = {_Path(p).resolve() for p in check_accounted._stream_globs()}
+    out = []
+    for pattern in ("*.json", "queue/*.json", "queue/by-model/*/*.json",
+                    "experiment-*/pass-*/*.json", "round-*/*.json",
+                    "round-*/by-model/*/*.json"):
+        for p in _glob.glob(str(root / pattern)):
+            out.append((_Path(p).resolve() in stream, _Path(p)))
+    return out
+
+
+def test_probe_use_lists_the_stream_once_for_all_three(root, monkeypatch):
+    """Codex, 2026-09-09. Three snapshots, one report.
+
+    `probe_use` listed the stream for the verdicts, and the two
+    `measured_outside_the_stream` calls listed it again. A paid product row
+    written between the first and the rest fell out of `run` (the first
+    listing had not seen it), out of `unadopted` (the later listing sees it
+    *inside* the stream) and out of the foreign line (it is the product's) —
+    so a completed, paid measurement appeared in no line of the report at all.
+    """
+    case(root, "one")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+
+    listings = []
+    real = stage2.result_files
+    monkeypatch.setattr(stage2, "result_files",
+                        lambda: (listings.append(1), real())[1])
+    # And the paid listing, which globs the experiment and round directories.
+    # Freezing only the stream left this one re-globbing on every call, so a
+    # product *experiment* row arriving between the two calls was missed by
+    # the first and excluded by the second. Codex, 2026-09-09.
+    paid = []
+    real_paid = stage2.paid_result_files
+    monkeypatch.setattr(stage2, "paid_result_files",
+                        lambda s=None: (paid.append(1), real_paid(s))[1])
+
+    probe_use(Args())
+
+    assert len(listings) == 1
+    assert len(paid) == 1
+
+
+def test_a_foreign_run_where_the_queue_now_writes_it_is_still_seen(root):
+    """The same in this tool. `paid_result_files` is the "what was bought"
+    listing and it globbed `queue/*.json` only, so a row at
+    `queue/<model>/<case>.json` was resumable by the queue and invisible
+    here — reported neither as run nor as another model's."""
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+    batch(root, "queue/by-model/claude-sonnet-5/two.json",
+          [{"case_id": "two", "pair_success": True,
+            "members": _measured_by("claude-sonnet-5")}])
+
+    result = probe_use(Args())
+
+    assert "1/2 run" in result.detail, result.detail
+    assert "1 measured only by another model: two" in result.detail
+
+
+def test_a_foreign_row_in_the_queue_does_not_settle_the_verdict(root):
+    """Codex, 2026-09-09. The path this change itself created.
+
+    `run_queue.result_path` writes a non-product run to
+    `queue/<model>/<case>.json`. `result_files()` — the production stream —
+    globs `queue/*.json`, so the directory keeps a foreign run out of it by
+    construction; but the row must still be *seen* by the readers that count
+    what was bought, or a paid measurement is resumable and invisible at once.
+
+    The first version of this repair wrote `queue/<case>.<model>.json`, inside
+    the stream, and the Sonnet row became the product's settled answer while
+    `measured_outside_the_stream` skipped it as already in the stream — wrong
+    in both directions from one row. That is what the model check on the
+    stream is still for: a row can reach it from a batch too.
+    """
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+    queue = root / "measurements" / "queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    batch(root, "queue/by-model/claude-sonnet-5/two.json",
+          [{"case_id": "two", "pair_success": True,
+            "members": _measured_by("claude-sonnet-5")}])
+
+    result = probe_use(Args())
+
+    assert "1/2 run" in result.detail, result.detail
+    assert "1 measured only by another model: two" in result.detail
+    assert result.state == PARTIAL
+
+
+def test_a_foreign_queue_row_is_not_a_failure_to_reconcile(root):
+    """The **other** reader of the same stream, and it had no test at all.
+
+    `settles_a_verdict` is applied in two places: `probe_use` and
+    `_failing_cases`, which `probe_fixes` reads. Deleting the second left
+    every other new test green, and the comment on that line says exactly what
+    it is for — "two spellings would let one of the two probes report a
+    failure the other cannot see".
+
+    Measured with the guard removed: `probe_fixes` demands a fix or a
+    `LIMITATIONS.md` line for a failure the product never had, over a row
+    `run_queue.result_path` can now write straight into the production stream.
+    """
+    from stage2 import probe_fixes
+
+    case(root, "one")
+    queue = root / "measurements" / "queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    batch(root, "queue/by-model/claude-sonnet-5/one.json",
+          [{"case_id": "one", "pair_success": False, "safe_findings": [],
+            "unsafe_findings": [], "members": _measured_by("claude-sonnet-5")}])
+    (root / "LIMITATIONS.md").write_text("nothing about it\n", encoding="utf-8")
+
+    assert probe_fixes(Args()).state == TODO
+
+
+def test_the_product_s_own_failure_is_still_reconciled(root):
+    """The control. Without it the test above passes over a reader that drops
+    every row, and `probe_fixes` would stop asking about real failures — which
+    is the whole of what it is for."""
+    from stage2 import probe_fixes
+
+    case(root, "one")
+    queue = root / "measurements" / "queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    batch(root, "queue/one.json",
+          [{"case_id": "one", "pair_success": False, "safe_findings": [],
+            "unsafe_findings": [], "members": _measured_by("claude-opus-5")}])
+    (root / "LIMITATIONS.md").write_text("nothing about it\n", encoding="utf-8")
+
+    result = probe_fixes(Args())
+
+    assert result.state == PARTIAL
+    assert "one" in result.detail
+
+
+def test_the_product_s_own_queue_row_still_settles_it(root):
+    """The control. Without it the test above passes over a reader that drops
+    every queue row, which would empty the production stream."""
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+    queue = root / "measurements" / "queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    batch(root, "queue/two.json",
+          [{"case_id": "two", "pair_success": True,
+            "members": _measured_by("claude-opus-5")}])
+
+    result = probe_use(Args())
+
+    assert result.detail == "2/2 pairs, decision preserved"
+    assert result.state == DONE
+
+
+def test_a_row_that_names_no_model_is_not_offered_as_another_model_s(root):
+    """The same defect in the other reader. `not adopted` would be wrong — no
+    product row exists — and `measured only by another model` would be a claim
+    about a model the row does not name."""
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+    experiment_row(root, "two", {"pair_success": True,
+                                 "members": {"safe": {}, "unsafe": {}}})
+
+    result = probe_use(Args())
+
+    assert "not adopted: two" not in result.detail
+    assert "measured only by another model" not in result.detail
+
+
+def test_the_product_s_own_row_is_still_offered(root):
+    """The control. Without it the test above passes over a filter that
+    rejects every row, and the invitation disappears for cases that really are
+    waiting on a decision."""
+    case(root, "one")
+    case(root, "two")
+    batch(root, "b.json", [{"case_id": "one", "pair_success": True}])
+    experiment_row(root, "two", {"pair_success": True,
+                                 "members": _measured_by("claude-opus-5")})
+
+    result = probe_use(Args())
+
+    assert "measured outside the stream and not adopted: two" in result.detail
+    assert "measured only by another model" not in result.detail
 
 
 def test_an_experiment_run_is_read_by_the_billing_probe(root):
