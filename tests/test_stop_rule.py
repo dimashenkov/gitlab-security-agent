@@ -364,6 +364,181 @@ class TestARowThatCannotSayWhoReviewedItIsRefused:
             == "reviewed by nothing"
 
 
+class TestACaseScoredTwoWaysIsNeitherPassedNorFailed:
+    """`latest_rows` settles a case with the newest row, which is one draw.
+
+    `experiment-noise-floor-2` ran thirteen cases twice with nothing changed
+    and two came out differently — the 15% instability `RESULT.md` reports.
+    Those two sat inside the pass rate as facts, and nothing in the counting
+    said which they were: `go-m6jg-wr9m-cg2f` recorded as a miss because the
+    second pass missed it, `rb-g65v-27r3-5p6m` recorded as clean because the
+    second pass was clean.
+
+    Codex, 2026-09-09, choosing this over leaving the rule alone: *"This
+    accepts the failure of conservatism: without an epoch/version field, it
+    can preserve a historical flip after a genuine change in behavior. That is
+    preferable to silently converting observed nondeterminism into a
+    definitive current pass or failure."*
+    """
+
+    def _row(self, case_id, *, recall, alarm, when):
+        passed = recall and not alarm
+        prov = {"model_requested": stop_rule.PRODUCT_MODEL,
+                "models_served": [stop_rule.PRODUCT_MODEL],
+                "models_verified": []}
+        return {"case_id": case_id, "unsafe_recall": recall,
+                "safe_false_positive": alarm, "pair_success": passed,
+                "ran_at": when,
+                "members": {"safe": {"provenance": dict(prov)},
+                            "unsafe": {"provenance": dict(prov)}}}
+
+    def _world(self, tmp_path, monkeypatch, rows):
+        monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, rows))
+
+    def test_two_draws_that_disagree_make_the_case_unstable(
+            self, tmp_path, monkeypatch):
+        self._world(tmp_path, monkeypatch, [
+            self._row("a", recall=True, alarm=False,
+                      when="2026-09-01T11:00:00+00:00"),
+            self._row("a", recall=False, alarm=False,
+                      when="2026-09-01T13:00:00+00:00"),
+        ])
+
+        assert stop_rule.unstable_cases() == {"a": 2}
+
+    def test_two_draws_that_agree_do_not(self, tmp_path, monkeypatch):
+        """The control. Without it the rule could be "measured twice", which
+        would mark every re-measured case and say nothing."""
+        self._world(tmp_path, monkeypatch, [
+            self._row("a", recall=True, alarm=False,
+                      when="2026-09-01T11:00:00+00:00"),
+            self._row("a", recall=True, alarm=False,
+                      when="2026-09-01T13:00:00+00:00"),
+        ])
+
+        assert stop_rule.unstable_cases() == {}
+
+    def test_a_crashed_run_is_not_one_of_the_two_answers(
+            self, tmp_path, monkeypatch):
+        """`pair_corpus` writes the three fields only on the success path, so
+        a review that crashed carries none of them. Counting that as an answer
+        would mark every case with one failed run unstable, which says the
+        opposite of what the word means. Codex named it."""
+        crashed = self._row("a", recall=True, alarm=False,
+                            when="2026-09-01T11:00:00+00:00")
+        for field in ("unsafe_recall", "safe_false_positive", "pair_success"):
+            crashed[field] = None
+        self._world(tmp_path, monkeypatch, [
+            crashed,
+            self._row("a", recall=True, alarm=False,
+                      when="2026-09-01T13:00:00+00:00"),
+        ])
+
+        assert stop_rule.unstable_cases() == {}
+
+    def test_a_row_whose_three_fields_disagree_is_not_an_answer(
+            self, tmp_path, monkeypatch):
+        """`pair_success` is derivable from the other two, so a row where they
+        contradict was not written by a run of this product. Admitting it
+        would let a hand-edited file contradict a real measurement and mark
+        the case unstable for good — and the state is sticky."""
+        forged = self._row("a", recall=True, alarm=False,
+                           when="2026-09-01T11:00:00+00:00")
+        forged["pair_success"] = False
+        self._world(tmp_path, monkeypatch, [
+            forged,
+            self._row("a", recall=True, alarm=False,
+                      when="2026-09-01T13:00:00+00:00"),
+        ])
+
+        assert stop_rule.unstable_cases() == {}
+
+    def test_later_agreement_does_not_resolve_it(self, tmp_path, monkeypatch):
+        """Sticky, and deliberately. Nothing in the artifacts says the code
+        changed between two runs, so two agreeing draws after a flip are two
+        more draws of the same coin. Codex asked for this explicitly, and
+        named the cost: a historical flip survives a genuine repair until a
+        measurement epoch exists."""
+        self._world(tmp_path, monkeypatch, [
+            self._row("a", recall=True, alarm=False,
+                      when="2026-09-01T11:00:00+00:00"),
+            self._row("a", recall=False, alarm=False,
+                      when="2026-09-01T12:00:00+00:00"),
+            self._row("a", recall=False, alarm=False,
+                      when="2026-09-01T13:00:00+00:00"),
+            self._row("a", recall=False, alarm=False,
+                      when="2026-09-01T14:00:00+00:00"),
+        ])
+
+        assert stop_rule.unstable_cases() == {"a": 2}
+
+    def test_a_contradiction_across_two_versions_of_the_case_is_not_a_flip(
+            self, tmp_path, monkeypatch):
+        """The caller says which rows are about the same thing.
+
+        `check_accounted.standings` rejects a row carrying a stale
+        `case_digest`; this walked every product row, so a failure recorded
+        against an *older version of the case* contradicted a pass recorded
+        against today's. All three cases the first run reported as unstable
+        were exactly that — each one repaired, each unanimous within its own
+        version. Codex, 2026-09-09.
+        """
+        old_row = self._row("a", recall=False, alarm=False,
+                            when="2026-08-01T11:00:00+00:00")
+        old_row["case_digest"] = "0" * 16
+        new_row = self._row("a", recall=True, alarm=False,
+                            when="2026-09-01T13:00:00+00:00")
+        new_row["case_digest"] = "1" * 16
+        self._world(tmp_path, monkeypatch, [old_row, new_row])
+
+        def today(case_id, row):
+            return row.get("case_digest") == "1" * 16
+
+        assert stop_rule.unstable_cases(tmp_path, today) == {}
+        # The control: with no predicate the caller has said nothing about
+        # versions, and both rows count. That is what `None` means, and it is
+        # why the parameter exists rather than a default.
+        assert stop_rule.unstable_cases(tmp_path) == {"a": 2}
+
+    def test_a_results_wrapper_is_read_like_any_other_file(
+            self, tmp_path, monkeypatch):
+        """Three shapes are written and all three are read elsewhere: a list,
+        a bare object, and a list wrapped under `results`. This handled two
+        and treated the third as one row, so a wrapper holding two
+        contradicting rows returned nothing — a supported artifact hiding a
+        flip completely. Codex, 2026-09-09."""
+        import json
+        (tmp_path / "measurements").mkdir()
+        (tmp_path / "measurements" / "wrapped.json").write_text(json.dumps({
+            "results": [
+                self._row("a", recall=True, alarm=False,
+                          when="2026-09-01T11:00:00+00:00"),
+                self._row("a", recall=False, alarm=False,
+                          when="2026-09-01T13:00:00+00:00"),
+            ]}), encoding="utf-8")
+
+        assert stop_rule.unstable_cases(tmp_path) == {"a": 2}
+
+    def test_a_row_another_model_produced_is_not_a_draw(
+            self, tmp_path, monkeypatch):
+        """The filter that closed `LIMITATIONS.md` applies here too, or the
+        rejected model's rows would mark the product's cases unstable — which
+        is the same defect one reader along."""
+        other = self._row("a", recall=False, alarm=False,
+                          when="2026-09-01T13:00:00+00:00")
+        for member in other["members"].values():
+            member["provenance"] = {"model_requested": "claude-sonnet-5",
+                                    "models_served": ["claude-sonnet-5"],
+                                    "models_verified": []}
+        self._world(tmp_path, monkeypatch, [
+            self._row("a", recall=True, alarm=False,
+                      when="2026-09-01T11:00:00+00:00"),
+            other,
+        ])
+
+        assert stop_rule.unstable_cases() == {}
+
+
 class TestWhichRowAnswers:
     def test_a_later_row_supersedes_an_earlier_one(self, tmp_path, monkeypatch):
         monkeypatch.setattr(stop_rule, "ROOT", world(tmp_path, [

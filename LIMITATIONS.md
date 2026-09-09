@@ -2210,3 +2210,128 @@ block again, and the remedy is a second line in the ignore file with the new
 fingerprint the report prints. **What is not built:** an identity stable across
 requoting. Codex named the shape — it needs more than "a line both quotes" —
 and nothing here attempts it.
+
+
+## The pass rate counted single draws from a process measured as unstable
+
+`stop_rule.latest_rows` settles each case with the newest admissible product
+row. That is the best estimate of current behaviour and it is also **one
+draw**: `experiment-noise-floor-2` ran thirteen cases twice with nothing
+changed, and two came out differently — the 15% instability `RESULT.md`
+reports. Those two sat inside the pass rate as facts and nothing in the
+counting said which they were. `go-m6jg-wr9m-cg2f` was recorded as a miss
+because the second pass missed it; `rb-g65v-27r3-5p6m` as clean because the
+second pass was clean.
+
+**The suspicion that led here was wrong, and the measurement is what settled
+it.** The queued note said a row from a trial directory could supersede a
+corpus row *because it was measured with a different instrument*. It cannot:
+across 248 member records there is exactly one settings block, and the two
+records that differ carry `verify_model: claude-opus-5` explicitly where the
+rest leave it unset — and unset resolves to the reviewer's model, which is
+that same model. Same instrument, different recording, nothing to refuse on.
+The defect was one reader along from where it was expected.
+
+Codex, 2026-09-09, choosing to mark rather than to leave it: *"This accepts
+the failure of conservatism: without an epoch/version field, it can preserve a
+historical flip after a genuine change in behavior. That is preferable to
+silently converting observed nondeterminism into a definitive current pass or
+failure."*
+
+So `check_accounted` has a sixth basket, `unstable`. **The tally did not
+move**: it is still 50 pass, and the basket is empty today. The three cases
+the first implementation put in it were not unstable at all — each carried a
+failure recorded against an *older version of the case* beside a pass recorded
+against today's, and within its own version every row agrees. Those are
+repaired cases, and the reader was manufacturing a contradiction out of two
+different questions. `check_accounted.standings` has always rejected a stale
+`case_digest`; this reader did not, which is the two ends of one rule
+disagreeing, arriving inside the change that was fixing a different reader.
+Found by Codex the same day, along with three more:
+
+* a `{"results": [...]}` file — a shape three other readers accept — was
+  treated as one row, so such an artifact could hide a flip completely;
+* the check was asked *after* every branch about the standing answer, so a
+  case whose rows contradict each other but whose newest row cannot be read
+  fell to `unaccounted` and the flip was named nowhere;
+* the line that names contradicted cases looked only at `limitation` and
+  `known_failure`, while `invalid` wins before instability is asked — so a
+  case ruled invalid hid its flip entirely, under a comment claiming the
+  opposite.
+
+What the basket actually reports today is the three real flips, and they are
+all under a ruling somebody made. The ruling keeps them and they are named
+beside the tally with the bucket they are in, because a machine observation
+does not revoke a human decision — this file has already been caught once
+letting it:
+
+```
+3 more carry a contradicted answer and keep the bucket a ruling put them in:
+  go-m6jg-wr9m-cg2f (limitation), py-p43p-whwx-q52h (limitation),
+  rb-g65v-27r3-5p6m (limitation)
+```
+
+A third round found three more, and the first is the one worth carrying:
+**the command printed "neither passed nor failed" and returned exit 0 to CI in
+the same run.** The exit condition listed `unaccounted`, `unrun` and
+`unadopted` and not this basket, so a case with two answers and no ruling
+announced itself and was reported as success. `unstable` is now one of the
+states that is not exit 0, and the message says what closes it: a fix that
+removes the disagreement, or a line here saying the case is not decidable as
+it stands. **Re-measuring is not a third option** — a third draw of a coin
+that has landed both ways is a third draw.
+
+The other two: a contradicted case that is in no bucket at all — deleted,
+renamed, mistyped — was dropped from the naming line in silence, under a
+comment claiming every contradicted case is named; and the test written for
+that naming would have passed with the whole printing block deleted, because
+it asserted the bucket rather than the report. Checked on the running code,
+the first of those cannot currently arrive: `about_this_version` refuses a row
+whose case has no manifest, so such a row never contradicts anything. The
+fallback that names it stays, and what the test asserts is the predicate that
+makes it unreachable — because that is the assertion that fails if somebody
+loosens it.
+
+A fourth round found the repair to the second of those lying in its turn:
+`--construction snapshot` filters the buckets and did not filter this list, so
+all three contradicted *regression* cases were reported as "not in the
+corpus" — about cases sitting in `corpus-real/`. Three states now, not two: in
+a bucket, in the corpus but outside the filter this run asked for, or absent.
+The same shape as the source classifier earlier the same day, one file along.
+
+A fifth round found two more, and the first is wider than the change that
+surfaced it. **A `case_id` was a path, not a name.** It is joined onto the
+corpus directory, so `"../corpus-real/foo"`, `"./foo"` and `"foo/."` all
+resolve to `foo` and were accepted as results about it — and
+`about_this_version` is what `standings` uses to settle every case, so an
+aliased id could supply the standing answer for a case it does not name, in
+the accounting every number in this project is read from. A case id is now
+required to be one directory name. The second: `main` scanned for
+contradictions a second time to build the naming line, so a row written
+between the two scans made two views of one directory disagree about one case
+— named as contradicted *and* as sitting in `pass`, under a sentence claiming
+a ruling holds it there. One listing now, handed to both readers.
+
+"A directory listed twice is two directories" is one of the four recurring
+shapes this repository's own commit message names, and it arrived inside the
+change that message describes.
+
+The coherence check that refuses a row whose three outcome fields disagree has
+**never fired on a real row**: 118 rows taken, 34 with a non-boolean field — a
+crashed run — 53 another model's, 0 dropped. Codex checked the writer against
+it independently and `pair_corpus` writes exactly that expression. It is a
+guard against a file no run wrote, not a filter on production output.
+
+Two things this does **not** do, and both are open:
+
+* **It is sticky and cannot be un-stuck.** Two later agreeing draws do not
+  resolve an earlier contradiction, because nothing in the artifacts says the
+  code changed between them. A genuine repair therefore leaves the case
+  marked. Codex named the fix — a measurement epoch, a version field the rows
+  carry — and it is not built.
+* **`stop_rule.rates` is untouched.** It still counts the latest draw for the
+  D-013 recall and false-alarm figures, so the baskets and the rates now
+  answer the instability question differently. That is deliberate rather than
+  overlooked: those two numbers have a published threshold behind them and
+  moving them is a separate decision with its own measurement. It is written
+  here so that the difference is a recorded choice and not a discovery.

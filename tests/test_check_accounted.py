@@ -32,6 +32,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import check_accounted  # noqa: E402
+import stop_rule  # noqa: E402
 from artifact import case_digest  # noqa: E402
 
 CASE = "xx-test-0000-0000"
@@ -99,6 +100,366 @@ def corpus(tmp_path, monkeypatch):
     digest = build_corpus(tmp_path)
     monkeypatch.setattr(check_accounted, "ROOT", tmp_path)
     return tmp_path, digest
+
+
+class TestTheUnstableBasketReadsThisModulesTree:
+    """The two readers keep separate `ROOT` names, and only one is replaced.
+
+    `account` asks `stop_rule.unstable_cases` which cases were scored two
+    ways. The first version let that function default to *its own* `ROOT`, so
+    a test that built a corpus in `tmp_path` was answered from the real
+    `measurements/` directory — and it passed, because no fixture case id
+    happens to collide with a real one. That is luck, not a rule.
+
+    The two ends of one rule disagreeing is this repository's most frequent
+    defect, and it arrived inside the line that was fixing another one.
+    """
+
+    def _scored(self, case_id, *, recall, alarm, when, digest):
+        prov = {"model_requested": stop_rule.PRODUCT_MODEL,
+                "models_served": [stop_rule.PRODUCT_MODEL],
+                "models_verified": []}
+        return {"case_id": case_id, "case_digest": digest,
+                "unsafe_recall": recall, "safe_false_positive": alarm,
+                "pair_success": recall and not alarm, "ran_at": when,
+                "unsafe_findings": [{"category": "injection",
+                                     "file": "app/handler.py",
+                                     "fingerprint": "f" * 16}]
+                if recall else [],
+                "safe_findings": [],
+                "members": {"safe": {"provenance": dict(prov)},
+                            "unsafe": {"provenance": dict(prov)}}}
+
+    def test_a_flip_in_this_tree_is_seen(self, corpus):
+        root, digest = corpus
+        write_rows(root, "pass-a.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+        write_rows(root, "pass-b.json",
+                   self._scored(CASE, recall=False, alarm=False, digest=digest,
+                                when="2026-09-01T13:00:00+00:00"))
+
+        assert check_accounted.account()["unstable"] == [CASE]
+        assert CASE not in check_accounted.account()["pass"]
+
+    def test_the_real_measurements_directory_is_not_consulted(self, corpus):
+        """The control, and the assertion that catches the defect: a corpus
+        with one agreeing row must come out `pass`, whatever the real tree
+        holds for cases of the same name."""
+        root, digest = corpus
+        write_rows(root, "only.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+
+        buckets = check_accounted.account()
+        assert buckets["unstable"] == []
+        assert buckets["pass"] == [CASE]
+
+    def test_a_flip_with_no_standing_answer_is_still_named(self, corpus):
+        """The check was asked after every branch about the standing answer.
+
+        So a case whose rows contradict each other but whose newest row cannot
+        be read fell to `unaccounted` — "failed, and nothing says why" — and
+        the flip was named nowhere. The rule is about the rows, not about
+        whether one of them ended up standing. Codex, 2026-09-09.
+        """
+        root, digest = corpus
+        write_rows(root, "pass-a.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+        write_rows(root, "pass-b.json",
+                   self._scored(CASE, recall=False, alarm=False, digest=digest,
+                                when="2026-09-01T12:00:00+00:00"))
+        unreadable = self._scored(CASE, recall=True, alarm=False,
+                                  digest=digest,
+                                  when="2026-09-01T13:00:00+00:00")
+        unreadable["unsafe_findings"] = "not a list"
+        write_rows(root, "broken.json", unreadable)
+
+        buckets = check_accounted.account()
+        assert buckets["unstable"] == [CASE]
+        assert buckets["unaccounted"] == []
+
+    def test_a_stale_row_does_not_manufacture_a_flip(self, corpus):
+        """The control that matters most, because it is what the first version
+        got wrong on live data: a case repaired between two versions is not
+        unstable, it is fixed."""
+        root, digest = corpus
+        stale = self._scored(CASE, recall=False, alarm=False, digest="0" * 16,
+                             when="2026-08-01T11:00:00+00:00")
+        write_rows(root, "old.json", stale)
+        write_rows(root, "new.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T13:00:00+00:00"))
+
+        buckets = check_accounted.account()
+        assert buckets["unstable"] == []
+        assert buckets["pass"] == [CASE]
+
+    def _main(self, capsys, argv=()):
+        """Run the command and return (exit code, everything it printed).
+
+        Through `main`, not through `account`. Codex, 2026-09-09, on the first
+        version of the test below: it asserted the bucket and a separate call
+        to `unstable_cases`, and would have passed with the whole printing
+        block deleted. A test of a *report* has to read the report.
+        """
+        import sys
+        argv_before = sys.argv
+        sys.argv = ["check_accounted.py", *argv]
+        try:
+            code = check_accounted.main()
+        finally:
+            sys.argv = argv_before
+        return code, capsys.readouterr().out
+
+    def test_an_unresolved_flip_is_not_exit_zero(self, corpus, capsys):
+        """The command printed "neither passed nor failed" and told CI
+        everything was fine, in the same run.
+
+        Exit 0 in this repository means nothing is outstanding, and a case
+        with two answers and no ruling is outstanding. The exit condition
+        listed `unaccounted`, `unrun` and `unadopted` and not this. Codex,
+        2026-09-09.
+        """
+        root, digest = corpus
+        write_rows(root, "pass-a.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+        write_rows(root, "pass-b.json",
+                   self._scored(CASE, recall=False, alarm=False, digest=digest,
+                                when="2026-09-01T13:00:00+00:00"))
+
+        code, out = self._main(capsys)
+
+        assert code == 1, out
+        assert "1 unstable" in out
+        assert CASE in out
+
+    def test_a_settled_corpus_is_still_exit_zero(self, corpus, capsys):
+        """The control. An exit condition that never returns 0 is a gate
+        nobody can satisfy, and it gets switched off rather than obeyed."""
+        root, digest = corpus
+        write_rows(root, "only.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+
+        code, out = self._main(capsys)
+
+        assert code == 0, out
+        assert "0 unstable" in out
+
+    @pytest.mark.parametrize("alias", [
+        "../corpus-real/{}", "./{}", "{}/.", "{}/",
+        # Not aliases of the case, but names that are not names. They satisfy
+        # `Path(x).name` and the manifest lookup stops them in this layout —
+        # named here so the guard stops being an argument about the layout.
+        "..{}", "{}..",
+    ])
+    def test_a_case_id_that_is_a_path_is_not_this_case(self, corpus, alias):
+        """`case_id` is joined onto the corpus directory, so a name that
+        *resolves* to a case was accepted as a result about it.
+
+        Not only the instability list, which is where it surfaced:
+        `standings` settles a case with the newest admissible row, so an
+        aliased id could supply the standing answer for a case it does not
+        name — in the accounting every number in this project is read from.
+        A case id is one directory name. Codex, 2026-09-09.
+        """
+        _root, digest = corpus
+
+        assert check_accounted.about_this_version(
+            alias.format(CASE), {"case_digest": digest}) is False
+        for literal in ("", ".", "..", "/"):
+            assert check_accounted.about_this_version(
+                literal, {"case_digest": digest}) is False
+        # The control: the canonical name still works, or the repair has
+        # simply switched the predicate off.
+        assert check_accounted.about_this_version(
+            CASE, {"case_digest": digest}) is True
+
+    def test_the_tally_and_the_naming_line_read_one_listing(self, corpus,
+                                                            capsys):
+        """`main` scanned for contradictions a second time to build the naming
+        line, so a row written between the two scans made two views of one
+        directory disagree about one case — named as contradicted *and* as
+        sitting in `pass`, with no ruling anywhere, under a sentence claiming
+        a ruling holds it there.
+
+        "A directory listed twice is two directories" is one of the four
+        shapes this repository keeps being caught by. Codex, 2026-09-09.
+        """
+        root, digest = corpus
+        write_rows(root, "pass-a.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+        write_rows(root, "pass-b.json",
+                   self._scored(CASE, recall=False, alarm=False, digest=digest,
+                                when="2026-09-01T13:00:00+00:00"))
+
+        _code, out = self._main(capsys)
+
+        # One listing means one answer: the case is in the basket, and the
+        # line about cases that kept a ruling does not mention it.
+        assert "1 unstable" in out
+        assert "keep the bucket a ruling put them in" not in out
+
+    def test_the_caller_may_hand_the_listing_in(self, corpus):
+        """The mechanism, asserted directly: `account` uses what it is given
+        rather than scanning again. Without this the two readers could agree
+        today by luck and drift the moment one of them is called alone."""
+        root, digest = corpus
+        write_rows(root, "only.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+
+        # Nothing on disk contradicts, and the caller says otherwise.
+        buckets = check_accounted.account(None, {CASE: 2})
+
+        assert buckets["unstable"] == [CASE]
+        assert buckets["pass"] == []
+
+    def test_a_filtered_out_case_is_not_called_missing(self, corpus, capsys):
+        """The buckets take `--construction`; this list did not.
+
+        So a contradicted *regression* case, asked for under
+        `--construction snapshot`, was reported as "not in the corpus" — about
+        a case sitting in `corpus-real/`. Measured on the real tree: all three
+        of today's contradicted cases were named absent that way. A repair
+        whose own output lies, which is the class the repair exists to close.
+        Codex, 2026-09-09.
+        """
+        root, digest = corpus
+        write_rows(root, "pass-a.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+        write_rows(root, "pass-b.json",
+                   self._scored(CASE, recall=False, alarm=False, digest=digest,
+                                when="2026-09-01T13:00:00+00:00"))
+
+        # The fixture builds a `regression` case, so this filter excludes it.
+        _code, out = self._main(capsys, ("--construction", "snapshot"))
+
+        assert "{} (outside the snapshot filter)".format(CASE) in out
+        assert "not in the corpus" not in out
+        # And the sentence introducing them must not claim a ruling did it.
+        # Codex, 2026-09-09: it read "keep the bucket a ruling put them in",
+        # which is false for exactly this input — the filter excluded the
+        # case and no ruling exists.
+        assert "a filter is not a ruling" in out
+        assert "ruling put them in" not in out
+
+    def test_the_same_case_unfiltered_is_named_by_its_bucket(self, corpus,
+                                                             capsys):
+        """The control. Without it the branch above could be "always say
+        filtered", which would hide a genuinely missing case."""
+        root, digest = corpus
+        write_rows(root, "pass-a.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+        write_rows(root, "pass-b.json",
+                   self._scored(CASE, recall=False, alarm=False, digest=digest,
+                                when="2026-09-01T13:00:00+00:00"))
+
+        code, out = self._main(capsys)
+
+        # Unfiltered it is in a bucket, so it is named by the bucket and the
+        # "elsewhere" line does not mention it at all.
+        #
+        # The case is asserted **by name** in the unstable block, not only
+        # through the count: Codex, 2026-09-09, pointed out that the first
+        # version checked "1 unstable" and the absence of "outside the", and
+        # would still have passed with the three-state resolution reverted —
+        # because the two-state fallback also never says "outside the".
+        assert code == 1, out
+        assert "1 unstable" in out
+        assert "neither passed nor failed: {}".format(CASE) in out
+        assert "outside the" not in out
+        assert "not in the corpus" not in out
+
+    def test_a_case_outside_the_corpus_cannot_be_contradicted_at_all(
+            self, corpus, capsys):
+        """Codex named a case in no bucket at all — deleted, renamed, or
+        mistyped — whose contradiction the naming line dropped in silence.
+        Checked on the running code: it cannot arrive.
+
+        `about_this_version` is the predicate `check_accounted` passes, and it
+        returns `False` when `corpus-real/<case>/case.yml` is missing, so such
+        a row is refused before it can contradict anything. The fallback that
+        would name it stays — the branch costs nothing and the comment beside
+        it is then true whatever a later change does to the predicate — but
+        what is asserted here is the thing that makes it unreachable, because
+        that is the assertion that fails if somebody loosens it.
+        """
+        root, digest = corpus
+        write_rows(root, "gone-a.json",
+                   self._scored("deleted-case", recall=True, alarm=False,
+                                digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+        write_rows(root, "gone-b.json",
+                   self._scored("deleted-case", recall=False, alarm=False,
+                                digest=digest,
+                                when="2026-09-01T13:00:00+00:00"))
+
+        assert check_accounted.about_this_version(
+            "deleted-case", {"case_digest": digest}) is False
+        assert stop_rule.unstable_cases(
+            check_accounted.ROOT,
+            check_accounted.about_this_version) == {}
+        # And without the predicate the rows do contradict, which is what
+        # makes the assertion above about the predicate rather than about the
+        # fixture being empty.
+        assert stop_rule.unstable_cases(check_accounted.ROOT) \
+            == {"deleted-case": 2}
+
+    def test_a_case_ruled_invalid_still_has_its_flip_named(self, corpus,
+                                                           capsys):
+        """`invalid` wins before instability is asked, and the line that names
+        contradicted cases looked only at `limitation` and `known_failure` —
+        so a case ruled invalid whose rows contradict each other was named
+        nowhere, while the comment beside the code claimed ruled cases are
+        named there. A repair whose own comment is false. Codex, 2026-09-09.
+        """
+        root, digest = corpus
+        (root / "corpus-real" / "adjudications.yml").write_text(
+            yaml.safe_dump({"adjudications": [
+                {"case_id": CASE, "case_is_malformed": True,
+                 "why_malformed": "the answer key names a file that moved"}
+            ]}), encoding="utf-8")
+        write_rows(root, "pass-a.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+        write_rows(root, "pass-b.json",
+                   self._scored(CASE, recall=False, alarm=False, digest=digest,
+                                when="2026-09-01T13:00:00+00:00"))
+
+        buckets = check_accounted.account()
+        # The ruling holds — a case that cannot measure anything is not made
+        # measurable by having been measured twice.
+        assert buckets["invalid"] == [CASE]
+        assert buckets["unstable"] == []
+
+        # And the contradiction is named where a person reads. Asserted on the
+        # printed line rather than on a second call to `unstable_cases`: the
+        # first version did that and would have passed with the whole printing
+        # block deleted, which is a test of the defect's absence rather than of
+        # the repair. Codex, 2026-09-09.
+        _code, out = self._main(capsys)
+        assert "{} (invalid)".format(CASE) in out
+
+    def test_the_baskets_still_sum_to_the_corpus(self, corpus):
+        """A new bucket that does not sum makes the corpus larger or smaller
+        than it is, and the tally line is where anybody would notice — late."""
+        root, digest = corpus
+        write_rows(root, "pass-a.json",
+                   self._scored(CASE, recall=True, alarm=False, digest=digest,
+                                when="2026-09-01T11:00:00+00:00"))
+        write_rows(root, "pass-b.json",
+                   self._scored(CASE, recall=False, alarm=False, digest=digest,
+                                when="2026-09-01T13:00:00+00:00"))
+
+        buckets = check_accounted.account()
+        assert sum(len(buckets[name]) for name in check_accounted.BUCKETS) == 1
 
 
 class TestOnlyResultsAboutTodaysCase:

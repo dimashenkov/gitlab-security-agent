@@ -495,6 +495,134 @@ def _why_not_row_for(row: dict, model: str) -> Optional[str]:
     return None
 
 
+def rows_in(stored):
+    """Every row a measurement file holds, whatever shape the file has.
+
+    Three shapes are written and all three are read elsewhere: a batch is a
+    list, an experiment writes one row as a bare object, and a results file
+    wraps a list under `results`. The first version of `unstable_cases` handled
+    two of them and treated the third as one row — so a wrapper holding two
+    contradicting rows returned nothing at all, and a real supported artifact
+    could hide a flip completely. Codex, 2026-09-09.
+    """
+    if isinstance(stored, dict) and isinstance(stored.get("results"), list):
+        stored = stored["results"]
+    for row in (stored if isinstance(stored, list) else [stored]):
+        if isinstance(row, dict):
+            yield row
+
+
+def outcome_triple(row: dict):
+    """This row's answer, or `None` when it does not carry one.
+
+    The three fields a scored pair records, and all three have to be real
+    booleans: `pair_corpus` writes them only on the success path, so a review
+    that crashed carries none of them, and `bool(None)` would score a run that
+    never happened as a miss.
+
+    The coherence check is Codex's, 2026-09-09, and it is not decoration.
+    `pair_success` is derivable — a pair passes when the unsafe member was
+    caught and the safe member raised nothing — so a row where the three
+    disagree was not written by a run of this product, and admitting it as an
+    "answer" would let a hand-edited or half-written file contradict a real
+    measurement and mark the case unstable forever.
+
+    **And it has never fired on a real row**, which is the number rather than
+    the argument. Counted over every file under `measurements/` on 2026-09-09:
+    118 rows taken as an answer, 34 with a field that is not a boolean — a
+    crashed run — 53 refused as another model's, and **0** dropped for
+    incoherence. Codex checked the writer against it independently:
+    `pair_corpus` writes `pair_success = (not safe_hit) and unsafe_hit`, which
+    is this expression. So this is a guard against a file nobody's run wrote,
+    not a filter on production output, and the count is here so the next
+    reader does not have to re-derive whether it is silently dropping answers.
+    """
+    recall = row.get("unsafe_recall")
+    alarm = row.get("safe_false_positive")
+    passed = row.get("pair_success")
+    if not all(isinstance(value, bool) for value in (recall, alarm, passed)):
+        return None
+    if passed != (recall and not alarm):
+        return None
+    return (recall, alarm, passed)
+
+
+def unstable_cases(root=None, admits=None) -> Dict[str, int]:
+    """Cases this product has scored more than one way, and how many ways.
+
+    `latest_rows` settles a case with the newest admissible row. That is the
+    best estimate of current behaviour and it is also a **single draw** from a
+    process this repository has measured as unstable: `experiment-noise-floor-2`
+    ran thirteen cases twice with nothing changed and two of them came out
+    differently, which `RESULT.md` reports as 15% instability. The counting had
+    no way to say which cases those were, so two coin flips sat inside the pass
+    rate as facts — `go-m6jg-wr9m-cg2f` recorded as a miss because the second
+    pass missed it, `rb-g65v-27r3-5p6m` recorded as clean because the second
+    pass was clean.
+
+    Codex, 2026-09-09, choosing this over leaving the rule alone: *"This
+    accepts the failure of conservatism: without an epoch/version field, it can
+    preserve a historical flip after a genuine change in behavior. That is
+    preferable to silently converting observed nondeterminism into a definitive
+    current pass or failure."*
+
+    So the state is **sticky**: two later agreeing draws do not resolve an
+    earlier contradiction, because nothing in the artifacts says the code
+    changed between them. When a measurement epoch exists this can be scoped to
+    one, and until then a flip is a fact about the case that stays.
+
+    A crashed row is not one of the two answers — it is no answer, and
+    `outcome_triple` refuses it. Without that every case with one failed run
+    would read as unstable, which would say the opposite of what it means.
+
+    **`admits` is how the caller says which rows are about the same thing, and
+    the first version had no such parameter.** Codex, 2026-09-09: this walked
+    every product row while `check_accounted.standings` rejects rows carrying
+    a stale `case_digest`, so a failure recorded against an *older version of
+    the case* contradicted a pass recorded against today's — and all three
+    cases the first run reported as unstable were exactly that. Each is a case
+    that was repaired: within its current version every row agrees. Preserving
+    a contradiction across two different questions is not conservatism, it is
+    the two ends of one rule disagreeing, and it arrived inside the change
+    that was fixing a different reader.
+
+    The predicate is passed in rather than re-implemented here, because
+    `about_this_version` needs the corpus layout and this module has no
+    business knowing it. `None` admits everything, which is what a caller with
+    no corpus to compare against means.
+    """
+    # **The root is a parameter.** `check_accounted` reads this and keeps its
+    # own `ROOT`, which its tests replace with a temporary tree — so a default
+    # of this module's `ROOT` made the two readers look at different
+    # directories, and a test that built a corpus of its own would have been
+    # answered from the real `measurements/`. It passed today only because no
+    # fixture case id collides with a real one, which is luck rather than a
+    # rule. The two ends of one rule disagreeing is this repository's most
+    # frequent defect and it arrived inside the line that fixed another one.
+    seen: Dict[str, set] = {}
+    base = Path(root) if root is not None else ROOT
+    for path in glob.glob(str(base / "measurements" / "**" / "*.json"),
+                          recursive=True):
+        if Path(path).name == "manifest.json":
+            continue
+        try:
+            stored = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for row in rows_in(stored):
+            case_id = row.get("case_id")
+            if not case_id or why_not_product_row(row) is not None:
+                continue
+            if admits is not None and not admits(case_id, row):
+                continue
+            answer = outcome_triple(row)
+            if answer is None:
+                continue
+            seen.setdefault(case_id, set()).add(answer)
+    return {case: len(answers) for case, answers in seen.items()
+            if len(answers) > 1}
+
+
 def latest_rows() -> Dict[str, dict]:
     """The most recent row per case, from every measurement file.
 

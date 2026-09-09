@@ -210,6 +210,25 @@ def about_this_version(case_id: str, row: dict) -> bool:
     hash — see `artifact.NO_MEMBERS` — and the comparison is refused outright
     rather than left to compare two sentinels and answer yes.
     """
+    # **The name has to be the name, not a path that reaches it.** Codex,
+    # 2026-09-09: `case_id` is joined onto the corpus directory, so
+    # `"../corpus-real/foo"`, `"./foo"` and `"foo/."` all resolve to `foo` and
+    # were accepted as results about it. Every reader of this predicate was
+    # affected, not only the instability list that surfaced it: `standings`
+    # settles a case with the newest admissible row, so an aliased id could
+    # supply the standing answer for a case it does not name — in the
+    # accounting every number in this project is read from.
+    #
+    # A case id is one directory name. Anything that needs resolving to become
+    # one is not this case's id, whatever it resolves to.
+    #
+    # `.` and `..` are named explicitly: they satisfy `name` and are not
+    # names. Codex checked that the manifest lookup stops them in this layout
+    # anyway — the point of the line is that it stops being an argument about
+    # the layout.
+    if (not case_id or case_id in (".", "..")
+            or case_id != Path(case_id).name):
+        return False
     directory = ROOT / "corpus-real" / case_id
     if not (directory / "case.yml").is_file():
         return False
@@ -561,14 +580,14 @@ def measured_by_other_models() -> set:
 # so that a summation cannot silently acquire a key that is not an outcome —
 # which is what adding `FOREIGN` to the same dict would otherwise have done.
 BUCKETS = ("pass", "limitation", "invalid", "unaccounted", "unrun",
-           "unadopted", "known_failure")
+           "unadopted", "known_failure", "unstable")
 
 # A case some other model measured and this product did not. Reported beside
 # the tally, never inside it: such a case is already counted in `unrun`.
 FOREIGN = "measured_by_another_model"
 
 
-def account(construction=None) -> dict:
+def account(construction=None, contradicted=None) -> dict:
     invalid = rulings()
     understood = known_failures()
     limitations = named_in_limitations()
@@ -598,7 +617,8 @@ def account(construction=None) -> dict:
     # walk was for a few lines above.
     other = _foreign(by_model) - measured
     buckets = {"pass": [], "limitation": [], "invalid": [], "unaccounted": [],
-               "unrun": [], "unadopted": [], "known_failure": []}
+               "unrun": [], "unadopted": [], "known_failure": [],
+               "unstable": []}
     # Under a key of its own, and **not** an outcome. Every case is in exactly
     # one of the buckets above and they sum to the corpus; a case named here
     # is *also* in `unrun`, so treating it as a seventh bucket would report a
@@ -606,6 +626,20 @@ def account(construction=None) -> dict:
     # tool and the property test count through it rather than through
     # `.values()`.
     buckets[FOREIGN] = []
+    # This module's `ROOT`, not the other module's: they are separate names
+    # and the tests replace only this one.
+    # **One listing, and the caller may hand it in.** Codex, 2026-09-09:
+    # `main` scanned for contradictions a second time to build the naming
+    # line, so a row written between the two scans made the two views of one
+    # directory disagree about one case — the report could name a case as
+    # contradicted *and* as sitting in `pass`, with no ruling anywhere, and
+    # the sentence claiming a ruling holds it there was then false.
+    #
+    # "A directory listed twice is two directories" is one of the four shapes
+    # this repository keeps being caught by; today's own commit message names
+    # it, and it arrived again in the change that message describes.
+    unstable = set(stop_rule.unstable_cases(ROOT, about_this_version)
+                   if contradicted is None else contradicted)
     for manifest in sorted((ROOT / "corpus-real").glob("*/case.yml")):
         case_id = manifest.parent.name
         body = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
@@ -615,6 +649,24 @@ def account(construction=None) -> dict:
             buckets[FOREIGN].append(case_id)
         if case_id in invalid:
             buckets["invalid"].append(case_id)
+        elif (case_id in unstable and case_id not in understood
+                and case_id not in limitations):
+            # **Asked before every branch about the standing answer.** Codex,
+            # 2026-09-09: the first version asked it after them, so a case
+            # whose product rows contradict each other but whose newest row is
+            # unreadable — or which was never adopted into the production
+            # stream — fell to `unaccounted`, `unadopted` or `unrun`, and the
+            # flip was named nowhere. The rule is about the rows, not about
+            # whether one of them ended up standing.
+            #
+            # `invalid` still wins: a case that cannot measure anything is not
+            # made measurable by having been measured twice. A case a person
+            # ruled on keeps the ruling — instability is an argument to
+            # revisit a decision, not an erasure of it, and this file has been
+            # caught once letting a machine observation revoke a human one.
+            # Every contradicted case outside this bucket is named beside the
+            # tally instead, whichever bucket it landed in.
+            buckets["unstable"].append(case_id)
         elif standing.get(case_id, "absent") is None:
             # Its production rows exist and none of them answers — a findings
             # field that is not a list, or one holding something that is not a
@@ -668,17 +720,81 @@ def main() -> int:
     parser.add_argument("--construction", choices=("regression", "snapshot"))
     args = parser.parse_args()
 
-    buckets = account(args.construction)
+    # Scanned once and handed to both readers, so the tally and the naming
+    # line below cannot disagree about which cases are contradicted.
+    contradicted = stop_rule.unstable_cases(ROOT, about_this_version)
+    buckets = account(args.construction, contradicted)
     total = sum(len(buckets[name]) for name in BUCKETS)
 
-    print("{} case(s){}: {} pass, {} known failure(s), {} limitation(s), "
-          "{} invalid, {} not run, {} measured but not adopted, "
-          "{} unaccounted".format(
+    print("{} case(s){}: {} pass, {} unstable, {} known failure(s), "
+          "{} limitation(s), {} invalid, {} not run, "
+          "{} measured but not adopted, {} unaccounted".format(
               total, " ({})".format(args.construction) if args.construction else "",
-              len(buckets["pass"]), len(buckets["known_failure"]),
-              len(buckets["limitation"]),
+              len(buckets["pass"]), len(buckets["unstable"]),
+              len(buckets["known_failure"]), len(buckets["limitation"]),
               len(buckets["invalid"]), len(buckets["unrun"]),
               len(buckets["unadopted"]), len(buckets["unaccounted"])))
+
+    # **Named, and the ones that keep a ruling are named too.** Only a case
+    # that would otherwise be `pass` is diverted into the basket, so a case a
+    # person has ruled on stays where the ruling put it — and would then carry
+    # no sign at all that its answer has been contradicted. That is the state
+    # this whole basket exists to stop being silent about, one bucket along.
+    if buckets["unstable"]:
+        print("{} case(s) this product has scored more than one way, so "
+              "neither passed nor failed: {}".format(
+                  len(buckets["unstable"]), ", ".join(sorted(buckets["unstable"]))))
+
+    # **Every contradicted case that is not in the basket, whichever bucket it
+    # is in.** The first version named only `limitation` and `known_failure`,
+    # and `invalid` wins before instability is asked — so a case ruled invalid
+    # whose rows contradict each other was named nowhere at all, while the
+    # comment beside it claimed ruled cases are named here. Codex, 2026-09-09:
+    # a repair whose own comment is false about what the code does.
+    #
+    # Derived from the buckets rather than from a second list of ruling names,
+    # so a bucket added later cannot fall out of this line the way `invalid`
+    # did.
+    # Every case the corpus holds, whatever filter this invocation asked for.
+    # Without it "in no bucket" cannot be told from "filtered out of this
+    # run's buckets", and those are different sentences to a reader.
+    in_the_corpus = {path.parent.name
+                     for path in (ROOT / "corpus-real").glob("*/case.yml")}
+    construction = args.construction or "requested"
+    elsewhere = []
+    for case in sorted(contradicted):
+        if case in buckets["unstable"]:
+            continue
+        # **A case in no bucket is named too, and says so.** Codex,
+        # 2026-09-09: `account` iterates the corpus manifests, so a
+        # contradicted row for a case that has been deleted, renamed or
+        # mistyped is in no bucket at all — and the first version dropped it
+        # silently while the comment above claimed every contradicted case is
+        # named. Absence read as agreement, in the line that reports absence.
+        # Codex again, on that repair: the fallback said "not in the corpus"
+        # for a case that is *in* the corpus and merely outside the requested
+        # `--construction`. Measured on the tree: `--construction snapshot`
+        # named all three of today's contradicted regression cases as absent.
+        # The buckets are filtered and this list is not, so the sentence was
+        # false about every case the filter dropped — a repair whose own
+        # output lies, which is the class the repair exists to close.
+        where = next((name for name in BUCKETS if case in buckets[name]), None)
+        if where is None:
+            where = ("outside the {} filter".format(construction)
+                     if case in in_the_corpus else "not in the corpus")
+        elsewhere.append("{} ({})".format(case, where))
+    if elsewhere:
+        # **The sentence says only what is true of every case in the list.**
+        # Codex, 2026-09-09: it read "keep the bucket a ruling put them in",
+        # and a case the `--construction` filter excluded is in this list with
+        # no ruling anywhere — so the lead sentence was false for a reachable
+        # input while each entry beside it was right. The reason is per case
+        # and is printed per case; the sentence introduces them and must not
+        # claim a cause it cannot know.
+        print("{} more carry a contradicted answer and are counted elsewhere, "
+              "with what holds each one there. A ruling is not revoked by an "
+              "observation, and a filter is not a ruling: {}".format(
+                  len(elsewhere), ", ".join(elsewhere)))
 
     # Named, not folded in. These rows were paid for and are not this
     # product's answer; a case that has only such a row is counted above as
@@ -705,8 +821,22 @@ def main() -> int:
               "ones are bought this would otherwise announce that everything "
               "is accounted for while two cases have no verdict.".format(
                   len(buckets["unadopted"]), "\n  ".join(buckets["unadopted"])))
+    if buckets["unstable"]:
+        print("\n{} case(s) have no settled answer because this product "
+              "gave more than one:\n  {}\n\nEach needs a decision, and "
+              "re-measuring is not one on its own — a third draw of a coin "
+              "that has landed both ways is a third draw. Either a fix that "
+              "removes the source of the disagreement, or a line in "
+              "LIMITATIONS.md saying the case is not decidable as it "
+              "stands.".format(len(buckets["unstable"]),
+                                "\n  ".join(sorted(buckets["unstable"]))))
+    # **And `unstable` is one of the states that is not exit 0.** Codex,
+    # 2026-09-09: without it the command printed "scored more than one way, so
+    # neither passed nor failed" and told CI everything was fine, in the same
+    # run. This repository's own rule is that exit 0 means nothing is
+    # outstanding; a case with two answers and no ruling is outstanding.
     return 1 if (buckets["unaccounted"] or buckets["unrun"]
-                 or buckets["unadopted"]) else 0
+                 or buckets["unadopted"] or buckets["unstable"]) else 0
 
 
 if __name__ == "__main__":
