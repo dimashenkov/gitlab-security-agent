@@ -2335,3 +2335,134 @@ Two things this does **not** do, and both are open:
   overlooked: those two numbers have a published threshold behind them and
   moving them is a separate decision with its own measurement. It is written
   here so that the difference is a recorded choice and not a discovery.
+
+
+## The spend counter did not know 131 of its own files existed
+
+Measured 2026-09-09: 154 files under `measurements/` record something
+billable, and **131 of them are outside every glob `tools/spend.py` uses**.
+`DEFAULT_GLOBS` covers `findings.json` and `rows.json`; the corpus batches and
+the experiment rows are named neither way. 356 member records sit there, 318
+provider requests, and **221 of them carry a `cost` summing to $131.05** — in
+the tool that exists to answer "what has this cost".
+
+**The first measurement of the gap was wrong and said so out loud.** It looked
+for `total_cost_usd`, found none, and reported the gap as token counts with no
+money in it. The field is `cost` and it is a bare float. A number nobody found
+is not a number that is not there.
+
+Codex adjudicated how to close it, and refused the obvious repair: *"B. It
+accepts incomplete overall coverage: unkeyed sources remain unsummed. Heading
+must claim 'separately observed, unpriced token usage'. It must not claim
+total spend, deduplicated usage, or inclusion in the artifact-derived floor."*
+
+The refusal has a count behind it. **All 22 kept `findings.json` artifacts
+have a row for the same `(case, member)`**, and neither side carries a
+`run_id` — keying them would need a composite of case, member and instant.
+Adding a glob would have counted every one of those runs twice, which is the
+defect that once reported `$10.00` for a `$5.00` purchase, returning by the
+same route. Double counting invents spend nobody paid; a floor that says it is
+a floor does not.
+
+So `--source rows` is a third source beside `artifacts` and `queue`, summed
+with neither, and the headline names what it did not read.
+
+**What this does not do:** the three sources are never reconciled, so nothing
+here can state a total. A run written both as an artifact and as a row is in
+two of them, and the tool says so rather than choosing. Closing that needs a
+`run_id` written at the time of the run — which is a change to the writer, not
+to the counter, and is not built.
+
+**Eleven defects in the building of it, and the shape of the worst one.**
+Three came from running the shapes a file *can* have rather than the shape it
+should have: `members` as a list raised `AttributeError` — and `unread_note`
+runs on every headline path, so one malformed file under `measurements/` took
+down the single line the owner reads in every report; `cost` as `nan` made the
+whole sum `nan`, printed as `$nan`, one refused value poisoning every figure
+downstream of it — and the first repair then filed it under "carry usage and
+no price", about a record that carries one, while this file called it
+unreadable three lines away. A **refused** price and an **absent** one are
+different answers and are counted separately now; a negative price would have *reduced* a total, so one
+bad row could hide the cost of a real one.
+
+**And two claims the reader could not establish.** The heading said the price
+was "charged to nobody" — but a row carries no provider, no login and no
+billing arrangement, so a copied, future or API-funded row would be classified
+by a sentence with no evidence under it. In the counter that exists to refuse
+exactly that. It says what it saw and what it cannot say now; whether anybody
+paid is `BILLING_ARRANGEMENT`'s question. Beside it, `--since`, `--detail`,
+`--breakdown` and a positional path were accepted by this source and silently
+did nothing, so a filtered invocation printed figures for the whole repository
+and exited 0 — a flag accepted and ignored is worse than one rejected, because
+the reader believes the filter applied. They are refused with exit 2 now.
+
+**Three states again, and it took a measurement to see it.** A file holding
+`{"foo": "bar"}` passed as "a readable source with nothing in it" — and 68
+files under `measurements/` are exactly that: a panel, a replay, a report. The
+repair that suggested itself was to call them unreadable, which would have
+made the real corpus exit 2 on every invocation and got the check switched
+off. Counting them first is what showed the answer is a *third* state: parsed,
+understood, about something else. That is the third time in two days the
+answer has been three states rather than two, and each time the two-state
+version was already written before anybody counted.
+
+**And then a fifth state, found by asking what a file with *both* does.** One
+usable row beside one this reader cannot parse: `seen_here` won, the broken row
+vanished, and the file counted as fully understood. Absence read as agreement,
+in the reader written against it — and a question neither the tests nor three
+review rounds had put. **They are facts about a file, not a list of states, and saying "five
+states" cost two more rounds.** The reader records four things and a file can
+carry several at once: it yielded records (`files`), something in it was not
+usable (`partial`), something in it was not a row at all (`not_rows`), and —
+only when nothing came out — nothing in it could be read (`unreadable`). A
+file that will not open or will not parse lands in the last of those; there is
+no separate "not there", and this file claimed one for a round.
+
+Written as an `elif` chain first. A file holding a good row, a broken row
+*and* an object that is not a row matched the third arm, so `partial` was
+never set and the command exited 0 over a file it had read in half. One arm of
+a chain swallowing another is the same loss as a missing branch. Found by
+running all sixteen combinations of what a file can contain; reasoning about
+which case might collide had found nothing.
+
+And a member the reader cannot use is a loss like any other. `unusable_members`
+was counted and changed nothing about its file, so a file whose only member was
+unreadable landed in no state at all and exited 0, and one usable member beside
+one unusable read as wholly understood — the count said something was missing
+and the exit code said everything was fine. A partial read exits 2 for the same
+reason an unreadable file does: the figure is under by an amount nobody knows.
+
+**One invariant covers every refusal, and it took the last round to state it.**
+A refused price and a refused token count were both recorded and neither made
+the file partial, so the command printed what it had thrown away and exited 0 —
+contradicting what exit 0 means here and what `partial` is defined as three
+lines from the refusal. Codex named this as the single thing that had to change
+before the work could be committed: *anything in a member this reader refuses
+makes the read partial.* One rule rather than two that can drift apart, which is
+how the pair got out of step in the first place.
+
+Beside it, two smaller ones from the same round: `unreadable` counts files and
+was incremented per row, so one file holding two malformed rows reported "2
+file(s) could not be read" — a counter inflating its own figure for how much
+it missed; and the heading announced "a recorded price" over a source that
+recorded none, contradicting the line three rows below it.
+
+**Three more from the round after that, and all of them the same shape from
+the other side.** An object that is not a row disappeared when it shared a file
+with a real one; a member this reader cannot parse was dropped in silence, so a
+file with four members could contribute two and report nothing missing; and a
+price that was written down and refused was reported as a price that was never
+written. Not absence read as agreement this time — **a refusal read as an
+absence**, which is the same loss wearing the other coat.
+
+None of the three occurs in this tree, measured before the repair rather than
+assumed after it. They close holes rather than move a live figure.
+
+**And one thing found while building it.** The clause naming the unread source
+went into the `$0.00 charged` branch, and this file prints a figure four ways:
+an empty ledger, an indeterminate one, a number, and that one. A run with no
+artifacts takes the *empty* branch — "no records were found" — which is the
+headline where the omission is worst, and the qualification was absent from
+exactly there. It is one function now, called on every path. The comment
+beside the no-call clause already recorded the same shape happening once
+before, three lines from where it happened again.

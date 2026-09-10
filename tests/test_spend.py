@@ -14,6 +14,7 @@ cannot be read.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -1639,3 +1640,718 @@ class TestOneRunIsCountedOnce:
         out = capsys.readouterr().out
         assert "-26" not in out
         assert "could not be read" not in out
+
+
+class TestTheCorpusRowsAreASourceOfTheirOwn:
+    """131 of the 154 money-bearing files were outside every glob this tool
+    uses, and 221 member records in them carry a price summing to $131.05.
+
+    The tool that answers "what has this cost" did not know the files existed
+    — the shape it exists to catch, in itself. Codex, 2026-09-09, choosing how
+    to close it: *"B. It accepts incomplete overall coverage: unkeyed sources
+    remain unsummed. Heading must claim 'separately observed, unpriced token
+    usage'. It must not claim total spend, deduplicated usage, or inclusion in
+    the artifact-derived floor."*
+
+    Folding them into the artifact totals was refused on a count: all 22 kept
+    `findings.json` artifacts have a row for the same `(case, member)`, and
+    neither side carries a `run_id`. A glob would have counted every one of
+    those runs twice — the defect that once reported `$10.00` for a `$5.00`
+    purchase.
+    """
+
+    def _row(self, root, name, *members):
+        body = {"case_id": "c", "members": {
+            role: {"cost": cost, "usage": {
+                "requests": 1, "input_tokens": 10, "output_tokens": 20,
+                "cache_read_tokens": 300, "cache_write_tokens": 40}}
+            for role, cost in members}}
+        path = root / "measurements" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(body), encoding="utf-8")
+        return path
+
+    def test_it_reads_what_no_other_source_does(self, tmp_path):
+        self._row(tmp_path, "batch.json", ("safe", 1.25), ("unsafe", 2.75))
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["members"] == 2
+        assert totals["priced"] == 2
+        assert totals["usd"] == 4.00
+        assert totals["requests"] == 2
+
+    def test_the_artifact_globs_are_not_read_here(self, tmp_path):
+        """The control, and the whole reason this is a separate source: a
+        file the artifact reader already covers must not be counted again."""
+        for name in ("findings.json", "rows.json"):
+            self._row(tmp_path, name, ("safe", 9.99))
+
+        assert spend.corpus_rows_usage(tmp_path)["members"] == 0
+
+    def test_a_record_with_no_price_is_absent_and_not_zero(self, tmp_path):
+        """`unpriced`, not a zero folded into the sum. A run whose price was
+        never written down is a missing value, and this file's whole subject
+        is that the two are different answers."""
+        self._row(tmp_path, "batch.json", ("safe", None), ("unsafe", 3.00))
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["priced"] == 1
+        assert totals["unpriced"] == 1
+        assert totals["usd"] == 3.00
+
+    def test_a_boolean_cost_is_not_a_dollar(self, tmp_path):
+        """`True` is an `int` in Python and would add one dollar to a bill.
+        The guard is `isinstance(cost, bool)`, and this is the input for it.
+
+        It lands in `rejected_price`, not `unpriced`: the record carries a
+        value and this reader refused it, which is not the same as a record
+        that carries none.
+        """
+        self._row(tmp_path, "batch.json", ("safe", True))
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["usd"] == 0.0
+        assert totals["rejected_price"] == 1
+        assert totals["unpriced"] == 0
+
+    def test_a_results_wrapper_is_read(self, tmp_path):
+        """One of the three shapes written in this tree. Reading it as a
+        single row would report a whole file as nothing."""
+        path = tmp_path / "measurements" / "wrapped.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"results": [
+            {"case_id": "c", "members": {"safe": {
+                "cost": 5.00,
+                "usage": {"requests": 1, "input_tokens": 1,
+                          "output_tokens": 1, "cache_read_tokens": 1,
+                          "cache_write_tokens": 1}}}}]}), encoding="utf-8")
+
+        assert spend.corpus_rows_usage(tmp_path)["usd"] == 5.00
+
+    def test_an_unreadable_file_is_counted_and_not_skipped(self, tmp_path):
+        """"I could not read it" is a third answer. Counting it silently as
+        nothing is what makes a floor read like a total."""
+        path = tmp_path / "measurements" / "broken.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json", encoding="utf-8")
+
+        assert spend.corpus_rows_usage(tmp_path)["unreadable"] == 1
+
+    def test_two_names_for_one_file_are_one_file(self, tmp_path):
+        """A hard link makes `glob` hand over the same bytes twice.
+
+        This source's whole justification is that it does not double count,
+        and `$5.00` became `$10.00` from two names for one file — the exact
+        figure this tool was once caught reporting. `read_runs` already keys
+        on `(st_dev, st_ino)` for the artifact source; the rule was argued for
+        here at length and not applied. Codex, 2026-09-09.
+        """
+        first = self._row(tmp_path, "a.json", ("safe", 5.00))
+        # `Path.hardlink_to` is 3.10; this runs on 3.9.
+        os.link(str(first), str(tmp_path / "measurements" / "alias.json"))
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["files"] == 1
+        assert totals["usd"] == 5.00
+
+    def test_a_malformed_members_block_does_not_take_the_report_down(
+            self, tmp_path):
+        """`members` as a list raised `AttributeError`.
+
+        `unread_note` calls this on *every* headline path, so one malformed
+        file under `measurements/` took down the single line the owner reads
+        in every report. A counter that cannot be run is worse than one that
+        counts short. Found 2026-09-09 by running the shapes a file can have
+        rather than the shape it should have.
+        """
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": ["nope"]}),
+                        encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["members"] == 0
+        assert totals["unreadable"] == 1
+
+    @pytest.mark.parametrize("cost", [float("nan"), float("inf"), -5.0,
+                                      "5.00", True])
+    def test_a_refused_price_is_not_an_absent_one(self, tmp_path, cost):
+        """`nan`, a negative, a string and a bool all landed in `unpriced`,
+        which prints "carry usage and no price" — about a record that carries
+        one. `LIMITATIONS.md` called `nan` an unreadable value in the same
+        breath, so the file and its own documentation disagreed. The earlier
+        test asserted `unpriced == 1` and so encoded the conflation. Codex,
+        2026-10."""
+        self._row(tmp_path, "x.json", ("safe", cost))
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["rejected_price"] == 1
+        assert totals["unpriced"] == 0
+        assert totals["usd"] == 0.0
+
+    def test_an_absent_price_is_still_absent(self, tmp_path):
+        """The control, and the other half of the distinction: a member with
+        no `cost` key at all is a missing value, not a refused one."""
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {"safe": {
+            "usage": {"requests": 1}}}}), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["unpriced"] == 1
+        assert totals["rejected_price"] == 0
+
+    def test_a_member_that_cannot_be_read_is_counted(self, tmp_path):
+        """A member that is not an object, or whose `usage` is not one, was
+        dropped in silence — so a file could hold four members, contribute
+        two, and report nothing missing. Codex, 2026-10."""
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {
+            "safe": "not an object",
+            "unsafe": {"cost": 1.0, "usage": "not an object"},
+        }}), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["unusable_members"] == 2
+        assert totals["members"] == 0
+
+    def test_a_file_of_only_unusable_members_is_unreadable(self, tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+        """`unusable_members` was counted and changed nothing about its file.
+
+        So a file whose only member could not be read landed in no state at
+        all and the command exited 0 — the count said something was missing
+        and the exit code said everything was fine. Codex, 2026-10.
+        """
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c",
+                                    "members": {"safe": "not an object"}}),
+                        encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+        assert totals["files"] == 0
+        assert totals["unreadable"] == 1
+        assert spend.main(["--source", "rows"]) == 2
+        capsys.readouterr()
+
+    def test_a_usable_member_beside_an_unusable_one_is_partial(self,
+                                                               tmp_path):
+        """The other half: the file did yield a record, and it is still short
+        by one. Read in part, not read whole."""
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {
+            "safe": "not an object",
+            "unsafe": {"cost": 1.0, "usage": {"requests": 1}},
+        }}), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["files"] == 1
+        assert totals["partial"] == 1
+        assert totals["members"] == 1
+
+    def test_a_refused_field_makes_the_read_partial(self, tmp_path,
+                                                    monkeypatch, capsys):
+        """The refusal was recorded and the command still exited 0.
+
+        That contradicts what exit 0 means here and what `partial` is defined
+        as, three lines of documentation away. One invariant covers both
+        refusals — a price and a count — rather than two rules that can drift.
+        Codex, 2026-10, named this as the single thing that had to change
+        before the work could be committed.
+        """
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {"safe": {
+            "cost": "5.00",
+            "usage": {"requests": "many", "input_tokens": 1,
+                      "output_tokens": 1, "cache_read_tokens": 1,
+                      "cache_write_tokens": 1}}}}), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+        assert totals["partial"] == 1
+        assert totals["rejected_price"] == 1
+        assert totals["unusable_counts"] == 1
+
+        assert spend.main(["--source", "rows"]) == 2
+        capsys.readouterr()
+
+    @pytest.mark.parametrize("member", [
+        {"cost": "5.00", "usage": {"requests": 1}},
+        {"cost": 1.0, "usage": {"requests": "many"}},
+    ])
+    def test_either_refusal_alone_is_enough(self, tmp_path, member):
+        """One invariant, so a price refused on its own and a count refused on
+        its own both reach it. Two rules would drift; this is the test that
+        notices if they are ever split again."""
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c",
+                                    "members": {"safe": member}}),
+                        encoding="utf-8")
+
+        assert spend.corpus_rows_usage(tmp_path)["partial"] == 1
+
+    def test_a_file_whose_members_all_read_is_not_partial(self, tmp_path):
+        """The control. Without it the two above could be satisfied by
+        calling every file partial, which makes the exit code useless."""
+        self._row(tmp_path, "x.json", ("safe", 1.0), ("unsafe", 2.0))
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["partial"] == 0
+        assert totals["unusable_members"] == 0
+
+    def test_a_non_row_beside_a_good_row_is_not_lost(self, tmp_path):
+        """Only the all-or-nothing case was reported, so an object nobody
+        could place vanished when it shared a file with a row. Measured: no
+        file in this tree is that shape, so the hole is closed rather than
+        waited for. Codex, 2026-10."""
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([
+            {"case_id": "c", "members": {"safe": {
+                "cost": 1.0, "usage": {"requests": 1}}}},
+            {"foo": "bar"},
+        ]), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["members"] == 1
+        assert totals["files"] == 1
+        assert totals["not_rows"] == 1
+
+    def test_an_ordinary_price_is_still_summed(self, tmp_path):
+        """The control. A guard that refuses everything is not a guard."""
+        self._row(tmp_path, "x.json", ("safe", 5.00))
+
+        assert spend.corpus_rows_usage(tmp_path)["usd"] == 5.00
+
+    def test_a_token_count_that_is_not_a_number_is_named(self, tmp_path):
+        """A float count was dropped in silence while the member still
+        counted — an undercount with nothing saying so. A string is refused
+        and said."""
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {"safe": {
+            "cost": 1.0,
+            "usage": {"requests": "many", "input_tokens": 2.5,
+                      "output_tokens": 1, "cache_read_tokens": 1,
+                      "cache_write_tokens": 1}}}}), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        # The float is real arithmetic and counts; the string does not, and
+        # the fact that something was refused is recorded rather than lost.
+        assert totals["input_tokens"] == 2.5
+        assert totals["requests"] == 0
+        assert totals["unusable_counts"] == 1
+
+    def test_the_refused_counts_are_printed_and_not_only_counted(
+            self, tmp_path, monkeypatch, capsys):
+        """`unusable_counts` was collected and printed nowhere.
+
+        A refused value that is counted and not said makes the token figures
+        read as complete when they are short — the qualification that does not
+        travel with the number, which is the defect this file repaired twice
+        today before doing it a third time itself.
+        """
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {"safe": {
+            "cost": 1.0, "usage": {"requests": "many", "input_tokens": 1,
+                                   "output_tokens": 1, "cache_read_tokens": 1,
+                                   "cache_write_tokens": 1}}}}),
+            encoding="utf-8")
+
+        spend.main(["--source", "rows"])
+        out = capsys.readouterr().out
+
+        assert "not usable numbers" in out
+
+    def test_it_is_silent_when_every_count_was_usable(self, tmp_path,
+                                                     monkeypatch, capsys):
+        """The control. A line that always prints is not a qualification."""
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {"safe": {
+            "cost": 1.0, "usage": {"requests": 1, "input_tokens": 1,
+                                   "output_tokens": 1, "cache_read_tokens": 1,
+                                   "cache_write_tokens": 1}}}}),
+            encoding="utf-8")
+
+        spend.main(["--source", "rows"])
+
+        assert "not usable numbers" not in capsys.readouterr().out
+
+    @pytest.mark.parametrize("body", [
+        [["not", "a", "row"]],
+        {"results": {"case_id": "c", "members": {"safe": {"cost": 5}}}},
+        "a bare string",
+    ])
+    def test_a_file_of_no_known_shape_is_not_an_empty_source(self, tmp_path,
+                                                             body):
+        """It parsed, matched nothing, and left the count at zero with exit 0.
+
+        "I read it and there was nothing" about a file nobody could read is
+        the same sentence this project exists to refuse everywhere else. The
+        second case is worse than silence: a `results` key holding one row
+        rather than a list made the wrapper itself get read as the row, so a
+        file plainly holding a measurement came out empty. Codex, 2026-09-09.
+        """
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["members"] == 0
+        assert totals["unreadable"] == 1
+
+    def test_a_file_about_something_else_is_a_third_answer(self, tmp_path):
+        """`{"foo": "bar"}` passed as "a readable source with nothing in it".
+
+        68 files in this repository are exactly that — a panel, a replay, a
+        report — so calling them unreadable would make the real corpus exit 2
+        on every invocation and the check would be switched off. They are a
+        third state: parsed, understood, and about something else. Codex,
+        2026-09-09; the count is measured, not guessed.
+        """
+        path = tmp_path / "measurements" / "panels.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"panels": [1, 2]}), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["not_rows"] == 1
+        assert totals["unreadable"] == 0
+        assert totals["files"] == 0
+
+    def test_one_file_with_two_bad_rows_is_one_unreadable_file(self,
+                                                               tmp_path):
+        """`unreadable` counts files and was incremented per row, so a single
+        file holding two malformed rows reported "2 file(s) could not be
+        read" — the reader inflating its own figure for how much it missed.
+        Codex, 2026-09-09."""
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([{"case_id": "a", "members": []},
+                                    {"case_id": "b", "members": []}]),
+                        encoding="utf-8")
+
+        assert spend.corpus_rows_usage(tmp_path)["unreadable"] == 1
+
+    def test_a_file_read_in_part_says_so(self, tmp_path):
+        """One usable row beside one this reader cannot parse.
+
+        `seen_here` won, so the broken row vanished and the file counted as
+        fully understood — absence read as agreement, in the reader written
+        against it. Found 2026-10 by asking what a file with *both* does,
+        which is a question neither the tests nor three review rounds had put.
+        """
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([
+            {"case_id": "a", "members": {"safe": {
+                "cost": 1.0, "usage": {"requests": 1}}}},
+            {"case_id": "b", "members": []},
+        ]), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        # What came out is kept; what did not is named.
+        assert totals["members"] == 1
+        assert totals["partial"] == 1
+        assert totals["unreadable"] == 0
+        assert totals["files"] == 1
+
+    def test_a_file_carrying_three_facts_reports_all_three(self, tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+        """These are not five exclusive states — they are facts, and a file
+        can carry several.
+
+        Written as an `elif` chain first: `good row + malformed row + non-row
+        object` matched the `not_rows` arm, so `partial` was never set and the
+        run exited 0 over a file it had read in half. One arm of a chain
+        swallowing another is the same loss as a missing branch, and only
+        running every combination showed it — found 2026-10 by doing that
+        rather than by reasoning about which case might collide.
+        """
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([
+            {"case_id": "a", "members": {"safe": {
+                "cost": 1.0, "usage": {"requests": 1}}}},
+            {"case_id": "b", "members": []},
+            {"foo": "bar"},
+        ]), encoding="utf-8")
+
+        totals = spend.corpus_rows_usage(tmp_path)
+        assert totals["files"] == 1
+        assert totals["partial"] == 1
+        assert totals["not_rows"] == 1
+        assert totals["unreadable"] == 0
+
+        # And every one of them reaches the reader, with exit 2 for the half
+        # that was not read.
+        code = spend.main(["--source", "rows"])
+        out = capsys.readouterr().out
+        assert code == 2
+        assert "read in part" in out
+        assert "about something else" in out
+
+    def test_a_file_read_whole_is_not_partial(self, tmp_path):
+        """The control. A flag that fires on a healthy file is a flag that
+        makes the exit code useless."""
+        self._row(tmp_path, "x.json", ("safe", 1.0), ("unsafe", 2.0))
+
+        assert spend.corpus_rows_usage(tmp_path)["partial"] == 0
+
+    def test_a_partial_read_is_not_exit_zero(self, tmp_path, monkeypatch,
+                                             capsys):
+        """The figure is under by an amount nobody knows, and "I could not
+        check" must not leave with the code for "here is the answer"."""
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([
+            {"case_id": "a", "members": {"safe": {
+                "cost": 1.0, "usage": {"requests": 1}}}},
+            {"case_id": "b", "members": []},
+        ]), encoding="utf-8")
+
+        code = spend.main(["--source", "rows"])
+
+        assert code == 2
+        assert "read in part" in capsys.readouterr().out
+
+    def test_the_heading_claims_no_price_when_none_was_recorded(
+            self, tmp_path, monkeypatch, capsys):
+        """Over a source whose members all carry usage and no `cost`, the
+        heading announced "a recorded price" and the next line said the
+        opposite — two sentences about one run contradicting each other three
+        lines apart. Codex, 2026-09-09."""
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        self._row(tmp_path, "x.json", ("safe", None))
+
+        spend.main(["--source", "rows"])
+        out = capsys.readouterr().out
+
+        assert "a recorded price" not in out
+        assert "carry usage and no price" in out
+
+    def test_the_heading_names_the_price_when_there_is_one(self, tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+        """The control. A heading that never mentions a price would hide the
+        figure this source exists to surface."""
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        self._row(tmp_path, "x.json", ("safe", 5.00))
+
+        spend.main(["--source", "rows"])
+
+        assert "a recorded price" in capsys.readouterr().out
+
+    def test_an_empty_list_is_a_readable_file_with_nothing_in_it(
+            self, tmp_path):
+        """The control. A batch that legitimately recorded no rows is not a
+        file this reader failed to understand, and calling it unreadable would
+        make the exit code useless."""
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("[]", encoding="utf-8")
+
+        assert spend.corpus_rows_usage(tmp_path)["unreadable"] == 0
+
+    def test_a_dangling_symlink_is_counted_as_unreadable(self, tmp_path):
+        """The unreadable test used invalid JSON, which is a different branch.
+
+        Codex, 2026-09-09: removing the `stat()` accounting would not fail it.
+        A dangling symlink is the ordinary way a real repository reaches that
+        branch — `glob` lists the name and `stat` follows it and raises — so
+        the state is one a tree can hold rather than one only a test can
+        build.
+        """
+        (tmp_path / "measurements").mkdir(parents=True, exist_ok=True)
+        os.symlink(str(tmp_path / "measurements" / "gone.json"),
+                   str(tmp_path / "measurements" / "dangling.json"))
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["members"] == 0
+        assert totals["unreadable"] == 1
+
+    def test_a_symlinked_directory_alias_is_one_file(self, tmp_path):
+        """The implementation claims a symlinked alias is deduplicated and
+        only a hard link was tested. Codex, 2026-09-09: an untested half of a
+        claim is a claim."""
+        self._row(tmp_path, "a.json", ("safe", 5.00))
+        os.symlink(str(tmp_path / "measurements"),
+                   str(tmp_path / "measurements" / "mirror"))
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["files"] == 1
+        assert totals["usd"] == 5.00
+
+    def test_two_different_files_are_two_files(self, tmp_path):
+        """The control. Deduplicating by content or by size would collapse
+        two genuine runs that happen to look alike."""
+        self._row(tmp_path, "a.json", ("safe", 5.00))
+        self._row(tmp_path, "b.json", ("safe", 5.00))
+
+        totals = spend.corpus_rows_usage(tmp_path)
+
+        assert totals["files"] == 2
+        assert totals["usd"] == 10.00
+
+
+class TestTheHeadlineNamesWhatItDidNotRead:
+    """The line said "$0.00 charged — every call the counter saw" while 356
+    member records sat in a source no glob here touches.
+
+    True, and the count beside it read as the whole. The qualification travels
+    with the figure, not with the breakdown, because the line is the only
+    place most readers look.
+    """
+
+    def _tree(self, root):
+        path = root / "measurements" / "batch.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {"safe": {
+            "cost": 1.0,
+            "usage": {"requests": 1, "input_tokens": 1, "output_tokens": 1,
+                      "cache_read_tokens": 1, "cache_write_tokens": 1}}}}),
+            encoding="utf-8")
+
+    def test_the_headline_says_another_source_holds_more(self, tmp_path,
+                                                         monkeypatch, capsys):
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        self._tree(tmp_path)
+
+        spend.one_figure([], {"calls": [], "problems": []}, source="artifacts")
+
+        assert "--source rows" in capsys.readouterr().out
+
+    def test_it_is_silent_when_there_is_nothing_more(self, tmp_path,
+                                                    monkeypatch, capsys):
+        """The control. A clause that always prints is not a qualification,
+        it is noise, and the next reader learns to skip the line."""
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        (tmp_path / "measurements").mkdir(parents=True, exist_ok=True)
+
+        spend.one_figure([], {"calls": [], "problems": []}, source="artifacts")
+
+        assert "--source rows" not in capsys.readouterr().out
+
+    def test_a_source_of_nothing_but_unreadable_files_still_speaks(
+            self, tmp_path, monkeypatch, capsys):
+        """The note returned nothing whenever `members` was zero, whatever
+        `unreadable` said.
+
+        So a corpus of nothing but unparseable files produced "no records were
+        found" — on the empty-ledger branch this note exists to repair, and
+        the branch where the omission is worst. Absence read as agreement, in
+        the line written against absence being read as agreement. Codex,
+        2026-09-09.
+        """
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "broken.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json", encoding="utf-8")
+
+        spend.one_figure([], {"calls": [], "problems": []}, source="artifacts")
+        out = capsys.readouterr().out
+
+        assert "could not be read at all" in out
+        assert "--source rows" in out
+
+    def test_the_rows_source_does_not_exit_zero_over_a_file_it_skipped(
+            self, tmp_path, monkeypatch, capsys):
+        """It printed that the figure is under its own source and returned 0.
+
+        "I could not check" and "here is the answer" are different answers and
+        this repository gives them different exit codes. Codex, 2026-09-09.
+        """
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "broken.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json", encoding="utf-8")
+
+        assert spend.main(["--source", "rows"]) == 2
+
+    def test_the_heading_claims_nothing_about_who_paid(self, tmp_path,
+                                                       monkeypatch, capsys):
+        """A row carries no provider, no login and no billing arrangement, so
+        this reader cannot say whether anything was charged.
+
+        Two wordings were refused before this one: the ruling's "unpriced",
+        which stopped being true when 221 rows turned out to carry a price,
+        and then "charged to nobody", which is `BILLING_ARRANGEMENT`'s answer
+        and not visible from a row. Codex, 2026-09-09: *"Any copied, future,
+        or API-funded row gets falsely classified."* No test asserted the
+        heading at all, which is how a claim reached it twice.
+        """
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "x.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {"safe": {
+            "cost": 5.0, "usage": {"requests": 1}}}}), encoding="utf-8")
+
+        spend.main(["--source", "rows"])
+        out = capsys.readouterr().out
+
+        assert "cannot place against any billing arrangement" in out
+        assert "charged to nobody" not in out
+        assert "flat subscription" not in out
+
+    @pytest.mark.parametrize("extra", [
+        ["--since", "2099-01-01"], ["--detail"], ["--breakdown"],
+    ])
+    def test_a_flag_this_source_cannot_honour_is_refused(self, tmp_path,
+                                                         monkeypatch, capsys,
+                                                         extra):
+        """`--since`, `--detail` and `--breakdown` were accepted here and did
+        nothing, so a filtered invocation printed figures for the whole
+        repository and exited 0. A flag accepted and ignored is worse than one
+        rejected: the reader believes a filter applied. Codex, 2026-09-09."""
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        (tmp_path / "measurements").mkdir(parents=True, exist_ok=True)
+
+        code = spend.main(["--source", "rows", *extra])
+        out = capsys.readouterr().out
+
+        assert code == 2
+        assert "accepted and ignored" in out
+
+    def test_a_readable_rows_source_is_exit_zero(self, tmp_path, monkeypatch):
+        """The control. An exit code that is never 0 is a check nobody can
+        satisfy, and it gets dropped from the pipeline rather than fixed."""
+        monkeypatch.setattr(spend, "ROOT", tmp_path)
+        path = tmp_path / "measurements" / "batch.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": "c", "members": {"safe": {
+            "cost": 1.0,
+            "usage": {"requests": 1, "input_tokens": 1, "output_tokens": 1,
+                      "cache_read_tokens": 1, "cache_write_tokens": 1}}}}),
+            encoding="utf-8")
+
+        assert spend.main(["--source", "rows"]) == 0

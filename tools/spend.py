@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -775,10 +776,60 @@ def summarise(rows: List[Dict[str, Any]], by: str = "day",
     return 0
 
 
+def unread_note(source: str) -> str:
+    """What this source did not read, in one sentence, or nothing.
+
+    **One spelling and every headline gets it.** There are four ways this file
+    prints a figure — an empty ledger, an indeterminate one, a number, and
+    `$0.00 charged` — and the first version put this clause inside one of
+    them. A run with no artifacts took the *empty* branch, which says "no
+    records were found", and that is the headline where the omission is worst:
+    356 member records sat in the corpus rows while the line said none existed
+    anywhere.
+
+    The comment beside the no-call clause already records the same shape
+    happening once before. A qualification only some of the figures carry is
+    one the reader cannot rely on.
+
+    **What it costs, measured rather than assumed.** This walks all of
+    `measurements/` and parses every file in it, on the command the owner
+    reads in every report. 2026-09-09: 16 ms median over 126 files, 15 ms
+    fastest, 17 ms slowest. No cache, because caching sixteen milliseconds is
+    complexity with no reason behind it — and a cache is a second copy of an
+    answer, which is how the two ends of one rule start disagreeing. The
+    number is here so the next reader does not re-derive it: at ten times this
+    corpus the line costs about a sixth of a second, and that is where the
+    question is worth opening again.
+    """
+    if source != "artifacts":
+        return ""
+    unread = corpus_rows_usage(ROOT)
+    # **A file that could not be read is a reason to speak, not a reason to be
+    # silent.** Codex, 2026-09-09: this returned nothing whenever `members`
+    # was zero, whatever `unreadable` said — so a corpus of nothing but
+    # unparseable files produced "no records were found", on the branch this
+    # note exists to repair. Absence read as agreement, in the line written
+    # against absence being read as agreement.
+    if not unread["members"] and not unread["unreadable"]:
+        return ""
+    parts = []
+    if unread["members"]:
+        parts.append("{} member record(s) in the corpus rows, {} of them "
+                     "priced at list".format(unread["members"],
+                                             money(unread["usd"])))
+    if unread["unreadable"]:
+        parts.append("{} file(s) there that could not be read at all"
+                     .format(unread["unreadable"]))
+    return ("  and not read by this source: {}. `--source rows`, never added "
+            "to the figure above — a run can be in both and nothing keys them "
+            "together.".format("; ".join(parts)))
+
+
 def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
                unreadable: int = 0, skipped_lines: int = 0,
                scope: str = "", since: str = "",
-               may_double_count: bool = False) -> int:
+               may_double_count: bool = False,
+               source: str = "artifacts") -> int:
     """The whole report, in the form the owner asked for: one line.
 
     Not a table. He asked for one figure and a breakdown only when he asks for
@@ -811,6 +862,9 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
         print("  scope: {} · as of {}".format(
             scope or "this repository's records",
             datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")))
+        note = unread_note(source)
+        if note:
+            print(note)
         print("  not counted anywhere, and nothing here can count it: "
               "{}".format("; ".join(INVISIBLE)))
         return 2
@@ -1053,6 +1107,18 @@ def one_figure(rows: List[Dict[str, Any]], vendor: Dict[str, Any],
         " · `--since {}` filters the reviews and not the vendor calls, so the "
         "two halves cover different windows".format(since) if since else ""))
 
+    # **Beside the scope, so it holds for every headline.** The first version
+    # put this clause inside the `$0.00 charged` branch, and there are four:
+    # an empty ledger, an indeterminate one, a figure, and that one. A test
+    # with no rows took the empty branch and the qualification vanished —
+    # which is the "two ends of one rule" shape, and the comment eight lines
+    # up already names it happening to the no-call clause. A qualification
+    # that only some of the figures carry is a qualification the reader
+    # cannot rely on.
+    note = unread_note(source)
+    if note:
+        print(note)
+
     if integrity:
         print("  ledger: {}".format("; ".join(integrity[:3])))
         if len(integrity) > 3:
@@ -1155,6 +1221,245 @@ def collect(args: argparse.Namespace) -> tuple:
     return fold_representations(found)
 
 
+def corpus_rows_usage(root: Path) -> dict:
+    """Token counts recorded by the corpus rows, which no other source reads.
+
+    Measured 2026-09-09: 154 files under `measurements/` record something
+    billable and **131 of them are outside every glob this tool uses**. 356
+    member records, 318 provider requests, and **221 of them carry a `cost`
+    summing to $131.05** — which the tool that answers "what has this cost"
+    has never read.
+
+    The first pass at this measurement looked for `total_cost_usd`, found
+    none, and reported the gap as token counts with no money in it. The field
+    is `cost` and it is a bare float. A number nobody found is not a number
+    that is not there, and the wrong search had already been said out loud
+    before the right one was run.
+
+    **A third source, never merged.** Codex, 2026-09-09, asked to choose:
+    *"B. It accepts incomplete overall coverage: unkeyed sources remain
+    unsummed. Heading must claim 'separately observed, unpriced token usage'.
+    It must not claim total spend, deduplicated usage, or inclusion in the
+    artifact-derived floor."*
+
+    The alternative was to fold the rows into the artifact totals, and the
+    reason it was refused is countable: all 22 kept `findings.json` artifacts
+    have a row for the same `(case, member)`, and neither side carries a
+    `run_id`. Adding a glob would have counted every one of those runs twice —
+    the defect that once reported `$10.00` for a `$5.00` purchase, returning
+    by the same route.
+    """
+    # **One file, however many names reach it.** Codex, 2026-09-09: a hard
+    # link, or a symlinked directory alias, makes `glob` hand over the same
+    # bytes twice — and this source's whole justification is that it does not
+    # double count. `$5.00` became `$10.00` from two names for one file, which
+    # is the exact figure this tool was once caught reporting. `read_runs`
+    # already keys on `(st_dev, st_ino)` for the artifact source; this is the
+    # same rule, argued for at length here and not applied.
+    seen_files = set()
+    totals = {"files": 0, "members": 0, "requests": 0, "input_tokens": 0,
+              "output_tokens": 0, "cache_read_tokens": 0,
+              "cache_write_tokens": 0, "priced": 0, "unpriced": 0,
+              "usd": 0.0, "unreadable": 0, "unusable_counts": 0,
+              "not_rows": 0, "partial": 0, "unusable_members": 0,
+              "rejected_price": 0}
+    for path in sorted(glob.glob(str(root / "measurements" / "**" / "*.json"),
+                                 recursive=True)):
+        name = Path(path).name
+        if name in ("findings.json", "rows.json", "manifest.json"):
+            continue
+        try:
+            info = Path(path).stat()
+        except OSError:
+            totals["unreadable"] += 1
+            continue
+        identity = (info.st_dev, info.st_ino)
+        if identity in seen_files:
+            continue
+        seen_files.add(identity)
+        try:
+            body = json.loads(Path(path).read_text(encoding="utf-8"))
+        except OSError:
+            totals["unreadable"] += 1
+            continue
+        except ValueError:
+            totals["unreadable"] += 1
+            continue
+        # **A `results` key that is not a list is not a wrapper.** Codex,
+        # 2026-09-09: falling back to `body` made the wrapper *itself* get
+        # read as a row, so `{"results": {...one row...}}` came out as zero
+        # records from a file that plainly held one. Three shapes are
+        # accepted and anything else is said, not assumed away.
+        if isinstance(body, dict) and "results" in body:
+            stored = body["results"]
+            if not isinstance(stored, list):
+                totals["unreadable"] += 1
+                continue
+        else:
+            stored = body
+        if not isinstance(stored, (list, dict)):
+            totals["unreadable"] += 1
+            continue
+        seen_here = False
+        # A file that is none of the three shapes must not read as an empty
+        # source that was understood. `[["not", "a", "row"]]` parsed, matched
+        # nothing, and left the count at zero with exit 0 — "I read it and
+        # there was nothing" about a file nobody could read.
+        malformed_here = False
+        # And a file that parsed and is simply about something else. Three
+        # states, because the tree holds all three.
+        not_rows_here = False
+        # **A member this reader could not use is a loss too.** Codex,
+        # 2026-10: `unusable_members` was counted and changed nothing about
+        # the file, so a file whose only member was unreadable landed in no
+        # state at all and exited 0, and one usable member beside one
+        # unreadable read as wholly understood. The count said something was
+        # missing; the exit code said everything was fine.
+        lost_here = False
+        for row in (stored if isinstance(stored, list) else [stored]):
+            if not isinstance(row, dict):
+                malformed_here = True
+                continue
+            members = row.get("members")
+            if members is None and "case_id" not in row:
+                # Not a row at all — `panels.json`, a replay artifact, a
+                # report. **68 such files are in this tree**, measured
+                # 2026-09-09, and calling them unreadable would make the real
+                # corpus exit 2 on every invocation, which is over-eagerness
+                # in the other direction and gets the check switched off. They
+                # are a third state: parsed, understood, and about something
+                # else. Codex found them passing silently as "a readable
+                # source with nothing in it", which is the second state
+                # wearing the first one's clothes.
+                #
+                # **Remembered even when the file also holds rows.** Codex, on
+                # the first version of this branch: a non-row sharing a file
+                # with a good row was lost, because only the all-or-nothing
+                # case was reported. Measured 2026-10: no file in this tree is
+                # that shape, so this moves no live figure — it closes the
+                # hole rather than waiting for one.
+                not_rows_here = True
+                continue
+            if not isinstance(members, dict):
+                # **A `members` that is not a mapping raised
+                # `AttributeError`.** Found 2026-09-09 by running the shapes a
+                # file can have rather than the shape it should have. This
+                # matters more than it looks: `unread_note` calls this on
+                # *every* headline path, so one malformed file under
+                # `measurements/` took down the single line the owner reads in
+                # every report. A counter that cannot be run is worse than one
+                # that counts short.
+                #
+                # **A flag, not an increment.** Codex, 2026-09-09: this added
+                # one to a count of *files* for every bad row, so a single
+                # file holding two of them reported "2 file(s) could not be
+                # read" — the reader's own inflation, in the figure that says
+                # how much it missed.
+                malformed_here = True
+                continue
+            for member in members.values():
+                # **Both refusals are counted, not skipped.** Codex,
+                # 2026-10: a member that is not an object, and one whose
+                # `usage` is not an object, were dropped in silence — so a
+                # file could hold four members, contribute two, and report
+                # nothing missing. `unusable_members` is what says the record
+                # count is short. No such member exists in this tree today,
+                # measured; the hole is closed rather than waited for.
+                if not isinstance(member, dict):
+                    totals["unusable_members"] += 1
+                    lost_here = True
+                    continue
+                usage = member.get("usage")
+                if not isinstance(usage, dict):
+                    totals["unusable_members"] += 1
+                    lost_here = True
+                    continue
+                seen_here = True
+                totals["members"] += 1
+                cost = member.get("cost")
+                # A bool is an int in Python and `True` would add one dollar.
+                #
+                # **And `nan`, `inf` and a negative are not prices.** Found
+                # 2026-09-09: `float("nan")` in one file made the whole sum
+                # `nan`, printed as `$nan` in the line this project quotes in
+                # every report — one unreadable value poisoning every figure
+                # downstream of it, which no later check could undo. A
+                # negative goes the same way for a different reason: it would
+                # *reduce* a total, so one bad row could hide the cost of a
+                # real one.
+                if (isinstance(cost, (int, float))
+                        and not isinstance(cost, bool)
+                        and math.isfinite(cost) and cost >= 0):
+                    totals["priced"] += 1
+                    totals["usd"] += float(cost)
+                elif cost is None:
+                    # Not zero. A run whose price was never written down is a
+                    # missing value, and this file's whole subject is that the
+                    # two are different answers.
+                    totals["unpriced"] += 1
+                else:
+                    # **And a price that was written down and refused is a
+                    # third answer again.** Codex, 2026-10: `nan`, a negative,
+                    # a string and a bool all landed in `unpriced`, which
+                    # prints "carry usage and no price" — about a record that
+                    # carries one. `LIMITATIONS.md` called `nan` an unreadable
+                    # value in the same breath, so the file and its own
+                    # documentation disagreed. The test written for it
+                    # asserted `unpriced == 1` and so encoded the conflation.
+                    totals["rejected_price"] += 1
+                    # **And a refused field makes the read partial.** Codex,
+                    # 2026-10, as the one thing that had to change before this
+                    # could be committed: the refusal was recorded and the
+                    # command still exited 0, which contradicts what exit 0
+                    # means here and what `partial` is defined as three lines
+                    # of documentation away. One invariant for both refusals —
+                    # a price and a count — rather than two rules that can
+                    # drift.
+                    lost_here = True
+                for field in ("requests", "input_tokens", "output_tokens",
+                              "cache_read_tokens", "cache_write_tokens"):
+                    value = usage.get(field)
+                    # A float count is real arithmetic and was being dropped
+                    # in silence while the member still counted — an
+                    # undercount with nothing saying so. A string, a bool, a
+                    # `nan` or a negative is not a count and is refused;
+                    # `unpriced_tokens` is what says a member's numbers were
+                    # not all usable, so the figure never reads as complete
+                    # when it is not.
+                    if (isinstance(value, (int, float))
+                            and not isinstance(value, bool)
+                            and math.isfinite(value) and value >= 0):
+                        totals[field] += value
+                    elif value is not None:
+                        totals["unusable_counts"] += 1
+                        # The same invariant as a refused price: something in
+                        # this file was not usable, so the figures are short
+                        # by an unknown amount and the read was partial.
+                        lost_here = True
+        # **Not five exclusive states — facts, and a file can carry several.**
+        # Written as an `elif` chain first, and measured 2026-10 across every
+        # combination a file can hold: `good row + malformed row + non-row
+        # object` matched the `not_rows` branch, so `partial` was never set
+        # and the run exited 0 over a file it had read in half. One arm of a
+        # chain swallowing another is the same loss as a missing branch, and
+        # only running the combinations showed it.
+        #
+        # `unreadable` is the one exclusive answer: nothing came out at all.
+        if seen_here:
+            totals["files"] += 1
+            if malformed_here or lost_here:
+                totals["partial"] += 1
+            if not_rows_here:
+                totals["not_rows"] += 1
+        elif malformed_here or lost_here:
+            totals["unreadable"] += 1
+        elif not_rows_here:
+            totals["not_rows"] += 1
+        continue
+
+    return totals
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("paths", nargs="*", help="artifacts to read")
@@ -1166,11 +1471,133 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="the table, by day or month. Without it this prints one line, "
              "which is what the owner asked to read in every report")
     parser.add_argument(
-        "--source", default="artifacts", choices=("artifacts", "queue"),
-        help="artifacts written by a review, or the queue's own log. Separate "
-             "on purpose: a review can be in both and nothing keys them "
-             "together, so adding them would double-count")
+        "--source", default="artifacts",
+        choices=("artifacts", "queue", "rows"),
+        help="artifacts written by a review, the queue's own log, or the "
+             "corpus rows. Separate on purpose: a review can be in more than "
+             "one and nothing keys them together, so adding them would "
+             "double-count")
     args = parser.parse_args(argv)
+
+    if args.source == "rows":
+        # **A source of its own, and never added to another.** Codex,
+        # 2026-09-09: *"Heading must claim 'separately observed, unpriced
+        # token usage'. It must not claim total spend, deduplicated usage, or
+        # inclusion in the artifact-derived floor."*
+        #
+        # Refused the alternative on a count: all 22 kept `findings.json`
+        # artifacts have a row for the same `(case, member)`, and neither side
+        # carries a `run_id`. Folding them in would have counted every one of
+        # those runs twice — the defect that once reported `$10.00` for a
+        # `$5.00` purchase.
+        # **What this source cannot do, refused rather than ignored.** Codex,
+        # 2026-09-09: `--since`, `--detail`, `--breakdown` and a positional
+        # path were accepted here and silently did nothing, so
+        # `spend.py /tmp/wanted.json --source rows --since 2099-01-01` printed
+        # figures for the whole repository and exited 0. A flag that is
+        # accepted and ignored is worse than one that is rejected: the reader
+        # believes a filter applied.
+        refused = [name for name, given in (
+            ("paths", bool(args.paths)), ("--since", bool(args.since)),
+            ("--detail", args.detail), ("--breakdown", args.breakdown),
+        ) if given]
+        if refused:
+            print("--source rows reads the corpus rows under measurements/ "
+                  "and nothing else, so {} would be accepted and ignored. "
+                  "Rerun without {}, or ask the artifact source, which "
+                  "implements them.".format(", ".join(refused),
+                                            "them" if len(refused) > 1
+                                            else refused[0]))
+            return 2
+        totals = corpus_rows_usage(ROOT)
+        # The heading names what the figures *are*, and nothing it cannot
+        # see. Codex's ruling asked for "separately observed, unpriced token
+        # usage"; that wording came from my telling it the rows carried no
+        # price, and 221 of them do. The second attempt said "charged to
+        # nobody" — and Codex refused that too, correctly: **a row carries no
+        # provider, no auth method and no billing arrangement**, so this
+        # reader cannot establish who was charged. A copied row, a future one,
+        # an API-funded one would all be classified by a sentence with no
+        # evidence under it. That is the claim-beyond-the-record this whole
+        # file exists to refuse, written into its own heading.
+        #
+        # So: what was observed, where, and what it is not. Whether anybody
+        # paid is `BILLING_ARRANGEMENT`'s question and is answered where that
+        # evidence lives.
+        #
+        # **And it does not mention a price when none was recorded.** Codex,
+        # 2026-09-09: over an empty source, or one whose members all carry
+        # usage and no `cost`, the heading announced "a recorded price" and
+        # the next line said the opposite. Two sentences about one run,
+        # contradicting each other, three lines apart.
+        print("Corpus rows: separately observed token usage{}, from {} member "
+              "record(s) in {} file(s). Not a total, not deduplicated against "
+              "any other source, and not part of the artifact floor — a run "
+              "can appear here and there, and nothing keys the two together."
+              .format(", and a recorded price this reader cannot place "
+                      "against any billing arrangement"
+                      if totals["priced"] else "",
+                      totals["members"], totals["files"]))
+        if totals["not_rows"]:
+            print("  {} file(s) under measurements/ parsed and are about "
+                  "something else — a panel, a replay, a report. Understood "
+                  "and not counted, which is a different answer from "
+                  "unreadable.".format(totals["not_rows"]))
+        if totals["priced"]:
+            # The same discipline as the heading: the figure is what the rows
+            # recorded, and whether it was ever charged is not in them. The
+            # first version said "this project's runs are on a flat
+            # subscription" — true of today's corpus and not established by
+            # anything this function reads.
+            print("  ${:.2f} recorded across {} record(s). What the rows "
+                  "carry and nothing more: no provider, no login, no billing "
+                  "arrangement, so this reader cannot say whether any of it "
+                  "was charged. `--breakdown` on the artifact source is where "
+                  "that question is answered."
+                  .format(totals["usd"], totals["priced"]))
+        if totals["unpriced"]:
+            print("  {} record(s) carry usage and no price. Absent, not "
+                  "$0.00.".format(totals["unpriced"]))
+        if totals["rejected_price"]:
+            print("  {} record(s) carry a price this reader refused — not a "
+                  "finite number, or below zero. Present and unusable, which "
+                  "is not the same as absent."
+                  .format(totals["rejected_price"]))
+        if totals["unusable_members"]:
+            print("  {} member record(s) could not be read at all, so the "
+                  "record count above is short."
+                  .format(totals["unusable_members"]))
+        if totals["unreadable"]:
+            print("  {} file(s) could not be read, so this figure is under "
+                  "even its own source.".format(totals["unreadable"]))
+        if totals["partial"]:
+            print("  {} file(s) were read in part — a usable row beside one "
+                  "this reader could not parse. What came out is counted; "
+                  "what did not is not, and by an unknown amount."
+                  .format(totals["partial"]))
+        if totals["unusable_counts"]:
+            # **Collected and never printed, until this line.** Counting a
+            # refused value and then not saying so makes the token figures
+            # read as complete when they are short — the qualification that
+            # does not travel with the number, which is the defect this file
+            # repaired twice today before doing it a third time itself.
+            print("  {} token count(s) were not usable numbers and are not in "
+                  "the totals below.".format(totals["unusable_counts"]))
+        print("  tokens: {} request(s) · input {:,} · output {:,} · "
+              "cache_read {:,} · cache_write {:,}".format(
+                  totals["requests"], totals["input_tokens"],
+                  totals["output_tokens"], totals["cache_read_tokens"],
+                  totals["cache_write_tokens"]))
+        # **Exit 2 when a file could not be read.** Codex, 2026-09-09: this
+        # returned 0 while printing that the figure is under its own source.
+        # "I could not check" and "here is the answer" are different answers
+        # and this repository gives them different exit codes; a crash must
+        # never leave with the code for success, and neither must a reader
+        # that skipped part of what it was pointed at.
+        # A file read in part counts here for the same reason as one not read
+        # at all: the figure is under by an amount nobody knows, and "I could
+        # not check" must not leave with the code for "here is the answer".
+        return 2 if (totals["unreadable"] or totals["partial"]) else 0
 
     if args.source == "queue":
         # **Accumulated, not read once at the end.** `queue_rows` resets
@@ -1252,7 +1679,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     # code, and a vendor-only ledger printed "no records were found" from a
     # `summarise([])` that had never been shown the calls.
     code = one_figure(rows, vendor, unreadable, skipped, scope,
-                      args.since, may_double_count=bool(beside))
+                      args.since, may_double_count=bool(beside),
+                      source=args.source)
     if beside:
         # **Said, because it cannot be fixed here.** A run written both as its
         # own artifact and as a row is counted twice, and nothing in either
@@ -1316,6 +1744,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("\nThe queue log holds review rows this source does not: "
               "tools/spend.py --source queue. Not added to the above — a "
               "review can appear in both and nothing keys them together.")
+    # **Named where the default reader is, or it stays invisible.** The gap
+    # existed for as long as the tool did and nobody saw it, because nothing
+    # said the files were there. Printed on the artifact path only: it is a
+    # pointer to another source, not a figure in this one.
+    if args.source == "artifacts":
+        corpus = corpus_rows_usage(ROOT)
+        if corpus["members"]:
+            print("The corpus rows hold {} more member record(s) this source "
+                  "does not read, ${:.2f} of them priced: tools/spend.py "
+                  "--source rows. Not added to the above, for the same "
+                  "reason.".format(corpus["members"], corpus["usd"]))
     if args.detail and rows:
         detail(rows)
     return code
